@@ -1193,7 +1193,7 @@ function WeatherTab({projectId,project,weather,onRefresh,onErr}) {
         const icon=entry?entry[1][1]:"🌡️";
         return (
           <div key={w.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:20}}>{icon}</span><div><div style={{fontSize:14,fontWeight:700}}>{w.conditions||"Logged"}</div><div style={{fontSize:11,color:T.muted}}>{fmtShort(w.date)}{w.wind_speed?" · "+Math.round(w.wind_speed)+"mph":""}{w.precipitation>0?" · "+w.precipitation+'" precip":""}</div></div></div>{w.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4}}>{w.notes}</div>}</div>
+            <div><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:20}}>{icon}</span><div><div style={{fontSize:14,fontWeight:700}}>{w.conditions||"Logged"}</div><div style={{fontSize:11,color:T.muted}}>{fmtShort(w.date)}{w.wind_speed?" · "+Math.round(w.wind_speed)+"mph":""}{w.precipitation>0?" · "+w.precipitation+"in precip":""}</div></div></div>{w.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4}}>{w.notes}</div>}</div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>{w.temp_high&&<div style={{textAlign:"right"}}><div style={{fontSize:15,fontWeight:800,color:T.orange}}>{Math.round(w.temp_high)}°</div>{w.temp_low&&<div style={{fontSize:10,color:T.muted}}>{Math.round(w.temp_low)}° lo</div>}</div>}<button onClick={()=>del(w.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div>
           </div>
         );
