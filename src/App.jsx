@@ -376,7 +376,8 @@ function JobCard({p,onSelect,divColor}){
         </div>
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
           {p.afe&&<span style={pill(T.muted)}>AFE: {p.afe}</span>}
-          {p.work_order&&<span style={pill(T.muted)}>WO: {p.work_order}</span>}
+          {p.work_order&&<span style={pill(T.muted)}>PO: {p.work_order}</span>}
+          <span style={pill(p.job_type==="Contract"?T.blue:T.orange)}>{p.job_type||"T&M"}</span>
           <span style={pill(isArchived?T.muted:T.green)}>{isArchived?"Archived":"Active"}</span>
         </div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:10,borderTop:`1px solid ${T.border}`}}>
@@ -396,13 +397,46 @@ function JobCard({p,onSelect,divColor}){
 
 /* ── PROJECT FORM ───────────────────────────────────────────── */
 function ProjectForm({initial,onSave,onCancel,saving,defaultDivision}){
-  const [f,setF]=useState(initial||{name:"",client:"",location:"",afe:"",work_order:"",start_date:today(),notes:"",status:"active",division:defaultDivision||"Pipeline"});
+  const [f,setF]=useState(initial||{name:"",client:"",location:"",afe:"",work_order:"",start_date:today(),notes:"",status:"active",division:defaultDivision||"Pipeline",job_type:"T&M",contract_value:""});
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <TopBar title={initial?"Edit Job":"New Job"} onBack={onCancel}/>
       <div style={{padding:"16px 16px 100px"}}>
         {[{k:"name",l:"Job Number *",ph:"e.g. HDD-2026-001"},{k:"client",l:"Client",ph:"Colonial Pipeline"},{k:"location",l:"Location",ph:"City, State or Milepost"},{k:"afe",l:"AFE No.",ph:"AFE #"},{k:"work_order",l:"PO #",ph:"PO #"}].map(({k,l,ph})=>(<div key={k} style={{marginBottom:12}}><label style={lbl}>{l}</label><input type="text" placeholder={ph} value={f[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}
+
+        {/* Job Type */}
+        <div style={{marginBottom:12}}>
+          <label style={lbl}>Job Type</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {[["T&M","⏱️ Time & Material"],["Contract","📋 Contract"]].map(([val,label])=>(
+              <button key={val} onClick={()=>set("job_type",val)} style={{
+                padding:"14px 10px",borderRadius:12,
+                border:`2px solid ${f.job_type===val?T.orange:T.border}`,
+                background:f.job_type===val?T.orangeLow:T.surface,
+                color:f.job_type===val?T.orange:T.sub,
+                fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit",textAlign:"center"
+              }}>{label}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Contract value — only shown for Contract jobs */}
+        {f.job_type==="Contract"&&(
+          <div style={{marginBottom:12}}>
+            <label style={lbl}>Contract Total Value ($)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="e.g. 250000.00"
+              value={f.contract_value||""}
+              onChange={e=>set("contract_value",e.target.value)}
+              style={inp}
+            />
+          </div>
+        )}
+
         <div style={{marginBottom:12}}>
           <label style={lbl}>Division</label>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
@@ -1115,7 +1149,7 @@ function WeatherTab({projectId,project,weather,onRefresh,onErr}){
 /* ── INFO TAB ───────────────────────────────────────────────── */
 function InfoTab({project,user,onEdit,onArchive,onDelete}){
   return(<div>
-    <div style={cardS}>{[["Division",project.division],["Client",project.client],["Location",project.location],["AFE No.",project.afe],["Work Order",project.work_order],["Start Date",fmtDate(project.start_date)],["Status",project.status],["Created By",project.created_by]].map(([l,v])=>v?(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"11px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>{l}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span></div>):null)}</div>
+    <div style={cardS}>{[["Division",project.division],["Job Type",project.job_type||"T&M"],["Contract Value",project.job_type==="Contract"&&project.contract_value?"$"+Number(project.contract_value).toLocaleString("en-US",{minimumFractionDigits:2}):null],["Client",project.client],["Location",project.location],["AFE No.",project.afe],["PO #",project.work_order],["Start Date",fmtDate(project.start_date)],["Status",project.status],["Created By",project.created_by]].map(([l,v])=>v?(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"11px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>{l}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span></div>):null)}</div>
     {project.notes&&<div style={{...cardS,marginTop:12}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Notes</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{project.notes}</div></div>}
     {can(user,"edit_job")&&<div style={{marginTop:16,display:"flex",flexDirection:"column",gap:10}}><button onClick={onEdit} style={{...ghostBtn,width:"100%",textAlign:"center"}}>✏️ Edit Job</button><button onClick={onArchive} style={{...ghostBtn,width:"100%",textAlign:"center",color:T.muted}}>{project.status==="active"?"📦 Archive Job":"♻️ Restore Job"}</button><button onClick={onDelete} style={{...dangerBtn}}>🗑 Delete Job Permanently</button></div>}
   </div>);
