@@ -472,13 +472,15 @@ function SignaturePad({onSave,onCancel,reportName}){
   const [drawing,setDrawing]=useState(false);
   const [hasStrokes,setHasStrokes]=useState(false);
   const [inspectorName,setInspectorName]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [sigErr,setSigErr]=useState("");
   const lastPos=useRef(null);
 
   function getPos(e,canvas){
     const rect=canvas.getBoundingClientRect();
     const scaleX=canvas.width/rect.width;
     const scaleY=canvas.height/rect.height;
-    if(e.touches){
+    if(e.touches&&e.touches.length>0){
       return{x:(e.touches[0].clientX-rect.left)*scaleX,y:(e.touches[0].clientY-rect.top)*scaleY};
     }
     return{x:(e.clientX-rect.left)*scaleX,y:(e.clientY-rect.top)*scaleY};
@@ -487,6 +489,7 @@ function SignaturePad({onSave,onCancel,reportName}){
   function startDraw(e){
     e.preventDefault();
     const canvas=canvasRef.current;
+    if(!canvas)return;
     const ctx=canvas.getContext("2d");
     const pos=getPos(e,canvas);
     ctx.beginPath();
@@ -500,6 +503,7 @@ function SignaturePad({onSave,onCancel,reportName}){
     e.preventDefault();
     if(!drawing)return;
     const canvas=canvasRef.current;
+    if(!canvas)return;
     const ctx=canvas.getContext("2d");
     const pos=getPos(e,canvas);
     ctx.lineWidth=3;
@@ -513,63 +517,83 @@ function SignaturePad({onSave,onCancel,reportName}){
     lastPos.current=pos;
   }
 
-  function endDraw(e){e.preventDefault();setDrawing(false);}
+  function endDraw(e){
+    if(e)e.preventDefault();
+    setDrawing(false);
+  }
 
   function clearPad(){
     const canvas=canvasRef.current;
+    if(!canvas)return;
     const ctx=canvas.getContext("2d");
     ctx.clearRect(0,0,canvas.width,canvas.height);
     setHasStrokes(false);
+    setSigErr("");
   }
 
-  function save(){
-    if(!hasStrokes||!inspectorName.trim())return;
+  async function save(){
+    if(!hasStrokes||!inspectorName.trim()||saving)return;
     const canvas=canvasRef.current;
-    const sig=canvas.toDataURL("image/png");
-    onSave(inspectorName.trim(),sig);
+    if(!canvas){setSigErr("Signature canvas not ready. Try again.");return;}
+    setSaving(true);
+    setSigErr("");
+    try{
+      // Use JPEG at 0.7 quality — much smaller than PNG, still clear
+      const sig=canvas.toDataURL("image/jpeg",0.7);
+      await onSave(inspectorName.trim(),sig);
+    }catch(err){
+      setSigErr("Failed to save: "+err.message);
+      setSaving(false);
+    }
   }
+
+  const canSign=hasStrokes&&inspectorName.trim().length>0&&!saving;
 
   return(
-    <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.96)",display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
+    <div style={{position:"fixed",inset:0,zIndex:300,background:T.bg,display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
       {/* Header */}
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px 16px 12px",flexShrink:0}}>
         <div style={{fontSize:18,fontWeight:900,color:T.text,marginBottom:2}}>✍️ Inspector Sign-Off</div>
         <div style={{fontSize:12,color:T.muted}}>{reportName}</div>
       </div>
 
-      <div style={{flex:1,overflow:"auto",padding:"16px 16px 0"}}>
+      <div style={{flex:1,overflow:"auto",padding:"16px"}}>
+        {sigErr&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:13,color:T.red}}>⚠️ {sigErr}</div>}
+
         {/* Inspector name */}
-        <div style={{marginBottom:14}}>
-          <label style={lbl}>Inspector Name</label>
+        <div style={{marginBottom:16}}>
+          <label style={lbl}>Inspector Name *</label>
           <input
             type="text"
             placeholder="Print inspector's full name"
             value={inspectorName}
-            onChange={e=>setInspectorName(e.target.value)}
+            onChange={e=>{setInspectorName(e.target.value);setSigErr("");}}
             style={inp}
+            autoComplete="off"
           />
         </div>
 
         {/* Signature canvas */}
         <div style={{marginBottom:8}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <label style={lbl}>Signature</label>
-            {hasStrokes&&<button onClick={clearPad} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600}}>Clear</button>}
+            <label style={lbl}>Signature *</label>
+            {hasStrokes&&<button onClick={clearPad} style={{background:"none",border:"none",color:T.orange,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Clear</button>}
           </div>
-          <div style={{background:"#fff",borderRadius:14,border:`2px solid ${hasStrokes?T.orange:T.border}`,overflow:"hidden",position:"relative"}}>
+          <div style={{background:"#fff",borderRadius:14,border:`2px solid ${hasStrokes?T.orange:T.border}`,overflow:"hidden",position:"relative",userSelect:"none"}}>
             {!hasStrokes&&(
               <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-                <div style={{textAlign:"center",color:"#ccc"}}>
-                  <div style={{fontSize:28,marginBottom:4}}>✍️</div>
-                  <div style={{fontSize:13}}>Sign here</div>
+                <div style={{textAlign:"center",color:"#bbb"}}>
+                  <div style={{fontSize:36,marginBottom:6}}>✍️</div>
+                  <div style={{fontSize:14,fontWeight:600}}>Sign here</div>
+                  <div style={{fontSize:11,marginTop:2}}>Use finger or stylus</div>
                 </div>
               </div>
             )}
             <canvas
               ref={canvasRef}
-              width={640}
-              height={220}
-              style={{width:"100%",height:180,display:"block",touchAction:"none"}}
+              width={600}
+              height={200}
+              style={{width:"100%",height:200,display:"block",touchAction:"none",cursor:"crosshair"}}
               onMouseDown={startDraw}
               onMouseMove={draw}
               onMouseUp={endDraw}
@@ -579,20 +603,28 @@ function SignaturePad({onSave,onCancel,reportName}){
               onTouchEnd={endDraw}
             />
           </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:4,textAlign:"center"}}>Draw signature with finger or stylus</div>
+          {hasStrokes&&<div style={{fontSize:11,color:T.green,marginTop:4,textAlign:"center",fontWeight:600}}>✓ Signature captured</div>}
         </div>
       </div>
 
       {/* Buttons */}
-      <div style={{padding:"16px",display:"flex",flexDirection:"column",gap:10,borderTop:`1px solid ${T.border}`,background:T.surface}}>
+      <div style={{padding:"16px",display:"flex",flexDirection:"column",gap:10,borderTop:`1px solid ${T.border}`,background:T.surface,flexShrink:0}}>
         <button
           onClick={save}
-          style={{...primBtn,borderRadius:14,opacity:hasStrokes&&inspectorName.trim()?1:0.45}}
-          disabled={!hasStrokes||!inspectorName.trim()}
+          style={{
+            ...primBtn,
+            borderRadius:14,
+            opacity:canSign?1:0.45,
+            background:canSign?T.green:T.muted,
+            color:"#09090B",
+          }}
         >
-          ✅ Confirm & Sign Report
+          {saving?"Saving…":"✅ Confirm & Sign Report"}
         </button>
-        <button onClick={onCancel} style={{...ghostBtn,width:"100%",textAlign:"center"}}>Cancel</button>
+        <button onClick={onCancel} style={{...ghostBtn,width:"100%",textAlign:"center"}} disabled={saving}>
+          Cancel
+        </button>
+        {!canSign&&!saving&&<div style={{fontSize:11,color:T.muted,textAlign:"center"}}>{!inspectorName.trim()?"Enter inspector name above":!hasStrokes?"Draw signature above to continue":""}</div>}
       </div>
     </div>
   );
@@ -610,7 +642,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   async function saveSignature(inspectorName,sigData){
     setSigSaving(true);
     try{
-      const updated=await API.reports.update(report.id,{
+      await API.reports.update(report.id,{
         inspector_name:inspectorName,
         inspector_signature:sigData,
         inspector_signed_at:new Date().toISOString(),
@@ -618,7 +650,10 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       });
       setReport(r=>({...r,inspector_name:inspectorName,inspector_signature:sigData,inspector_signed_at:new Date().toISOString(),status:"signed"}));
       setShowSigPad(false);
-    }catch(e){console.error(e);}
+    }catch(e){
+      setSigSaving(false);
+      throw new Error(e.message||"Could not save signature. Check connection.");
+    }
     setSigSaving(false);
   }
   function exportXLSX(){
