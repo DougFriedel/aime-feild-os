@@ -37,7 +37,7 @@ const API={
   },
   safety:   {forProject:(pid)=>sb(`/safety_logs?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/safety_logs",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/safety_logs?id=eq.${id}`,{method:"DELETE"})},
   photos:   {forProject:(pid)=>sb(`/project_photos?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/project_photos",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/project_photos?id=eq.${id}`,{method:"DELETE"})},
-  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
+  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
@@ -102,7 +102,7 @@ async function fetchWeather(location){const gR=await fetch(`https://geocoding-ap
 async function notify(type,title,body,extra={}){try{await API.notifications.create({type,title,body,...extra});}catch{}}
 
 /* ── SHARED UI ──────────────────────────────────────────────── */
-function Spinner(){return(<div style={{display:"flex",justifyContent:"center",padding:"48px 0"}}><div style={{width:32,height:32,border:`3px solid ${T.border}`,borderTopColor:T.orange,borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>);}
+function Spinner(){return(<div style={{display:"flex",justifyContent:"center",padding:"48px 0"}}><div style={{width:32,height:32,border:`3px solid ${T.border}`,borderTopColor:T.orange,borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}} select option{background:#1a1a1a;color:#F97316;} select{color:#F97316;}`}</style></div>);}
 function ErrBanner({msg,onDismiss}){if(!msg)return null;return(<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:13,color:T.red}}>⚠️ {msg}</span><button onClick={onDismiss} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:18,padding:"0 0 0 10px"}}>×</button></div>);}
 function Lightbox({src,onClose}){if(!src)return null;return(<div onClick={onClose} style={{position:"fixed",inset:0,zIndex:999,background:"rgba(0,0,0,0.95)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><img src={src} alt="" style={{maxWidth:"100%",maxHeight:"90vh",borderRadius:12}} onClick={e=>e.stopPropagation()}/><button onClick={onClose} style={{position:"absolute",top:16,right:16,background:"#333",border:"none",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:18,cursor:"pointer"}}>×</button></div>);}
 function DashedAdd({label,onClick,color}){const c=color||T.muted;return(<button onClick={onClick} style={{width:"100%",border:`2px dashed ${c}50`,background:c+"08",color:c,borderRadius:14,padding:"14px",fontSize:15,cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>{label}</button>);}
@@ -128,21 +128,26 @@ function LoginScreen({onLogin}){
     setLoading(true);
     try{
       const rows=await API.userProfiles.getByName(n);
-      setProfile(rows&&rows.length>0?rows[0]:{name:n,role:"crew",division:null});
-    }catch{setProfile({name:n,role:"crew",division:null});}
+      setProfile(rows&&rows.length>0?rows[0]:{name:n,role:"crew",division:null,pin:null});
+    }catch{setProfile({name:n,role:"crew",division:null,pin:null});}
     setLoading(false);
   }
 
   async function handleLogin(){
     if(!name||!profile)return;
-    if(profile.role==="admin"&&(pin!==profile.pin&&pin!=="1234")){
-      setErr("Incorrect PIN"); return;
+    // If profile has no PIN set yet, allow login but warn admin to set one
+    if(profile.pin){
+      if(pin!==profile.pin){ setErr("Incorrect PIN"); return; }
+    } else if(name==="Admin"){
+      // Admin fallback PIN
+      if(pin!=="1234"){ setErr("Incorrect PIN (default: 1234)"); return; }
     }
+    // If no PIN set for regular user, allow in but note it
     onLogin(profile);
   }
 
-  const needsPin=profile&&profile.role==="admin";
   const roleM=profile?ROLE_META[profile.role]:null;
+  const pinIsSet=profile&&(profile.pin||name==="Admin");
 
   return(
     <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",justifyContent:"center",padding:24,fontFamily:"inherit"}}>
@@ -161,10 +166,10 @@ function LoginScreen({onLogin}){
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
         <div style={{marginBottom:14}}>
           <label style={lbl}>Select Your Name</label>
-          <select value={name} onChange={e=>handleNameChange(e.target.value)} style={inp}>
-            <option value="">— Select your name —</option>
-            {NAMES.map(n=><option key={n}>{n}</option>)}
-            <option value="Admin">Admin</option>
+          <select value={name} onChange={e=>handleNameChange(e.target.value)} style={{...inp,color:T.orange}}>
+            <option value="" style={{background:"#1a1a1a",color:T.orange}}>— Select your name —</option>
+            {NAMES.map(n=><option key={n} style={{background:"#1a1a1a",color:T.orange}}>{n}</option>)}
+            <option value="Admin" style={{background:"#1a1a1a",color:T.orange}}>Admin</option>
           </select>
         </div>
 
@@ -173,7 +178,9 @@ function LoginScreen({onLogin}){
         {profile&&!loading&&(
           <div style={{...cardS,marginBottom:14,background:T.surface,borderLeft:`3px solid ${roleM?.color||T.border}`}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <div style={{width:36,height:36,borderRadius:10,background:(roleM?.color||T.muted)+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>{profile.role==="admin"?"🔴":profile.role==="pm"?"🟠":profile.role==="foreman"?"🟡":"🟢"}</div>
+              <div style={{width:36,height:36,borderRadius:10,background:(roleM?.color||T.muted)+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>
+                {profile.role==="admin"?"🔴":profile.role==="pm"?"🟠":profile.role==="foreman"?"🟡":"🟢"}
+              </div>
               <div>
                 <div style={{fontSize:14,fontWeight:700,color:T.text}}>{roleM?.label||"Field Crew"}</div>
                 <div style={{fontSize:12,color:T.muted}}>{profile.division||"All Divisions"}</div>
@@ -182,14 +189,23 @@ function LoginScreen({onLogin}){
           </div>
         )}
 
-        {needsPin&&(
+        {profile&&!loading&&(
           <div style={{marginBottom:14}}>
-            <label style={lbl}>{profile.role==="admin"?"Admin PIN":"PM PIN"}</label>
-            <input type="password" maxLength={6} placeholder="Enter PIN" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={inp}/>
+            <label style={lbl}>PIN</label>
+            <input
+              type="password" maxLength={6}
+              placeholder={pinIsSet?"Enter your PIN":"No PIN set — contact admin"}
+              value={pin}
+              onChange={e=>setPin(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&handleLogin()}
+              style={{...inp,opacity:pinIsSet?1:0.5}}
+              disabled={!pinIsSet}
+            />
+            {!pinIsSet&&profile&&<div style={{fontSize:11,color:T.yellow,marginTop:4}}>⚠️ Ask your admin to set your PIN in PM Dashboard → Users</div>}
           </div>
         )}
 
-        <button onClick={handleLogin} style={{...primBtn,opacity:name&&!loading?1:0.45}} disabled={!name||loading}>
+        <button onClick={handleLogin} style={{...primBtn,opacity:name&&!loading&&(pinIsSet?pin.length>0:false)?1:0.45}} disabled={!name||loading||!pinIsSet||pin.length===0}>
           {loading?"Loading…":"Sign In →"}
         </button>
       </div>
@@ -198,7 +214,7 @@ function LoginScreen({onLogin}){
 }
 
 /* ── DIVISION SELECTION SCREEN ──────────────────────────────── */
-function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash}){
+function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards}){
   const divStats=DIVISIONS.map(div=>{
     const divProjects=projects.filter(p=>p.division===div&&p.status==="active");
     const totalBilled=divProjects.reduce((s,p)=>s+(p._billed||0),0);
@@ -222,6 +238,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash}){
           </div>
           <div style={{display:"flex",gap:8}}>
             {can(user,"view_dashboard")&&<button onClick={onDash} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
+            <button onClick={onTimeCards} style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",color:T.green,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⏱️</button>
             {can(user,"crew_directory")&&<button onClick={onCrew} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"8px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>👥</button>}
             <button onClick={onLogout} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>Out</button>
           </div>
@@ -1017,6 +1034,27 @@ function PMDashboard({onBack,user}){
       const ws2=XLSX.utils.aoa_to_sheet(dRows);XLSX.utils.book_append_sheet(wb,ws2,"Detail");
       XLSX.writeFile(wb,`AIME_Report_${range}_${today()}.xlsx`);
     }
+
+    function exportAllReports(){
+      const wb=XLSX.utils.book_new();
+      // All reports detail
+      const rows=[["Date","Project","Division","Submitted By","Status","Description","Labor $","Equipment $","Materials $","Grand Total $"]];
+      [...reports].sort((a,b)=>a.date>b.date?1:-1).forEach(r=>{
+        const t=reportTotals(r);
+        const p=projects.find(x=>x.id===r.project_id);
+        rows.push([r.date,p?.name||"Unknown",p?.division||"",r.submitted_by||"",r.status||"submitted",r.description||"",t.labor,t.equip,t.mats,t.grand]);
+      });
+      const ws=XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"]=[{wch:12},{wch:25},{wch:14},{wch:18},{wch:12},{wch:30},{wch:12},{wch:14},{wch:14},{wch:14}];
+      // Format currency columns
+      const rng=XLSX.utils.decode_range(ws["!ref"]);
+      for(let r=1;r<=rng.e.r;r++){
+        [6,7,8,9].forEach(c=>{const addr=XLSX.utils.encode_cell({r,c});if(ws[addr]&&typeof ws[addr].v==="number")ws[addr].z='"$"#,##0.00';});
+      }
+      XLSX.utils.book_append_sheet(wb,ws,"All Reports");
+      XLSX.writeFile(wb,`AIME_AllReports_${today()}.xlsx`);
+    }
+
     return(<div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}><div><label style={lbl}>Time Range</label><select value={range} onChange={e=>setRange(e.target.value)} style={inp}><option value="week">This Week</option><option value="month">This Month</option><option value="quarter">This Quarter</option><option value="year">This Year</option><option value="all">All Time</option></select></div><div><label style={lbl}>Project</label><select value={selProj} onChange={e=>setSelProj(e.target.value)} style={inp}><option value="all">All Projects</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div></div>
       <div style={{...cardS,marginBottom:14,background:T.orangeLow,border:`1px solid ${T.orange}40`}}><div style={{fontSize:11,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>{fr.length} Reports</div>{[["Labor",tot.l,T.green],["Equipment",tot.e,T.yellow],["Materials",tot.m,T.blue],["Grand Total",tot.g,T.orange]].map(([l,v,c])=>(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.sub,fontWeight:l==="Grand Total"?700:400}}>{l}</span><span style={{fontSize:l==="Grand Total"?18:13,fontWeight:800,color:c}}>${fmt(v)}</span></div>))}</div>
@@ -1024,7 +1062,8 @@ function PMDashboard({onBack,user}){
       {["Mechanical","Pipeline","Structural"].map(div=>{const dr=fr.filter(r=>r.projects?.division===div||projects.find(p=>p.id===r.project_id)?.division===div);if(dr.length===0)return null;const dt=dr.reduce((s,r)=>{const t=reportTotals(r);return{g:s.g+t.grand};},{g:0});return(<div key={div} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${DIV_META[div]?.color||T.border}`}}><div style={{display:"flex",justifyContent:"space-between"}}><div style={{fontSize:14,fontWeight:700}}>{DIV_META[div]?.icon} {div}</div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${dt.g>=1000?(dt.g/1000).toFixed(1)+"k":fmt(dt.g)}</div></div><div style={{fontSize:11,color:T.muted,marginTop:2}}>{dr.length} reports</div></div>);})}
       {pr.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>By Job</div>{pr.map(p=>(<div key={p.name} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><div><div style={{fontSize:13,fontWeight:700}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.division} · {p.count} reports</div></div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${fmt(p.grand)}</div></div>))}</div>}
       {wr.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>By Worker</div>{wr.map(w=>(<div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><div><div style={{fontSize:13,fontWeight:700}}>{w.name}</div><div style={{fontSize:11,color:T.muted}}>{w.reg.toFixed(1)}reg {w.ot.toFixed(1)}OT {w.travel.toFixed(1)}tr hrs</div></div><div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(w.pay)}</div></div>))}</div>}
-      <button onClick={exportReport} style={{...primBtn,borderRadius:14}}>📥 Export Full Report (.xlsx)</button>
+      <button onClick={exportReport} style={{...primBtn,borderRadius:14,marginBottom:10}}>📥 Export Filtered Report (.xlsx)</button>
+      <button onClick={exportAllReports} style={{...ghostBtn,width:"100%",textAlign:"center"}}>📥 Export ALL Reports (.xlsx)</button>
     </div>);
   }
 
@@ -1147,7 +1186,11 @@ function PMDashboard({onBack,user}){
             {DIVISIONS.map(div=>{const m=DIV_META[div];return(<button key={div} onClick={()=>setEditing(x=>({...x,division:div}))} style={{padding:"10px",borderRadius:10,border:`2px solid ${editing.division===div?m.color:T.border}`,background:editing.division===div?m.color+"18":T.surface,color:editing.division===div?m.color:T.sub,fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{m.icon} {div}</button>);})}
           </div>
         </div>
-        {editing.role==="admin"&&<div style={{marginBottom:12}}><label style={lbl}>Admin PIN</label><input type="text" maxLength={6} placeholder="Set a PIN" value={editing.pin||""} onChange={e=>setEditing(x=>({...x,pin:e.target.value}))} style={inp}/></div>}
+        <div style={{marginBottom:12}}>
+          <label style={lbl}>PIN (required for all users)</label>
+          <input type="text" maxLength={6} placeholder="Set a 4-6 digit PIN" value={editing.pin||""} onChange={e=>setEditing(x=>({...x,pin:e.target.value}))} style={inp}/>
+          <div style={{fontSize:11,color:T.muted,marginTop:4}}>This person will enter this PIN every time they sign in.</div>
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           <button onClick={()=>setEditing(null)} style={{...ghostBtn,textAlign:"center"}}>Cancel</button>
           <button onClick={saveEdit} style={{...primBtn,borderRadius:12,opacity:saving?0.6:1}}>{saving?"Saving…":"Save"}</button>
@@ -1193,13 +1236,343 @@ function PMDashboard({onBack,user}){
   }
 }
 
+
+/* ── STANDALONE TIME CARDS SCREEN ──────────────────────────── */
+function TimeCardsScreen({user,projects,onBack}){
+  const [tab,setTab]=useState("log"); // log | week | export
+  const [cards,setCards]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState("");
+  const [showForm,setShowForm]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [f,setF]=useState({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",project_id:"",notes:""});
+  const weekStart=getWeekStart();
+  const [exportFrom,setExportFrom]=useState(weekStart);
+  const [exportTo,setExportTo]=useState(today());
+
+  async function load(){
+    setLoading(true);
+    try{ setCards(await API.timeCards.all()||[]); }
+    catch(e){ setErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[]);
+
+  async function save(){
+    if(!f.worker_name||!f.date)return;
+    setSaving(true);
+    const total_hours=calcHours(f.clock_in,f.clock_out);
+    const ot_hours=Math.max(0,total_hours-8);
+    try{
+      await API.timeCards.create({
+        ...f,
+        project_id:f.project_id||null,
+        total_hours,ot_hours
+      });
+      await load();
+      setShowForm(false);
+      setF({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",project_id:"",notes:""});
+    }catch(e){setErr(e.message);}
+    setSaving(false);
+  }
+
+  async function remove(id){
+    try{ await API.timeCards.remove(id); await load(); }
+    catch(e){ setErr(e.message); }
+  }
+
+  // Week summary
+  const weekCards=cards.filter(c=>c.date>=weekStart);
+  const byWorker={};
+  weekCards.forEach(c=>{
+    if(!byWorker[c.worker_name])byWorker[c.worker_name]={name:c.worker_name,days:{},reg:0,ot:0,total:0};
+    byWorker[c.worker_name].total+=(c.total_hours||0);
+    byWorker[c.worker_name].ot+=(c.ot_hours||0);
+    byWorker[c.worker_name].reg+=Math.max(0,(c.total_hours||0)-(c.ot_hours||0));
+    byWorker[c.worker_name].days[c.date]=(byWorker[c.worker_name].days[c.date]||0)+(c.total_hours||0);
+  });
+  const weekRows=Object.values(byWorker).sort((a,b)=>a.name.localeCompare(b.name));
+
+  // Today's cards
+  const todayCards=cards.filter(c=>c.date===today());
+
+  function exportTimeCards(){
+    const wb=XLSX.utils.book_new();
+
+    // Fetch cards in range
+    const rangeCards=cards.filter(c=>c.date>=exportFrom&&c.date<=exportTo);
+
+    // Summary sheet by worker
+    const workerSummary={};
+    rangeCards.forEach(c=>{
+      if(!workerSummary[c.worker_name])workerSummary[c.worker_name]={name:c.worker_name,reg:0,ot:0,total:0,days:0};
+      workerSummary[c.worker_name].reg+=Math.max(0,(c.total_hours||0)-(c.ot_hours||0));
+      workerSummary[c.worker_name].ot+=(c.ot_hours||0);
+      workerSummary[c.worker_name].total+=(c.total_hours||0);
+      workerSummary[c.worker_name].days++;
+    });
+
+    const sumRows=[
+      ["AIME Field OS — Time Card Report"],
+      [`Period: ${exportFrom} to ${exportTo}`],
+      [`Generated: ${new Date().toLocaleString()}`],
+      [],
+      ["Worker","Regular Hrs","OT Hrs","Total Hrs","Days Worked"],
+      ...Object.values(workerSummary).sort((a,b)=>a.name.localeCompare(b.name)).map(w=>[w.name,w.reg.toFixed(2),w.ot.toFixed(2),w.total.toFixed(2),w.days]),
+      [],
+      ["TOTALS","",
+        Object.values(workerSummary).reduce((s,w)=>s+w.reg,0).toFixed(2),
+        Object.values(workerSummary).reduce((s,w)=>s+w.ot,0).toFixed(2),
+        Object.values(workerSummary).reduce((s,w)=>s+w.total,0).toFixed(2),
+      ],
+    ];
+    const ws1=XLSX.utils.aoa_to_sheet(sumRows);
+    ws1["!cols"]=[{wch:25},{wch:14},{wch:12},{wch:12},{wch:14}];
+    XLSX.utils.book_append_sheet(wb,ws1,"Summary");
+
+    // Detail sheet
+    const detailRows=[["Date","Worker","Project","Clock In","Clock Out","Regular Hrs","OT Hrs","Total Hrs","Notes"]];
+    rangeCards.sort((a,b)=>a.date>b.date?1:-1).forEach(c=>{
+      const proj=projects.find(p=>p.id===c.project_id);
+      detailRows.push([c.date,c.worker_name,proj?.name||"",c.clock_in||"",c.clock_out||"",
+        Math.max(0,(c.total_hours||0)-(c.ot_hours||0)).toFixed(2),
+        (c.ot_hours||0).toFixed(2),(c.total_hours||0).toFixed(2),c.notes||""]);
+    });
+    const ws2=XLSX.utils.aoa_to_sheet(detailRows);
+    ws2["!cols"]=[{wch:12},{wch:22},{wch:25},{wch:10},{wch:10},{wch:14},{wch:10},{wch:12},{wch:20}];
+    XLSX.utils.book_append_sheet(wb,ws2,"Detail");
+
+    XLSX.writeFile(wb,`AIME_TimeCards_${exportFrom}_to_${exportTo}.xlsx`);
+  }
+
+  const TABS=[{id:"log",l:"📋 Log"},{id:"week",l:"📊 This Week"},{id:"export",l:"📥 Export"}];
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>⏱️ Time Cards</div>
+            <div style={{fontSize:12,color:T.muted}}>Company-wide time tracking</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:tab===t.id?T.orange:"transparent",border:tab===t.id?"none":`1px solid ${T.border}`,borderRadius:10,padding:"9px 6px",fontSize:12,fontWeight:tab===t.id?800:500,cursor:"pointer",color:tab===t.id?"#09090B":T.sub,fontFamily:"inherit"}}>
+              {t.l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{padding:"14px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {loading&&<Spinner/>}
+
+        {/* ── LOG TAB ── */}
+        {!loading&&tab==="log"&&(
+          <div>
+            <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14,background:T.green,color:"#09090B"}}>
+              {showForm?"✕ Cancel":"⏱️ Log Time"}
+            </button>
+
+            {showForm&&(
+              <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`}}>
+                <div style={{marginBottom:10}}><label style={lbl}>Worker</label>
+                  <select value={f.worker_name} onChange={e=>setF(x=>({...x,worker_name:e.target.value}))} style={inp}>
+                    {NAMES.map(n=><option key={n}>{n}</option>)}
+                  </select>
+                </div>
+                <div style={{marginBottom:10}}><label style={lbl}>Date</label>
+                  <input type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))} style={inp}/>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <div><label style={lbl}>Clock In</label><input type="time" value={f.clock_in} onChange={e=>setF(x=>({...x,clock_in:e.target.value}))} style={inp}/></div>
+                  <div><label style={lbl}>Clock Out</label><input type="time" value={f.clock_out} onChange={e=>setF(x=>({...x,clock_out:e.target.value}))} style={inp}/></div>
+                </div>
+                {f.clock_in&&f.clock_out&&(()=>{
+                  const h=calcHours(f.clock_in,f.clock_out);
+                  const ot=Math.max(0,h-8);
+                  return h>0&&(
+                    <div style={{background:T.greenLow,borderRadius:10,padding:"10px 14px",marginBottom:10,display:"flex",gap:20}}>
+                      <div><div style={{fontSize:20,fontWeight:900,color:T.green}}>{h.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Total</div></div>
+                      <div><div style={{fontSize:20,fontWeight:900,color:T.muted}}>{Math.min(h,8).toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Regular</div></div>
+                      {ot>0&&<div><div style={{fontSize:20,fontWeight:900,color:T.yellow}}>{ot.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>OT</div></div>}
+                    </div>
+                  );
+                })()}
+                <div style={{marginBottom:10}}><label style={lbl}>Project (optional)</label>
+                  <select value={f.project_id} onChange={e=>setF(x=>({...x,project_id:e.target.value}))} style={inp}>
+                    <option value="">— No project / General —</option>
+                    {projects.filter(p=>p.status==="active").map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </div>
+                <div style={{marginBottom:10}}><label style={lbl}>Notes</label>
+                  <input type="text" placeholder="Optional…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/>
+                </div>
+                <button onClick={save} style={{...primBtn,background:T.green,color:"#09090B",borderRadius:12}}>
+                  {saving?"Saving…":"Save Time Card"}
+                </button>
+              </div>
+            )}
+
+            {/* Today's entries */}
+            {todayCards.length>0&&(
+              <div style={{...cardS,marginBottom:14}}>
+                <div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>
+                  Today — {todayCards.reduce((s,c)=>s+(c.total_hours||0),0).toFixed(1)} total hrs
+                </div>
+                {todayCards.map(c=>{
+                  const proj=projects.find(p=>p.id===c.project_id);
+                  return(
+                    <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+                      <div>
+                        <div style={{fontSize:14,fontWeight:700}}>{c.worker_name}</div>
+                        <div style={{fontSize:11,color:T.muted}}>
+                          {c.clock_in||"—"} → {c.clock_out||"—"}
+                          {proj?" · "+proj.name:""}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:15,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div>
+                          {(c.ot_hours||0)>0&&<div style={{fontSize:10,color:T.yellow}}>{c.ot_hours.toFixed(1)} OT</div>}
+                        </div>
+                        <button onClick={()=>remove(c.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Recent cards (not today) */}
+            {cards.filter(c=>c.date!==today()).slice(0,30).map(c=>{
+              const proj=projects.find(p=>p.id===c.project_id);
+              return(
+                <div key={c.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:700}}>{c.worker_name}</div>
+                    <div style={{fontSize:11,color:T.muted}}>
+                      {fmtShort(c.date)} · {c.clock_in||"—"} → {c.clock_out||"—"}
+                      {proj?" · "+proj.name:""}
+                    </div>
+                    {c.notes&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{c.notes}</div>}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:15,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div>
+                      {(c.ot_hours||0)>0&&<div style={{fontSize:10,color:T.yellow}}>{c.ot_hours.toFixed(1)} OT</div>}
+                    </div>
+                    <button onClick={()=>remove(c.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {cards.length===0&&!showForm&&(
+              <div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>
+                <div style={{fontSize:36,marginBottom:8}}>⏱️</div>
+                <div>No time cards yet. Tap Log Time to add the first entry.</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── WEEK TAB ── */}
+        {!loading&&tab==="week"&&(
+          <div>
+            <div style={{...cardS,marginBottom:14,background:T.orangeLow,border:`1px solid ${T.orange}40`}}>
+              <div style={{fontSize:12,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:4}}>Week of {fmtDate(weekStart)}</div>
+              <div style={{fontSize:22,fontWeight:900,color:T.text}}>
+                {weekCards.reduce((s,c)=>s+(c.total_hours||0),0).toFixed(1)} total hours
+              </div>
+              <div style={{fontSize:12,color:T.muted,marginTop:2}}>
+                {weekCards.reduce((s,c)=>s+(c.ot_hours||0),0).toFixed(1)} OT hrs · {weekRows.length} workers
+              </div>
+            </div>
+
+            {weekRows.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>No entries this week yet.</div>}
+
+            {weekRows.map(w=>(
+              <div key={w.name} style={{...cardS,marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div style={{fontSize:15,fontWeight:700}}>{w.name}</div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:18,fontWeight:900,color:T.green}}>{w.total.toFixed(1)}h</div>
+                    {w.ot>0&&<div style={{fontSize:11,color:T.yellow}}>{w.ot.toFixed(1)} OT</div>}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  <span style={pill(T.green)}>{w.reg.toFixed(1)} reg</span>
+                  {w.ot>0&&<span style={pill(T.yellow)}>{w.ot.toFixed(1)} OT</span>}
+                  <span style={pill(T.muted)}>{Object.keys(w.days).length} days</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── EXPORT TAB ── */}
+        {!loading&&tab==="export"&&(
+          <div>
+            <div style={{...cardS,marginBottom:14}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Select Date Range</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+                <div><label style={lbl}>From</label><input type="date" value={exportFrom} onChange={e=>setExportFrom(e.target.value)} style={inp}/></div>
+                <div><label style={lbl}>To</label><input type="date" value={exportTo} onChange={e=>setExportTo(e.target.value)} style={inp}/></div>
+              </div>
+              {/* Preview */}
+              {(()=>{
+                const rc=cards.filter(c=>c.date>=exportFrom&&c.date<=exportTo);
+                const totalH=rc.reduce((s,c)=>s+(c.total_hours||0),0);
+                const totalOT=rc.reduce((s,c)=>s+(c.ot_hours||0),0);
+                const workers=[...new Set(rc.map(c=>c.worker_name))];
+                return rc.length>0&&(
+                  <div style={{background:T.surface,borderRadius:12,padding:"12px 14px",marginBottom:14}}>
+                    <div style={{fontSize:12,color:T.muted,marginBottom:6}}>Preview</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                      {[["Entries",rc.length,T.orange],["Total Hrs",totalH.toFixed(1),T.green],["OT Hrs",totalOT.toFixed(1),T.yellow]].map(([l,v,c])=>(
+                        <div key={l} style={{textAlign:"center"}}>
+                          <div style={{fontSize:18,fontWeight:800,color:c}}>{v}</div>
+                          <div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>{l}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{fontSize:12,color:T.muted,marginTop:8}}>{workers.length} worker{workers.length!==1?"s":""}: {workers.slice(0,3).join(", ")}{workers.length>3?` +${workers.length-3} more`:""}</div>
+                  </div>
+                );
+              })()}
+              <button onClick={exportTimeCards} style={{...primBtn,borderRadius:12}}>
+                📥 Export Time Cards (.xlsx)
+              </button>
+            </div>
+
+            {/* Quick presets */}
+            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Quick Select</div>
+            {[
+              {label:"This Week",from:getWeekStart(),to:today()},
+              {label:"Last 2 Weeks",from:(()=>{const d=new Date();d.setDate(d.getDate()-14);return d.toISOString().split("T")[0];})(),to:today()},
+              {label:"This Month",from:(()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})(),to:today()},
+              {label:"Last 30 Days",from:(()=>{const d=new Date();d.setDate(d.getDate()-30);return d.toISOString().split("T")[0];})(),to:today()},
+            ].map(p=>(
+              <button key={p.label} onClick={()=>{setExportFrom(p.from);setExportTo(p.to);}} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:8,display:"block"}}>{p.label}</button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── ROOT APP ───────────────────────────────────────────────── */
 export default function App(){
   const [user,setUser]           = useState(null);
   const [projects,setProjects]   = useState([]);
   const [loading,setLoading]     = useState(false);
   const [err,setErr]             = useState("");
-  const [screen,setScreen]       = useState("division"); // division|jobboard|projectDetail|pmDashboard|crewDirectory|userManagement|newProject
+  const [screen,setScreen]       = useState("division"); // division|jobboard|projectDetail|pmDashboard|crewDirectory|userManagement|newProject|timeCards
   const [division,setDivision]   = useState(null);
   const [activeProject,setActiveProject] = useState(null);
 
@@ -1331,10 +1704,19 @@ export default function App(){
         />
       )}
 
-      {/* USER MANAGEMENT (admin only, also accessible from division screen) */}
+      {/* USER MANAGEMENT */}
       {screen==="userManagement"&&can(user,"manage_users")&&(
         <UserManagementScreen
           currentUser={user}
+          onBack={()=>setScreen("division")}
+        />
+      )}
+
+      {/* STANDALONE TIME CARDS */}
+      {screen==="timeCards"&&(
+        <TimeCardsScreen
+          user={user}
+          projects={projects}
           onBack={()=>setScreen("division")}
         />
       )}
