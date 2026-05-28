@@ -1092,14 +1092,103 @@ function PMDashboard({onBack,user}){
   );
 
   function UserManagement(){
-    const [profs,setProfs]=useState([]);const [ul,setUl]=useState(true);const [uerr,setUerr]=useState("");
+    const [profs,setProfs]=useState([]);
+    const [ul,setUl]=useState(true);
+    const [uerr,setUerr]=useState("");
+    const [editing,setEditing]=useState(null); // {name,role,division,pin,id}
+    const [saving,setSaving]=useState(false);
+
     async function loadU(){setUl(true);try{setProfs(await API.userProfiles.list()||[]);}catch(e){setUerr(e.message);}setUl(false);}
     useEffect(()=>{loadU();},[]);
+
+    async function saveEdit(){
+      if(!editing)return; setSaving(true);
+      try{
+        if(editing.id){
+          await API.userProfiles.update(editing.id,{role:editing.role,division:editing.division||null,pin:editing.pin||null,active:editing.active!==false});
+        } else {
+          await API.userProfiles.upsert({name:editing.name,role:editing.role,division:editing.division||null,pin:editing.pin||null,active:true});
+        }
+        await loadU(); setEditing(null);
+      }catch(e){setUerr(e.message);}
+      setSaving(false);
+    }
+
+    async function removeProfile(id){
+      if(!window.confirm("Remove this user profile? They will default to Field Crew."))return;
+      try{await API.userProfiles.remove(id);await loadU();}catch(e){setUerr(e.message);}
+    }
+
+    const profileMap={};profs.forEach(p=>profileMap[p.name]=p);
+
+    if(editing) return(
+      <div style={{...cardS,borderLeft:`3px solid ${ROLE_META[editing.role]?.color||T.border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div style={{fontSize:16,fontWeight:800}}>{editing.id?"Edit":"Add"}: {editing.name}</div>
+          <button onClick={()=>setEditing(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18}}>×</button>
+        </div>
+        {!editing.id&&<div style={{marginBottom:12}}><label style={lbl}>Name</label><select value={editing.name||""} onChange={e=>setEditing(x=>({...x,name:e.target.value}))} style={inp}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>}
+        <div style={{marginBottom:12}}>
+          <label style={lbl}>Permission Level</label>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {ROLES.map(role=>{const m=ROLE_META[role];return(
+              <button key={role} onClick={()=>setEditing(x=>({...x,role}))} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:12,border:`2px solid ${editing.role===role?m.color:T.border}`,background:editing.role===role?m.color+"18":T.surface,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                <div style={{width:12,height:12,borderRadius:"50%",background:m.color,flexShrink:0}}/>
+                <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:editing.role===role?m.color:T.text}}>{m.label}</div><div style={{fontSize:11,color:T.muted}}>{m.desc}</div></div>
+                {editing.role===role&&<span style={{color:m.color,fontSize:16}}>✓</span>}
+              </button>
+            );})}
+          </div>
+        </div>
+        <div style={{marginBottom:12}}>
+          <label style={lbl}>Division (optional — leave blank for all)</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button onClick={()=>setEditing(x=>({...x,division:null}))} style={{padding:"10px",borderRadius:10,border:`2px solid ${!editing.division?T.orange:T.border}`,background:!editing.division?T.orangeLow:T.surface,color:!editing.division?T.orange:T.sub,fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>All Divisions</button>
+            {DIVISIONS.map(div=>{const m=DIV_META[div];return(<button key={div} onClick={()=>setEditing(x=>({...x,division:div}))} style={{padding:"10px",borderRadius:10,border:`2px solid ${editing.division===div?m.color:T.border}`,background:editing.division===div?m.color+"18":T.surface,color:editing.division===div?m.color:T.sub,fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{m.icon} {div}</button>);})}
+          </div>
+        </div>
+        {editing.role==="admin"&&<div style={{marginBottom:12}}><label style={lbl}>Admin PIN</label><input type="text" maxLength={6} placeholder="Set a PIN" value={editing.pin||""} onChange={e=>setEditing(x=>({...x,pin:e.target.value}))} style={inp}/></div>}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <button onClick={()=>setEditing(null)} style={{...ghostBtn,textAlign:"center"}}>Cancel</button>
+          <button onClick={saveEdit} style={{...primBtn,borderRadius:12,opacity:saving?0.6:1}}>{saving?"Saving…":"Save"}</button>
+        </div>
+      </div>
+    );
+
     return(<div>
       <ErrBanner msg={uerr} onDismiss={()=>setUerr("")}/>
-      <div style={{...cardS,marginBottom:14,background:T.blueLow,border:`1px solid ${T.blue}40`}}><div style={{fontSize:13,color:T.blue}}>👤 Go to the full User Management screen for complete control.</div></div>
+      <button onClick={()=>setEditing({name:"",role:"crew",division:null,pin:"",id:null})} style={{...primBtn,marginBottom:14,borderRadius:14}}>+ Add / Set User Role</button>
       {ul&&<Spinner/>}
-      {!ul&&profs.map(p=>{const m=ROLE_META[p.role]||ROLE_META.crew;return(<div key={p.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${m.color}`}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:10,height:10,borderRadius:"50%",background:m.color}}/><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700}}>{p.name}</div><div style={{display:"flex",gap:6,marginTop:4}}><span style={pill(m.color)}>{m.label}</span>{p.division&&<span style={pill(DIV_META[p.division]?.color||T.muted)}>{p.division}</span>}</div></div></div></div>);})}
+      {!ul&&<>
+        {profs.length===0&&<div style={{...cardS,marginBottom:14,background:T.yellowLow,border:`1px solid ${T.yellow}40`}}><div style={{fontSize:13,color:T.yellow}}>⚠️ No profiles set. All users sign in as Field Crew until configured here.</div></div>}
+        {profs.map(p=>{
+          const m=ROLE_META[p.role]||ROLE_META.crew;
+          return(<div key={p.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${m.color}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:m.color,flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:700}}>{p.name}</div>
+                <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                  <span style={pill(m.color)}>{m.label}</span>
+                  {p.division?<span style={pill(DIV_META[p.division]?.color||T.muted)}>{DIV_META[p.division]?.icon} {p.division}</span>:<span style={pill(T.muted)}>All Divisions</span>}
+                  {!p.active&&<span style={pill(T.red)}>INACTIVE</span>}
+                </div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>setEditing({...p})} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"6px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
+                {p.name!==user.name&&<button onClick={()=>removeProfile(p.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>}
+              </div>
+            </div>
+          </div>);
+        })}
+        <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"16px 0 10px"}}>Not Yet Configured (tap Edit to set role)</div>
+        {NAMES.filter(n=>!profileMap[n]).map(n=>(
+          <div key={n} style={{...cardS,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",opacity:0.5}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:8,height:8,borderRadius:"50%",background:T.green}}/><span style={{fontSize:13}}>{n}</span><span style={pill(T.green)}>Field Crew</span></div>
+            <button onClick={()=>setEditing({name:n,role:"crew",division:null,pin:"",id:null})} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",color:T.sub,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Set Role</button>
+          </div>
+        ))}
+      </>}
     </div>);
   }
 }
