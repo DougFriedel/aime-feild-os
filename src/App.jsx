@@ -467,12 +467,162 @@ function DailyReportForm({user,project,onSave,onCancel}){
   );
 }
 
+
+/* ── SIGNATURE PAD ──────────────────────────────────────────── */
+function SignaturePad({onSave,onCancel,reportName}){
+  const canvasRef=useRef(null);
+  const [drawing,setDrawing]=useState(false);
+  const [hasStrokes,setHasStrokes]=useState(false);
+  const [inspectorName,setInspectorName]=useState("");
+  const lastPos=useRef(null);
+
+  function getPos(e,canvas){
+    const rect=canvas.getBoundingClientRect();
+    const scaleX=canvas.width/rect.width;
+    const scaleY=canvas.height/rect.height;
+    if(e.touches){
+      return{x:(e.touches[0].clientX-rect.left)*scaleX,y:(e.touches[0].clientY-rect.top)*scaleY};
+    }
+    return{x:(e.clientX-rect.left)*scaleX,y:(e.clientY-rect.top)*scaleY};
+  }
+
+  function startDraw(e){
+    e.preventDefault();
+    const canvas=canvasRef.current;
+    const ctx=canvas.getContext("2d");
+    const pos=getPos(e,canvas);
+    ctx.beginPath();
+    ctx.moveTo(pos.x,pos.y);
+    lastPos.current=pos;
+    setDrawing(true);
+    setHasStrokes(true);
+  }
+
+  function draw(e){
+    e.preventDefault();
+    if(!drawing)return;
+    const canvas=canvasRef.current;
+    const ctx=canvas.getContext("2d");
+    const pos=getPos(e,canvas);
+    ctx.lineWidth=3;
+    ctx.lineCap="round";
+    ctx.lineJoin="round";
+    ctx.strokeStyle="#F97316";
+    ctx.lineTo(pos.x,pos.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(pos.x,pos.y);
+    lastPos.current=pos;
+  }
+
+  function endDraw(e){e.preventDefault();setDrawing(false);}
+
+  function clearPad(){
+    const canvas=canvasRef.current;
+    const ctx=canvas.getContext("2d");
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    setHasStrokes(false);
+  }
+
+  function save(){
+    if(!hasStrokes||!inspectorName.trim())return;
+    const canvas=canvasRef.current;
+    const sig=canvas.toDataURL("image/png");
+    onSave(inspectorName.trim(),sig);
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.96)",display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
+      {/* Header */}
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px"}}>
+        <div style={{fontSize:18,fontWeight:900,color:T.text,marginBottom:2}}>✍️ Inspector Sign-Off</div>
+        <div style={{fontSize:12,color:T.muted}}>{reportName}</div>
+      </div>
+
+      <div style={{flex:1,overflow:"auto",padding:"16px 16px 0"}}>
+        {/* Inspector name */}
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Inspector Name</label>
+          <input
+            type="text"
+            placeholder="Print inspector's full name"
+            value={inspectorName}
+            onChange={e=>setInspectorName(e.target.value)}
+            style={inp}
+          />
+        </div>
+
+        {/* Signature canvas */}
+        <div style={{marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <label style={lbl}>Signature</label>
+            {hasStrokes&&<button onClick={clearPad} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600}}>Clear</button>}
+          </div>
+          <div style={{background:"#fff",borderRadius:14,border:`2px solid ${hasStrokes?T.orange:T.border}`,overflow:"hidden",position:"relative"}}>
+            {!hasStrokes&&(
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                <div style={{textAlign:"center",color:"#ccc"}}>
+                  <div style={{fontSize:28,marginBottom:4}}>✍️</div>
+                  <div style={{fontSize:13}}>Sign here</div>
+                </div>
+              </div>
+            )}
+            <canvas
+              ref={canvasRef}
+              width={640}
+              height={220}
+              style={{width:"100%",height:180,display:"block",touchAction:"none"}}
+              onMouseDown={startDraw}
+              onMouseMove={draw}
+              onMouseUp={endDraw}
+              onMouseLeave={endDraw}
+              onTouchStart={startDraw}
+              onTouchMove={draw}
+              onTouchEnd={endDraw}
+            />
+          </div>
+          <div style={{fontSize:11,color:T.muted,marginTop:4,textAlign:"center"}}>Draw signature with finger or stylus</div>
+        </div>
+      </div>
+
+      {/* Buttons */}
+      <div style={{padding:"16px",display:"flex",flexDirection:"column",gap:10,borderTop:`1px solid ${T.border}`,background:T.surface}}>
+        <button
+          onClick={save}
+          style={{...primBtn,borderRadius:14,opacity:hasStrokes&&inspectorName.trim()?1:0.45}}
+          disabled={!hasStrokes||!inspectorName.trim()}
+        >
+          ✅ Confirm & Sign Report
+        </button>
+        <button onClick={onCancel} style={{...ghostBtn,width:"100%",textAlign:"center"}}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 /* ── REPORT DETAIL ──────────────────────────────────────────── */
-function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}){
+function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,onFlag}){
+  const [report,setReport]=useState(initReport);
   const [lb,setLb]=useState(null);const [flagNote,setFlagNote]=useState("");const [flagging,setFlagging]=useState(false);
+  const [showSigPad,setShowSigPad]=useState(false);const [sigSaving,setSigSaving]=useState(false);
   const tot=reportTotals(report);
-  const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[report.status]||T.muted;
+  const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[report.status]||T.muted;
   const divColor=DIV_META[project.division]?.color||T.orange;
+
+  async function saveSignature(inspectorName,sigData){
+    setSigSaving(true);
+    try{
+      const updated=await API.reports.update(report.id,{
+        inspector_name:inspectorName,
+        inspector_signature:sigData,
+        inspector_signed_at:new Date().toISOString(),
+        status:"signed",
+      });
+      setReport(r=>({...r,inspector_name:inspectorName,inspector_signature:sigData,inspector_signed_at:new Date().toISOString(),status:"signed"}));
+      setShowSigPad(false);
+    }catch(e){console.error(e);}
+    setSigSaving(false);
+  }
   function exportXLSX(){
     const wb=XLSX.utils.book_new();const rows=[];const blank=()=>Array(11).fill(null);
     const r1=blank();r1[1]="COLONIAL PIPELINE COMPANY";rows.push(r1);
@@ -498,6 +648,14 @@ function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}){
     (report.materials||[]).forEach(m=>{const row=blank();row[1]=m.qty||"";row[2]=m.description||"";row[5]=parseFloat(m.amount)||0;rows.push(row);});
     const gtRow=blank();gtRow[8]="GRAND TOTAL";gtRow[9]=tot.grand;rows.push(gtRow);
     const sgRow=blank();sgRow[1]="VERIFIED AND ACCEPTED BY CO. REP";sgRow[3]="DATE";sgRow[4]="CERTIFIED AS CORRECT BY CONTRACTOR";rows.push(sgRow);
+    if(report.inspector_name){
+      const irRow=blank();
+      irRow[1]="INSPECTOR SIGN-OFF:";
+      irRow[2]=report.inspector_name;
+      irRow[4]="SIGNED:";
+      irRow[5]=report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleString():"";
+      rows.push(irRow);
+    }
     const ws=XLSX.utils.aoa_to_sheet(rows);
     ws["!cols"]=[{wch:5.7},{wch:15},{wch:11.7},{wch:17.1},{wch:12.7},{wch:13.1},{wch:10},{wch:10},{wch:24.9},{wch:23.7},{wch:10.1}];
     const rng=XLSX.utils.decode_range(ws["!ref"]);
@@ -507,6 +665,7 @@ function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}){
   }
   return(
     <div style={{background:T.bg,minHeight:"100vh",padding:16,fontFamily:"inherit"}}>
+      {showSigPad&&<SignaturePad reportName={`${project.name} · ${fmtDate(report.date)}`} onSave={saveSignature} onCancel={()=>setShowSigPad(false)}/>}
       <Lightbox src={lb} onClose={()=>setLb(null)}/>
       <button onClick={onBack} style={{...ghostBtn,marginBottom:14}}>← Reports</button>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>{fmtDate(report.date)}</div><span style={pill(sc)}>{(report.status||"submitted").toUpperCase()}</span></div>
@@ -519,6 +678,26 @@ function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}){
       {can(user,"view_dashboard")&&<div style={{...cardS,background:divColor+"12",border:`1px solid ${divColor}40`,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:15,fontWeight:800}}>Grand Total</span><span style={{fontSize:26,fontWeight:900,color:divColor,letterSpacing:"-1px"}}>${fmt(tot.grand)}</span></div>}
       {can(user,"approve_report")&&report.status==="submitted"&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><button onClick={()=>onApprove&&onApprove(report.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>✓ Approve</button><button onClick={()=>setFlagging(!flagging)} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:12}}>🚩 Flag</button></div>)}
       {flagging&&<div style={{...cardS,marginBottom:10}}><label style={lbl}>Flag Note for Crew</label><textarea value={flagNote} onChange={e=>setFlagNote(e.target.value)} rows={3} placeholder="What needs to be corrected…" style={{...inp,resize:"vertical",marginBottom:10}}/><button onClick={()=>{onFlag&&onFlag(report.id,flagNote);setFlagging(false);}} style={{...primBtn,borderRadius:12}}>Send Flag</button></div>}
+      {/* Signature section */}
+      {report.inspector_signature?(
+        <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px"}}>✅ Inspector Sign-Off</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.orange,marginTop:2}}>{report.inspector_name}</div>
+              {report.inspector_signed_at&&<div style={{fontSize:11,color:T.muted,marginTop:2}}>{new Date(report.inspector_signed_at).toLocaleString()}</div>}
+            </div>
+          </div>
+          <div style={{background:"#fff",borderRadius:10,padding:4,marginTop:4}}>
+            <img src={report.inspector_signature} alt="Inspector signature" style={{width:"100%",borderRadius:8,display:"block"}}/>
+          </div>
+        </div>
+      ):(
+        <button onClick={()=>setShowSigPad(true)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,marginBottom:12,borderRadius:14}}>
+          ✍️ Get Inspector Signature
+        </button>
+      )}
+
       <button onClick={exportXLSX} style={{...primBtn,background:divColor+"15",color:divColor,border:`1px solid ${divColor}40`,marginBottom:10,borderRadius:14}}>📥 Export to Excel (.xlsx)</button>
       <button onClick={()=>window.confirm("Delete this report?")&&onDelete(report.id)} style={dangerBtn}>🗑 Delete Report</button>
     </div>
@@ -1152,7 +1331,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
         {!loading&&tab==="reports"&&(<div>
           {can(user,"submit_report")&&<button onClick={()=>setScreen("newReport")} style={{...primBtn,marginBottom:16,borderRadius:14,padding:"18px",fontSize:17,background:divMeta.color}}>📋 + New Daily Report</button>}
           {reports.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:15,fontWeight:600,color:T.sub,marginBottom:4}}>No reports yet</div></div>}
-          {reports.map(r=>{const t=reportTotals(r);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div>{can(user,"view_dashboard")&&<div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div>}</div>);})}
+          {reports.map(r=>{const t=reportTotals(r);const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div>{can(user,"view_dashboard")&&<div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div>}</div>);})}
         </div>)}
         {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
@@ -1293,7 +1472,7 @@ function PMDashboard({onBack,user}){
             <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>By Division</div>
             {DIVISIONS.map(div=>{const dp=projects.filter(p=>p.division===div);const dr=reports.filter(r=>dp.find(p=>p.id===r.project_id));const dt=dr.reduce((s,r)=>{const t=reportTotals(r);return{g:s.g+t.grand};},{g:0});const m=DIV_META[div];return(<div key={div} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${m.color}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:20}}>{m.icon}</span><div><div style={{fontSize:15,fontWeight:700}}>{div}</div><div style={{fontSize:11,color:T.muted}}>{dp.filter(p=>p.status==="active").length} active jobs · {dr.length} reports</div></div></div><div style={{fontSize:18,fontWeight:900,color:T.green}}>${dt.g>=1000?(dt.g/1000).toFixed(1)+"k":fmt(dt.g)}</div></div></div>);})}
             <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 12px"}}>Recent Reports</div>
-            {reports.slice(0,15).map(r=>{const t=reportTotals(r);const p=projects.find(x=>x.id===r.project_id);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...cardS,marginBottom:8,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:13,fontWeight:700}}>{fmtShort(r.date)} · {r.projects?.name||"Unknown"}</div><div style={{fontSize:11,color:T.muted}}>{r.projects?.division||""} · {r.submitted_by||"Unknown"} · <span style={{color:sc}}>{(r.status||"submitted").toUpperCase()}</span></div></div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${fmt(t.grand)}</div></div>);})}
+            {reports.slice(0,15).map(r=>{const t=reportTotals(r);const p=projects.find(x=>x.id===r.project_id);const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...cardS,marginBottom:8,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:13,fontWeight:700}}>{fmtShort(r.date)} · {r.projects?.name||"Unknown"}</div><div style={{fontSize:11,color:T.muted}}>{r.projects?.division||""} · {r.submitted_by||"Unknown"} · <span style={{color:sc}}>{(r.status||"submitted").toUpperCase()}</span></div></div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${fmt(t.grand)}</div></div>);})}
             {reports.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>No reports yet.</div>}
           </div>)}
           {pmTab==="approvals"&&(<div>
