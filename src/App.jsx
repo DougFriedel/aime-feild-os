@@ -294,6 +294,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack}){
     return ms&&ms2;
   });
   const active=divProjects.filter(p=>p.status==="active");
+  const canCreate=user.role==="admin"||user.role==="pm"||can(user,"create_job");
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -305,7 +306,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack}){
             <div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{division}</div>
             <div style={{fontSize:11,color:T.muted}}>{active.length} active job{active.length!==1?"s":""}</div>
           </div>
-          {can(user,"create_job")&&<button onClick={onNew} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Job</button>}
+          {canCreate&&<button onClick={onNew} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Job</button>}
         </div>
         {/* Search */}
         <div style={{position:"relative",marginBottom:10}}>
@@ -321,11 +322,12 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack}){
 
       <div style={{padding:"12px 16px 80px"}}>
         {loading&&<Spinner/>}
+      {canCreate&&<div style={{position:"fixed",bottom:20,right:"max(16px,calc(50vw - 224px))",zIndex:100}}><button onClick={onNew} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:50,padding:"14px 22px",fontSize:15,fontWeight:900,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 24px rgba(249,115,22,0.5)",display:"flex",alignItems:"center",gap:8}}>＋ New Job</button></div>}
         {!loading&&filtered.length===0&&(
           <div style={{textAlign:"center",padding:"60px 20px",color:T.muted}}>
             <div style={{fontSize:48,marginBottom:12}}>{meta.icon}</div>
             <div style={{fontSize:17,fontWeight:700,color:T.sub,marginBottom:6}}>{search?`No jobs matching "${search}"`:filter==="archived"?"No archived jobs":"No active jobs in "+division}</div>
-            {!search&&filter==="active"&&can(user,"create_job")&&<div style={{fontSize:13}}>Tap + New Job to create one.</div>}
+            {!search&&filter==="active"&&canCreate&&<div style={{fontSize:13}}>Tap + New Job to create one.</div>}
           </div>
         )}
         {!loading&&filtered.map(p=><JobCard key={p.id} p={p} onSelect={onSelect} divColor={meta.color}/>)}
@@ -695,11 +697,11 @@ function WeatherTab({projectId,project,weather,onRefresh,onErr}){
 }
 
 /* ── INFO TAB ───────────────────────────────────────────────── */
-function InfoTab({project,user,onEdit,onArchive}){
+function InfoTab({project,user,onEdit,onArchive,onDelete}){
   return(<div>
     <div style={cardS}>{[["Division",project.division],["Client",project.client],["Location",project.location],["AFE No.",project.afe],["Work Order",project.work_order],["Start Date",fmtDate(project.start_date)],["Status",project.status],["Created By",project.created_by]].map(([l,v])=>v?(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"11px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>{l}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span></div>):null)}</div>
     {project.notes&&<div style={{...cardS,marginTop:12}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Notes</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{project.notes}</div></div>}
-    {can(user,"edit_job")&&<div style={{marginTop:16,display:"flex",flexDirection:"column",gap:10}}><button onClick={onEdit} style={{...ghostBtn,width:"100%",textAlign:"center"}}>✏️ Edit Job</button><button onClick={onArchive} style={{...ghostBtn,width:"100%",textAlign:"center",color:T.muted}}>{project.status==="active"?"📦 Archive Job":"♻️ Restore Job"}</button></div>}
+    {can(user,"edit_job")&&<div style={{marginTop:16,display:"flex",flexDirection:"column",gap:10}}><button onClick={onEdit} style={{...ghostBtn,width:"100%",textAlign:"center"}}>✏️ Edit Job</button><button onClick={onArchive} style={{...ghostBtn,width:"100%",textAlign:"center",color:T.muted}}>{project.status==="active"?"📦 Archive Job":"♻️ Restore Job"}</button><button onClick={onDelete} style={{...dangerBtn}}>🗑 Delete Job Permanently</button></div>}
   </div>);
 }
 
@@ -913,6 +915,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));await notify("report_flagged","Report Flagged",pm_notes,{project_id:project.id,report_id:id});await load(true);}catch(e){setErr(e.message);}}
   async function updateProject(data){try{const[u]=await API.projects.update(project.id,data);setProject(u);onProjectUpdated(u);setEditProject(false);}catch(e){setErr(e.message);}}
   async function archiveProject(){if(!window.confirm(project.status==="active"?"Archive this job?":"Restore?"))return;await updateProject({status:project.status==="active"?"archived":"active"});onBack();}
+  async function deleteProject(){if(!window.confirm("Permanently delete this job and ALL its data? This cannot be undone."))return;if(!window.confirm("Are you sure? All reports, photos, time cards and safety logs will be deleted."))return;try{await API.projects.remove(project.id);onBack();}catch(e){setErr(e.message);}}
 
   const tot=reports.reduce((s,r)=>{const t=reportTotals(r);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
 
@@ -955,7 +958,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
         {!loading&&tab==="schedule" &&can(user,"schedule")    &&<ScheduleTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="photos"   &&can(user,"photos")      &&<PhotosTab projectId={project.id} photos={photos} onRefresh={()=>load(true)} onErr={setErr}/>}
         {!loading&&tab==="weather"  &&can(user,"weather")     &&<WeatherTab projectId={project.id} project={project} weather={weather} onRefresh={()=>load(true)} onErr={setErr}/>}
-        {!loading&&tab==="info"     &&<InfoTab project={project} user={user} onEdit={()=>setEditProject(true)} onArchive={archiveProject}/>}
+        {!loading&&tab==="info"     &&<InfoTab project={project} user={user} onEdit={()=>setEditProject(true)} onArchive={archiveProject} onDelete={deleteProject}/>}
       </div>
     </div>
   );
