@@ -49,10 +49,9 @@ const API = {
     remove:     (id)  => supa(`/project_photos?id=eq.${id}`, { method:"DELETE" }),
   },
   timeCards: {
-    forProject: (pid)       => supa(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),
-    forDate:    (pid,date)  => supa(`/time_cards?project_id=eq.${pid}&date=eq.${date}&order=created_at`),
-    create:     (d)         => supa("/time_cards", { method:"POST", body:d, prefer:"return=representation" }),
-    remove:     (id)        => supa(`/time_cards?id=eq.${id}`, { method:"DELETE" }),
+    forProject: (pid)      => supa(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),
+    create:     (d)        => supa("/time_cards", { method:"POST", body:d, prefer:"return=representation" }),
+    remove:     (id)       => supa(`/time_cards?id=eq.${id}`, { method:"DELETE" }),
   },
   weather: {
     forProject: (pid) => supa(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),
@@ -60,9 +59,9 @@ const API = {
     remove:     (id)  => supa(`/weather_logs?id=eq.${id}`, { method:"DELETE" }),
   },
   equipment: {
-    forProject: (pid)      => supa(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),
-    create:     (d)        => supa("/equipment_on_site", { method:"POST", body:d, prefer:"return=representation" }),
-    remove:     (id)       => supa(`/equipment_on_site?id=eq.${id}`, { method:"DELETE" }),
+    forProject: (pid) => supa(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),
+    create:     (d)   => supa("/equipment_on_site", { method:"POST", body:d, prefer:"return=representation" }),
+    remove:     (id)  => supa(`/equipment_on_site?id=eq.${id}`, { method:"DELETE" }),
   },
   subs: {
     forProject: (pid) => supa(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),
@@ -92,8 +91,8 @@ const inp = {
 };
 const lbl = { display:"block", fontSize:11, fontWeight:700, color:T.muted, letterSpacing:"1px", textTransform:"uppercase", marginBottom:6 };
 const cardS = { background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:"16px" };
-const pill = (c) => ({ display:"inline-flex", alignItems:"center", background:c+"20", color:c, borderRadius:20, padding:"3px 10px", fontSize:11, fontWeight:700 });
-const primBtn = { width:"100%", background:T.orange, color:"#09090B", border:"none", borderRadius:14, padding:"16px", fontSize:16, fontWeight:800, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:8 };
+const pill  = (c) => ({ display:"inline-flex", alignItems:"center", background:c+"20", color:c, borderRadius:20, padding:"3px 10px", fontSize:11, fontWeight:700 });
+const primBtn  = { width:"100%", background:T.orange, color:"#09090B", border:"none", borderRadius:14, padding:"16px", fontSize:16, fontWeight:800, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:8 };
 const ghostBtn = { background:"transparent", border:`1px solid ${T.border}`, borderRadius:12, padding:"12px 16px", color:T.sub, fontSize:14, cursor:"pointer", fontFamily:"inherit", fontWeight:600 };
 const dangerBtn = { background:T.redLow, border:`1px solid ${T.red}30`, borderRadius:12, padding:"12px 16px", color:T.red, fontSize:14, cursor:"pointer", fontFamily:"inherit", fontWeight:600, width:"100%", textAlign:"center" };
 
@@ -144,20 +143,19 @@ const EQUIP_LIST = [
   {name:"Tractor - 50 HP 4x4 w/ Bush Hog",rate:36.50,unit:"Hours"},{name:"Mower - Riding/Zero Turn",rate:175,unit:"Days"},
   {section:"Air, Compressors & Blast"},
   {name:"Air Compressor - 185 CFM",rate:195,unit:"Days"},{name:"Air Compressor - 375 CFM",rate:275,unit:"Days"},
-  {name:"Air Impact Wrench - 1\"",rate:50,unit:"Days"},{name:"Air Spade / Knife",rate:55,unit:"Days"},
+  {name:"Air Impact Wrench - 1in",rate:50,unit:"Days"},{name:"Air Spade / Knife",rate:55,unit:"Days"},
   {name:"Blast Rig - 4 Bag Pot w/ 185 CFM AC",rate:55.50,unit:"Hours"},{name:"Blast Rig - 1 Pot w/ 375 CFM AC",rate:500,unit:"Days"},
   {section:"Testing & Misc. Tools"},
   {name:"Holiday Detector / Pipe Jeep",rate:72,unit:"Days"},{name:"Hydraulic Torque",rate:200,unit:"Days"},
   {name:"Hydro Test Pump",rate:60,unit:"Days"},{name:"Hydrotest - High Pressure",rate:3800,unit:"Days"},
   {name:"Jack Hammer",rate:72,unit:"Days"},{name:"LEL/Gas Monitor - 4 Gas",rate:50,unit:"Days"},
   {name:"Line Locator",rate:50,unit:"Days"},{name:"HEPA Vacuum",rate:100,unit:"Days"},
-  {name:"Torque Wrench w/Sockets Hyd/Pneu",rate:195,unit:"Days"},{name:"Pipe Beveling Machine 16-22\"",rate:100,unit:"Days"},
+  {name:"Torque Wrench w/Sockets Hyd/Pneu",rate:195,unit:"Days"},{name:"Pipe Beveling Machine 16-22in",rate:100,unit:"Days"},
 ];
 const WMO = {
   0:["Clear Sky","☀️"],1:["Mainly Clear","🌤️"],2:["Partly Cloudy","⛅"],3:["Overcast","☁️"],
-  45:["Foggy","🌫️"],48:["Icy Fog","🌫️"],
-  51:["Light Drizzle","🌦️"],53:["Drizzle","🌦️"],55:["Heavy Drizzle","🌦️"],
-  61:["Light Rain","🌧️"],63:["Rain","🌧️"],65:["Heavy Rain","🌧️"],
+  45:["Foggy","🌫️"],48:["Icy Fog","🌫️"],51:["Light Drizzle","🌦️"],53:["Drizzle","🌦️"],
+  55:["Heavy Drizzle","🌦️"],61:["Light Rain","🌧️"],63:["Rain","🌧️"],65:["Heavy Rain","🌧️"],
   71:["Light Snow","🌨️"],73:["Snow","🌨️"],75:["Heavy Snow","❄️"],77:["Snow Grains","❄️"],
   80:["Light Showers","🌦️"],81:["Showers","🌦️"],82:["Violent Showers","⛈️"],
   85:["Snow Showers","🌨️"],86:["Heavy Snow Showers","🌨️"],
@@ -167,11 +165,11 @@ const WMO = {
 /* ═══════════════════════════════════════════════════════════════
    HELPERS
 ═══════════════════════════════════════════════════════════════ */
-const uid       = () => Math.random().toString(36).slice(2,9);
-const today     = () => new Date().toISOString().split("T")[0];
-const fmt       = (n) => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-const fmtDate   = (d) => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—";
-const fmtShort  = (d) => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}) : "—";
+const uid      = () => Math.random().toString(36).slice(2,9);
+const today    = () => new Date().toISOString().split("T")[0];
+const fmt      = (n) => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtDate  = (d) => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—";
+const fmtShort = (d) => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}) : "—";
 
 function laborAmt(r) {
   const p = POSITIONS.find(x=>x.name===r.classification);
@@ -186,7 +184,7 @@ function reportTotals(r) {
   const mats=(r.materials||[]).reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
   return { labor, equip, mats, grand:labor+equip+mats };
 }
-function calcHours(ci, co) {
+function calcHours(ci,co) {
   if (!ci||!co) return 0;
   const [ih,im]=ci.split(":").map(Number);
   const [oh,om]=co.split(":").map(Number);
@@ -245,9 +243,9 @@ function ErrBanner({msg,onDismiss}) {
     </div>
   );
 }
-function TopBar({title,sub,onBack,right,noBorder}) {
+function TopBar({title,sub,onBack,right}) {
   return (
-    <div style={{background:T.surface,borderBottom:noBorder?"none":`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+    <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
       {onBack&&<button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
         <div style={{flex:1,minWidth:0}}>
@@ -302,11 +300,13 @@ function LaborCard({row,onChange,onRemove}) {
         <div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label>
           <select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inp}>
             <option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}
-          </select></div>
+          </select>
+        </div>
         <div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label>
           <select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inp}>
             <option value="">— Select —</option>{POSITIONS.map(p=><option key={p.name}>{p.name}</option>)}
-          </select></div>
+          </select>
+        </div>
       </div>
       {pos&&!pos.flat&&(
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
@@ -384,7 +384,7 @@ function MatCard({row,onChange,onRemove}) {
         </div>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
-        {(row.amount>0||row.description)&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(parseFloat(row.amount)||0)}</span>}
+        {row.amount>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(parseFloat(row.amount)||0)}</span>}
         <button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button>
       </div>
     </div>
@@ -407,7 +407,7 @@ function LoginScreen({onLogin}) {
             <div style={{fontSize:11,color:T.muted,letterSpacing:"2px",textTransform:"uppercase"}}>Colonial Pipeline</div>
           </div>
         </div>
-        <div style={{fontSize:13,color:T.muted}}>Daily reporting · Time cards · Safety · PM dashboard</div>
+        <div style={{fontSize:13,color:T.muted,marginTop:6}}>Daily reporting · Time cards · Safety · PM dashboard</div>
       </div>
       <div style={{...cardS,maxWidth:400,margin:"0 auto",width:"100%"}}>
         <div style={{marginBottom:14}}><label style={lbl}>Your Name</label>
@@ -427,95 +427,215 @@ function LoginScreen({onLogin}) {
         </div>
         {role==="pm"&&<div style={{marginBottom:14}}><label style={lbl}>PM PIN</label><input type="password" maxLength={4} placeholder="4-digit PIN (default: 1234)" value={pin} onChange={e=>setPin(e.target.value)} style={inp}/></div>}
         <button onClick={go} style={{...primBtn,opacity:name?1:0.45}}>Sign In →</button>
-        {role==="pm"&&<p style={{fontSize:11,color:T.muted,textAlign:"center",marginTop:8}}>Default PIN: 1234</p>}
+        {role==="pm"&&<p style={{fontSize:11,color:T.muted,textAlign:"center",marginTop:8,margin:"8px 0 0"}}>Default PIN: 1234</p>}
       </div>
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   PROJECTS HOME
+   JOB BOARD HOME
 ═══════════════════════════════════════════════════════════════ */
 function ProjectsHome({user,projects,loading,onSelect,onNew,onLogout,onDash}) {
+  const [search,setSearch]=useState("");
+  const [filter,setFilter]=useState("active");
+
+  const filtered=projects.filter(p=>{
+    const matchStatus=filter==="all"?true:p.status===filter;
+    const q=search.toLowerCase();
+    const matchSearch=!q||
+      p.name?.toLowerCase().includes(q)||
+      p.location?.toLowerCase().includes(q)||
+      p.afe?.toLowerCase().includes(q)||
+      p.client?.toLowerCase().includes(q)||
+      p.work_order?.toLowerCase().includes(q);
+    return matchStatus&&matchSearch;
+  });
+
   const active=projects.filter(p=>p.status==="active");
-  const archived=projects.filter(p=>p.status!=="active");
   const totalBilled=projects.reduce((s,p)=>s+(p._billed||0),0);
   const totalReports=projects.reduce((s,p)=>s+(p._reports||0),0);
+
   return (
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+
+      {/* ── HEADER ── */}
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px 16px 0"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:36,height:36,background:T.orange,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:18,color:"#09090B"}}>A</div>
-            <div><div style={{fontSize:16,fontWeight:800,color:T.text}}>AIME Field OS</div><div style={{fontSize:11,color:T.muted}}>👋 {user.name} · {user.role==="pm"?"Project Manager":"Field Crew"}</div></div>
+            <div style={{width:42,height:42,background:T.orange,borderRadius:13,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:22,color:"#09090B",flexShrink:0}}>A</div>
+            <div>
+              <div style={{fontSize:17,fontWeight:900,color:T.text,letterSpacing:"-0.4px"}}>AIME Field OS</div>
+              <div style={{fontSize:11,color:T.muted}}>👋 {user.name} · {user.role==="pm"?"Project Manager":"Field Crew"}</div>
+            </div>
           </div>
-          <button onClick={onLogout} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>Sign Out</button>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {user.role==="pm"&&(
+              <button onClick={onDash} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                📊 Dashboard
+              </button>
+            )}
+            <button onClick={onLogout} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>Out</button>
+          </div>
         </div>
-        <StatBar items={[
-          {label:"Projects",val:active.length,color:T.orange},
-          {label:"Reports",val:totalReports,color:T.green},
-          {label:"Billed",val:"$"+(totalBilled>=1000?(totalBilled/1000).toFixed(1)+"k":fmt(totalBilled)),color:T.blue},
-        ]}/>
+
+        {/* Stats */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+          {[
+            {label:"Active Jobs",val:active.length,color:T.orange},
+            {label:"Total Reports",val:totalReports,color:T.green},
+            {label:"Total Billed",val:"$"+(totalBilled>=1000?(totalBilled/1000).toFixed(1)+"k":fmt(totalBilled)),color:T.blue},
+          ].map(s=>(
+            <div key={s.label} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 8px",textAlign:"center"}}>
+              <div style={{fontSize:17,fontWeight:900,color:s.color}}>{s.val}</div>
+              <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.7px",marginTop:2}}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Search */}
+        <div style={{position:"relative",marginBottom:12}}>
+          <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",fontSize:15,pointerEvents:"none"}}>🔍</span>
+          <input
+            type="text"
+            placeholder="Search jobs by name, location, AFE…"
+            value={search}
+            onChange={e=>setSearch(e.target.value)}
+            style={{...inp,paddingLeft:40,borderRadius:12,fontSize:14}}
+          />
+          {search&&(
+            <button onClick={()=>setSearch("")} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:0}}>×</button>
+          )}
+        </div>
+
+        {/* Filter tabs + New button */}
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          {[["active","Active"],["archived","Archived"],["all","All"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setFilter(v)} style={{
+              padding:"9px 14px",
+              borderRadius:"10px 10px 0 0",
+              background:filter===v?T.bg:"transparent",
+              border:filter===v?`1px solid ${T.border}`:"1px solid transparent",
+              borderBottom:filter===v?`1px solid ${T.bg}`:"none",
+              color:filter===v?T.text:T.muted,
+              fontSize:13,fontWeight:filter===v?700:500,
+              cursor:"pointer",fontFamily:"inherit",
+              position:"relative",zIndex:filter===v?1:0,
+              marginBottom:filter===v?-1:0,
+            }}>
+              {l}
+              {v==="active"&&active.length>0&&(
+                <span style={{marginLeft:5,background:T.orangeLow,color:T.orange,borderRadius:20,padding:"1px 6px",fontSize:10,fontWeight:800}}>{active.length}</span>
+              )}
+            </button>
+          ))}
+          {user.role==="pm"&&(
+            <button onClick={onNew} style={{marginLeft:"auto",background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",marginBottom:2}}>
+              + New Job
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* ── JOB LIST ── */}
       <div style={{padding:"14px 16px 100px"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <span style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Active Projects</span>
-          {user.role==="pm"&&<button onClick={onNew} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Project</button>}
-        </div>
         {loading&&<Spinner/>}
-        {!loading&&active.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>🏗️</div><div>{user.role==="pm"?"No projects yet. Tap + New Project.":"No active projects. Check back soon."}</div></div>}
-        {active.map(p=><ProjectCard key={p.id} p={p} onSelect={onSelect}/>)}
-        {archived.length>0&&<>
-          <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginTop:24,marginBottom:10}}>Archived</div>
-          {archived.map(p=><ProjectCard key={p.id} p={p} onSelect={onSelect} dim/>)}
-        </>}
+
+        {!loading&&filtered.length===0&&(
+          <div style={{textAlign:"center",padding:"60px 20px",color:T.muted}}>
+            <div style={{fontSize:48,marginBottom:12}}>🏗️</div>
+            <div style={{fontSize:17,fontWeight:700,color:T.sub,marginBottom:6}}>
+              {search?`No jobs matching "${search}"`:filter==="archived"?"No archived jobs":"No active jobs"}
+            </div>
+            <div style={{fontSize:13}}>
+              {!search&&filter==="active"&&user.role==="pm"?"Tap + New Job to create your first project.":"Try a different search or filter."}
+            </div>
+          </div>
+        )}
+
+        {!loading&&filtered.map(p=><ProjectCard key={p.id} p={p} onSelect={onSelect}/>)}
       </div>
+
+      {/* PM bottom nav */}
       {user.role==="pm"&&(
         <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:T.surface,borderTop:`1px solid ${T.border}`,padding:"10px 16px",display:"flex",gap:8,zIndex:50}}>
-          <button style={{flex:1,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:"13px",color:T.text,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🏗️ Projects</button>
+          <button style={{flex:1,background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:"13px",color:T.text,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🏗️ Jobs</button>
           <button onClick={onDash} style={{flex:1,background:T.orange,border:"none",borderRadius:12,padding:"13px",color:"#09090B",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>📊 PM Dashboard</button>
         </div>
       )}
     </div>
   );
 }
-function ProjectCard({p,onSelect,dim}) {
+
+function ProjectCard({p,onSelect}) {
+  const isArchived=p.status!=="active";
+  const daysSince=p._lastReport?Math.floor((Date.now()-new Date(p._lastReport+"T12:00:00").getTime())/86400000):null;
+  const actColor=daysSince===null?T.muted:daysSince===0?T.green:daysSince<=2?T.orange:T.red;
+  const actLabel=daysSince===null?"No reports yet":daysSince===0?"Reported today":daysSince===1?"Reported yesterday":`${daysSince}d since last report`;
+
   return (
-    <div onClick={()=>onSelect(p)} style={{...cardS,marginBottom:10,cursor:"pointer",borderLeft:`3px solid ${dim?T.border:T.orange}`,opacity:dim?0.55:1,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{fontSize:15,fontWeight:800,color:T.text}}>{p.name}</div>
-        <div style={{fontSize:12,color:T.sub,marginTop:2}}>{p.client||"No client"}{p.location?" · "+p.location:""}</div>
-        <div style={{display:"flex",gap:6,marginTop:7,flexWrap:"wrap"}}>
-          <span style={pill(T.orange)}>{p._reports||0} report{p._reports!==1?"s":""}</span>
-          {p.afe&&<span style={pill(T.muted)}>AFE: {p.afe}</span>}
-          <span style={pill(p.status==="active"?T.green:T.muted)}>{p.status}</span>
+    <div onClick={()=>onSelect(p)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,marginBottom:10,cursor:"pointer",overflow:"hidden",opacity:isArchived?0.55:1}}>
+      {/* Top accent bar */}
+      <div style={{height:3,background:isArchived?T.border:`linear-gradient(90deg,${T.orange},${T.yellow})`}}/>
+      <div style={{padding:"14px 16px"}}>
+        {/* Name + billed */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+          <div style={{flex:1,minWidth:0,paddingRight:12}}>
+            <div style={{fontSize:17,fontWeight:900,color:T.text,letterSpacing:"-0.3px",lineHeight:1.2}}>{p.name}</div>
+            <div style={{fontSize:12,color:T.sub,marginTop:3}}>{[p.client,p.location].filter(Boolean).join(" · ")||"No details"}</div>
+          </div>
+          <div style={{textAlign:"right",flexShrink:0}}>
+            <div style={{fontSize:20,fontWeight:900,color:T.green,letterSpacing:"-0.5px"}}>${(p._billed||0)>=1000?((p._billed||0)/1000).toFixed(1)+"k":fmt(p._billed||0)}</div>
+            <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:1}}>Total Billed</div>
+          </div>
         </div>
-      </div>
-      <div style={{textAlign:"right",flexShrink:0,marginLeft:12}}>
-        <div style={{fontSize:18,fontWeight:900,color:T.green}}>${(p._billed||0)>=1000?((p._billed||0)/1000).toFixed(1)+"k":fmt(p._billed||0)}</div>
-        <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",marginTop:2}}>Billed</div>
+
+        {/* Tags */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          {p.afe&&<span style={pill(T.muted)}>AFE: {p.afe}</span>}
+          {p.work_order&&<span style={pill(T.muted)}>WO: {p.work_order}</span>}
+          <span style={pill(isArchived?T.muted:T.green)}>{isArchived?"Archived":"Active"}</span>
+        </div>
+
+        {/* Footer */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",gap:16}}>
+            <div>
+              <div style={{fontSize:16,fontWeight:800,color:T.orange}}>{p._reports||0}</div>
+              <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>Reports</div>
+            </div>
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:actColor,marginTop:2}}>{actLabel}</div>
+              <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:1}}>Last Activity</div>
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6,background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 14px"}}>
+            <span style={{fontSize:13,fontWeight:700,color:T.orange}}>Enter Job</span>
+            <span style={{fontSize:16,color:T.orange}}>→</span>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   PROJECT FORM (new / edit)
+   PROJECT FORM
 ═══════════════════════════════════════════════════════════════ */
 function ProjectForm({initial,onSave,onCancel,saving}) {
   const [f,setF]=useState(initial||{name:"",client:"",location:"",afe:"",work_order:"",start_date:today(),notes:"",status:"active"});
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
   return (
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      <TopBar title={initial?"Edit Project":"New Project"} onBack={onCancel}/>
+      <TopBar title={initial?"Edit Project":"New Job"} onBack={onCancel}/>
       <div style={{padding:"16px 16px 100px"}}>
-        {[{k:"name",l:"Project Name *",ph:"e.g. HDD Crossing – Station 42"},{k:"client",l:"Client",ph:"Colonial Pipeline"},{k:"location",l:"Location",ph:"City, State or Milepost"},{k:"afe",l:"AFE No.",ph:"AFE #"},{k:"work_order",l:"Work Order #",ph:"WO #"}].map(({k,l,ph})=>(
+        {[{k:"name",l:"Job Name *",ph:"e.g. HDD Crossing – Station 42"},{k:"client",l:"Client",ph:"Colonial Pipeline"},{k:"location",l:"Location",ph:"City, State or Milepost"},{k:"afe",l:"AFE No.",ph:"AFE #"},{k:"work_order",l:"Work Order #",ph:"WO #"}].map(({k,l,ph})=>(
           <div key={k} style={{marginBottom:12}}><label style={lbl}>{l}</label><input type="text" placeholder={ph} value={f[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>
         ))}
         <div style={{marginBottom:12}}><label style={lbl}>Start Date</label><input type="date" value={f.start_date||today()} onChange={e=>set("start_date",e.target.value)} style={inp}/></div>
         <div style={{marginBottom:20}}><label style={lbl}>Notes</label><textarea placeholder="Project notes, scope, special instructions…" value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={3} style={{...inp,resize:"vertical",lineHeight:1.5}}/></div>
         <button onClick={()=>f.name.trim()&&!saving&&onSave(f)} style={{...primBtn,opacity:f.name.trim()&&!saving?1:0.5}}>
-          {saving?"Saving…":initial?"Save Changes":"Create Project"}
+          {saving?"Saving…":initial?"Save Changes":"Create Job"}
         </button>
       </div>
     </div>
@@ -625,12 +745,15 @@ function DailyReportForm({user,project,onSave,onCancel}) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   REPORT DETAIL  +  EXCEL EXPORT
+   REPORT DETAIL + EXCEL EXPORT
 ═══════════════════════════════════════════════════════════════ */
 function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}) {
-  const [lb,setLb]=useState(null); const [flagNote,setFlagNote]=useState(""); const [flagging,setFlagging]=useState(false); const [deleting,setDeleting]=useState(false);
+  const [lb,setLb]=useState(null);
+  const [flagNote,setFlagNote]=useState("");
+  const [flagging,setFlagging]=useState(false);
   const tot=reportTotals(report);
   const statusColor={submitted:T.yellow,approved:T.green,flagged:T.red}[report.status]||T.muted;
+
   function exportXLSX(){
     const wb=XLSX.utils.book_new();const rows=[];const blank=()=>Array(11).fill(null);
     const r1=blank();r1[1]="COLONIAL PIPELINE COMPANY";rows.push(r1);
@@ -663,6 +786,7 @@ function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}) {
     XLSX.utils.book_append_sheet(wb,ws,"Daily Report");
     XLSX.writeFile(wb,`AIME_${project.name.replace(/\s+/g,"_")}_${(report.date||"").replace(/-/g,"")}.xlsx`);
   }
+
   return (
     <div style={{background:T.bg,minHeight:"100vh",padding:16,fontFamily:"inherit"}}>
       <Lightbox src={lb} onClose={()=>setLb(null)}/>
@@ -671,7 +795,7 @@ function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}) {
         <div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>{fmtDate(report.date)}</div>
         <span style={pill(statusColor)}>{(report.status||"submitted").toUpperCase()}</span>
       </div>
-      {report.submitted_by&&<div style={{fontSize:12,color:T.muted,marginBottom:report.pm_notes?6:14}}>by {report.submitted_by}</div>}
+      {report.submitted_by&&<div style={{fontSize:12,color:T.muted,marginBottom:14}}>by {report.submitted_by}</div>}
       {report.pm_notes&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.red}`,background:T.redLow}}><div style={{fontSize:11,color:T.red,fontWeight:700,marginBottom:4}}>🚩 PM NOTE</div><div style={{fontSize:13,color:T.sub}}>{report.pm_notes}</div></div>}
       {report.description&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Work Done</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{report.description}</div></div>}
       {(report.labor||[]).length>0&&<div style={{...cardS,marginBottom:12}}>
@@ -687,7 +811,7 @@ function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}) {
         <div style={{fontSize:12,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Equipment · <span style={{color:T.green}}>${fmt(tot.equip)}</span></div>
         {report.equipment.map((r,i)=>(
           <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.equipment.length-1?`1px solid ${T.border}`:"none"}}>
-            <div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty} × {r.usage} {r.unit}</div></div>
+            <div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty} x {r.usage} {r.unit}</div></div>
             <div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(equipAmt(r))}</div>
           </div>
         ))}
@@ -697,7 +821,7 @@ function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}) {
         {report.materials.map((r,i)=>(
           <div key={i} style={{padding:"8px 0",borderBottom:i<report.materials.length-1?`1px solid ${T.border}`:"none"}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:r.receipts?.length>0?8:0}}>
-              <span style={{fontSize:13}}>{r.qty?`${r.qty}× `:""}{r.description}</span>
+              <span style={{fontSize:13}}>{r.qty?`${r.qty}x `:""}{r.description}</span>
               <span style={{fontSize:13,fontWeight:700,color:T.green}}>${fmt(parseFloat(r.amount)||0)}</span>
             </div>
             {r.receipts?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{r.receipts.map(rc=><img key={rc.id} src={rc.src} alt="" onClick={()=>setLb(rc.src)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer"}}/>)}</div>}
@@ -720,7 +844,7 @@ function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}) {
         <button onClick={()=>{onFlag&&onFlag(report.id,flagNote);setFlagging(false);}} style={{...primBtn,borderRadius:12}}>Send Flag</button>
       </div>}
       <button onClick={exportXLSX} style={{...primBtn,background:T.orangeLow,color:T.orange,border:`1px solid ${T.orange}40`,marginBottom:10,borderRadius:14}}>📥 Export to Excel (.xlsx)</button>
-      <button onClick={async()=>{if(!window.confirm("Delete this report?"))return;setDeleting(true);await onDelete(report.id);setDeleting(false);}} style={dangerBtn}>{deleting?"Deleting…":"🗑 Delete Report"}</button>
+      <button onClick={()=>window.confirm("Delete this report?")&&onDelete(report.id)} style={dangerBtn}>🗑 Delete Report</button>
     </div>
   );
 }
@@ -733,115 +857,72 @@ function TimeCardsTab({projectId,user,onErr}) {
   const [showForm,setShowForm]=useState(false); const [saving,setSaving]=useState(false);
   const [f,setF]=useState({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",notes:""});
   const weekStart=getWeekStart();
-
   async function load(){setLoading(true);try{setCards(await API.timeCards.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[projectId]);
-
   async function save(){
-    if(!f.worker_name||!f.date)return;
-    setSaving(true);
+    if(!f.worker_name||!f.date)return;setSaving(true);
     const total_hours=calcHours(f.clock_in,f.clock_out);
     const ot_hours=Math.max(0,total_hours-8);
     try{await API.timeCards.create({...f,project_id:projectId,total_hours,ot_hours});await load();setShowForm(false);setF({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",notes:""});}
-    catch(e){onErr(e.message);}
-    setSaving(false);
+    catch(e){onErr(e.message);}setSaving(false);
   }
   async function remove(id){try{await API.timeCards.remove(id);await load();}catch(e){onErr(e.message);}}
-
-  // Weekly summary
   const weekCards=cards.filter(c=>c.date>=weekStart);
   const byWorker={};
-  weekCards.forEach(c=>{
-    if(!byWorker[c.worker_name])byWorker[c.worker_name]={name:c.worker_name,reg:0,ot:0,total:0};
-    byWorker[c.worker_name].total+=(c.total_hours||0);
-    byWorker[c.worker_name].ot+=(c.ot_hours||0);
-    byWorker[c.worker_name].reg+=Math.min(c.total_hours||0,(c.total_hours||0)-(c.ot_hours||0));
-  });
+  weekCards.forEach(c=>{if(!byWorker[c.worker_name])byWorker[c.worker_name]={name:c.worker_name,reg:0,ot:0,total:0};byWorker[c.worker_name].total+=(c.total_hours||0);byWorker[c.worker_name].ot+=(c.ot_hours||0);byWorker[c.worker_name].reg+=Math.max(0,(c.total_hours||0)-(c.ot_hours||0));});
   const workerRows=Object.values(byWorker).sort((a,b)=>b.total-a.total);
-
   const todayCards=cards.filter(c=>c.date===today());
-  const recentCards=cards.slice(0,40);
-
+  const recentCards=cards.filter(c=>c.date!==today()).slice(0,30);
   return (
     <div>
       <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"⏱️ Log Time"}</button>
       {showForm&&(
         <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`}}>
-          <div style={{marginBottom:10}}><label style={lbl}>Worker</label>
-            <select value={f.worker_name} onChange={e=>setF(x=>({...x,worker_name:e.target.value}))} style={inp}>
-              {NAMES.map(n=><option key={n}>{n}</option>)}
-            </select>
-          </div>
+          <div style={{marginBottom:10}}><label style={lbl}>Worker</label><select value={f.worker_name} onChange={e=>setF(x=>({...x,worker_name:e.target.value}))} style={inp}>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
           <div style={{marginBottom:10}}><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))} style={inp}/></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
             <div><label style={lbl}>Clock In</label><input type="time" value={f.clock_in} onChange={e=>setF(x=>({...x,clock_in:e.target.value}))} style={inp}/></div>
             <div><label style={lbl}>Clock Out</label><input type="time" value={f.clock_out} onChange={e=>setF(x=>({...x,clock_out:e.target.value}))} style={inp}/></div>
           </div>
-          {f.clock_in&&f.clock_out&&(()=>{const h=calcHours(f.clock_in,f.clock_out);const ot=Math.max(0,h-8);return h>0&&(
-            <div style={{background:T.greenLow,borderRadius:10,padding:"10px 12px",marginBottom:10,display:"flex",gap:16}}>
-              <div><div style={{fontSize:18,fontWeight:900,color:T.green}}>{h.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Total</div></div>
-              <div><div style={{fontSize:18,fontWeight:900,color:ot>0?T.yellow:T.muted}}>{Math.min(h,8).toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Regular</div></div>
-              {ot>0&&<div><div style={{fontSize:18,fontWeight:900,color:T.yellow}}>{ot.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Overtime</div></div>}
-            </div>
-          );})()}
-          <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input type="text" placeholder="Optional notes…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
+          {f.clock_in&&f.clock_out&&(()=>{const h=calcHours(f.clock_in,f.clock_out);const ot=Math.max(0,h-8);return h>0&&(<div style={{background:T.greenLow,borderRadius:10,padding:"10px 12px",marginBottom:10,display:"flex",gap:16}}><div><div style={{fontSize:18,fontWeight:900,color:T.green}}>{h.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Total</div></div><div><div style={{fontSize:18,fontWeight:900,color:ot>0?T.yellow:T.muted}}>{Math.min(h,8).toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Regular</div></div>{ot>0&&<div><div style={{fontSize:18,fontWeight:900,color:T.yellow}}>{ot.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>OT</div></div>}</div>);})()}
+          <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input type="text" placeholder="Optional…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
           <button onClick={save} style={{...primBtn,background:T.green,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Time Card"}</button>
         </div>
       )}
-
       {loading&&<Spinner/>}
-      {!loading&&(
-        <>
-          {/* Weekly Summary */}
-          {workerRows.length>0&&(
-            <div style={{...cardS,marginBottom:16}}>
-              <div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>⏱️ This Week's Hours</div>
-              {workerRows.map(w=>(
-                <div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
-                  <span style={{fontSize:14,fontWeight:600}}>{w.name}</span>
-                  <div style={{display:"flex",gap:12,alignItems:"center"}}>
-                    <span style={{fontSize:12,color:T.muted}}>{w.reg.toFixed(1)}reg</span>
-                    {w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)}OT</span>}
-                    <span style={{fontSize:15,fontWeight:800,color:T.green}}>{w.total.toFixed(1)}h</span>
-                  </div>
-                </div>
-              ))}
+      {!loading&&<>
+        {workerRows.length>0&&<div style={{...cardS,marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>This Week</div>
+          {workerRows.map(w=>(
+            <div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+              <span style={{fontSize:14,fontWeight:600}}>{w.name}</span>
+              <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                <span style={{fontSize:12,color:T.muted}}>{w.reg.toFixed(1)}reg</span>
+                {w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)}OT</span>}
+                <span style={{fontSize:15,fontWeight:800,color:T.green}}>{w.total.toFixed(1)}h</span>
+              </div>
             </div>
-          )}
-
-          {/* Today */}
-          {todayCards.length>0&&(
-            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Today On Site</div>
-          )}
-          {todayCards.map(c=><TimeCardRow key={c.id} c={c} onRemove={()=>remove(c.id)}/>)}
-
-          {/* Recent */}
-          {recentCards.filter(c=>c.date!==today()).length>0&&(
-            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 10px"}}>Recent</div>
-          )}
-          {recentCards.filter(c=>c.date!==today()).map(c=><TimeCardRow key={c.id} c={c} onRemove={()=>remove(c.id)}/>)}
-          {cards.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>⏱️</div><div>No time cards yet. Tap Log Time to add the first entry.</div></div>}
-        </>
-      )}
+          ))}
+        </div>}
+        {todayCards.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Today</div>}
+        {todayCards.map(c=><TimeCardRow key={c.id} c={c} onRemove={()=>remove(c.id)}/>)}
+        {recentCards.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 10px"}}>Recent</div>}
+        {recentCards.map(c=><TimeCardRow key={c.id} c={c} onRemove={()=>remove(c.id)}/>)}
+        {cards.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>⏱️</div><div>No time cards yet.</div></div>}
+      </>}
     </div>
   );
 }
 function TimeCardRow({c,onRemove}) {
-  const ot=c.ot_hours||0;
   return (
     <div style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
       <div>
         <div style={{fontSize:14,fontWeight:700}}>{c.worker_name}</div>
-        <div style={{fontSize:11,color:T.muted,marginTop:3}}>
-          {fmtShort(c.date)}{c.clock_in?" · "+c.clock_in:""}{c.clock_out?" → "+c.clock_out:""}
-        </div>
+        <div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(c.date)}{c.clock_in?" · "+c.clock_in:""}{c.clock_out?" → "+c.clock_out:""}</div>
         {c.notes&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{c.notes}</div>}
       </div>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
-        <div style={{textAlign:"right"}}>
-          <div style={{fontSize:16,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div>
-          {ot>0&&<div style={{fontSize:10,color:T.yellow}}>{ot.toFixed(1)} OT</div>}
-        </div>
+        <div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div>{(c.ot_hours||0)>0&&<div style={{fontSize:10,color:T.yellow}}>{c.ot_hours.toFixed(1)} OT</div>}</div>
         <button onClick={onRemove} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>
       </div>
     </div>
@@ -849,13 +930,12 @@ function TimeCardRow({c,onRemove}) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   CREW TAB  (who's on site + equipment on site)
+   CREW / EQUIPMENT ON SITE TAB
 ═══════════════════════════════════════════════════════════════ */
 function CrewTab({projectId,user,onErr}) {
   const [equip,setEquip]=useState([]); const [loading,setLoading]=useState(true);
   const [showForm,setShowForm]=useState(false); const [saving,setSaving]=useState(false);
   const [f,setF]=useState({equipment_name:"",quantity:1,operator_name:"",hours_used:"",notes:"",date:today()});
-
   async function load(){setLoading(true);try{setEquip(await API.equipment.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[projectId]);
   async function save(){
@@ -864,62 +944,47 @@ function CrewTab({projectId,user,onErr}) {
     catch(e){onErr(e.message);}setSaving(false);
   }
   async function remove(id){try{await API.equipment.remove(id);await load();}catch(e){onErr(e.message);}}
-
   const todayEquip=equip.filter(e=>e.date===today());
   const prevEquip=equip.filter(e=>e.date!==today()).slice(0,20);
-
   return (
     <div>
       <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"🚜 Log Equipment On Site"}</button>
       {showForm&&(
         <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.yellow}`}}>
-          <div style={{marginBottom:10}}><label style={lbl}>Equipment Name</label>
+          <div style={{marginBottom:10}}><label style={lbl}>Equipment</label>
             <select value={f.equipment_name} onChange={e=>setF(x=>({...x,equipment_name:e.target.value}))} style={inp}>
-              <option value="">— Select or type below —</option>
+              <option value="">— Select Equipment —</option>
               {EQUIP_LIST.filter(e=>!e.section).map(e=><option key={e.name} value={e.name}>{e.name}</option>)}
             </select>
           </div>
-          {!EQUIP_LIST.find(e=>!e.section&&e.name===f.equipment_name)&&(
-            <div style={{marginBottom:10}}><label style={lbl}>Or Enter Custom Equipment</label><input type="text" placeholder="Equipment name…" value={f.equipment_name} onChange={e=>setF(x=>({...x,equipment_name:e.target.value}))} style={inp}/></div>
+          {!EQUIP_LIST.find(e=>!e.section&&e.name===f.equipment_name)&&f.equipment_name===""&&(
+            <div style={{marginBottom:10}}><label style={lbl}>Or Custom Name</label><input type="text" placeholder="Equipment name…" value={f.equipment_name} onChange={e=>setF(x=>({...x,equipment_name:e.target.value}))} style={inp}/></div>
           )}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
             <div><label style={lbl}>Quantity</label><input type="number" min="1" value={f.quantity} onChange={e=>setF(x=>({...x,quantity:e.target.value}))} style={inp}/></div>
             <div><label style={lbl}>Hours Used</label><input type="number" min="0" step="0.5" placeholder="0" value={f.hours_used} onChange={e=>setF(x=>({...x,hours_used:e.target.value}))} style={inp}/></div>
           </div>
-          <div style={{marginBottom:10}}><label style={lbl}>Operator</label>
-            <select value={f.operator_name} onChange={e=>setF(x=>({...x,operator_name:e.target.value}))} style={inp}>
-              <option value="">— Operator (optional) —</option>
-              {NAMES.map(n=><option key={n}>{n}</option>)}
-            </select>
-          </div>
+          <div style={{marginBottom:10}}><label style={lbl}>Operator</label><select value={f.operator_name} onChange={e=>setF(x=>({...x,operator_name:e.target.value}))} style={inp}><option value="">— Optional —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
           <div style={{marginBottom:10}}><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))} style={inp}/></div>
-          <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input type="text" placeholder="Condition, issues, etc." value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
+          <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input type="text" placeholder="Condition, issues…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
           <button onClick={save} style={{...primBtn,background:T.yellow,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Entry"}</button>
         </div>
       )}
       {loading&&<Spinner/>}
-      {!loading&&(
-        <>
-          {todayEquip.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>On Site Today</div>}
-          {todayEquip.map(e=><EquipSiteRow key={e.id} e={e} onRemove={()=>remove(e.id)}/>)}
-          {prevEquip.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"16px 0 10px"}}>Previous</div>}
-          {prevEquip.map(e=><EquipSiteRow key={e.id} e={e} onRemove={()=>remove(e.id)}/>)}
-          {equip.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🚜</div><div>No equipment logged. Tap above to log equipment on site.</div></div>}
-        </>
-      )}
+      {!loading&&<>
+        {todayEquip.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>On Site Today</div>}
+        {todayEquip.map(e=><EquipSiteRow key={e.id} e={e} onRemove={()=>remove(e.id)}/>)}
+        {prevEquip.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 10px"}}>Previous</div>}
+        {prevEquip.map(e=><EquipSiteRow key={e.id} e={e} onRemove={()=>remove(e.id)}/>)}
+        {equip.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🚜</div><div>No equipment logged.</div></div>}
+      </>}
     </div>
   );
 }
 function EquipSiteRow({e,onRemove}) {
   return (
     <div style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.yellow}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-      <div>
-        <div style={{fontSize:14,fontWeight:700}}>{e.equipment_name}</div>
-        <div style={{fontSize:11,color:T.muted,marginTop:3}}>
-          {fmtShort(e.date)} · Qty {e.quantity||1}{e.operator_name?" · "+e.operator_name:""}{e.hours_used?" · "+e.hours_used+"h":""}
-        </div>
-        {e.notes&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{e.notes}</div>}
-      </div>
+      <div><div style={{fontSize:14,fontWeight:700}}>{e.equipment_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(e.date)} · Qty {e.quantity||1}{e.operator_name?" · "+e.operator_name:""}{e.hours_used?" · "+e.hours_used+"h":""}</div>{e.notes&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{e.notes}</div>}</div>
       <button onClick={onRemove} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0,marginLeft:12}}>🗑</button>
     </div>
   );
@@ -933,7 +998,6 @@ function SubsTab({projectId,user,onErr}) {
   const [showForm,setShowForm]=useState(false); const [saving,setSaving]=useState(false);
   const [f,setF]=useState({date:today(),company_name:"",trade:"",contact_name:"",contact_phone:"",workers_count:1,hours_worked:"",work_description:""});
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
-
   async function load(){setLoading(true);try{setSubs(await API.subs.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[projectId]);
   async function save(){
@@ -942,22 +1006,15 @@ function SubsTab({projectId,user,onErr}) {
     catch(e){onErr(e.message);}setSaving(false);
   }
   async function remove(id){try{await API.subs.remove(id);await load();}catch(e){onErr(e.message);}}
-
   const trades=["Electrical","Mechanical","Civil","Welding","Coating","Survey","Inspection","HDD","Boring","Concrete","Other"];
-
   return (
     <div>
       <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"🏢 Log Subcontractor"}</button>
       {showForm&&(
         <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.purple}`}}>
+          <div style={{marginBottom:10}}><label style={lbl}>Company Name *</label><input type="text" placeholder="Sub company name" value={f.company_name} onChange={e=>set("company_name",e.target.value)} style={inp}/></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-            <div style={{gridColumn:"1/-1"}}><label style={lbl}>Company Name *</label><input type="text" placeholder="Sub company name" value={f.company_name} onChange={e=>set("company_name",e.target.value)} style={inp}/></div>
-            <div><label style={lbl}>Trade</label>
-              <select value={f.trade} onChange={e=>set("trade",e.target.value)} style={inp}>
-                <option value="">— Select —</option>
-                {trades.map(t=><option key={t}>{t}</option>)}
-              </select>
-            </div>
+            <div><label style={lbl}>Trade</label><select value={f.trade} onChange={e=>set("trade",e.target.value)} style={inp}><option value="">— Select —</option>{trades.map(t=><option key={t}>{t}</option>)}</select></div>
             <div><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>set("date",e.target.value)} style={inp}/></div>
             <div><label style={lbl}>Contact Name</label><input type="text" placeholder="Foreman / Contact" value={f.contact_name} onChange={e=>set("contact_name",e.target.value)} style={inp}/></div>
             <div><label style={lbl}>Contact Phone</label><input type="tel" placeholder="555-555-5555" value={f.contact_phone} onChange={e=>set("contact_phone",e.target.value)} style={inp}/></div>
@@ -974,10 +1031,10 @@ function SubsTab({projectId,user,onErr}) {
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
             <div style={{flex:1}}>
               <div style={{fontSize:15,fontWeight:800}}>{s.company_name}</div>
-              <div style={{display:"flex",gap:8,marginTop:5,flexWrap:"wrap"}}>
+              <div style={{display:"flex",gap:6,marginTop:5,flexWrap:"wrap"}}>
                 {s.trade&&<span style={pill(T.purple)}>{s.trade}</span>}
                 <span style={pill(T.muted)}>{fmtShort(s.date)}</span>
-                {s.workers_count>0&&<span style={pill(T.blue)}>👷 {s.workers_count} workers</span>}
+                {s.workers_count>0&&<span style={pill(T.blue)}>👷 {s.workers_count}</span>}
                 {s.hours_worked>0&&<span style={pill(T.green)}>{s.hours_worked}h</span>}
               </div>
               {s.contact_name&&<div style={{fontSize:12,color:T.sub,marginTop:6}}>📞 {s.contact_name}{s.contact_phone?" · "+s.contact_phone:""}</div>}
@@ -987,7 +1044,7 @@ function SubsTab({projectId,user,onErr}) {
           </div>
         </div>
       ))}
-      {!loading&&subs.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🏢</div><div>No subcontractors logged. Tap above to add a sub entry.</div></div>}
+      {!loading&&subs.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🏢</div><div>No subcontractors logged.</div></div>}
     </div>
   );
 }
@@ -1022,13 +1079,15 @@ function SafetyTab({projectId,safety,user,onRefresh,onErr}) {
           <div style={{marginBottom:10}}><label style={lbl}>Notes / Corrective Action</label><textarea rows={3} placeholder="Additional details…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={{...inp,resize:"vertical"}}/></div>
           {(type==="incident"||type==="nearmiss")&&<div style={{marginBottom:10}}><label style={lbl}>Severity</label>
             <select value={f.severity} onChange={e=>setF(x=>({...x,severity:e.target.value}))} style={inp}>
-              <option value="low">Low – First Aid Only</option><option value="medium">Medium – Recordable</option><option value="high">High – Lost Time Injury</option>
+              <option value="low">Low – First Aid Only</option>
+              <option value="medium">Medium – Recordable</option>
+              <option value="high">High – Lost Time Injury</option>
             </select>
           </div>}
           <button onClick={save} style={{...primBtn,background:T.yellow,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Entry"}</button>
         </div>
       )}
-      {safety.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>⛑️</div><div>No safety entries. Log toolbox talks, JSAs, observations and incidents here.</div></div>}
+      {safety.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>⛑️</div><div>No safety entries yet.</div></div>}
       {[...safety].map(s=>(
         <div key={s.id} style={{...cardS,marginBottom:9,borderLeft:`3px solid ${TC[s.type]||T.border}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -1090,93 +1149,56 @@ function PhotosTab({projectId,photos,onRefresh,onErr}) {
 function WeatherTab({projectId,project,weather,onRefresh,onErr}) {
   const [fetching,setFetching]=useState(false); const [liveWeather,setLiveWeather]=useState(null);
   const [manualNote,setManualNote]=useState(""); const [saving,setSaving]=useState(false);
-
   async function autoFetch(){
-    if(!project.location){onErr("Add a location to the project first.");return;}
+    if(!project.location){onErr("Add a location to this job first (Info tab).");return;}
     setFetching(true);setLiveWeather(null);
-    try{
-      const w=await fetchWeather(project.location);
-      setLiveWeather(w);
-    }catch(e){onErr(e.message);}
-    setFetching(false);
+    try{setLiveWeather(await fetchWeather(project.location));}catch(e){onErr(e.message);}setFetching(false);
   }
-
   async function logWeather(){
     if(!liveWeather)return;setSaving(true);
     const c=liveWeather.current;
-    const [desc]=WMO[c.weathercode]||["Unknown","🌡️"];
+    const [desc]=WMO[c.weathercode]||["Unknown"];
     try{
-      await API.weather.upsert({
-        project_id:projectId, date:today(),
-        temp_high:liveWeather.daily?.temperature_2m_max?.[0]||c.temperature_2m,
-        temp_low:liveWeather.daily?.temperature_2m_min?.[0]||c.temperature_2m,
-        conditions:desc, wind_speed:c.windspeed_10m,
-        precipitation:liveWeather.daily?.precipitation_sum?.[0]||0,
-        notes:manualNote,
-      });
+      await API.weather.upsert({project_id:projectId,date:today(),temp_high:liveWeather.daily?.temperature_2m_max?.[0]||c.temperature_2m,temp_low:liveWeather.daily?.temperature_2m_min?.[0]||c.temperature_2m,conditions:desc,wind_speed:c.windspeed_10m,precipitation:liveWeather.daily?.precipitation_sum?.[0]||0,notes:manualNote});
       await onRefresh();setLiveWeather(null);setManualNote("");
     }catch(e){onErr(e.message);}setSaving(false);
   }
-
   async function del(id){try{await API.weather.remove(id);await onRefresh();}catch(e){onErr(e.message);}}
-
   return (
     <div>
-      <button onClick={autoFetch} style={{...primBtn,marginBottom:14,borderRadius:14,opacity:fetching?0.6:1}}>{fetching?"🌐 Fetching weather…":"🌤️ Auto-Fetch Today's Weather"}</button>
-      {!project.location&&<div style={{...cardS,marginBottom:14,background:T.yellowLow,border:`1px solid ${T.yellow}40`}}><div style={{fontSize:13,color:T.yellow}}>⚠️ Set a location on this project (Info tab) to auto-fetch weather.</div></div>}
-
+      <button onClick={autoFetch} style={{...primBtn,marginBottom:14,borderRadius:14,opacity:fetching?0.6:1}}>{fetching?"🌐 Fetching…":"🌤️ Auto-Fetch Today's Weather"}</button>
+      {!project.location&&<div style={{...cardS,marginBottom:14,background:T.yellowLow,border:`1px solid ${T.yellow}40`}}><div style={{fontSize:13,color:T.yellow}}>⚠️ Add a location to this job (Info tab) to auto-fetch weather.</div></div>}
       {liveWeather&&(()=>{
-        const c=liveWeather.current;
-        const [desc,icon]=WMO[c.weathercode]||["Unknown","🌡️"];
+        const c=liveWeather.current;const [desc,icon]=WMO[c.weathercode]||["Unknown","🌡️"];
         return (
           <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.blue}`}}>
-            <div style={{fontSize:11,color:T.blue,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Live Weather · {liveWeather.locationName}</div>
+            <div style={{fontSize:11,color:T.blue,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Live · {liveWeather.locationName}</div>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
-              <span style={{fontSize:48}}>{icon}</span>
-              <div>
-                <div style={{fontSize:28,fontWeight:900,color:T.text,letterSpacing:"-1px"}}>{Math.round(c.temperature_2m)}°F</div>
-                <div style={{fontSize:14,color:T.sub}}>{desc}</div>
-                <div style={{fontSize:12,color:T.muted}}>Feels like {Math.round(c.apparent_temperature)}°F</div>
-              </div>
+              <span style={{fontSize:44}}>{icon}</span>
+              <div><div style={{fontSize:28,fontWeight:900,letterSpacing:"-1px"}}>{Math.round(c.temperature_2m)}°F</div><div style={{fontSize:14,color:T.sub}}>{desc}</div><div style={{fontSize:12,color:T.muted}}>Feels {Math.round(c.apparent_temperature)}°F</div></div>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
               {[["💨 Wind",Math.round(c.windspeed_10m)+" mph"],["🌡️ High",Math.round(liveWeather.daily?.temperature_2m_max?.[0]||c.temperature_2m)+"°F"],["🌧️ Precip",(liveWeather.daily?.precipitation_sum?.[0]||0).toFixed(2)+'"']].map(([l,v])=>(
-                <div key={l} style={{background:T.surface,borderRadius:10,padding:"8px",textAlign:"center"}}>
-                  <div style={{fontSize:13,fontWeight:700,color:T.text}}>{v}</div>
-                  <div style={{fontSize:10,color:T.muted}}>{l}</div>
-                </div>
+                <div key={l} style={{background:T.surface,borderRadius:10,padding:"8px",textAlign:"center"}}><div style={{fontSize:13,fontWeight:700}}>{v}</div><div style={{fontSize:10,color:T.muted}}>{l}</div></div>
               ))}
             </div>
-            <div style={{marginBottom:10}}><label style={lbl}>Field Notes (optional)</label><input type="text" placeholder="Work impacted by weather?" value={manualNote} onChange={e=>setManualNote(e.target.value)} style={inp}/></div>
+            <div style={{marginBottom:10}}><label style={lbl}>Field Notes</label><input type="text" placeholder="Work impacted by weather?" value={manualNote} onChange={e=>setManualNote(e.target.value)} style={inp}/></div>
             <button onClick={logWeather} style={{...primBtn,background:T.blue,borderRadius:12}}>{saving?"Saving…":"💾 Log This Weather"}</button>
           </div>
         );
       })()}
-
-      {/* History */}
       {weather.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Weather History</div>}
       {weather.map(w=>{
-        const [,icon]=WMO[Object.keys(WMO).find(k=>WMO[k][0]===w.conditions)]||["","🌡️"];
+        const entry=Object.entries(WMO).find(([,v])=>v[0]===w.conditions);
+        const icon=entry?entry[1][1]:"🌡️";
         return (
           <div key={w.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:20}}>{icon}</span>
-                <div>
-                  <div style={{fontSize:14,fontWeight:700}}>{w.conditions||"Logged"}</div>
-                  <div style={{fontSize:11,color:T.muted}}>{fmtShort(w.date)}{w.wind_speed?" · "+Math.round(w.wind_speed)+"mph wind":""}{w.precipitation>0?" · "+w.precipitation+'" precip':""}</div>
-                </div>
-              </div>
-              {w.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4}}>{w.notes}</div>}
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              {w.temp_high&&<div style={{textAlign:"right"}}><div style={{fontSize:15,fontWeight:800,color:T.orange}}>{Math.round(w.temp_high)}°</div><div style={{fontSize:10,color:T.muted}}>{w.temp_low?Math.round(w.temp_low)+"° lo":""}</div></div>}
-              <button onClick={()=>del(w.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>
-            </div>
+            <div><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:20}}>{icon}</span><div><div style={{fontSize:14,fontWeight:700}}>{w.conditions||"Logged"}</div><div style={{fontSize:11,color:T.muted}}>{fmtShort(w.date)}{w.wind_speed?" · "+Math.round(w.wind_speed)+"mph":""}{w.precipitation>0?" · "+w.precipitation+'" precip":""}</div></div></div>{w.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4}}>{w.notes}</div>}</div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>{w.temp_high&&<div style={{textAlign:"right"}}><div style={{fontSize:15,fontWeight:800,color:T.orange}}>{Math.round(w.temp_high)}°</div>{w.temp_low&&<div style={{fontSize:10,color:T.muted}}>{Math.round(w.temp_low)}° lo</div>}</div>}<button onClick={()=>del(w.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div>
           </div>
         );
       })}
-      {weather.length===0&&!liveWeather&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🌤️</div><div>No weather logs yet. Tap Auto-Fetch to pull today's weather.</div></div>}
+      {weather.length===0&&!liveWeather&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🌤️</div><div>No weather logs yet.</div></div>}
     </div>
   );
 }
@@ -1197,15 +1219,15 @@ function InfoTab({project,user,onEdit,onArchive}) {
       </div>
       {project.notes&&<div style={{...cardS,marginTop:12}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Notes</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{project.notes}</div></div>}
       {user.role==="pm"&&<div style={{marginTop:16,display:"flex",flexDirection:"column",gap:10}}>
-        <button onClick={onEdit} style={{...ghostBtn,width:"100%",textAlign:"center"}}>✏️ Edit Project</button>
-        <button onClick={onArchive} style={{...ghostBtn,width:"100%",textAlign:"center",color:T.muted}}>{project.status==="active"?"📦 Archive Project":"♻️ Restore Project"}</button>
+        <button onClick={onEdit} style={{...ghostBtn,width:"100%",textAlign:"center"}}>✏️ Edit Job</button>
+        <button onClick={onArchive} style={{...ghostBtn,width:"100%",textAlign:"center",color:T.muted}}>{project.status==="active"?"📦 Archive Job":"♻️ Restore Job"}</button>
       </div>}
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   PROJECT DETAIL  (orchestrator)
+   PROJECT DETAIL  (main job screen)
 ═══════════════════════════════════════════════════════════════ */
 const PTABS=[
   {id:"reports",icon:"📋",label:"Reports"},
@@ -1243,11 +1265,11 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}) {
 
   async function saveReport(d){try{await API.reports.create({...d,project_id:project.id});await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
   async function deleteReport(id){try{await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
-  async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved",approved_by:user.name}));await load(true);}catch(e){setErr(e.message);}}
+  async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));await load(true);}catch(e){setErr(e.message);}}
   async function updateProject(data){try{const [u]=await API.projects.update(project.id,data);setProject(u);onProjectUpdated(u);setEditProject(false);}catch(e){setErr(e.message);}}
   async function archiveProject(){
-    if(!window.confirm(project.status==="active"?"Archive this project?":"Restore this project?"))return;
+    if(!window.confirm(project.status==="active"?"Archive this job?":"Restore this job?"))return;
     await updateProject({status:project.status==="active"?"archived":"active"});onBack();
   }
 
@@ -1261,11 +1283,11 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}) {
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       {/* Sticky header */}
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
-        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Projects</button>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← All Jobs</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-          <div style={{flex:1,minWidth:0}}>
+          <div style={{flex:1,minWidth:0,paddingRight:10}}>
             <div style={{fontSize:19,fontWeight:900,color:T.text,letterSpacing:"-0.4px",lineHeight:1.2}}>{project.name}</div>
-            <div style={{fontSize:12,color:T.sub,marginTop:2}}>{project.client}{project.location?" · "+project.location:""}</div>
+            <div style={{fontSize:12,color:T.sub,marginTop:2}}>{[project.client,project.location].filter(Boolean).join(" · ")||"No details"}</div>
           </div>
           <span style={pill(project.status==="active"?T.green:T.muted)}>{project.status}</span>
         </div>
@@ -1275,7 +1297,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}) {
           {label:"Equip",val:"$"+(tot.e>=1000?(tot.e/1000).toFixed(1)+"k":fmt(tot.e)),color:T.yellow},
           {label:"Total",val:"$"+(tot.g>=1000?(tot.g/1000).toFixed(1)+"k":fmt(tot.g)),color:T.blue},
         ]}/>
-        {/* Scrollable tab bar */}
+        {/* Scrollable tabs */}
         <div style={{display:"flex",gap:4,marginTop:12,overflowX:"auto",paddingBottom:2,WebkitOverflowScrolling:"touch"}}>
           {PTABS.map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{flexShrink:0,background:tab===t.id?T.orange:"transparent",border:tab===t.id?"none":`1px solid ${T.border}`,borderRadius:10,padding:"8px 10px",fontSize:11,fontWeight:tab===t.id?800:500,cursor:"pointer",color:tab===t.id?"#09090B":T.sub,fontFamily:"inherit",whiteSpace:"nowrap"}}>
@@ -1291,8 +1313,17 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}) {
 
         {!loading&&tab==="reports"&&(
           <div>
-            <button onClick={()=>setScreen("newReport")} style={{...primBtn,marginBottom:14,borderRadius:14}}>+ New Daily Report</button>
-            {reports.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>📋</div><div>No reports yet.</div></div>}
+            {/* Prominent new report CTA */}
+            <button onClick={()=>setScreen("newReport")} style={{...primBtn,marginBottom:16,borderRadius:14,padding:"18px",fontSize:17}}>
+              📋 + New Daily Report
+            </button>
+            {reports.length===0&&(
+              <div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>
+                <div style={{fontSize:36,marginBottom:8}}>📋</div>
+                <div style={{fontSize:15,fontWeight:600,color:T.sub,marginBottom:4}}>No reports yet</div>
+                <div style={{fontSize:13}}>Tap above to add the first daily report for this job.</div>
+              </div>
+            )}
             {reports.map(r=>{
               const t=reportTotals(r);
               const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;
@@ -1320,13 +1351,13 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}) {
           </div>
         )}
 
-        {!loading&&tab==="time"&&<TimeCardsTab projectId={project.id} user={user} onErr={setErr}/>}
-        {!loading&&tab==="crew"&&<CrewTab projectId={project.id} user={user} onErr={setErr}/>}
-        {!loading&&tab==="subs"&&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
-        {!loading&&tab==="safety"&&<SafetyTab projectId={project.id} safety={safety} user={user} onRefresh={()=>load(true)} onErr={setErr}/>}
-        {!loading&&tab==="photos"&&<PhotosTab projectId={project.id} photos={photos} onRefresh={()=>load(true)} onErr={setErr}/>}
-        {!loading&&tab==="weather"&&<WeatherTab projectId={project.id} project={project} weather={weather} onRefresh={()=>load(true)} onErr={setErr}/>}
-        {!loading&&tab==="info"&&<InfoTab project={project} user={user} onEdit={()=>setEditProject(true)} onArchive={archiveProject}/>}
+        {!loading&&tab==="time"    &&<TimeCardsTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="crew"    &&<CrewTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="subs"    &&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="safety"  &&<SafetyTab projectId={project.id} safety={safety} user={user} onRefresh={()=>load(true)} onErr={setErr}/>}
+        {!loading&&tab==="photos"  &&<PhotosTab projectId={project.id} photos={photos} onRefresh={()=>load(true)} onErr={setErr}/>}
+        {!loading&&tab==="weather" &&<WeatherTab projectId={project.id} project={project} weather={weather} onRefresh={()=>load(true)} onErr={setErr}/>}
+        {!loading&&tab==="info"    &&<InfoTab project={project} user={user} onEdit={()=>setEditProject(true)} onArchive={archiveProject}/>}
       </div>
     </div>
   );
@@ -1348,14 +1379,8 @@ function PMDashboard({onBack,user}) {
   }
   useEffect(()=>{load();},[]);
 
-  async function approve(id){
-    try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});await load();}
-    catch(e){setErr(e.message);}
-  }
-  async function flag(id,notes){
-    try{await API.reports.update(id,{status:"flagged",pm_notes:notes});await load();}
-    catch(e){setErr(e.message);}
-  }
+  async function approve(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});await load();}catch(e){setErr(e.message);}}
+  async function flag(id,notes){try{await API.reports.update(id,{status:"flagged",pm_notes:notes});await load();}catch(e){setErr(e.message);}}
 
   if(activeReport&&activeProject) return (
     <ReportDetail report={activeReport} project={activeProject} user={user}
@@ -1368,30 +1393,28 @@ function PMDashboard({onBack,user}) {
   const allTot=reports.reduce((s,r)=>{const t=reportTotals(r);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
   const thisWeek=reports.filter(r=>{const d=new Date(r.date+"T12:00:00");return(Date.now()-d.getTime())/86400000<=7;});
 
-  // Worker hours summary from all reports this month
-  const monthStart=new Date(); monthStart.setDate(1); const ms=monthStart.toISOString().split("T")[0];
+  const monthStart=new Date();monthStart.setDate(1);const ms=monthStart.toISOString().split("T")[0];
   const monthReports=reports.filter(r=>r.date>=ms);
   const workerHours={};
   monthReports.forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!workerHours[l.name])workerHours[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0};workerHours[l.name].reg+=parseFloat(l.regHrs)||0;workerHours[l.name].ot+=parseFloat(l.otHrs)||0;workerHours[l.name].travel+=parseFloat(l.travelHrs)||0;workerHours[l.name].pay+=laborAmt(l);}));
   const workerRows=Object.values(workerHours).sort((a,b)=>b.pay-a.pay);
 
-  // Project billing breakdown
   const projMap={};
   projects.forEach(p=>{projMap[p.id]={...p,labor:0,equip:0,mats:0,grand:0,count:0};});
   reports.forEach(r=>{if(!projMap[r.project_id])return;const t=reportTotals(r);projMap[r.project_id].labor+=t.labor;projMap[r.project_id].equip+=t.equip;projMap[r.project_id].mats+=t.mats;projMap[r.project_id].grand+=t.grand;projMap[r.project_id].count++;});
   const projRows=Object.values(projMap).filter(p=>p.status==="active").sort((a,b)=>b.grand-a.grand);
 
-  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:"✅ Approvals"},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"}];
+  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:"✅ Approvals"+(pending.length>0?` (${pending.length})`:"")} ,{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"}];
 
   return (
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
-        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Projects</button>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Jobs</button>
         <div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px",marginBottom:12}}>PM Dashboard</div>
         <div style={{display:"flex",gap:6,overflowX:"auto"}}>
           {DMTABS.map(t=>(
             <button key={t.id} onClick={()=>setPmTab(t.id)} style={{flexShrink:0,background:pmTab===t.id?T.orange:"transparent",border:pmTab===t.id?"none":`1px solid ${T.border}`,borderRadius:10,padding:"9px 12px",fontSize:12,fontWeight:pmTab===t.id?800:500,cursor:"pointer",color:pmTab===t.id?"#09090B":T.sub,fontFamily:"inherit"}}>
-              {t.l}{t.id==="approvals"&&pending.length>0?` (${pending.length})`:""}
+              {t.l}
             </button>
           ))}
         </div>
@@ -1406,9 +1429,9 @@ function PMDashboard({onBack,user}) {
               <div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
                   {[
-                    {icon:"💰",label:"Total Billed (All Time)",val:"$"+fmt(allTot.g),color:T.green},
+                    {icon:"💰",label:"Total Billed",val:"$"+fmt(allTot.g),color:T.green},
                     {icon:"📋",label:"Reports This Week",val:thisWeek.length,color:T.orange},
-                    {icon:"🏗️",label:"Active Projects",val:projects.filter(p=>p.status==="active").length,color:T.blue},
+                    {icon:"🏗️",label:"Active Jobs",val:projects.filter(p=>p.status==="active").length,color:T.blue},
                     {icon:"✅",label:"Pending Approvals",val:pending.length,color:pending.length>0?T.yellow:T.muted},
                   ].map(k=>(
                     <div key={k.label} style={cardS}>
@@ -1419,8 +1442,9 @@ function PMDashboard({onBack,user}) {
                   ))}
                 </div>
                 <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>Recent Reports</div>
-                {reports.slice(0,15).map(r=>{
-                  const t=reportTotals(r);const p=projects.find(x=>x.id===r.project_id);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;
+                {reports.slice(0,20).map(r=>{
+                  const t=reportTotals(r);const p=projects.find(x=>x.id===r.project_id);
+                  const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;
                   return(
                     <div key={r.id} onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...cardS,marginBottom:8,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div><div style={{fontSize:13,fontWeight:700}}>{fmtShort(r.date)} · {r.projects?.name||"Unknown"}</div><div style={{fontSize:11,color:T.muted}}>{r.submitted_by||"Unknown"} · <span style={{color:sc}}>{(r.status||"submitted").toUpperCase()}</span></div></div>
@@ -1428,6 +1452,7 @@ function PMDashboard({onBack,user}) {
                     </div>
                   );
                 })}
+                {reports.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>No reports yet.</div>}
               </div>
             )}
 
@@ -1441,9 +1466,9 @@ function PMDashboard({onBack,user}) {
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                         <div>
                           <div style={{fontSize:15,fontWeight:800}}>{fmtShort(r.date)}</div>
-                          <div style={{fontSize:12,color:T.sub}}>{r.projects?.name||"Unknown Project"}</div>
+                          <div style={{fontSize:12,color:T.sub}}>{r.projects?.name||"Unknown Job"}</div>
                           <div style={{fontSize:12,color:T.muted}}>by {r.submitted_by||"Unknown"}</div>
-                          {r.description&&<div style={{fontSize:12,color:T.sub,marginTop:4,lineHeight:1.4}}>{r.description.slice(0,120)}{r.description.length>120?"…":""}</div>}
+                          {r.description&&<div style={{fontSize:12,color:T.sub,marginTop:4,lineHeight:1.4}}>{r.description.slice(0,100)}{r.description.length>100?"…":""}</div>}
                         </div>
                         <div style={{textAlign:"right",flexShrink:0,marginLeft:10}}>
                           <div style={{fontSize:18,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div>
@@ -1453,11 +1478,11 @@ function PMDashboard({onBack,user}) {
                           </div>
                         </div>
                       </div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
                         <button onClick={()=>approve(r.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:10,padding:"12px"}}>✓ Approve</button>
                         <button onClick={()=>{const n=window.prompt("Flag note for crew:");if(n!==null)flag(r.id,n);}} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:10,padding:"12px"}}>🚩 Flag</button>
                       </div>
-                      <button onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...ghostBtn,width:"100%",textAlign:"center",marginTop:8,padding:"10px"}}>View Full Report</button>
+                      <button onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...ghostBtn,width:"100%",textAlign:"center",padding:"10px"}}>View Full Report →</button>
                     </div>
                   );
                 })}
@@ -1500,7 +1525,7 @@ function PMDashboard({onBack,user}) {
                     </div>
                   ))}
                 </div>
-                <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>By Project</div>
+                <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>By Job</div>
                 {projRows.map(p=>(
                   <div key={p.id} style={{...cardS,marginBottom:10}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
@@ -1530,49 +1555,51 @@ function PMDashboard({onBack,user}) {
    ROOT APP
 ═══════════════════════════════════════════════════════════════ */
 export default function App() {
-  const [user,setUser]     = useState(null);
+  const [user,setUser]         = useState(null);
   const [projects,setProjects] = useState([]);
   const [loading,setLoading]   = useState(false);
   const [err,setErr]           = useState("");
-  const [screen,setScreen]     = useState("projects"); // projects|newProject|projectDetail|pmDashboard
+  const [screen,setScreen]     = useState("projects");
   const [activeProject,setActiveProject] = useState(null);
 
   useEffect(()=>{
     const link=document.createElement("link");
     link.rel="stylesheet";
-    link.href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;0,9..40,900&display=swap";
+    link.href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&display=swap";
     document.head.appendChild(link);
   },[]);
 
   async function loadProjects() {
-    setLoading(true);setErr("");
-    try{
-      const projs=await API.projects.list();
-      const enriched=await Promise.all((projs||[]).map(async p=>{
-        try{
-          const reps=await API.reports.forProject(p.id);
-          const billed=(reps||[]).reduce((s,r)=>s+reportTotals(r).grand,0);
-          return {...p,_reports:(reps||[]).length,_billed:billed};
-        }catch{return {...p,_reports:0,_billed:0};}
+    setLoading(true); setErr("");
+    try {
+      const projs = await API.projects.list();
+      const enriched = await Promise.all((projs||[]).map(async p=>{
+        try {
+          const reps = await API.reports.forProject(p.id);
+          const billed = (reps||[]).reduce((s,r)=>s+reportTotals(r).grand,0);
+          const sorted = [...(reps||[])].sort((a,b)=>b.date>a.date?1:-1);
+          const lastReport = sorted[0]?.date||null;
+          return {...p,_reports:(reps||[]).length,_billed:billed,_lastReport:lastReport};
+        } catch {
+          return {...p,_reports:0,_billed:0,_lastReport:null};
+        }
       }));
       setProjects(enriched);
-    }catch(e){setErr(e.message);}
+    } catch(e) { setErr(e.message); }
     setLoading(false);
   }
 
-  useEffect(()=>{if(user)loadProjects();},[user]);
+  useEffect(()=>{ if(user) loadProjects(); },[user]);
 
   async function handleNewProject(data) {
-    try{await API.projects.create({...data,created_by:user.name});await loadProjects();setScreen("projects");}
-    catch(e){setErr(e.message);}
+    try { await API.projects.create({...data,created_by:user.name}); await loadProjects(); setScreen("projects"); }
+    catch(e) { setErr(e.message); }
   }
 
   function handleProjectUpdated(updated) {
     setActiveProject(p=>({...p,...updated}));
     loadProjects();
   }
-
-  function selectProject(p) { setActiveProject(p); setScreen("projectDetail"); }
 
   if(!user) return (
     <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
@@ -1582,9 +1609,11 @@ export default function App() {
 
   return (
     <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif",background:T.bg,minHeight:"100vh"}}>
-      {err&&<div style={{position:"fixed",top:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,zIndex:200,padding:"0 16px"}}>
-        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
-      </div>}
+      {err&&(
+        <div style={{position:"fixed",top:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,zIndex:200,padding:"0 16px"}}>
+          <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        </div>
+      )}
 
       {screen==="pmDashboard"&&<PMDashboard user={user} onBack={()=>setScreen("projects")}/>}
 
@@ -1594,7 +1623,7 @@ export default function App() {
         <ProjectDetail
           project={projects.find(p=>p.id===activeProject.id)||activeProject}
           user={user}
-          onBack={()=>{setScreen("projects");loadProjects();}}
+          onBack={()=>{ setScreen("projects"); loadProjects(); }}
           onProjectUpdated={handleProjectUpdated}
         />
       )}
@@ -1602,9 +1631,9 @@ export default function App() {
       {screen==="projects"&&(
         <ProjectsHome
           user={user} projects={projects} loading={loading}
-          onSelect={selectProject}
+          onSelect={p=>{ setActiveProject(p); setScreen("projectDetail"); }}
           onNew={()=>setScreen("newProject")}
-          onLogout={()=>{setUser(null);setProjects([]);setScreen("projects");}}
+          onLogout={()=>{ setUser(null); setProjects([]); setScreen("projects"); }}
           onDash={()=>setScreen("pmDashboard")}
         />
       )}
