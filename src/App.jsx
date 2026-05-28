@@ -1299,7 +1299,12 @@ function TimeCardsScreen({user,projects,onBack}){
 
   function exportTimeCards(){
     const wb=XLSX.utils.book_new();
-    const rangeCards=cards.filter(c=>c.date>=exportFrom&&c.date<=exportTo).sort((a,b)=>a.worker_name.localeCompare(b.worker_name)||a.date.localeCompare(b.date));
+    const rangeCards=cards.filter(c=>{
+      const inRange=c.date>=exportFrom&&c.date<=exportTo;
+      const inJobs=selectedJobs.length===0||(c.project_id&&selectedJobs.includes(c.project_id))||(!c.project_id&&selectedJobs.length===0);
+      return inRange&&inJobs;
+    }).sort((a,b)=>a.worker_name.localeCompare(b.worker_name)||a.date.localeCompare(b.date));
+    const jobLabel=selectedJobs.length===0?"All Jobs":selectedJobs.length===1?(projects.find(p=>p.id===selectedJobs[0])?.name||"1 Job"):`${selectedJobs.length} Jobs`;
 
     // ── Sheet 1: Summary by Employee ──
     const workerSummary={};
@@ -1314,6 +1319,7 @@ function TimeCardsScreen({user,projects,onBack}){
     const sumRows=[
       ["AIME Field OS — Time Card Report"],
       [`Period: ${fmtDate(exportFrom)} to ${fmtDate(exportTo)}`],
+      [`Jobs: ${jobLabel}`],
       [`Generated: ${new Date().toLocaleString()}`],
       [],
       ["Employee Name","Regular Hours","Overtime Hours","Total Hours","Days Worked"],
@@ -1387,10 +1393,15 @@ function TimeCardsScreen({user,projects,onBack}){
     ws3["!cols"]=[{wch:12},{wch:24},{wch:28},{wch:16},{wch:14},{wch:10},{wch:10},{wch:14},{wch:12},{wch:12},{wch:22}];
     XLSX.utils.book_append_sheet(wb,ws3,"All Entries");
 
-    XLSX.writeFile(wb,`AIME_TimeCards_${exportFrom}_to_${exportTo}.xlsx`);
+    const safeLabel=jobLabel.replace(/[^a-zA-Z0-9]/g,"_");
+    XLSX.writeFile(wb,`AIME_TimeCards_${safeLabel}_${exportFrom}_to_${exportTo}.xlsx`);
   }
 
   const TABS=[{id:"log",l:"📋 Log"},{id:"week",l:"📊 This Week"},{id:"export",l:"📥 Export"}];
+  const [selectedJobs,setSelectedJobs]=useState([]); // job ids selected for export
+  function toggleJob(id){ setSelectedJobs(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]); }
+  function selectAllJobs(){ setSelectedJobs(projects.filter(p=>p.status==="active").map(p=>p.id)); }
+  function clearJobs(){ setSelectedJobs([]); }
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -1562,7 +1573,7 @@ function TimeCardsScreen({user,projects,onBack}){
         {/* ── EXPORT TAB ── */}
         {!loading&&tab==="export"&&(
           <div>
-            {/* Quick presets */}
+            {/* ── DATE RANGE ── */}
             <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Quick Select Period</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
               {[
@@ -1583,9 +1594,54 @@ function TimeCardsScreen({user,projects,onBack}){
               </div>
             </div>
 
+            {/* ── JOB SELECTOR ── */}
+            <div style={{...cardS,marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <div style={{fontSize:13,fontWeight:700}}>Select Jobs to Include</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={selectAllJobs} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"5px 10px",color:T.orange,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>All</button>
+                  <button onClick={clearJobs} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",color:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>None</button>
+                </div>
+              </div>
+              {/* All Jobs option */}
+              <div onClick={()=>selectedJobs.length===0?selectAllJobs():clearJobs()} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,background:selectedJobs.length===0?T.orangeLow:T.surface,border:`1px solid ${selectedJobs.length===0?T.orange:T.border}`,marginBottom:8,cursor:"pointer"}}>
+                <div style={{width:20,height:20,borderRadius:5,border:`2px solid ${selectedJobs.length===0?T.orange:T.border}`,background:selectedJobs.length===0?T.orange:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#09090B",flexShrink:0}}>
+                  {selectedJobs.length===0?"✓":""}
+                </div>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:selectedJobs.length===0?T.orange:T.text}}>All Jobs + General Time</div>
+                  <div style={{fontSize:11,color:T.muted}}>Include all entries regardless of job</div>
+                </div>
+              </div>
+              {/* Individual jobs */}
+              {projects.filter(p=>p.status==="active").map(p=>{
+                const sel=selectedJobs.includes(p.id);
+                const divMeta=DIV_META[p.division]||{icon:"🏗️",color:T.orange};
+                const jobCards=cards.filter(c=>c.project_id===p.id&&c.date>=exportFrom&&c.date<=exportTo);
+                const jobHrs=jobCards.reduce((s,c)=>s+(c.total_hours||0),0);
+                return(
+                  <div key={p.id} onClick={()=>{if(selectedJobs.length===0)clearJobs();toggleJob(p.id);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,background:sel?divMeta.color+"18":T.surface,border:`1px solid ${sel?divMeta.color:T.border}`,marginBottom:6,cursor:"pointer"}}>
+                    <div style={{width:20,height:20,borderRadius:5,border:`2px solid ${sel?divMeta.color:T.border}`,background:sel?divMeta.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"#09090B",flexShrink:0,fontWeight:900}}>
+                      {sel?"✓":""}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:700,color:sel?divMeta.color:T.text}}>{p.name}</div>
+                      <div style={{fontSize:11,color:T.muted}}>{divMeta.icon} {p.division}{p.afe?" · AFE: "+p.afe:""}</div>
+                    </div>
+                    {jobHrs>0&&<div style={{fontSize:12,fontWeight:700,color:T.green,flexShrink:0}}>{jobHrs.toFixed(1)}h</div>}
+                    {jobHrs===0&&<div style={{fontSize:11,color:T.muted,flexShrink:0}}>No entries</div>}
+                  </div>
+                );
+              })}
+            </div>
+
             {/* Detailed preview table */}
             {(()=>{
-              const rc=cards.filter(c=>c.date>=exportFrom&&c.date<=exportTo).sort((a,b)=>a.date>b.date?1:a.date<b.date?-1:a.worker_name.localeCompare(b.worker_name));
+              const rc=cards.filter(c=>{
+                const inRange=c.date>=exportFrom&&c.date<=exportTo;
+                const inJobs=selectedJobs.length===0||(c.project_id&&selectedJobs.includes(c.project_id))||(!c.project_id&&selectedJobs.length===0);
+                return inRange&&inJobs;
+              }).sort((a,b)=>a.date>b.date?1:a.date<b.date?-1:a.worker_name.localeCompare(b.worker_name));
               const totalReg=rc.reduce((s,c)=>s+Math.max(0,(c.total_hours||0)-(c.ot_hours||0)),0);
               const totalOT=rc.reduce((s,c)=>s+(c.ot_hours||0),0);
               const totalH=rc.reduce((s,c)=>s+(c.total_hours||0),0);
