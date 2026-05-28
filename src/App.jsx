@@ -757,7 +757,7 @@ function UserManagementScreen({onBack,currentUser}){
       <div style={{padding:"16px 16px 100px"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
         {!active&&<div style={{marginBottom:14}}><label style={lbl}>Name</label><select value={f.name} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>}
-        {active&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:16,fontWeight:800}}>{active.name}</div><div style={{fontSize:12,color:T.muted}}>Editing permissions</div></div>}
+        {active&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:16,fontWeight:800,color:T.orange}}>{active.name}</div><div style={{fontSize:12,color:T.muted}}>Editing permissions</div></div>}
 
         <div style={{marginBottom:14}}>
           <label style={lbl}>Permission Level</label>
@@ -809,7 +809,7 @@ function UserManagementScreen({onBack,currentUser}){
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 <div style={{width:10,height:10,borderRadius:"50%",background:m.color,flexShrink:0}}/>
                 <div style={{flex:1}}>
-                  <div style={{fontSize:14,fontWeight:700}}>{p.name}</div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.orange}}>{p.name}</div>
                   <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
                     <span style={pill(m.color)}>{m.label}</span>
                     {p.division&&<span style={pill(DIV_META[p.division]?.color||T.muted)}>{DIV_META[p.division]?.icon} {p.division}</span>}
@@ -828,7 +828,7 @@ function UserManagementScreen({onBack,currentUser}){
           <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 10px"}}>Unconfigured (Default: Field Crew)</div>
           {NAMES.filter(n=>!profileMap[n]).slice(0,15).map(n=>(
             <div key={n} style={{...cardS,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",opacity:0.5}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:10,height:10,borderRadius:"50%",background:T.green}}/><span style={{fontSize:13}}>{n}</span><span style={pill(T.green)}>Field Crew</span></div>
+              <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:10,height:10,borderRadius:"50%",background:T.green}}/><span style={{fontSize:13,color:T.orange,fontWeight:700}}>{n}</span><span style={pill(T.green)}>Field Crew</span></div>
               <button onClick={()=>{setF({...blank,name:n});setMode("edit");}} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",color:T.sub,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Set Role</button>
             </div>
           ))}
@@ -874,7 +874,7 @@ function CrewDirectoryScreen({onBack,user}){
   if(mode==="view"&&active) return(
     <div style={{background:T.bg,minHeight:"100vh",padding:16,fontFamily:"inherit"}}>
       <button onClick={()=>{setMode("list");setActive(null);}} style={{...ghostBtn,marginBottom:14}}>← Directory</button>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}><div><div style={{fontSize:22,fontWeight:900,letterSpacing:"-0.5px"}}>{active.name}</div>{active.classification&&<div style={{fontSize:14,color:T.sub,marginTop:2}}>{active.classification}</div>}</div><button onClick={()=>{setF({...blank,...active,certifications:active.certifications||[]});setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 14px",color:T.orange,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✏️ Edit</button></div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}><div><div style={{fontSize:22,fontWeight:900,letterSpacing:"-0.5px",color:T.orange}}>{active.name}</div>{active.classification&&<div style={{fontSize:14,color:T.sub,marginTop:2}}>{active.classification}</div>}</div><button onClick={()=>{setF({...blank,...active,certifications:active.certifications||[]});setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 14px",color:T.orange,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✏️ Edit</button></div>
       {(active.phone||active.email)&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Contact</div>{active.phone&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>Cell</span><a href={`tel:${active.phone}`} style={{fontSize:13,fontWeight:600,color:T.blue,textDecoration:"none"}}>{active.phone}</a></div>}{active.email&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0"}}><span style={{fontSize:13,color:T.muted}}>Email</span><a href={`mailto:${active.email}`} style={{fontSize:13,fontWeight:600,color:T.blue,textDecoration:"none"}}>{active.email}</a></div>}</div>}
       {(active.emergency_contact_name||active.emergency_contact_phone)&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.red}`}}><div style={{fontSize:12,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🆘 Emergency Contact</div>{active.emergency_contact_name&&<div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{active.emergency_contact_name}</div>}{active.emergency_contact_phone&&<a href={`tel:${active.emergency_contact_phone}`} style={{fontSize:14,color:T.red,textDecoration:"none",fontWeight:700}}>📞 {active.emergency_contact_phone}</a>}</div>}
       {(active.certifications||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🎖️ Certifications</div>{(active.certifications||[]).map((cert,i)=>{const exp=cert.expiry?daysUntil(cert.expiry):null;const expired=exp!==null&&exp<0;const expiring=exp!==null&&exp>=0&&exp<=30;return(<div key={cert.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<active.certifications.length-1?`1px solid ${T.border}`:"none"}}><div><div style={{fontSize:13,fontWeight:600}}>{cert.name}</div>{cert.cert_number&&<div style={{fontSize:11,color:T.muted}}>#{cert.cert_number}</div>}</div>{cert.expiry&&<span style={pill(expired?T.red:expiring?T.yellow:T.green)}>{expired?"EXPIRED":expiring?`Exp ${exp}d`:fmtDate(cert.expiry)}</span>}</div>);})}</div>}
@@ -894,8 +894,8 @@ function CrewDirectoryScreen({onBack,user}){
         {loading&&<Spinner/>}
         {!loading&&<>
           {active_m.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>👥</div><div>No crew members yet.</div></div>}
-          {active_m.map(m=>{const expiredCerts=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)<0);const expiringSoon=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)>=0&&daysUntil(c.expiry)<=30);return(<div key={m.id} onClick={()=>{setActive(m);setMode("view");}} style={{...cardS,marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}><div style={{width:44,height:44,borderRadius:12,background:T.orangeLow,border:`2px solid ${T.orange}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:T.orange,flexShrink:0}}>{m.name.split(" ").map(w=>w[0]).slice(0,2).join("")}</div><div style={{flex:1,minWidth:0}}><div style={{fontSize:15,fontWeight:700}}>{m.name}</div><div style={{fontSize:12,color:T.sub}}>{m.classification||"No classification"}{m.phone?" · "+m.phone:""}</div><div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>{(m.certifications||[]).length>0&&<span style={pill(T.blue)}>{m.certifications.length} certs</span>}{expiredCerts.length>0&&<span style={pill(T.red)}>{expiredCerts.length} expired</span>}{expiringSoon.length>0&&<span style={pill(T.yellow)}>{expiringSoon.length} expiring</span>}</div></div><span style={{fontSize:16,color:T.muted}}>›</span></div>);})}
-          {inactive_m.length>0&&<><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 10px"}}>Inactive</div>{inactive_m.map(m=>(<div key={m.id} onClick={()=>{setActive(m);setMode("view");}} style={{...cardS,marginBottom:8,cursor:"pointer",opacity:0.5,display:"flex",alignItems:"center",gap:12}}><div style={{width:36,height:36,borderRadius:10,background:T.surface,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:T.muted,flexShrink:0}}>{m.name.split(" ").map(w=>w[0]).slice(0,2).join("")}</div><div><div style={{fontSize:14,fontWeight:600}}>{m.name}</div><div style={{fontSize:12,color:T.muted}}>{m.classification}</div></div></div>))}</>}
+          {active_m.map(m=>{const expiredCerts=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)<0);const expiringSoon=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)>=0&&daysUntil(c.expiry)<=30);return(<div key={m.id} onClick={()=>{setActive(m);setMode("view");}} style={{...cardS,marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}><div style={{width:44,height:44,borderRadius:12,background:T.orangeLow,border:`2px solid ${T.orange}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:T.orange,flexShrink:0}}>{m.name.split(" ").map(w=>w[0]).slice(0,2).join("")}</div><div style={{flex:1,minWidth:0}}><div style={{fontSize:15,fontWeight:700,color:T.orange}}>{m.name}</div><div style={{fontSize:12,color:T.sub}}>{m.classification||"No classification"}{m.phone?" · "+m.phone:""}</div><div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>{(m.certifications||[]).length>0&&<span style={pill(T.blue)}>{m.certifications.length} certs</span>}{expiredCerts.length>0&&<span style={pill(T.red)}>{expiredCerts.length} expired</span>}{expiringSoon.length>0&&<span style={pill(T.yellow)}>{expiringSoon.length} expiring</span>}</div></div><span style={{fontSize:16,color:T.muted}}>›</span></div>);})}
+          {inactive_m.length>0&&<><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 10px"}}>Inactive</div>{inactive_m.map(m=>(<div key={m.id} onClick={()=>{setActive(m);setMode("view");}} style={{...cardS,marginBottom:8,cursor:"pointer",opacity:0.5,display:"flex",alignItems:"center",gap:12}}><div style={{width:36,height:36,borderRadius:10,background:T.surface,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:T.muted,flexShrink:0}}>{m.name.split(" ").map(w=>w[0]).slice(0,2).join("")}</div><div><div style={{fontSize:14,fontWeight:600,color:T.orange}}>{m.name}</div><div style={{fontSize:12,color:T.muted}}>{m.classification}</div></div></div>))}</>}
         </>}
       </div>
     </div>
@@ -1164,7 +1164,7 @@ function PMDashboard({onBack,user}){
     if(editing) return(
       <div style={{...cardS,borderLeft:`3px solid ${ROLE_META[editing.role]?.color||T.border}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-          <div style={{fontSize:16,fontWeight:800}}>{editing.id?"Edit":"Add"}: {editing.name}</div>
+          <div style={{fontSize:16,fontWeight:800,color:T.orange}}>{editing.id?"Edit":"Add"}: {editing.name}</div>
           <button onClick={()=>setEditing(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18}}>×</button>
         </div>
         {!editing.id&&<div style={{marginBottom:12}}><label style={lbl}>Name</label><select value={editing.name||""} onChange={e=>setEditing(x=>({...x,name:e.target.value}))} style={inpSel}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>}
@@ -1211,7 +1211,7 @@ function PMDashboard({onBack,user}){
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <div style={{width:10,height:10,borderRadius:"50%",background:m.color,flexShrink:0}}/>
               <div style={{flex:1}}>
-                <div style={{fontSize:14,fontWeight:700}}>{p.name}</div>
+                <div style={{fontSize:14,fontWeight:700,color:T.orange}}>{p.name}</div>
                 <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
                   <span style={pill(m.color)}>{m.label}</span>
                   {p.division?<span style={pill(DIV_META[p.division]?.color||T.muted)}>{DIV_META[p.division]?.icon} {p.division}</span>:<span style={pill(T.muted)}>All Divisions</span>}
@@ -1228,7 +1228,7 @@ function PMDashboard({onBack,user}){
         <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"16px 0 10px"}}>Not Yet Configured (tap Edit to set role)</div>
         {NAMES.filter(n=>!profileMap[n]).map(n=>(
           <div key={n} style={{...cardS,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",opacity:0.5}}>
-            <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:8,height:8,borderRadius:"50%",background:T.green}}/><span style={{fontSize:13}}>{n}</span><span style={pill(T.green)}>Field Crew</span></div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:8,height:8,borderRadius:"50%",background:T.green}}/><span style={{fontSize:13,color:T.orange,fontWeight:700}}>{n}</span><span style={pill(T.green)}>Field Crew</span></div>
             <button onClick={()=>setEditing({name:n,role:"crew",division:null,pin:"",id:null})} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",color:T.sub,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Set Role</button>
           </div>
         ))}
@@ -1299,11 +1299,9 @@ function TimeCardsScreen({user,projects,onBack}){
 
   function exportTimeCards(){
     const wb=XLSX.utils.book_new();
+    const rangeCards=cards.filter(c=>c.date>=exportFrom&&c.date<=exportTo).sort((a,b)=>a.worker_name.localeCompare(b.worker_name)||a.date.localeCompare(b.date));
 
-    // Fetch cards in range
-    const rangeCards=cards.filter(c=>c.date>=exportFrom&&c.date<=exportTo);
-
-    // Summary sheet by worker
+    // ── Sheet 1: Summary by Employee ──
     const workerSummary={};
     rangeCards.forEach(c=>{
       if(!workerSummary[c.worker_name])workerSummary[c.worker_name]={name:c.worker_name,reg:0,ot:0,total:0,days:0};
@@ -1312,36 +1310,82 @@ function TimeCardsScreen({user,projects,onBack}){
       workerSummary[c.worker_name].total+=(c.total_hours||0);
       workerSummary[c.worker_name].days++;
     });
-
+    const wRows=Object.values(workerSummary).sort((a,b)=>a.name.localeCompare(b.name));
     const sumRows=[
       ["AIME Field OS — Time Card Report"],
-      [`Period: ${exportFrom} to ${exportTo}`],
+      [`Period: ${fmtDate(exportFrom)} to ${fmtDate(exportTo)}`],
       [`Generated: ${new Date().toLocaleString()}`],
       [],
-      ["Worker","Regular Hrs","OT Hrs","Total Hrs","Days Worked"],
-      ...Object.values(workerSummary).sort((a,b)=>a.name.localeCompare(b.name)).map(w=>[w.name,w.reg.toFixed(2),w.ot.toFixed(2),w.total.toFixed(2),w.days]),
+      ["Employee Name","Regular Hours","Overtime Hours","Total Hours","Days Worked"],
+      ...wRows.map(w=>[w.name,parseFloat(w.reg.toFixed(2)),parseFloat(w.ot.toFixed(2)),parseFloat(w.total.toFixed(2)),w.days]),
       [],
-      ["TOTALS","",
-        Object.values(workerSummary).reduce((s,w)=>s+w.reg,0).toFixed(2),
-        Object.values(workerSummary).reduce((s,w)=>s+w.ot,0).toFixed(2),
-        Object.values(workerSummary).reduce((s,w)=>s+w.total,0).toFixed(2),
+      ["TOTALS",
+        parseFloat(wRows.reduce((s,w)=>s+w.reg,0).toFixed(2)),
+        parseFloat(wRows.reduce((s,w)=>s+w.ot,0).toFixed(2)),
+        parseFloat(wRows.reduce((s,w)=>s+w.total,0).toFixed(2)),
+        wRows.reduce((s,w)=>s+w.days,0),
       ],
     ];
     const ws1=XLSX.utils.aoa_to_sheet(sumRows);
-    ws1["!cols"]=[{wch:25},{wch:14},{wch:12},{wch:12},{wch:14}];
+    ws1["!cols"]=[{wch:26},{wch:16},{wch:16},{wch:14},{wch:14}];
+    // Bold header row
+    ["A5","B5","C5","D5","E5"].forEach(addr=>{if(ws1[addr])ws1[addr].s={font:{bold:true}};});
     XLSX.utils.book_append_sheet(wb,ws1,"Summary");
 
-    // Detail sheet
-    const detailRows=[["Date","Worker","Project","Clock In","Clock Out","Regular Hrs","OT Hrs","Total Hrs","Notes"]];
-    rangeCards.sort((a,b)=>a.date>b.date?1:-1).forEach(c=>{
-      const proj=projects.find(p=>p.id===c.project_id);
-      detailRows.push([c.date,c.worker_name,proj?.name||"",c.clock_in||"",c.clock_out||"",
-        Math.max(0,(c.total_hours||0)-(c.ot_hours||0)).toFixed(2),
-        (c.ot_hours||0).toFixed(2),(c.total_hours||0).toFixed(2),c.notes||""]);
+    // ── Sheet 2: Detailed by Employee ──
+    const detailRows=[
+      ["AIME Field OS — Detailed Time Card Report"],
+      [`Period: ${fmtDate(exportFrom)} to ${fmtDate(exportTo)}`],
+      [],
+    ];
+    // Group by employee
+    const byEmp={};
+    rangeCards.forEach(c=>{if(!byEmp[c.worker_name])byEmp[c.worker_name]=[];byEmp[c.worker_name].push(c);});
+    Object.entries(byEmp).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name,entries])=>{
+      detailRows.push([name.toUpperCase(),"","","","","","",""]);
+      detailRows.push(["Date","Job Name","Job Number (AFE)","Division","Clock In","Clock Out","Regular Hrs","OT Hrs","Total Hrs","Notes"]);
+      let empReg=0,empOT=0,empTotal=0;
+      entries.sort((a,b)=>a.date.localeCompare(b.date)).forEach(c=>{
+        const proj=projects.find(p=>p.id===c.project_id);
+        const reg=parseFloat(Math.max(0,(c.total_hours||0)-(c.ot_hours||0)).toFixed(2));
+        const ot=parseFloat((c.ot_hours||0).toFixed(2));
+        const tot=parseFloat((c.total_hours||0).toFixed(2));
+        empReg+=reg; empOT+=ot; empTotal+=tot;
+        detailRows.push([
+          c.date,
+          proj?.name||"General / No Project",
+          proj?.afe||"—",
+          proj?.division||"—",
+          c.clock_in||"",
+          c.clock_out||"",
+          reg, ot, tot,
+          c.notes||""
+        ]);
+      });
+      detailRows.push(["SUBTOTAL","","","","","",
+        parseFloat(empReg.toFixed(2)),
+        parseFloat(empOT.toFixed(2)),
+        parseFloat(empTotal.toFixed(2)),""]
+      );
+      detailRows.push([]); // spacer
     });
     const ws2=XLSX.utils.aoa_to_sheet(detailRows);
-    ws2["!cols"]=[{wch:12},{wch:22},{wch:25},{wch:10},{wch:10},{wch:14},{wch:10},{wch:12},{wch:20}];
-    XLSX.utils.book_append_sheet(wb,ws2,"Detail");
+    ws2["!cols"]=[{wch:12},{wch:28},{wch:16},{wch:14},{wch:10},{wch:10},{wch:14},{wch:12},{wch:12},{wch:22}];
+    XLSX.utils.book_append_sheet(wb,ws2,"Detailed");
+
+    // ── Sheet 3: Raw data (all entries flat) ──
+    const rawRows=[["Date","Employee Name","Job Name","Job Number (AFE)","Division","Clock In","Clock Out","Regular Hrs","OT Hrs","Total Hrs","Notes"]];
+    rangeCards.forEach(c=>{
+      const proj=projects.find(p=>p.id===c.project_id);
+      rawRows.push([c.date,c.worker_name,proj?.name||"",proj?.afe||"",proj?.division||"",c.clock_in||"",c.clock_out||"",
+        parseFloat(Math.max(0,(c.total_hours||0)-(c.ot_hours||0)).toFixed(2)),
+        parseFloat((c.ot_hours||0).toFixed(2)),
+        parseFloat((c.total_hours||0).toFixed(2)),
+        c.notes||""]);
+    });
+    const ws3=XLSX.utils.aoa_to_sheet(rawRows);
+    ws3["!cols"]=[{wch:12},{wch:24},{wch:28},{wch:16},{wch:14},{wch:10},{wch:10},{wch:14},{wch:12},{wch:12},{wch:22}];
+    XLSX.utils.book_append_sheet(wb,ws3,"All Entries");
 
     XLSX.writeFile(wb,`AIME_TimeCards_${exportFrom}_to_${exportTo}.xlsx`);
   }
@@ -1518,48 +1562,118 @@ function TimeCardsScreen({user,projects,onBack}){
         {/* ── EXPORT TAB ── */}
         {!loading&&tab==="export"&&(
           <div>
+            {/* Quick presets */}
+            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Quick Select Period</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+              {[
+                {label:"This Week",from:getWeekStart(),to:today()},
+                {label:"Last 2 Weeks",from:(()=>{const d=new Date();d.setDate(d.getDate()-14);return d.toISOString().split("T")[0];})(),to:today()},
+                {label:"This Month",from:(()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})(),to:today()},
+                {label:"Last 30 Days",from:(()=>{const d=new Date();d.setDate(d.getDate()-30);return d.toISOString().split("T")[0];})(),to:today()},
+              ].map(p=>(
+                <button key={p.label} onClick={()=>{setExportFrom(p.from);setExportTo(p.to);}} style={{padding:"10px",borderRadius:10,border:`1px solid ${exportFrom===p.from&&exportTo===p.to?T.orange:T.border}`,background:exportFrom===p.from&&exportTo===p.to?T.orangeLow:T.card,color:exportFrom===p.from&&exportTo===p.to?T.orange:T.sub,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>{p.label}</button>
+              ))}
+            </div>
+
             <div style={{...cardS,marginBottom:14}}>
-              <div style={{fontSize:14,fontWeight:700,marginBottom:12}}>Select Date Range</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:700,marginBottom:10}}>Custom Range</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                 <div><label style={lbl}>From</label><input type="date" value={exportFrom} onChange={e=>setExportFrom(e.target.value)} style={inp}/></div>
                 <div><label style={lbl}>To</label><input type="date" value={exportTo} onChange={e=>setExportTo(e.target.value)} style={inp}/></div>
               </div>
-              {/* Preview */}
-              {(()=>{
-                const rc=cards.filter(c=>c.date>=exportFrom&&c.date<=exportTo);
-                const totalH=rc.reduce((s,c)=>s+(c.total_hours||0),0);
-                const totalOT=rc.reduce((s,c)=>s+(c.ot_hours||0),0);
-                const workers=[...new Set(rc.map(c=>c.worker_name))];
-                return rc.length>0&&(
-                  <div style={{background:T.surface,borderRadius:12,padding:"12px 14px",marginBottom:14}}>
-                    <div style={{fontSize:12,color:T.muted,marginBottom:6}}>Preview</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-                      {[["Entries",rc.length,T.orange],["Total Hrs",totalH.toFixed(1),T.green],["OT Hrs",totalOT.toFixed(1),T.yellow]].map(([l,v,c])=>(
+            </div>
+
+            {/* Detailed preview table */}
+            {(()=>{
+              const rc=cards.filter(c=>c.date>=exportFrom&&c.date<=exportTo).sort((a,b)=>a.date>b.date?1:a.date<b.date?-1:a.worker_name.localeCompare(b.worker_name));
+              const totalReg=rc.reduce((s,c)=>s+Math.max(0,(c.total_hours||0)-(c.ot_hours||0)),0);
+              const totalOT=rc.reduce((s,c)=>s+(c.ot_hours||0),0);
+              const totalH=rc.reduce((s,c)=>s+(c.total_hours||0),0);
+
+              // Per-employee summary
+              const empMap={};
+              rc.forEach(c=>{
+                if(!empMap[c.worker_name])empMap[c.worker_name]={name:c.worker_name,reg:0,ot:0,total:0,entries:[]};
+                empMap[c.worker_name].reg+=Math.max(0,(c.total_hours||0)-(c.ot_hours||0));
+                empMap[c.worker_name].ot+=(c.ot_hours||0);
+                empMap[c.worker_name].total+=(c.total_hours||0);
+                empMap[c.worker_name].entries.push(c);
+              });
+              const empRows=Object.values(empMap).sort((a,b)=>a.name.localeCompare(b.name));
+
+              return rc.length>0?(
+                <div>
+                  {/* Totals banner */}
+                  <div style={{...cardS,marginBottom:14,background:T.orangeLow,border:`1px solid ${T.orange}40`}}>
+                    <div style={{fontSize:11,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+                      {fmtDate(exportFrom)} → {fmtDate(exportTo)} · {rc.length} entries · {empRows.length} employees
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                      {[["Regular",totalReg.toFixed(1)+"h",T.green],["Overtime",totalOT.toFixed(1)+"h",T.yellow],["Total",totalH.toFixed(1)+"h",T.orange]].map(([l,v,c])=>(
                         <div key={l} style={{textAlign:"center"}}>
-                          <div style={{fontSize:18,fontWeight:800,color:c}}>{v}</div>
-                          <div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>{l}</div>
+                          <div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div>
+                          <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.6px"}}>{l}</div>
                         </div>
                       ))}
                     </div>
-                    <div style={{fontSize:12,color:T.muted,marginTop:8}}>{workers.length} worker{workers.length!==1?"s":""}: {workers.slice(0,3).join(", ")}{workers.length>3?` +${workers.length-3} more`:""}</div>
                   </div>
-                );
-              })()}
-              <button onClick={exportTimeCards} style={{...primBtn,borderRadius:12}}>
-                📥 Export Time Cards (.xlsx)
-              </button>
-            </div>
 
-            {/* Quick presets */}
-            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Quick Select</div>
-            {[
-              {label:"This Week",from:getWeekStart(),to:today()},
-              {label:"Last 2 Weeks",from:(()=>{const d=new Date();d.setDate(d.getDate()-14);return d.toISOString().split("T")[0];})(),to:today()},
-              {label:"This Month",from:(()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})(),to:today()},
-              {label:"Last 30 Days",from:(()=>{const d=new Date();d.setDate(d.getDate()-30);return d.toISOString().split("T")[0];})(),to:today()},
-            ].map(p=>(
-              <button key={p.label} onClick={()=>{setExportFrom(p.from);setExportTo(p.to);}} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:8,display:"block"}}>{p.label}</button>
-            ))}
+                  {/* Per-employee breakdown */}
+                  <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Employee Breakdown</div>
+                  {empRows.map(emp=>(
+                    <div key={emp.name} style={{...cardS,marginBottom:10}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                        <div style={{fontSize:15,fontWeight:800,color:T.orange}}>{emp.name}</div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{fontSize:17,fontWeight:900,color:T.green}}>{emp.total.toFixed(2)}h total</div>
+                          {emp.ot>0&&<div style={{fontSize:11,color:T.yellow}}>{emp.ot.toFixed(2)}h OT</div>}
+                        </div>
+                      </div>
+                      {/* Daily detail rows */}
+                      <div style={{borderTop:`1px solid ${T.border}`,paddingTop:8}}>
+                        <div style={{display:"grid",gridTemplateColumns:"90px 1fr 60px 55px 55px",gap:6,marginBottom:6}}>
+                          {["DATE","JOB / AFE","REG","OT","TOT"].map(h=><div key={h} style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>{h}</div>)}
+                        </div>
+                        {emp.entries.map((c,i)=>{
+                          const proj=projects.find(p=>p.id===c.project_id);
+                          const reg=Math.max(0,(c.total_hours||0)-(c.ot_hours||0));
+                          return(
+                            <div key={i} style={{display:"grid",gridTemplateColumns:"90px 1fr 60px 55px 55px",gap:6,padding:"5px 0",borderBottom:i<emp.entries.length-1?`1px solid ${T.border}40`:"none",alignItems:"center"}}>
+                              <div style={{fontSize:11,color:T.sub}}>{fmtShort(c.date)}</div>
+                              <div>
+                                <div style={{fontSize:12,fontWeight:600,color:T.text}}>{proj?.name||"General"}</div>
+                                {proj?.afe&&<div style={{fontSize:10,color:T.muted}}>AFE: {proj.afe}</div>}
+                                {c.clock_in&&<div style={{fontSize:10,color:T.muted}}>{c.clock_in}{c.clock_out?" – "+c.clock_out:""}</div>}
+                                {c.notes&&<div style={{fontSize:10,color:T.muted,fontStyle:"italic"}}>{c.notes}</div>}
+                              </div>
+                              <div style={{fontSize:12,fontWeight:700,color:T.green}}>{reg.toFixed(1)}h</div>
+                              <div style={{fontSize:12,fontWeight:700,color:c.ot_hours>0?T.yellow:T.muted}}>{(c.ot_hours||0).toFixed(1)}h</div>
+                              <div style={{fontSize:12,fontWeight:700,color:T.text}}>{(c.total_hours||0).toFixed(1)}h</div>
+                            </div>
+                          );
+                        })}
+                        {/* Employee subtotal */}
+                        <div style={{display:"grid",gridTemplateColumns:"90px 1fr 60px 55px 55px",gap:6,paddingTop:6,marginTop:4,borderTop:`1px solid ${T.border}`}}>
+                          <div style={{fontSize:10,color:T.muted,gridColumn:"1/3",fontWeight:700,textTransform:"uppercase"}}>Subtotal</div>
+                          <div style={{fontSize:12,fontWeight:800,color:T.green}}>{emp.reg.toFixed(1)}h</div>
+                          <div style={{fontSize:12,fontWeight:800,color:emp.ot>0?T.yellow:T.muted}}>{emp.ot.toFixed(1)}h</div>
+                          <div style={{fontSize:12,fontWeight:800,color:T.orange}}>{emp.total.toFixed(1)}h</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ):(
+                <div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>
+                  <div style={{fontSize:32,marginBottom:8}}>📋</div>
+                  <div>No time cards in this date range.</div>
+                </div>
+              );
+            })()}
+
+            <button onClick={exportTimeCards} style={{...primBtn,borderRadius:14,marginTop:14}}>
+              📥 Export to Excel (.xlsx)
+            </button>
           </div>
         )}
       </div>
