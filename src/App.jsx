@@ -1824,6 +1824,7 @@ export default function App(){
           onLogout={handleLogout}
           onCrew={()=>setScreen("crewDirectory")}
           onDash={()=>setScreen("pmDashboard")}
+          onTimeCards={()=>setScreen("timeCards")}
         />
       )}
 
