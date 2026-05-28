@@ -41,7 +41,7 @@ const API={
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
-  docs:     {forProject:(pid)=>sb(`/documents?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
+  docs:     {forProject:(pid)=>sb(`/documents?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/documents?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
   milestones:{forProject:(pid)=>sb(`/milestones?project_id=eq.${pid}&order=sort_order.asc,target_date.asc`),create:(d)=>sb("/milestones",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/milestones?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/milestones?id=eq.${id}`,{method:"DELETE"})},
   crew:     {list:()=>sb("/crew_members?order=name.asc"),create:(d)=>sb("/crew_members",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/crew_members?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/crew_members?id=eq.${id}`,{method:"DELETE"})},
   notifications:{list:()=>sb("/notifications?order=created_at.desc&limit=50"),unread:()=>sb("/notifications?read=eq.false&order=created_at.desc"),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:()=>sb("/notifications?read=eq.false",{method:"PATCH",body:{read:true}}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
@@ -632,28 +632,212 @@ function SafetyTab({projectId,safety,user,onRefresh,onErr}){
 
 /* ── DOCS TAB ───────────────────────────────────────────────── */
 function DocsTab({projectId,user,onErr}){
-  const [docs,setDocs]=useState([]);const [loading,setLoading]=useState(true);const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
-  const [f,setF]=useState({name:"",doc_type:"Drawing",file_url:"",notes:""});
+  const [docs,setDocs]=useState([]);const [loading,setLoading]=useState(true);
+  const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
+  const [dragging,setDragging]=useState(false);const [uploading,setUploading]=useState(false);
+  const [editPerms,setEditPerms]=useState(null); // doc being permission-edited
+  const fileRef=useRef(null);
+  const allRoles=["admin","pm","foreman","crew"];
+  const roleLabels={admin:"🔴 Admin",pm:"🟠 PM",foreman:"🟡 Foreman",crew:"🟢 Field Crew"};
+  const [f,setF]=useState({name:"",doc_type:"Drawing",notes:"",visible_to:["admin","pm","foreman","crew"],can_download:["admin","pm","foreman","crew"]});
   const docTypes=["Drawing","Specification","Manual","Permit","Contract","As-Built","ITP","Procedure","Safety Plan","Other"];
   const docIcons={Drawing:"📐",Specification:"📄",Manual:"📗",Permit:"🗂️",Contract:"📝","As-Built":"🗺️",ITP:"✅",Procedure:"📋","Safety Plan":"⛑️",Other:"📁"};
+  const mimeIcons={"application/pdf":"📄","image/":"🖼️","application/vnd.openxmlformats-officedocument.spreadsheetml":"📊","application/vnd.openxmlformats-officedocument.wordprocessingml":"📝","application/vnd.openxmlformats-officedocument.presentationml":"📊","video/":"🎬","text/":"📝"};
+
+  function getMimeIcon(mime=""){
+    for(const[k,v] of Object.entries(mimeIcons)){if(mime.startsWith(k))return v;}
+    return "📁";
+  }
+  function fmtSize(bytes){
+    if(!bytes)return"";
+    if(bytes<1024)return bytes+"B";
+    if(bytes<1048576)return(bytes/1024).toFixed(1)+"KB";
+    return(bytes/1048576).toFixed(1)+"MB";
+  }
+  function guessType(filename=""){
+    const ext=filename.split(".").pop().toLowerCase();
+    const map={pdf:"Specification",dwg:"Drawing",dxf:"Drawing",png:"Drawing",jpg:"Drawing",jpeg:"Drawing",xlsx:"Other",xls:"Other",docx:"Other",doc:"Other",pptx:"Other",ifc:"Drawing"};
+    return map[ext]||"Other";
+  }
+
   async function load(){setLoading(true);try{setDocs(await API.docs.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[projectId]);
-  async function save(){if(!f.name.trim())return;setSaving(true);try{await API.docs.create({...f,project_id:projectId,uploaded_by:user.name});await load();setShowForm(false);setF({name:"",doc_type:"Drawing",file_url:"",notes:""});}catch(e){onErr(e.message);}setSaving(false);}
+
+  async function fileToBase64(file){
+    return new Promise((res,rej)=>{
+      const rd=new FileReader();
+      rd.onload=e=>res(e.target.result);
+      rd.onerror=rej;
+      rd.readAsDataURL(file);
+    });
+  }
+
+  async function uploadFiles(files){
+    setUploading(true);
+    let uploaded=0;
+    for(const file of files){
+      if(file.size>8*1024*1024){onErr(`${file.name} is too large (max 8MB)`);continue;}
+      try{
+        const data=await fileToBase64(file);
+        await API.docs.create({
+          project_id:projectId,
+          name:file.name.replace(/\.[^/.]+$/,""),
+          file_name:file.name,
+          file_mime:file.type,
+          file_size:file.size,
+          file_data:data,
+          doc_type:guessType(file.name),
+          notes:"",
+          uploaded_by:user.name,
+          visible_to:["admin","pm","foreman","crew"],
+          can_download:["admin","pm","foreman","crew"],
+        });
+        uploaded++;
+      }catch(e){onErr(`Failed to upload ${file.name}: ${e.message}`);}
+    }
+    await load();
+    setUploading(false);
+    if(uploaded>0)onErr(""); // clear any prior errors
+  }
+
+  function handleDrop(e){
+    e.preventDefault();setDragging(false);
+    uploadFiles(Array.from(e.dataTransfer.files));
+  }
+
+  function downloadDoc(doc){
+    if(!doc.file_data)return;
+    const a=document.createElement("a");
+    a.href=doc.file_data;
+    a.download=doc.file_name||doc.name;
+    a.click();
+  }
+
+  async function savePerms(doc,visible_to,can_download){
+    try{await API.docs.update?.(doc.id,{visible_to,can_download})||await sb(`/documents?id=eq.${doc.id}`,{method:"PATCH",body:{visible_to,can_download}});await load();setEditPerms(null);}
+    catch(e){onErr(e.message);}
+  }
+
   async function remove(id){try{await API.docs.remove(id);await load();}catch(e){onErr(e.message);}}
-  const grouped={};docs.forEach(d=>{const t=d.doc_type||"Other";if(!grouped[t])grouped[t]=[];grouped[t].push(d);});
-  return(<div>
-    <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"📁 + Add Document"}</button>
-    {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.teal}`}}>
-      <div style={{marginBottom:10}}><label style={lbl}>Document Name *</label><input type="text" placeholder="e.g. P&ID Drawing Rev 3" value={f.name} onChange={e=>setF(x=>({...x,name:e.target.value}))} style={inp}/></div>
-      <div style={{marginBottom:10}}><label style={lbl}>Type</label><select value={f.doc_type} onChange={e=>setF(x=>({...x,doc_type:e.target.value}))} style={inpSel}>{docTypes.map(t=><option key={t}>{t}</option>)}</select></div>
-      <div style={{marginBottom:10}}><label style={lbl}>Link (Google Drive, Dropbox, SharePoint…)</label><input type="url" placeholder="https://drive.google.com/…" value={f.file_url} onChange={e=>setF(x=>({...x,file_url:e.target.value}))} style={inp}/><div style={{fontSize:11,color:T.muted,marginTop:4}}>Paste a shareable link. Store files in Google Drive and share the link here.</div></div>
-      <div style={{marginBottom:10}}><label style={lbl}>Notes / Revision</label><input type="text" placeholder="e.g. Rev 3 – Approved" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
-      <button onClick={save} style={{...primBtn,background:T.teal,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Document"}</button>
-    </div>}
-    {loading&&<Spinner/>}
-    {!loading&&docs.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>📁</div><div style={{marginBottom:4}}>No documents yet.</div><div style={{fontSize:12}}>Add links to drawings, specs, manuals, permits.</div></div>}
-    {!loading&&Object.entries(grouped).map(([type,typeDocs])=>(<div key={type} style={{marginBottom:16}}><div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>{docIcons[type]||"📁"} {type} ({typeDocs.length})</div>{typeDocs.map(doc=>(<div key={doc.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.teal}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700,marginBottom:2}}>{doc.name}</div>{doc.notes&&<div style={{fontSize:12,color:T.sub,marginBottom:4}}>{doc.notes}</div>}<div style={{fontSize:11,color:T.muted}}>{doc.uploaded_by}</div></div><div style={{display:"flex",gap:8,flexShrink:0,marginLeft:10}}>{doc.file_url&&<button onClick={()=>window.open(doc.file_url,"_blank")} style={{background:T.teal+"20",border:`1px solid ${T.teal}40`,borderRadius:8,padding:"6px 12px",color:T.teal,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Open →</button>}<button onClick={()=>remove(doc.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div></div>))}</div>))}
-  </div>);
+
+  // Filter docs user can see
+  const visibleDocs=docs.filter(d=>{
+    const vt=d.visible_to||["admin","pm","foreman","crew"];
+    return vt.includes(user.role)||user.role==="admin";
+  });
+  const grouped={};visibleDocs.forEach(d=>{const t=d.doc_type||"Other";if(!grouped[t])grouped[t]=[];grouped[t].push(d);});
+
+  return(
+    <div>
+      {/* Permission editor modal */}
+      {editPerms&&(
+        <div onClick={()=>setEditPerms(null)} style={{position:"fixed",inset:0,zIndex:200,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",width:"100%",maxWidth:480}}>
+            <div style={{fontSize:16,fontWeight:800,marginBottom:4}}>{editPerms.name}</div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Set who can see and download this document</div>
+            {["visible_to","can_download"].map(perm=>(
+              <div key={perm} style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+                  {perm==="visible_to"?"👁 Can View":"📥 Can Download"}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                  {allRoles.map(role=>{
+                    const current=(editPerms[perm]||allRoles);
+                    const on=current.includes(role);
+                    const m=ROLE_META[role];
+                    return(
+                      <button key={role} onClick={()=>{
+                        const next=on?current.filter(r=>r!==role):[...current,role];
+                        setEditPerms(p=>({...p,[perm]:next}));
+                      }} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderRadius:10,border:`2px solid ${on?m.color:T.border}`,background:on?m.color+"18":T.surface,cursor:"pointer",fontFamily:"inherit"}}>
+                        <div style={{width:16,height:16,borderRadius:4,border:`2px solid ${on?m.color:T.border}`,background:on?m.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#09090B",fontWeight:900,flexShrink:0}}>{on?"✓":""}</div>
+                        <span style={{fontSize:12,fontWeight:700,color:on?m.color:T.sub}}>{roleLabels[role]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <button onClick={()=>savePerms(editPerms,editPerms.visible_to||allRoles,editPerms.can_download||allRoles)} style={{...primBtn,borderRadius:12}}>Save Permissions</button>
+            <button onClick={()=>setEditPerms(null)} style={{...ghostBtn,width:"100%",textAlign:"center",marginTop:8}}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Drag and drop zone */}
+      <div
+        onDrop={handleDrop}
+        onDragOver={e=>{e.preventDefault();setDragging(true);}}
+        onDragLeave={()=>setDragging(false)}
+        onClick={()=>fileRef.current?.click()}
+        style={{
+          border:`2px dashed ${dragging?T.orange:T.teal}`,
+          borderRadius:16,
+          background:dragging?T.orangeLow:T.teal+"0A",
+          padding:"28px 16px",
+          textAlign:"center",
+          cursor:"pointer",
+          marginBottom:14,
+          transition:"all 0.15s",
+        }}
+      >
+        <div style={{fontSize:36,marginBottom:8}}>{uploading?"⏳":dragging?"📂":"📁"}</div>
+        <div style={{fontSize:15,fontWeight:700,color:dragging?T.orange:T.teal,marginBottom:4}}>
+          {uploading?"Uploading…":dragging?"Drop to upload":"Drag & drop files here"}
+        </div>
+        <div style={{fontSize:12,color:T.muted}}>or tap to browse · PDF, images, Word, Excel, drawings · max 8MB each</div>
+        <input ref={fileRef} type="file" multiple style={{display:"none"}} onChange={e=>{uploadFiles(Array.from(e.target.files));e.target.value="";}}/>
+      </div>
+
+      {loading&&<Spinner/>}
+      {!loading&&visibleDocs.length===0&&(
+        <div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>
+          <div style={{fontSize:32,marginBottom:8}}>📁</div>
+          <div>No documents yet. Drag and drop files above to upload.</div>
+        </div>
+      )}
+
+      {!loading&&Object.entries(grouped).map(([type,typeDocs])=>(
+        <div key={type} style={{marginBottom:16}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+            {docIcons[type]||"📁"} {type} ({typeDocs.length})
+          </div>
+          {typeDocs.map(doc=>{
+            const icon=doc.file_mime?getMimeIcon(doc.file_mime):docIcons[doc.doc_type]||"📁";
+            const canDl=(doc.can_download||allRoles).includes(user.role)||user.role==="admin";
+            const vt=doc.visible_to||allRoles;
+            const restrictedView=!vt.includes("crew")||!vt.includes("foreman");
+            return(
+              <div key={doc.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.teal}`}}>
+                <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
+                  <div style={{fontSize:28,flexShrink:0,marginTop:2}}>{icon}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:14,fontWeight:700,color:T.text}}>{doc.name}</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>
+                      {doc.file_name&&<span style={pill(T.teal)}>{doc.file_name.split(".").pop().toUpperCase()}</span>}
+                      {doc.file_size&&<span style={pill(T.muted)}>{fmtSize(doc.file_size)}</span>}
+                      {restrictedView&&<span style={pill(T.yellow)}>🔒 Restricted</span>}
+                    </div>
+                    {doc.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4}}>{doc.notes}</div>}
+                    <div style={{fontSize:11,color:T.muted,marginTop:4}}>Uploaded by {doc.uploaded_by}</div>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
+                    {doc.file_data&&canDl&&(
+                      <button onClick={()=>downloadDoc(doc)} style={{background:T.teal+"20",border:`1px solid ${T.teal}40`,borderRadius:8,padding:"6px 12px",color:T.teal,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>📥 Download</button>
+                    )}
+                    {(user.role==="admin"||user.role==="pm")&&(
+                      <button onClick={()=>setEditPerms({...doc,visible_to:doc.visible_to||allRoles,can_download:doc.can_download||allRoles})} style={{background:T.yellowLow,border:`1px solid ${T.yellow}40`,borderRadius:8,padding:"6px 12px",color:T.yellow,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>🔒 Perms</button>
+                    )}
+                    <button onClick={()=>remove(doc.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:"4px 0",textAlign:"center"}}>🗑</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /* ── SCHEDULE TAB ───────────────────────────────────────────── */
