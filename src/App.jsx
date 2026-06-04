@@ -521,7 +521,7 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision}){
         </div>
         <div style={{marginBottom:12}}><label style={lbl}>Start Date</label><input type="date" value={f.start_date||today()} onChange={e=>set("start_date",e.target.value)} style={inp}/></div>
         <div style={{marginBottom:20}}><label style={lbl}>Notes</label><textarea placeholder="Project notes, scope, special instructions…" value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={3} style={{...inp,resize:"vertical",lineHeight:1.5}}/></div>
-        <button onClick={()=>f.name.trim()&&!saving&&onSave(f)} style={{...primBtn,opacity:f.name.trim()&&!saving?1:0.5}}>{saving?"Saving…":initial?"Save Changes":"Create Job"}</button>
+        <button onClick={()=>f.name.trim()&&!saving&&onSave({...f,contract_value:f.contract_value&&f.contract_value!==""?parseFloat(f.contract_value):null})} style={{...primBtn,opacity:f.name.trim()&&!saving?1:0.5}}>{saving?"Saving…":initial?"Save Changes":"Create Job"}</button>
       </div>
     </div>
   );
