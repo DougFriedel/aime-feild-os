@@ -163,8 +163,8 @@ const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Submit daily repor
 const PERMS={
   admin:  ["manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications"],
   pm:     ["create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications"],
-  foreman:["submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip"],
-  crew:   ["submit_report","time_card","photos"],
+  foreman:["submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
+  crew:   ["submit_report","time_card","photos","crew_directory"],
 };
 const can=(user,action)=>(PERMS[user?.role]||PERMS.crew).includes(action);
 
