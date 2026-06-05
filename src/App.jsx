@@ -1536,54 +1536,154 @@ function PMDashboard({onBack,user}){
   const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${pending.length>0?" ("+pending.length+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
   function CustomReports(){
-    const [range,setRange]=useState("month");const [selProj,setSelProj]=useState("all");
+    const [selDivision,setSelDivision]=useState("all");
+    const [selJobs,setSelJobs]=useState([]);
+    const [range,setRange]=useState("all");
+
     function getStart(){const d=new Date();if(range==="week"){d.setDate(d.getDate()-7);}else if(range==="month"){d.setDate(1);}else if(range==="quarter"){const q=Math.floor(d.getMonth()/3);d.setMonth(q*3);d.setDate(1);}else if(range==="year"){d.setMonth(0);d.setDate(1);}return d.toISOString().split("T")[0];}
-    const fr=reports.filter(r=>{const start=range==="all"?"2000-01-01":getStart();const md=r.date>=start;const mp=selProj==="all"||r.project_id===selProj;return md&&mp;});
+
+    const divJobs=projects.filter(p=>selDivision==="all"||p.division===selDivision);
+    function toggleJob(id){setSelJobs(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);}
+    function selectAllJobs(){setSelJobs(divJobs.map(p=>p.id));}
+    function clearJobs(){setSelJobs([]);}
+    function changeDivision(div){setSelDivision(div);setSelJobs([]);}
+
+    const fr=reports.filter(r=>{
+      const start=range==="all"?"2000-01-01":getStart();
+      const inRange=r.date>=start;
+      const proj=projects.find(p=>p.id===r.project_id);
+      const inDiv=selDivision==="all"||proj?.division===selDivision;
+      const inJobs=selJobs.length===0||selJobs.includes(r.project_id);
+      return inRange&&inDiv&&inJobs;
+    });
+
     const tot=fr.reduce((s,r)=>{const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);const t=reportTotals(r,div);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
-    const wm={};fr.forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!wm[l.name])wm[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0};wm[l.name].reg+=parseFloat(l.regHrs)||0;wm[l.name].ot+=parseFloat(l.otHrs)||0;wm[l.name].travel+=parseFloat(l.travelHrs)||0;wm[l.name].pay+=laborAmt(l);}));
+    const wm={};
+    fr.forEach(r=>{const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);(r.labor||[]).forEach(l=>{if(!l.name)return;if(!wm[l.name])wm[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0};wm[l.name].reg+=parseFloat(l.regHrs)||0;wm[l.name].ot+=parseFloat(l.otHrs)||0;wm[l.name].travel+=parseFloat(l.travelHrs)||0;wm[l.name].pay+=laborAmt(l,div);});});
     const wr=Object.values(wm).sort((a,b)=>b.pay-a.pay);
-    const pm2={};projects.forEach(p=>{pm2[p.id]={name:p.name,division:p.division,labor:0,equip:0,mats:0,grand:0,count:0};});
-    fr.forEach(r=>{if(!pm2[r.project_id])return;const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);const t=reportTotals(r,div);pm2[r.project_id].labor+=t.labor;pm2[r.project_id].equip+=t.equip;pm2[r.project_id].mats+=t.mats;pm2[r.project_id].grand+=t.grand;pm2[r.project_id].count++;});
+    const pm2={};projects.forEach(p=>{pm2[p.id]={id:p.id,name:p.name,division:p.division,afe:p.afe,labor:0,equip:0,mats:0,grand:0,laborHrs:0,otHrs:0,count:0};});
+    fr.forEach(r=>{if(!pm2[r.project_id])return;const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);const t=reportTotals(r,div);pm2[r.project_id].labor+=t.labor;pm2[r.project_id].equip+=t.equip;pm2[r.project_id].mats+=t.mats;pm2[r.project_id].grand+=t.grand;pm2[r.project_id].count++;(r.labor||[]).forEach(l=>{pm2[r.project_id].laborHrs+=parseFloat(l.regHrs)||0;pm2[r.project_id].otHrs+=parseFloat(l.otHrs)||0;});});
     const pr=Object.values(pm2).filter(p=>p.count>0).sort((a,b)=>b.grand-a.grand);
+    const totalReg=wr.reduce((s,w)=>s+w.reg,0);
+    const totalOT=wr.reduce((s,w)=>s+w.ot,0);
+    const totalTravel=wr.reduce((s,w)=>s+w.travel,0);
+
     function exportReport(){
       const wb=XLSX.utils.book_new();
-      const sumRows=[["AIME Field OS — Custom Report"],[`Period: ${range} · Project: ${selProj==="all"?"All":projects.find(p=>p.id===selProj)?.name||"—"}`],[`Generated: ${new Date().toLocaleString()}`],[],["TOTALS"],["Labor","Equipment","Materials","Grand Total"],[tot.l,tot.e,tot.m,tot.g],[],["WORKERS"],["Name","Reg Hrs","OT Hrs","Travel Hrs","Total Pay"],...wr.map(w=>[w.name,w.reg,w.ot,w.travel,w.pay]),[],["PROJECTS"],["Project","Division","Reports","Labor","Equip","Mats","Total"],...pr.map(p=>[p.name,p.division||"",p.count,p.labor,p.equip,p.mats,p.grand])];
-      const ws1=XLSX.utils.aoa_to_sheet(sumRows);ws1["!cols"]=[{wch:30},{wch:15},{wch:15},{wch:15},{wch:15},{wch:15},{wch:15}];XLSX.utils.book_append_sheet(wb,ws1,"Summary");
-      const dRows=[["Date","Project","Division","By","Status","Labor","Equip","Mats","Total"]];fr.forEach(r=>{const div=r.projects?.division||(projects.find(x=>x.id===r.project_id)?.division);const t=reportTotals(r,div);const p=projects.find(x=>x.id===r.project_id);dRows.push([r.date,p?.name||"",p?.division||"",r.submitted_by||"",r.status||"",t.labor,t.equip,t.mats,t.grand]);});
-      const ws2=XLSX.utils.aoa_to_sheet(dRows);XLSX.utils.book_append_sheet(wb,ws2,"Detail");
-      XLSX.writeFile(wb,`AIME_Report_${range}_${today()}.xlsx`);
-    }
-
-    function exportAllReports(){
-      const wb=XLSX.utils.book_new();
-      // All reports detail
-      const rows=[["Date","Project","Division","Submitted By","Status","Description","Labor $","Equipment $","Materials $","Grand Total $"]];
-      [...reports].sort((a,b)=>a.date>b.date?1:-1).forEach(r=>{
-        const exdiv=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);
-        const t=reportTotals(r,exdiv);
-        const p=projects.find(x=>x.id===r.project_id);
-        rows.push([r.date,p?.name||"Unknown",p?.division||"",r.submitted_by||"",r.status||"submitted",r.description||"",t.labor,t.equip,t.mats,t.grand]);
+      const divLabel=selDivision==="all"?"All Divisions":selDivision;
+      const jobLabel=selJobs.length===0?"All Jobs":selJobs.length+" Jobs";
+      const sumRows=[
+        ["AIME Field OS — Division Report"],
+        ["Division: "+divLabel+" | Jobs: "+jobLabel+" | Period: "+range],
+        ["Generated: "+new Date().toLocaleString()],
+        [],
+        ["COST SUMMARY"],["Labor $","Equipment $","Materials $","Grand Total $"],[tot.l,tot.e,tot.m,tot.g],
+        [],
+        ["HOURS SUMMARY"],["Regular Hrs","OT Hrs","Travel Hrs","Total Hrs"],[totalReg,totalOT,totalTravel,totalReg+totalOT+totalTravel],
+        [],
+        ["BY JOB"],["Job Number","Division","Reports","Reg Hrs","OT Hrs","Labor $","Equipment $","Materials $","Total $"],
+        ...pr.map(p=>[p.name,p.division||"",p.count,p.laborHrs,p.otHrs,p.labor,p.equip,p.mats,p.grand]),
+        [],
+        ["BY WORKER"],["Worker","Reg Hrs","OT Hrs","Travel Hrs","Total Hrs","Total Pay $"],
+        ...wr.map(w=>[w.name,w.reg,w.ot,w.travel,w.reg+w.ot+w.travel,w.pay]),
+        [],["TOTALS","",totalReg,totalOT,totalTravel,totalReg+totalOT+totalTravel,wr.reduce((s,w)=>s+w.pay,0)],
+      ];
+      const ws1=XLSX.utils.aoa_to_sheet(sumRows);
+      ws1["!cols"]=[{wch:28},{wch:14},{wch:10},{wch:12},{wch:12},{wch:14},{wch:14},{wch:14},{wch:14}];
+      XLSX.utils.book_append_sheet(wb,ws1,"Summary");
+      const dRows=[["Date","Job Number","Division","Submitted By","Status","Reg Hrs","OT Hrs","Labor $","Equipment $","Materials $","Total $","Description"]];
+      fr.sort((a,b)=>a.date>b.date?1:-1).forEach(r=>{
+        const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);
+        const t=reportTotals(r,div);const p=projects.find(x=>x.id===r.project_id);
+        const rh=(r.labor||[]).reduce((s,l)=>s+(parseFloat(l.regHrs)||0),0);
+        const oh=(r.labor||[]).reduce((s,l)=>s+(parseFloat(l.otHrs)||0),0);
+        dRows.push([r.date,p?.name||"",div||"",r.submitted_by||"",r.status||"",rh,oh,t.labor,t.equip,t.mats,t.grand,r.description||""]);
       });
-      const ws=XLSX.utils.aoa_to_sheet(rows);
-      ws["!cols"]=[{wch:12},{wch:25},{wch:14},{wch:18},{wch:12},{wch:30},{wch:12},{wch:14},{wch:14},{wch:14}];
-      // Format currency columns
-      const rng=XLSX.utils.decode_range(ws["!ref"]);
-      for(let r=1;r<=rng.e.r;r++){
-        [6,7,8,9].forEach(c=>{const addr=XLSX.utils.encode_cell({r,c});if(ws[addr]&&typeof ws[addr].v==="number")ws[addr].z='"$"#,##0.00';});
-      }
-      XLSX.utils.book_append_sheet(wb,ws,"All Reports");
-      XLSX.writeFile(wb,`AIME_AllReports_${today()}.xlsx`);
+      const ws2=XLSX.utils.aoa_to_sheet(dRows);
+      ws2["!cols"]=[{wch:12},{wch:20},{wch:14},{wch:20},{wch:12},{wch:10},{wch:10},{wch:12},{wch:14},{wch:14},{wch:14},{wch:35}];
+      XLSX.utils.book_append_sheet(wb,ws2,"Daily Detail");
+      XLSX.writeFile(wb,"AIME_"+divLabel.replace(/[^a-zA-Z0-9]/g,"_")+"_Report_"+today()+".xlsx");
     }
 
     return(<div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}><div><label style={lbl}>Time Range</label><select value={range} onChange={e=>setRange(e.target.value)} style={inpSel}><option value="week">This Week</option><option value="month">This Month</option><option value="quarter">This Quarter</option><option value="year">This Year</option><option value="all">All Time</option></select></div><div><label style={lbl}>Project</label><select value={selProj} onChange={e=>setSelProj(e.target.value)} style={inpSel}><option value="all">All Projects</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div></div>
-      <div style={{...cardS,marginBottom:14,background:T.orangeLow,border:`1px solid ${T.orange}40`}}><div style={{fontSize:11,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>{fr.length} Reports</div>{[["Labor",tot.l,T.green],["Equipment",tot.e,T.yellow],["Materials",tot.m,T.blue],["Grand Total",tot.g,T.orange]].map(([l,v,c])=>(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.sub,fontWeight:l==="Grand Total"?700:400}}>{l}</span><span style={{fontSize:l==="Grand Total"?18:13,fontWeight:800,color:c}}>${fmt(v)}</span></div>))}</div>
-      {/* By Division */}
-      {["Mechanical","Pipeline","Structural"].map(div=>{const dr=fr.filter(r=>r.projects?.division===div||projects.find(p=>p.id===r.project_id)?.division===div);if(dr.length===0)return null;const dt=dr.reduce((s,r)=>{const ddiv=r.projects?.division;const t=reportTotals(r,ddiv);return{g:s.g+t.grand};},{g:0});return(<div key={div} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${DIV_META[div]?.color||T.border}`}}><div style={{display:"flex",justifyContent:"space-between"}}><div style={{fontSize:14,fontWeight:700}}>{DIV_META[div]?.icon} {div}</div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${dt.g>=1000?(dt.g/1000).toFixed(1)+"k":fmt(dt.g)}</div></div><div style={{fontSize:11,color:T.muted,marginTop:2}}>{dr.length} reports</div></div>);})}
-      {pr.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>By Job</div>{pr.map(p=>(<div key={p.name} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><div><div style={{fontSize:13,fontWeight:700}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.division} · {p.count} reports</div></div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${fmt(p.grand)}</div></div>))}</div>}
-      {wr.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>By Worker</div>{wr.map(w=>(<div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><div><div style={{fontSize:13,fontWeight:700}}>{w.name}</div><div style={{fontSize:11,color:T.muted}}>{w.reg.toFixed(1)}reg {w.ot.toFixed(1)}OT {w.travel.toFixed(1)}tr hrs</div></div><div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(w.pay)}</div></div>))}</div>}
-      <button onClick={exportReport} style={{...primBtn,borderRadius:14,marginBottom:10}}>📥 Export Filtered Report (.xlsx)</button>
-      <button onClick={exportAllReports} style={{...ghostBtn,width:"100%",textAlign:"center"}}>📥 Export ALL Reports (.xlsx)</button>
+      {/* Division */}
+      <div style={{marginBottom:14}}>
+        <label style={lbl}>Division</label>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {[["all","🏗️ All Divisions"],["Mechanical","⚙️ Mechanical"],["Pipeline","🔧 Pipeline"],["Structural","🏗️ Structural"]].map(([v,l])=>{
+            const c=v==="all"?T.orange:(DIV_META[v]?.color||T.orange);
+            return(<button key={v} onClick={()=>changeDivision(v)} style={{padding:"12px 8px",borderRadius:10,border:"2px solid "+(selDivision===v?c:T.border),background:selDivision===v?c+"18":T.surface,color:selDivision===v?c:T.sub,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>{l}</button>);
+          })}
+        </div>
+      </div>
+
+      {/* Jobs */}
+      <div style={{...cardS,marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:13,fontWeight:700}}>Select Jobs</div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={selectAllJobs} style={{background:T.orangeLow,border:"1px solid "+T.orange+"40",borderRadius:7,padding:"4px 10px",color:T.orange,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>All</button>
+            <button onClick={clearJobs} style={{background:T.surface,border:"1px solid "+T.border,borderRadius:7,padding:"4px 10px",color:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>None</button>
+          </div>
+        </div>
+        <div onClick={clearJobs} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 10px",borderRadius:10,background:selJobs.length===0?T.orangeLow:T.surface,border:"1px solid "+(selJobs.length===0?T.orange:T.border),marginBottom:6,cursor:"pointer"}}>
+          <div style={{width:18,height:18,borderRadius:4,border:"2px solid "+(selJobs.length===0?T.orange:T.border),background:selJobs.length===0?T.orange:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#09090B",fontWeight:900,flexShrink:0}}>{selJobs.length===0?"✓":""}</div>
+          <div style={{fontSize:13,fontWeight:600,color:selJobs.length===0?T.orange:T.text}}>All jobs{selDivision!=="all"?" in "+selDivision:""}</div>
+        </div>
+        {divJobs.map(p=>{
+          const sel=selJobs.includes(p.id);const m=DIV_META[p.division]||{color:T.orange};
+          const jc=reports.filter(r=>r.project_id===p.id).length;
+          return(<div key={p.id} onClick={()=>{if(selJobs.length===0)selectAllJobs();toggleJob(p.id);}} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 10px",borderRadius:10,background:sel?m.color+"15":T.surface,border:"1px solid "+(sel?m.color:T.border),marginBottom:5,cursor:"pointer"}}>
+            <div style={{width:18,height:18,borderRadius:4,border:"2px solid "+(sel?m.color:T.border),background:sel?m.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#09090B",fontWeight:900,flexShrink:0}}>{sel?"✓":""}</div>
+            <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:700,color:sel?m.color:T.text}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{DIV_META[p.division]?.icon} {p.division}{p.afe?" · "+p.afe:""}</div></div>
+            <div style={{fontSize:11,fontWeight:700,color:T.green,flexShrink:0}}>{jc} reports</div>
+          </div>);
+        })}
+      </div>
+
+      {/* Time period */}
+      <div style={{marginBottom:14}}>
+        <label style={lbl}>Time Period</label>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+          {[["all","All Time"],["month","This Month"],["quarter","This Quarter"],["year","This Year"],["week","This Week"]].map(([v,l])=>(<button key={v} onClick={()=>setRange(v)} style={{padding:"9px 4px",borderRadius:9,border:"1px solid "+(range===v?T.orange:T.border),background:range===v?T.orangeLow:T.surface,color:range===v?T.orange:T.sub,fontSize:11,fontWeight:range===v?700:500,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>{l}</button>))}
+        </div>
+      </div>
+
+      {/* Results */}
+      {fr.length>0?(<div>
+        <div style={{...cardS,marginBottom:12,background:T.orangeLow,border:"1px solid "+T.orange+"40"}}>
+          <div style={{fontSize:11,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>{fr.length} Reports · {selDivision==="all"?"All Divisions":selDivision}{selJobs.length>0?" · "+selJobs.length+" Jobs":""}</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+            {[["💰 Grand Total","$"+fmt(tot.g),T.orange],["👷 Labor","$"+fmt(tot.l),T.green],["🚜 Equipment","$"+fmt(tot.e),T.yellow],["📦 Materials","$"+fmt(tot.m),T.blue]].map(([l,v,c])=>(<div key={l} style={{background:T.card,borderRadius:10,padding:"10px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:2}}>{l}</div></div>))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            {[["Reg Hrs",totalReg.toFixed(1),T.green],["OT Hrs",totalOT.toFixed(1),T.yellow],["Travel",totalTravel.toFixed(1),T.blue]].map(([l,v,c])=>(<div key={l} style={{background:T.card,borderRadius:10,padding:"8px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:800,color:c}}>{v}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",marginTop:1}}>{l}</div></div>))}
+          </div>
+        </div>
+        {pr.length>0&&<div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>By Job</div>
+          {pr.map(p=><div key={p.id} style={{padding:"9px 0",borderBottom:"1px solid "+T.border}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div><div style={{fontSize:13,fontWeight:700,color:T.orange}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{DIV_META[p.division]?.icon} {p.division} · {p.count} reports · {(p.laborHrs+p.otHrs).toFixed(1)}h total</div></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:15,fontWeight:800,color:T.green}}>${fmt(p.grand)}</div>{p.otHrs>0&&<div style={{fontSize:10,color:T.yellow}}>{p.otHrs.toFixed(1)}h OT</div>}</div>
+            </div>
+          </div>)}
+        </div>}
+        {wr.length>0&&<div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>By Worker</div>
+          {wr.map(w=><div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid "+T.border}}>
+            <div><div style={{fontSize:13,fontWeight:700,color:T.orange}}>{w.name}</div><div style={{fontSize:11,color:T.muted}}>{w.reg.toFixed(1)}reg {w.ot>0?w.ot.toFixed(1)+"OT ":""}{w.travel>0?w.travel.toFixed(1)+"tr":""}</div></div>
+            <div style={{textAlign:"right"}}><div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(w.pay)}</div><div style={{fontSize:10,color:T.muted}}>{(w.reg+w.ot+w.travel).toFixed(1)}h</div></div>
+          </div>)}
+        </div>}
+        <button onClick={exportReport} style={{...primBtn,borderRadius:14}}>📥 Export Report (.xlsx)</button>
+      </div>):(
+        <div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>
+          <div style={{fontSize:32,marginBottom:8}}>📊</div>
+          <div>No reports match your selection.</div>
+          <div style={{fontSize:12,marginTop:4}}>Try a different division, jobs, or time period.</div>
+        </div>
+      )}
     </div>);
   }
 
