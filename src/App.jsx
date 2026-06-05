@@ -1354,68 +1354,323 @@ function UserManagementScreen({onBack,currentUser}){
   );
 }
 
-/* ── CREW DIRECTORY SCREEN ──────────────────────────────────── */
-function CrewDirectoryScreen({onBack,user}){
-  const [members,setMembers]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
-  const [mode,setMode]=useState("list");const [active,setActive]=useState(null);const [saving,setSaving]=useState(false);
-  const blank={name:"",classification:"",phone:"",email:"",emergency_contact_name:"",emergency_contact_phone:"",certifications:[],notes:"",active:true};
-  const [f,setF]=useState({...blank});const set=(k,v)=>setF(x=>({...x,[k]:v}));
-  async function load(){setLoading(true);try{setMembers(await API.crew.list()||[]);}catch(e){setErr(e.message);}setLoading(false);}
-  useEffect(()=>{load();},[]);
-  async function save(){if(!f.name.trim())return;setSaving(true);try{if(active){await API.crew.update(active.id,f);setActive({...active,...f});}else{await API.crew.create(f);}await load();setMode("list");setActive(null);setF({...blank});}catch(e){setErr(e.message);}setSaving(false);}
-  async function remove(id){if(!window.confirm("Remove crew member?"))return;try{await API.crew.remove(id);await load();setMode("list");setActive(null);}catch(e){setErr(e.message);}}
-  function addCert(){set("certifications",[...(f.certifications||[]),{id:uid(),name:"",expiry:"",cert_number:""}]);}
-  function updateCert(i,k,v){const c=[...(f.certifications||[])];c[i]={...c[i],[k]:v};set("certifications",c);}
-  function removeCert(i){set("certifications",(f.certifications||[]).filter((_,j)=>j!==i));}
-  const CERT_TYPES=["OSHA 10","OSHA 30","First Aid / CPR","Confined Space Entry","Crane Operator","Welding Certification","Pipeline Operator Qualification","Hydro Test Operator","Excavation Competent Person","H2S Safety","Driver CDL","Other"];
-  const active_m=members.filter(m=>m.active);const inactive_m=members.filter(m=>!m.active);
 
-  if(mode==="new"||mode==="edit") return(
+/* ── COMBINED CREW & USER DIRECTORY ───────────────────────────── */
+function CrewDirectoryScreen({onBack,user}){
+  const [members,setMembers]=useState([]);
+  const [profiles,setProfiles]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState("");
+  const [search,setSearch]=useState("");
+  const [mode,setMode]=useState("list"); // list | view | edit | new
+  const [active,setActive]=useState(null);
+  const [saving,setSaving]=useState(false);
+
+  const canEdit=user.role==="admin"||user.role==="pm";
+
+  const blankMember={name:"",classification:"",phone:"",email:"",emergency_contact_name:"",emergency_contact_phone:"",certifications:[],notes:"",active:true};
+  const blankProfile={name:"",role:"crew",division:null,pin:"",active:true};
+  const [mf,setMf]=useState({...blankMember});
+  const [pf,setPf]=useState({...blankProfile});
+  const setM=(k,v)=>setMf(x=>({...x,[k]:v}));
+  const setP=(k,v)=>setPf(x=>({...x,[k]:v}));
+
+  async function load(){
+    setLoading(true);
+    try{
+      const [mems,profs]=await Promise.all([API.crew.list(),API.userProfiles.list()]);
+      setMembers(mems||[]);setProfiles(profs||[]);
+    }catch(e){setErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[]);
+
+  // Build unified roster — everyone in NAMES gets a card
+  const profileMap={};(profiles||[]).forEach(p=>profileMap[p.name]=p);
+  const memberMap={};(members||[]).forEach(m=>memberMap[m.name]=m);
+
+  const allNames=[...new Set([...NAMES,...(members||[]).map(m=>m.name)])].sort();
+  const filtered=allNames.filter(n=>!search||n.toLowerCase().includes(search.toLowerCase()));
+
+  async function save(){
+    if(!mf.name.trim())return;
+    setSaving(true);
+    try{
+      // Save crew member info
+      const existingMember=memberMap[mf.name];
+      if(existingMember){
+        await API.crew.update(existingMember.id,{...mf});
+      }else{
+        await API.crew.create({...mf});
+      }
+      // Save user profile (role/PIN)
+      const existingProfile=profileMap[pf.name||mf.name];
+      const profileData={name:mf.name,role:pf.role||"crew",division:pf.division||null,pin:pf.pin||null,active:pf.active!==false};
+      if(existingProfile){
+        await API.userProfiles.update(existingProfile.id,{role:profileData.role,division:profileData.division,pin:profileData.pin,active:profileData.active});
+      }else if(pf.role&&pf.role!=="crew"||pf.pin){
+        await API.userProfiles.upsert(profileData);
+      }
+      await load();
+      setMode("list");setActive(null);
+    }catch(e){setErr(e.message);}
+    setSaving(false);
+  }
+
+  async function removePerson(name){
+    if(!window.confirm(`Remove ${name} from the directory?`))return;
+    try{
+      const m=memberMap[name];if(m)await API.crew.remove(m.id);
+      const p=profileMap[name];if(p)await API.userProfiles.remove(p.id);
+      await load();setMode("list");setActive(null);
+    }catch(e){setErr(e.message);}
+  }
+
+  function openPerson(name){
+    const m=memberMap[name]||{name};
+    const p=profileMap[name]||{name,role:"crew",division:null,pin:""};
+    setActive(name);
+    setMf({...blankMember,...m});
+    setPf({...blankProfile,...p});
+    setMode("view");
+  }
+
+  function openEdit(name){
+    const m=memberMap[name]||{name};
+    const p=profileMap[name]||{name,role:"crew",division:null,pin:""};
+    setMf({...blankMember,...m,name});
+    setPf({...blankProfile,...p,name});
+    setActive(name);setMode("edit");
+  }
+
+  function addCert(){setM("certifications",[...(mf.certifications||[]),{id:uid(),name:"",expiry:"",cert_number:""}]);}
+  function updCert(i,k,v){const c=[...(mf.certifications||[])];c[i]={...c[i],[k]:v};setM("certifications",c);}
+  function remCert(i){setM("certifications",(mf.certifications||[]).filter((_,j)=>j!==i));}
+
+  const CERT_TYPES=["OSHA 10","OSHA 30","First Aid / CPR","Confined Space Entry","Crane Operator","Welding Certification","Pipeline Operator Qualification","Hydro Test Operator","Excavation Competent Person","H2S Safety","Driver CDL","Other"];
+  const roleColor={admin:T.red,pm:T.orange,foreman:T.yellow,crew:T.green};
+
+  /* ── EDIT / NEW FORM ── */
+  if(mode==="edit"||mode==="new") return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      <TopBar title={mode==="edit"?"Edit Member":"Add Member"} onBack={()=>{setMode("list");setActive(null);setF({...blank});}}/>
+      <TopBar title={mode==="new"?"Add Person":`Edit: ${mf.name}`} onBack={()=>{setMode(active?"view":"list");}}/>
       <div style={{padding:"16px 16px 100px"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
-        <div style={{marginBottom:12}}><label style={lbl}>Full Name *</label><select value={f.name} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
-        <div style={{marginBottom:12}}><label style={lbl}>Classification</label><select value={f.classification} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getPositions(division).map(p=><option key={p.name}>{p.name}</option>)}</select></div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}><div><label style={lbl}>Cell Phone</label><input type="tel" placeholder="555-555-5555" value={f.phone} onChange={e=>set("phone",e.target.value)} style={inp}/></div><div><label style={lbl}>Email</label><input type="email" placeholder="email@example.com" value={f.email} onChange={e=>set("email",e.target.value)} style={inp}/></div></div>
-        <div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🆘 Emergency Contact</div><div style={{marginBottom:10}}><label style={lbl}>Name</label><input type="text" placeholder="Spouse, parent…" value={f.emergency_contact_name} onChange={e=>set("emergency_contact_name",e.target.value)} style={inp}/></div><div><label style={lbl}>Phone</label><input type="tel" placeholder="555-555-5555" value={f.emergency_contact_phone} onChange={e=>set("emergency_contact_phone",e.target.value)} style={inp}/></div></div>
-        <div style={{...cardS,marginBottom:12}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px"}}>🎖️ Certifications</div><button onClick={addCert} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:8,padding:"6px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button></div>{(f.certifications||[]).length===0&&<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"10px 0"}}>No certifications added.</div>}{(f.certifications||[]).map((cert,i)=>(<div key={cert.id} style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginTop:i>0?10:0}}><div style={{marginBottom:8}}><label style={lbl}>Certification</label><select value={cert.name} onChange={e=>updateCert(i,"name",e.target.value)} style={inpSel}><option value="">— Select —</option>{CERT_TYPES.map(t=><option key={t}>{t}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div><label style={lbl}>Cert Number</label><input type="text" placeholder="Optional" value={cert.cert_number} onChange={e=>updateCert(i,"cert_number",e.target.value)} style={inp}/></div><div><label style={lbl}>Expiry Date</label><input type="date" value={cert.expiry} onChange={e=>updateCert(i,"expiry",e.target.value)} style={inp}/></div></div><button onClick={()=>removeCert(i)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>Remove</button></div>))}</div>
-        <div style={{marginBottom:20}}><label style={lbl}>Notes</label><textarea placeholder="Skills, notes, restrictions…" value={f.notes} onChange={e=>set("notes",e.target.value)} rows={3} style={{...inp,resize:"vertical"}}/></div>
-        <button onClick={save} style={{...primBtn,opacity:f.name&&!saving?1:0.5}}>{saving?"Saving…":mode==="edit"?"Save Changes":"Add Member"}</button>
+
+        {/* Name */}
+        {mode==="new"
+          ?<div style={{marginBottom:12}}><label style={lbl}>Name *</label><select value={mf.name} onChange={e=>{setM("name",e.target.value);setPf(x=>({...x,name:e.target.value}));}} style={inpSel}><option value="">— Select —</option>{NAMES.filter(n=>!memberMap[n]).map(n=><option key={n}>{n}</option>)}</select></div>
+          :<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${roleColor[pf.role]||T.green}`}}><div style={{fontSize:17,fontWeight:800,color:T.orange}}>{mf.name}</div><div style={{fontSize:12,color:T.muted}}>Editing profile</div></div>
+        }
+
+        {/* Contact */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>📋 Contact Info</div>
+          <div style={{marginBottom:10}}><label style={lbl}>Classification</label><select value={mf.classification||""} onChange={e=>setM("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().map(p=><option key={p.name}>{p.name}</option>)}</select></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Cell Phone</label><input type="tel" placeholder="555-555-5555" value={mf.phone||""} onChange={e=>setM("phone",e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>Email</label><input type="email" placeholder="email@example.com" value={mf.email||""} onChange={e=>setM("email",e.target.value)} style={inp}/></div>
+          </div>
+          <div style={{marginBottom:0}}><label style={lbl}>Notes</label><textarea placeholder="Skills, restrictions, notes…" value={mf.notes||""} onChange={e=>setM("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/></div>
+        </div>
+
+        {/* Emergency */}
+        <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.red}`}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🆘 Emergency Contact</div>
+          <div style={{marginBottom:10}}><label style={lbl}>Name</label><input type="text" placeholder="Spouse, parent…" value={mf.emergency_contact_name||""} onChange={e=>setM("emergency_contact_name",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Phone</label><input type="tel" placeholder="555-555-5555" value={mf.emergency_contact_phone||""} onChange={e=>setM("emergency_contact_phone",e.target.value)} style={inp}/></div>
+        </div>
+
+        {/* Certifications */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px"}}>🎖️ Certifications</div>
+            <button onClick={addCert} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:8,padding:"5px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>
+          </div>
+          {(mf.certifications||[]).length===0&&<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"8px 0"}}>No certifications yet.</div>}
+          {(mf.certifications||[]).map((cert,i)=>(
+            <div key={cert.id||i} style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginTop:i>0?10:0}}>
+              <div style={{marginBottom:8}}><label style={lbl}>Certification</label><select value={cert.name||""} onChange={e=>updCert(i,"name",e.target.value)} style={inpSel}><option value="">— Select —</option>{CERT_TYPES.map(t=><option key={t}>{t}</option>)}</select></div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div><label style={lbl}>Cert #</label><input type="text" placeholder="Optional" value={cert.cert_number||""} onChange={e=>updCert(i,"cert_number",e.target.value)} style={inp}/></div>
+                <div><label style={lbl}>Expiry</label><input type="date" value={cert.expiry||""} onChange={e=>updCert(i,"expiry",e.target.value)} style={inp}/></div>
+              </div>
+              <button onClick={()=>remCert(i)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>Remove</button>
+            </div>
+          ))}
+        </div>
+
+        {/* App Access — PM/Admin only */}
+        <div style={{...cardS,marginBottom:20,borderLeft:`3px solid ${roleColor[pf.role]||T.green}`}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.orange,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>🔐 App Access</div>
+          <div style={{marginBottom:12}}>
+            <label style={lbl}>Permission Level</label>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {ROLES.map(role=>{const m=ROLE_META[role];return(
+                <button key={role} onClick={()=>setP("role",role)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:12,border:`2px solid ${pf.role===role?m.color:T.border}`,background:pf.role===role?m.color+"18":T.surface,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <div style={{width:12,height:12,borderRadius:"50%",background:m.color,flexShrink:0}}/>
+                  <div style={{flex:1}}><div style={{fontSize:13,fontWeight:700,color:pf.role===role?m.color:T.text}}>{m.label}</div><div style={{fontSize:11,color:T.muted}}>{m.desc}</div></div>
+                  {pf.role===role&&<span style={{color:m.color}}>✓</span>}
+                </button>
+              );})}
+            </div>
+          </div>
+          <div style={{marginBottom:12}}>
+            <label style={lbl}>Division Assignment</label>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <button onClick={()=>setP("division",null)} style={{padding:"10px",borderRadius:10,border:`2px solid ${!pf.division?T.orange:T.border}`,background:!pf.division?T.orangeLow:T.surface,color:!pf.division?T.orange:T.sub,fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>All Divisions</button>
+              {DIVISIONS.map(div=>{const m=DIV_META[div];return(<button key={div} onClick={()=>setP("division",div)} style={{padding:"10px",borderRadius:10,border:`2px solid ${pf.division===div?m.color:T.border}`,background:pf.division===div?m.color+"18":T.surface,color:pf.division===div?m.color:T.sub,fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{m.icon} {div}</button>);})}
+            </div>
+          </div>
+          <div><label style={lbl}>Sign-In PIN</label><input type="text" maxLength={6} placeholder="Set a 4-6 digit PIN" value={pf.pin||""} onChange={e=>setP("pin",e.target.value)} style={inp}/><div style={{fontSize:11,color:T.muted,marginTop:4}}>Required for all users to sign in.</div></div>
+        </div>
+
+        <button onClick={save} style={{...primBtn,opacity:mf.name&&!saving?1:0.5}}>{saving?"Saving…":mode==="edit"?"Save Changes":"Add Person"}</button>
+        {mode==="edit"&&active&&mf.name!==user.name&&<button onClick={()=>removePerson(mf.name)} style={{...dangerBtn,marginTop:10}}>Remove from Directory</button>}
       </div>
     </div>
   );
 
-  if(mode==="view"&&active) return(
-    <div style={{background:T.bg,minHeight:"100vh",padding:16,fontFamily:"inherit"}}>
-      <button onClick={()=>{setMode("list");setActive(null);}} style={{...ghostBtn,marginBottom:14}}>← Directory</button>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}><div><div style={{fontSize:22,fontWeight:900,letterSpacing:"-0.5px",color:T.orange}}>{active.name}</div>{active.classification&&<div style={{fontSize:14,color:T.sub,marginTop:2}}>{active.classification}</div>}</div><button onClick={()=>{setF({...blank,...active,certifications:active.certifications||[]});setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 14px",color:T.orange,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✏️ Edit</button></div>
-      {(active.phone||active.email)&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Contact</div>{active.phone&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>Cell</span><a href={`tel:${active.phone}`} style={{fontSize:13,fontWeight:600,color:T.blue,textDecoration:"none"}}>{active.phone}</a></div>}{active.email&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0"}}><span style={{fontSize:13,color:T.muted}}>Email</span><a href={`mailto:${active.email}`} style={{fontSize:13,fontWeight:600,color:T.blue,textDecoration:"none"}}>{active.email}</a></div>}</div>}
-      {(active.emergency_contact_name||active.emergency_contact_phone)&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.red}`}}><div style={{fontSize:12,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🆘 Emergency Contact</div>{active.emergency_contact_name&&<div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{active.emergency_contact_name}</div>}{active.emergency_contact_phone&&<a href={`tel:${active.emergency_contact_phone}`} style={{fontSize:14,color:T.red,textDecoration:"none",fontWeight:700}}>📞 {active.emergency_contact_phone}</a>}</div>}
-      {(active.certifications||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🎖️ Certifications</div>{(active.certifications||[]).map((cert,i)=>{const exp=cert.expiry?daysUntil(cert.expiry):null;const expired=exp!==null&&exp<0;const expiring=exp!==null&&exp>=0&&exp<=30;return(<div key={cert.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<active.certifications.length-1?`1px solid ${T.border}`:"none"}}><div><div style={{fontSize:13,fontWeight:600}}>{cert.name}</div>{cert.cert_number&&<div style={{fontSize:11,color:T.muted}}>#{cert.cert_number}</div>}</div>{cert.expiry&&<span style={pill(expired?T.red:expiring?T.yellow:T.green)}>{expired?"EXPIRED":expiring?`Exp ${exp}d`:fmtDate(cert.expiry)}</span>}</div>);})}</div>}
-      {active.notes&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Notes</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{active.notes}</div></div>}
-      {can(user,"crew_directory")&&<button onClick={()=>remove(active.id)} style={{...dangerBtn,marginTop:8}}>Remove from Directory</button>}
-    </div>
-  );
+  /* ── PROFILE VIEW ── */
+  if(mode==="view"&&active){
+    const m=memberMap[active]||{name:active};
+    const p=profileMap[active]||{role:"crew"};
+    const rc=p.role||"crew";
+    const expiredCerts=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)<0);
+    const expiringSoon=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)>=0&&daysUntil(c.expiry)<=30);
+    return(
+      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+        <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+          <button onClick={()=>setMode("list")} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Directory</button>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:22,fontWeight:900,color:T.orange,letterSpacing:"-0.5px"}}>{active}</div>
+              <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                {m.classification&&<span style={pill(T.blue)}>{m.classification}</span>}
+                <span style={pill(roleColor[rc]||T.green)}>{ROLE_META[rc]?.label||"Field Crew"}</span>
+                {p.division&&<span style={pill(DIV_META[p.division]?.color||T.muted)}>{DIV_META[p.division]?.icon} {p.division}</span>}
+                {expiredCerts.length>0&&<span style={pill(T.red)}>{expiredCerts.length} expired</span>}
+                {expiringSoon.length>0&&<span style={pill(T.yellow)}>{expiringSoon.length} expiring</span>}
+              </div>
+            </div>
+            {canEdit&&<button onClick={()=>openEdit(active)} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 14px",color:T.orange,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✏️ Edit</button>}
+          </div>
+        </div>
+        <div style={{padding:"16px 16px 80px"}}>
+          {/* Contact */}
+          {(m.phone||m.email)&&<div style={{...cardS,marginBottom:12}}>
+            <div style={{fontSize:11,color:T.blue,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Contact</div>
+            {m.phone&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>Cell</span><a href={`tel:${m.phone}`} style={{fontSize:13,fontWeight:700,color:T.blue,textDecoration:"none"}}>{m.phone}</a></div>}
+            {m.email&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0"}}><span style={{fontSize:13,color:T.muted}}>Email</span><a href={`mailto:${m.email}`} style={{fontSize:13,fontWeight:700,color:T.blue,textDecoration:"none"}}>{m.email}</a></div>}
+          </div>}
+
+          {/* Emergency */}
+          {(m.emergency_contact_name||m.emergency_contact_phone)&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.red}`}}>
+            <div style={{fontSize:11,color:T.red,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>🆘 Emergency Contact</div>
+            {m.emergency_contact_name&&<div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{m.emergency_contact_name}</div>}
+            {m.emergency_contact_phone&&<a href={`tel:${m.emergency_contact_phone}`} style={{fontSize:14,color:T.red,fontWeight:700,textDecoration:"none"}}>📞 {m.emergency_contact_phone}</a>}
+          </div>}
+
+          {/* Certifications */}
+          {(m.certifications||[]).length>0&&<div style={{...cardS,marginBottom:12}}>
+            <div style={{fontSize:11,color:T.blue,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🎖️ Certifications</div>
+            {(m.certifications||[]).map((cert,i)=>{
+              const exp=cert.expiry?daysUntil(cert.expiry):null;
+              const expired=exp!==null&&exp<0;const expiring=exp!==null&&exp>=0&&exp<=30;
+              return(<div key={cert.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<m.certifications.length-1?`1px solid ${T.border}`:"none"}}>
+                <div><div style={{fontSize:13,fontWeight:600}}>{cert.name}</div>{cert.cert_number&&<div style={{fontSize:11,color:T.muted}}>#{cert.cert_number}</div>}</div>
+                {cert.expiry&&<span style={pill(expired?T.red:expiring?T.yellow:T.green)}>{expired?"EXPIRED":expiring?`${exp}d`:fmtDate(cert.expiry)}</span>}
+              </div>);
+            })}
+          </div>}
+
+          {/* App access — show role to PM/Admin, hide PIN */}
+          {canEdit&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${roleColor[rc]||T.green}`}}>
+            <div style={{fontSize:11,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🔐 App Access</div>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>Role</span><span style={pill(roleColor[rc]||T.green)}>{ROLE_META[rc]?.label||"Field Crew"}</span></div>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>Division</span><span style={{fontSize:13,fontWeight:600}}>{p.division||"All Divisions"}</span></div>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0"}}><span style={{fontSize:13,color:T.muted}}>PIN</span><span style={{fontSize:13,fontWeight:600}}>{p.pin?"••••••":"Not set"}</span></div>
+          </div>}
+
+          {m.notes&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Notes</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{m.notes}</div></div>}
+        </div>
+      </div>
+    );
+  }
+
+  /* ── LIST ── */
+  const activePeople=allNames.filter(n=>{const m=memberMap[n];return !m||m.active!==false;});
+  const inactivePeople=allNames.filter(n=>{const m=memberMap[n];return m&&m.active===false;});
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👥 Crew Directory</div><button onClick={()=>{setF({...blank});setMode("new");}} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div>
+            <div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👥 Crew Directory</div>
+            <div style={{fontSize:12,color:T.muted}}>{activePeople.length} people · tap to view details</div>
+          </div>
+          {canEdit&&<button onClick={()=>{setMf({...blankMember});setPf({...blankProfile});setActive(null);setMode("new");}} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>}
+        </div>
+        <div style={{position:"relative"}}>
+          <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:14,pointerEvents:"none"}}>🔍</span>
+          <input type="text" placeholder="Search people…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,paddingLeft:36,fontSize:14,borderRadius:12}}/>
+          {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:0}}>×</button>}
+        </div>
       </div>
-      <div style={{padding:"14px 16px 80px"}}>
+
+      <div style={{padding:"12px 16px 80px"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
         {loading&&<Spinner/>}
-        {!loading&&<>
-          {active_m.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>👥</div><div>No crew members yet.</div></div>}
-          {active_m.map(m=>{const expiredCerts=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)<0);const expiringSoon=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)>=0&&daysUntil(c.expiry)<=30);return(<div key={m.id} onClick={()=>{setActive(m);setMode("view");}} style={{...cardS,marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}><div style={{width:44,height:44,borderRadius:12,background:T.orangeLow,border:`2px solid ${T.orange}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:T.orange,flexShrink:0}}>{m.name.split(" ").map(w=>w[0]).slice(0,2).join("")}</div><div style={{flex:1,minWidth:0}}><div style={{fontSize:15,fontWeight:700,color:T.orange}}>{m.name}</div><div style={{fontSize:12,color:T.sub}}>{m.classification||"No classification"}{m.phone?" · "+m.phone:""}</div><div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>{(m.certifications||[]).length>0&&<span style={pill(T.blue)}>{m.certifications.length} certs</span>}{expiredCerts.length>0&&<span style={pill(T.red)}>{expiredCerts.length} expired</span>}{expiringSoon.length>0&&<span style={pill(T.yellow)}>{expiringSoon.length} expiring</span>}</div></div><span style={{fontSize:16,color:T.muted}}>›</span></div>);})}
-          {inactive_m.length>0&&<><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 10px"}}>Inactive</div>{inactive_m.map(m=>(<div key={m.id} onClick={()=>{setActive(m);setMode("view");}} style={{...cardS,marginBottom:8,cursor:"pointer",opacity:0.5,display:"flex",alignItems:"center",gap:12}}><div style={{width:36,height:36,borderRadius:10,background:T.surface,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:T.muted,flexShrink:0}}>{m.name.split(" ").map(w=>w[0]).slice(0,2).join("")}</div><div><div style={{fontSize:14,fontWeight:600,color:T.orange}}>{m.name}</div><div style={{fontSize:12,color:T.muted}}>{m.classification}</div></div></div>))}</>}
-        </>}
+        {!loading&&filtered.filter(n=>activePeople.includes(n)).map(name=>{
+          const m=memberMap[name]||{};
+          const p=profileMap[name]||{role:"crew"};
+          const rc=p.role||"crew";
+          const expiredCerts=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)<0);
+          const expiringSoon=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)>=0&&daysUntil(c.expiry)<=30);
+          return(
+            <div key={name} onClick={()=>openPerson(name)} style={{...cardS,marginBottom:9,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:44,height:44,borderRadius:12,background:T.orangeLow,border:`2px solid ${T.orange}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,color:T.orange,flexShrink:0}}>
+                {name.split(" ").map(w=>w[0]).slice(0,2).join("")}
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:15,fontWeight:700,color:T.orange}}>{name}</div>
+                <div style={{fontSize:12,color:T.sub,marginTop:1}}>
+                  {m.classification||"No classification"}{m.phone?" · "+m.phone:""}
+                </div>
+                <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
+                  <span style={pill(roleColor[rc]||T.green)}>{ROLE_META[rc]?.label||"Field Crew"}</span>
+                  {p.division&&<span style={pill(DIV_META[p.division]?.color||T.muted)}>{DIV_META[p.division]?.icon} {p.division}</span>}
+                  {(m.certifications||[]).length>0&&<span style={pill(T.blue)}>{m.certifications.length} certs</span>}
+                  {expiredCerts.length>0&&<span style={pill(T.red)}>{expiredCerts.length} expired</span>}
+                  {expiringSoon.length>0&&<span style={pill(T.yellow)}>{expiringSoon.length} expiring</span>}
+                  {!p.pin&&canEdit&&<span style={pill(T.yellow)}>No PIN</span>}
+                </div>
+              </div>
+              <span style={{fontSize:18,color:T.muted}}>›</span>
+            </div>
+          );
+        })}
+        {!loading&&filtered.filter(n=>activePeople.includes(n)).length===0&&search&&(
+          <div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>👥</div><div>No results for "{search}"</div></div>
+        )}
+        {!loading&&inactivePeople.filter(n=>!search||n.toLowerCase().includes(search.toLowerCase())).length>0&&(
+          <div style={{marginTop:20}}>
+            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Inactive</div>
+            {inactivePeople.filter(n=>!search||n.toLowerCase().includes(search.toLowerCase())).map(name=>(
+              <div key={name} onClick={()=>openPerson(name)} style={{...cardS,marginBottom:8,cursor:"pointer",opacity:0.45,display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:36,height:36,borderRadius:10,background:T.surface,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:T.muted,flexShrink:0}}>{name.split(" ").map(w=>w[0]).slice(0,2).join("")}</div>
+                <div><div style={{fontSize:14,fontWeight:600,color:T.orange}}>{name}</div><div style={{fontSize:12,color:T.muted}}>{memberMap[name]?.classification||"—"}</div></div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
 
 /* ── PROJECT DETAIL (ORCHESTRATOR) ─────────────────────────── */
 const PTABS=[
@@ -1754,7 +2009,7 @@ function PMDashboard({onBack,user}){
             {projRows.map(p=>(<div key={p.id} style={{...cardS,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontSize:15,fontWeight:700}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.division} · {p.count} reports</div></div><div style={{fontSize:18,fontWeight:900,color:T.green}}>${p.grand>=1000?(p.grand/1000).toFixed(1)+"k":fmt(p.grand)}</div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{[["Labor",p.labor,T.orange],["Equip",p.equip,T.yellow],["Mats",p.mats,T.blue]].map(([l,v,c])=>(<div key={l} style={{background:T.surface,borderRadius:8,padding:"8px",textAlign:"center"}}><div style={{fontSize:13,fontWeight:700,color:c}}>${v>=1000?(v/1000).toFixed(1)+"k":fmt(v)}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>{l}</div></div>))}</div></div>))}
           </div>)}
           {pmTab==="reports"&&<CustomReports/>}
-          {pmTab==="users"&&(can(user,"manage_users")?<UserManagement/>:<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>🔒</div><div>Admin access required.</div></div>)}
+          {pmTab==="users"&&(<div style={{textAlign:"center",padding:"40px 20px",color:T.muted}}><div style={{fontSize:40,marginBottom:12}}>👥</div><div style={{fontSize:16,fontWeight:700,color:T.text,marginBottom:6}}>User & Crew Management</div><div style={{fontSize:13,marginBottom:20}}>The Crew Directory now handles both contact info and app permissions in one place.</div><button onClick={onBack} style={{...primBtn,borderRadius:14}}>Go to Crew Directory →</button></div>)}
         </>)}
       </div>
     </div>
