@@ -472,13 +472,14 @@ function JobCard({p,onSelect,divColor}){
 }
 
 /* ── PROJECT FORM ───────────────────────────────────────────── */
-function ProjectForm({initial,onSave,onCancel,saving,defaultDivision}){
+function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr,onClearErr}){
   const [f,setF]=useState(initial||{name:"",client:"",location:"",afe:"",work_order:"",start_date:today(),notes:"",status:"active",division:defaultDivision||"Pipeline",job_type:"T&M",contract_value:""});
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <TopBar title={initial?"Edit Job":"New Job"} onBack={onCancel}/>
       <div style={{padding:"16px 16px 100px"}}>
+        <ErrBanner msg={externalErr} onDismiss={onClearErr}/>
         {[{k:"name",l:"Job Number *",ph:"e.g. HDD-2026-001"},{k:"client",l:"Client",ph:"Colonial Pipeline"},{k:"location",l:"Location",ph:"City, State or Milepost"},{k:"afe",l:"AFE No.",ph:"AFE #"},{k:"work_order",l:"PO #",ph:"PO #"}].map(({k,l,ph})=>(<div key={k} style={{marginBottom:12}}><label style={lbl}>{l}</label><input type="text" placeholder={ph} value={f[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}
 
         {/* Job Type */}
@@ -1439,7 +1440,16 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   async function deleteReport(id){try{await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
   async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));await notify("report_flagged","Report Flagged",pm_notes,{project_id:project.id,report_id:id});await load(true);}catch(e){setErr(e.message);}}
-  async function updateProject(data){try{const[u]=await API.projects.update(project.id,data);setProject(u);onProjectUpdated(u);setEditProject(false);}catch(e){setErr(e.message);}}
+  async function updateProject(data){
+    const{_reports,_billed,_lastReport,...clean}=data;
+    const payload={...clean,contract_value:clean.contract_value&&clean.contract_value!==""?parseFloat(clean.contract_value):null};
+    try{
+      const result=await API.projects.update(project.id,payload);
+      const u=Array.isArray(result)?result[0]:result;
+      const merged={...project,...payload,...(u||{})};
+      setProject(merged);onProjectUpdated(merged);setEditProject(false);
+    }catch(e){setErr(e.message);}
+  }
   async function archiveProject(){if(!window.confirm(project.status==="active"?"Archive this job?":"Restore?"))return;await updateProject({status:project.status==="active"?"archived":"active"});onBack();}
   async function deleteProject(){if(!window.confirm("Permanently delete this job and ALL its data? This cannot be undone."))return;if(!window.confirm("Are you sure? All reports, photos, time cards and safety logs will be deleted."))return;try{await API.projects.remove(project.id);onBack();}catch(e){setErr(e.message);}}
 
@@ -1447,7 +1457,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
 
   if(screen==="newReport"&&can(user,"submit_report")) return <DailyReportForm user={user} project={project} onSave={saveReport} onCancel={()=>setScreen("detail")}/>;
   if(screen==="reportDetail"&&activeReport) return <ReportDetail report={activeReport} project={project} user={user} onBack={()=>setScreen("detail")} onDelete={deleteReport} onApprove={approveReport} onFlag={flagReport}/>;
-  if(editProject&&can(user,"edit_job")) return <ProjectForm initial={project} onSave={updateProject} onCancel={()=>setEditProject(false)} defaultDivision={project.division}/>;
+  if(editProject&&can(user,"edit_job")) return <ProjectForm initial={project} onSave={updateProject} onCancel={()=>{setEditProject(false);setErr("");}} defaultDivision={project.division} externalErr={err} onClearErr={()=>setErr("")}/>;
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
