@@ -239,10 +239,10 @@ function LoginScreen({onLogin}){
           <div style={{width:60,height:60,background:T.orange,borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,fontWeight:900,color:"#09090B"}}>A</div>
           <div style={{textAlign:"left"}}>
             <div style={{fontSize:28,fontWeight:900,color:T.text,letterSpacing:"-1px",lineHeight:1.1}}>AIME</div>
-            <div style={{fontSize:12,color:T.muted,letterSpacing:"3px",textTransform:"uppercase"}}>Field OS</div>
+            <div style={{fontSize:12,color:T.muted,letterSpacing:"3px",textTransform:"uppercase"}}>Field Pro</div>
           </div>
         </div>
-        <div style={{fontSize:13,color:T.muted}}>Colonial Pipeline · Field Management</div>
+
       </div>
 
       <div style={{...cardS,maxWidth:400,margin:"0 auto",width:"100%"}}>
@@ -313,7 +313,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:40,height:40,background:T.orange,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:20,color:"#09090B"}}>A</div>
             <div>
-              <div style={{fontSize:16,fontWeight:800,color:T.text}}>AIME Field OS</div>
+              <div style={{fontSize:16,fontWeight:800,color:T.text}}>AIME Field Pro</div>
               <div style={{fontSize:11,color:T.muted}}>
                 {user.role==="admin"?"🔴":user.role==="pm"?"🟠":user.role==="foreman"?"🟡":"🟢"} {user.name} · {ROLE_META[user.role]?.label}
               </div>
