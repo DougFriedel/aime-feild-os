@@ -169,7 +169,7 @@ const fmt=(n)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maxi
 const fmtDate=(d)=>d?new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—";
 const fmtShort=(d)=>d?new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}):"—";
 const daysUntil=(d)=>{if(!d)return null;const diff=new Date(d+"T12:00:00")-new Date();return Math.ceil(diff/86400000);};
-function laborAmt(r){const p=POSITIONS.find(x=>x.name===r.classification);if(!p)return 0;if(p.flat)return p.rate;return p.rate*((parseFloat(r.regHrs)||0)+(parseFloat(r.otHrs)||0)*1.5+(parseFloat(r.travelHrs)||0));}
+function laborAmt(r,division){const positions=getPositions(division);const p=positions.find(x=>x.name===r.classification);if(!p)return 0;if(p.flat)return p.rate;return p.rate*((parseFloat(r.regHrs)||0)+(parseFloat(r.otHrs)||0)*1.5+(parseFloat(r.travelHrs)||0));}
 function equipAmt(r){return(parseFloat(r.rate)||0)*(parseFloat(r.qty)||0)*(parseFloat(r.usage)||0);}
 function reportTotals(r,division){const labor=(r.labor||[]).reduce((s,x)=>s+laborAmt(x,division),0);const equip=(r.equipment||[]).reduce((s,x)=>s+equipAmt(x),0);const mats=(r.materials||[]).reduce((s,x)=>s+(parseFloat(x.amount)||0),0);return{labor,equip,mats,grand:labor+equip+mats};}
 function calcHours(ci,co){if(!ci||!co)return 0;const[ih,im]=ci.split(":").map(Number);const[oh,om]=co.split(":").map(Number);const diff=(oh*60+om)-(ih*60+im);return diff>0?Math.round(diff/60*100)/100:0;}
