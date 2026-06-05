@@ -1559,7 +1559,7 @@ function PMDashboard({onBack,user}){
 
     const tot=fr.reduce((s,r)=>{const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);const t=reportTotals(r,div);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
     const wm={};
-    fr.forEach(r=>{const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);(r.labor||[]).forEach(l=>{if(!l.name)return;if(!wm[l.name])wm[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0};wm[l.name].reg+=parseFloat(l.regHrs)||0;wm[l.name].ot+=parseFloat(l.otHrs)||0;wm[l.name].travel+=parseFloat(l.travelHrs)||0;wm[l.name].pay+=laborAmt(l,div);});});
+    fr.forEach(r=>{const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);(r.labor||[]).forEach(l=>{if(!l.name)return;if(!wm[l.name])wm[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0,minDate:r.date,maxDate:r.date};wm[l.name].reg+=parseFloat(l.regHrs)||0;wm[l.name].ot+=parseFloat(l.otHrs)||0;wm[l.name].travel+=parseFloat(l.travelHrs)||0;wm[l.name].pay+=laborAmt(l,div);if(r.date<wm[l.name].minDate)wm[l.name].minDate=r.date;if(r.date>wm[l.name].maxDate)wm[l.name].maxDate=r.date;});});
     const wr=Object.values(wm).sort((a,b)=>b.pay-a.pay);
     const pm2={};projects.forEach(p=>{pm2[p.id]={id:p.id,name:p.name,division:p.division,afe:p.afe,labor:0,equip:0,mats:0,grand:0,laborHrs:0,otHrs:0,count:0};});
     fr.forEach(r=>{if(!pm2[r.project_id])return;const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);const t=reportTotals(r,div);pm2[r.project_id].labor+=t.labor;pm2[r.project_id].equip+=t.equip;pm2[r.project_id].mats+=t.mats;pm2[r.project_id].grand+=t.grand;pm2[r.project_id].count++;(r.labor||[]).forEach(l=>{pm2[r.project_id].laborHrs+=parseFloat(l.regHrs)||0;pm2[r.project_id].otHrs+=parseFloat(l.otHrs)||0;});});
@@ -1585,7 +1585,11 @@ function PMDashboard({onBack,user}){
         ...pr.map(p=>[p.name,p.division||"",p.count,p.laborHrs,p.otHrs,p.labor,p.equip,p.mats,p.grand]),
         [],
         ["BY WORKER"],["Worker","Reg Hrs","OT Hrs","Travel Hrs","Total Hrs","Total Pay $"],
-        ...wr.map(w=>[w.name,w.reg,w.ot,w.travel,w.reg+w.ot+w.travel,w.pay]),
+        ...wr.map(w=>{
+          const fmtD=d=>{if(!d)return"";const[y,mo,dy]=d.split("-");return mo+"/"+dy+"/"+y.slice(2);};
+          const dr=w.minDate===w.maxDate?fmtD(w.minDate):fmtD(w.minDate)+" - "+fmtD(w.maxDate);
+          return[w.name+" ("+dr+")",w.reg,w.ot,w.travel,w.reg+w.ot+w.travel,w.pay];
+        }),
         [],["TOTALS","",totalReg,totalOT,totalTravel,totalReg+totalOT+totalTravel,wr.reduce((s,w)=>s+w.pay,0)],
       ];
       const ws1=XLSX.utils.aoa_to_sheet(sumRows);
