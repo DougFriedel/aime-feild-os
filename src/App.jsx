@@ -773,44 +773,149 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     setSigSaving(false);
   }
   function exportXLSX(){
-    const wb=XLSX.utils.book_new();const rows=[];const blank=()=>Array(11).fill(null);
-    const r1=blank();r1[1]="COLONIAL PIPELINE COMPANY";rows.push(r1);
-    const r2=blank();r2[1]="DAILY REPORT-WORK PERFORMED BY CONTRACTOR";rows.push(r2);
-    const r3=blank();r3[1]="LOCATION";r3[3]="AFE NO.";r3[4]="WORK ORDER\nNUMBER";r3[6]="REPORT DATE";r3[8]="REPORT\nNO.";rows.push(r3);
+    const wb=XLSX.utils.book_new();
+    const rows=[];
+    const blank=()=>Array(12).fill(null);
     const[yr,mo,dy]=(report.date||"").split("-");
-    const r4=blank();r4[1]=project.location||"";r4[3]=project.afe||"";r4[4]=project.work_order||"";r4[6]=`${mo}/${dy}/${yr}`;r4[8]=report.report_no||"";rows.push(r4);
-    const r5=blank();r5[1]="CONTRACTOR:";r5[2]="AIME";r5[8]="CONTRACTOR DATE:";r5[9]=report.date||"";rows.push(r5);
+    const dateStr=mo+"/"+dy+"/"+yr;
+
+    // ── Row 1: blank ──
+    rows.push(blank());
+
+    // ── Row 2: AIME Header ──
+    const r2=blank();r2[1]="AIME DAILY REPORT-WORK";rows.push(r2);
+
+    // ── Row 3: Customer | PO# | Report Date ──
+    const r3=blank();r3[1]="Customer:";r3[2]=project.client||"";r3[5]="Work Order / PO #";r3[8]=project.work_order||"";r3[9]="Report Date:";r3[10]=dateStr;rows.push(r3);
+
+    // ── Row 4: Job Location ──
+    const r4=blank();r4[1]="Job Location:";r4[2]=project.location||"";rows.push(r4);
+
+    // ── Row 5: Job Number | Report # ──
+    const r5=blank();r5[1]="Job Number:";r5[2]=project.name||"";r5[4]="Report #:";r5[5]=report.report_no||"";rows.push(r5);
+
+    // ── Row 6-7: Description ──
     const r6=blank();r6[1]="DESCRIPTION OF WORK DONE:";rows.push(r6);
     const r7=blank();r7[1]=report.description||"";rows.push(r7);
+
+    // ── Row 8: LABOR header ──
     const r8=blank();r8[1]="LABOR";rows.push(r8);
+
+    // ── Row 9: Labor column headers ──
     const r9=blank();r9[1]="NAME";r9[3]="CLASSIFICATION";r9[5]="REG. HRS.";r9[6]="O.T. HRS.";r9[7]="TRAVEL HRS.";r9[8]="REGULAR RATE";r9[9]="AMOUNT";rows.push(r9);
-    const labRows=[...(report.labor||[])];while(labRows.length<14)labRows.push(null);
-    labRows.forEach(lr=>{const row=blank();if(lr){const pos=POSITIONS.find(p=>p.name===lr.classification);row[1]=lr.name||"";row[3]=lr.classification||"";if(pos&&!pos.flat){row[5]=parseFloat(lr.regHrs)||0;row[6]=parseFloat(lr.otHrs)||0;row[7]=parseFloat(lr.travelHrs)||0;}row[8]=pos?pos.rate:"";row[9]=laborAmt(lr);}else row[9]=0;rows.push(row);});
-    const tlRow=blank();tlRow[8]="TOTAL LABOR";tlRow[9]=tot.labor;rows.push(tlRow);rows.push(blank());
-    const ehRow=blank();ehRow[1]="EQUIPMENT";rows.push(ehRow);
-    const ecRow=blank();ecRow[1]="DESCRIPTION";ecRow[6]="Quantity";ecRow[7]="Hours/Days";ecRow[8]="RATE";ecRow[9]="AMOUNT";rows.push(ecRow);
-    const eqRows=[...(report.equipment||[])];while(eqRows.length<15)eqRows.push(null);
-    eqRows.forEach(er=>{const row=blank();if(er){row[1]=er.description||"";row[6]=parseFloat(er.qty)||0;row[7]=parseFloat(er.usage)||0;row[8]=parseFloat(er.rate)||0;row[9]=equipAmt(er);}else row[9]=0;rows.push(row);});
-    const teRow=blank();teRow[8]="TOTAL EQUIPMENT";teRow[9]=tot.equip;rows.push(teRow);rows.push(blank());
-    const mhRow=blank();mhRow[2]="MATERIAL & MISCELLANEOUS";rows.push(mhRow);
-    const mcRow=blank();mcRow[1]="QUANTITY";mcRow[2]="DESCRIPTION";mcRow[5]="AMOUNT";rows.push(mcRow);
-    (report.materials||[]).forEach(m=>{const row=blank();row[1]=m.qty||"";row[2]=m.description||"";row[5]=parseFloat(m.amount)||0;rows.push(row);});
-    const gtRow=blank();gtRow[8]="GRAND TOTAL";gtRow[9]=tot.grand;rows.push(gtRow);
-    const sgRow=blank();sgRow[1]="VERIFIED AND ACCEPTED BY CO. REP";sgRow[3]="DATE";sgRow[4]="CERTIFIED AS CORRECT BY CONTRACTOR";rows.push(sgRow);
-    if(report.inspector_name){
-      const irRow=blank();
-      irRow[1]="INSPECTOR SIGN-OFF:";
-      irRow[2]=report.inspector_name;
-      irRow[4]="SIGNED:";
-      irRow[5]=report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleString():"";
-      rows.push(irRow);
+
+    // ── Rows 10-24: Labor rows (15 rows) ──
+    const positions=getPositions(project.division);
+    const laborRows=[...(report.labor||[])];
+    while(laborRows.length<14)laborRows.push(null);
+    laborRows.forEach(lr=>{
+      const row=blank();
+      if(lr){
+        const pos=positions.find(p=>p.name===lr.classification);
+        row[1]=lr.name||"";
+        row[3]=lr.classification||"";
+        if(pos&&!pos.flat){row[5]=parseFloat(lr.regHrs)||0;row[6]=parseFloat(lr.otHrs)||0;row[7]=parseFloat(lr.travelHrs)||0;}
+        row[8]=pos?pos.rate:"";
+        row[9]=laborAmt(lr,project.division);
+      }else{row[9]=0;}
+      rows.push(row);
+    });
+
+    // ── Row 24: Per Diem row ──
+    const perDiemPos=positions.find(p=>p.name==="Per Diem");
+    const perDiemEntry=(report.labor||[]).find(l=>l.classification==="Per Diem");
+    const pdRow=blank();
+    pdRow[3]="Per Diem";
+    pdRow[9]=perDiemEntry?laborAmt(perDiemEntry,project.division):0;
+    rows.push(pdRow);
+
+    // ── Row 25: Total Labor ──
+    const totRow=blank();totRow[8]="TOTAL LABOR";totRow[9]=reportTotals(report,project.division).labor;rows.push(totRow);
+
+    // ── Row 26: blank ──
+    rows.push(blank());
+
+    // ── Row 27: EQUIPMENT header ──
+    const eq27=blank();eq27[1]="EQUIPMENT";rows.push(eq27);
+
+    // ── Row 28: Equipment column headers ──
+    const eq28=blank();eq28[1]="DESCRIPTION";eq28[6]="Quantity";eq28[7]="Hours/Days";eq28[8]="RATE";eq28[9]="AMOUNT";rows.push(eq28);
+
+    // ── Rows 29-43: Equipment rows (15 rows) ──
+    const eqList=getEquipList(project.division);
+    const equipRows=[...(report.equipment||[])];
+    while(equipRows.length<15)equipRows.push(null);
+    equipRows.forEach(er=>{
+      const row=blank();
+      if(er){
+        row[1]=er.description||"";
+        row[6]=parseFloat(er.qty)||0;
+        row[7]=parseFloat(er.usage)||0;
+        row[8]=parseFloat(er.rate)||0;
+        row[9]=equipAmt(er);
+      }else{row[9]=0;}
+      rows.push(row);
+    });
+
+    // ── Row 44: Total Equipment ──
+    const teRow=blank();teRow[8]="TOTAL EQUIPMENT";teRow[9]=reportTotals(report,project.division).equip;rows.push(teRow);
+
+    // ── Row 45: blank ──
+    rows.push(blank());
+
+    // ── Row 46: RENTAL EQUIPMENT header ──
+    const re46=blank();re46[4]="RENTAL EQUIPMENT";rows.push(re46);
+
+    // ── Row 47: Materials sub-header ──
+    const re47=blank();re47[2]="MATERIAL & MISCELLANEOUS — LIST OF MATERIAL & ATTACH SUPPORTING INVOICES";rows.push(re47);
+
+    // ── Row 48: Two-column material headers ──
+    const re48=blank();re48[1]="QUANTITY";re48[2]="DESCRIPTION";re48[5]="AMOUNT";re48[6]="QUANTITY";re48[7]="DESCRIPTION";re48[9]="AMOUNT";rows.push(re48);
+
+    // ── Material rows — two column layout ──
+    const mats=(report.materials||[]);
+    // Split into left (even index) and right (odd index) columns, 3 per column
+    const leftMats=mats.filter((_,i)=>i%2===0).slice(0,3);
+    const rightMats=mats.filter((_,i)=>i%2!==0).slice(0,3);
+    const maxMats=Math.max(3,leftMats.length,rightMats.length);
+
+    for(let i=0;i<maxMats;i++){
+      const lm=leftMats[i]||null;
+      const rm=rightMats[i]||null;
+      // Item row
+      const itemRow=blank();
+      if(lm){itemRow[1]=lm.qty||"";itemRow[2]=lm.description||"";itemRow[5]=parseFloat(lm.amount)||0;}else{itemRow[5]=0;}
+      if(rm){itemRow[6]=rm.qty||"";itemRow[7]=rm.description||"";itemRow[9]=parseFloat(rm.amount)||0;}else{itemRow[9]=0;}
+      rows.push(itemRow);
+      // Tax row
+      const taxRow=blank();taxRow[2]="Tax";taxRow[7]="Tax";rows.push(taxRow);
+      // Total row
+      const totR=blank();totR[2]="Total";totR[5]=lm?parseFloat(lm.amount)||0:0;totR[7]="Total";totR[9]=rm?parseFloat(rm.amount)||0:0;rows.push(totR);
     }
+
+    // ── Total Rental Equipment ──
+    const reTotal=blank();reTotal[8]="TOTAL RENTAL EQUIPMENT";reTotal[9]=reportTotals(report,project.division).mats;rows.push(reTotal);
+
+    // ── Grand Total ──
+    const gtRow=blank();gtRow[8]="GRAND TOTAL";gtRow[9]=reportTotals(report,project.division).grand;rows.push(gtRow);
+
+    // ── Signature row ──
+    const sgRow=blank();sgRow[1]="ACCEPTED BY";sgRow[3]="DATE";sgRow[4]="CERTIFIED AS CORRECT BY CONTRACTOR'S REP";rows.push(sgRow);
+    if(report.inspector_name){
+      const irRow=blank();irRow[1]="INSPECTOR SIGN-OFF:";irRow[2]=report.inspector_name;irRow[4]="SIGNED:";irRow[5]=report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleString():"";rows.push(irRow);
+    }
+
     const ws=XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"]=[{wch:5.7},{wch:15},{wch:11.7},{wch:17.1},{wch:12.7},{wch:13.1},{wch:10},{wch:10},{wch:24.9},{wch:23.7},{wch:10.1}];
+    ws["!cols"]=[{wch:3},{wch:18},{wch:14},{wch:18},{wch:12},{wch:14},{wch:10},{wch:14},{wch:22},{wch:14},{wch:14},{wch:5}];
+
+    // Format currency columns
     const rng=XLSX.utils.decode_range(ws["!ref"]);
-    for(let r=0;r<=rng.e.r;r++){const a=XLSX.utils.encode_cell({r,c:9});if(ws[a]&&typeof ws[a].v==="number")ws[a].z='"$"#,##0.00';const b=XLSX.utils.encode_cell({r,c:5});if(ws[b]&&typeof ws[b].v==="number")ws[b].z='"$"#,##0.00';}
+    for(let r=0;r<=rng.e.r;r++){
+      [5,9].forEach(c=>{const addr=XLSX.utils.encode_cell({r,c});if(ws[addr]&&typeof ws[addr].v==="number")ws[addr].z='"$"#,##0.00';});
+    }
+
     XLSX.utils.book_append_sheet(wb,ws,"Daily Report");
-    XLSX.writeFile(wb,`AIME_${project.name.replace(/\s+/g,"_")}_${(report.date||"").replace(/-/g,"")}.xlsx`);
+    XLSX.writeFile(wb,`AIME_${(project.name||"").replace(/\s+/g,"_")}_${(report.date||"").replace(/-/g,"")}.xlsx`);
   }
   return(
     <div style={{background:T.bg,minHeight:"100vh",padding:16,fontFamily:"inherit"}}>
