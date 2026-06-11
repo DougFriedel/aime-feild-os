@@ -775,21 +775,37 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     setSigSaving(false);
   }
   function exportXLSX(){
-    // Load V2 template
-    const wb = XLSX.read(DAILY_REPORT_TEMPLATE_B64, {type:'base64'});
+    const wb = XLSX.read(DAILY_REPORT_TEMPLATE_B64, {type:'base64', cellStyles:true, cellFormula:true});
     const ws = wb.Sheets['3-24-2026'];
 
+    // Clear ALL formulas from the sheet first to prevent #REF! / #VALUE!
+    Object.keys(ws).forEach(addr=>{
+      if(addr.startsWith('!'))return;
+      const cell=ws[addr];
+      if(cell&&cell.f){delete cell.f; cell.v=cell.v||0;}
+    });
+
+    // Helper: set value, preserve existing border/style, clear formula
     function sc(addr, val){
-      // Set cell value, preserve existing style
-      if(!ws[addr]) ws[addr]={t:'s',v:''};
-      if(typeof val==='number'){ws[addr].t='n';ws[addr].v=val;ws[addr].w=undefined;}
-      else{ws[addr].t='s';ws[addr].v=val==null?'':String(val);ws[addr].w=undefined;}
+      const existing=ws[addr]||{};
+      const s=existing.s||{};
+      if(typeof val==='number'){
+        ws[addr]={...existing, s, t:'n', v:val, w:undefined, f:undefined};
+      } else {
+        ws[addr]={...existing, s, t:'s', v:val==null?'':String(val), w:undefined, f:undefined};
+      }
     }
+    // Helper: set numeric/currency value
     function scn(addr, val){
-      // Set numeric cell with currency format
-      if(!ws[addr]) ws[addr]={t:'n',v:0};
-      ws[addr].t='n'; ws[addr].v=parseFloat(val)||0; ws[addr].w=undefined;
-      ws[addr].z='"$"#,##0.00';
+      const existing=ws[addr]||{};
+      const s=existing.s||{};
+      const n=parseFloat(val)||0;
+      ws[addr]={...existing, s, t:'n', v:n, z:'"$"#,##0.00', w:undefined, f:undefined};
+    }
+    // Helper: ensure a cell exists with $0.00 if not already set
+    function scn0(addr){
+      const existing=ws[addr]||{};
+      if(!existing.v) scn(addr,0);
     }
 
     const positions=getPositions(project.division);
@@ -806,7 +822,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     sc('F5', report.report_no||'');
     sc('B7', report.description||'');
 
-    // ── LABOR rows 10-23 (14 workers) ──
+    // ── LABOR rows 10-23 ──
     const laborRows=[...(report.labor||[]).filter(l=>l.classification!=='Per Diem')];
     while(laborRows.length<14) laborRows.push(null);
     laborRows.slice(0,14).forEach((lr,i)=>{
@@ -819,12 +835,15 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
           sc(`F${row}`, parseFloat(lr.regHrs)||0);
           sc(`G${row}`, parseFloat(lr.otHrs)||0);
           sc(`H${row}`, parseFloat(lr.travelHrs)||0);
+        } else {
+          sc(`F${row}`, 0); sc(`G${row}`, 0); sc(`H${row}`, 0);
         }
-        sc(`I${row}`, pos?pos.rate:'');
+        sc(`I${row}`, pos?pos.rate:0);
         scn(`J${row}`, laborAmt(lr,project.division));
       } else {
-        ['B','D','F','G','H','I'].forEach(c=>sc(`${c}${row}`,''));
-        scn(`J${row}`,0);
+        sc(`B${row}`,''); sc(`D${row}`,'');
+        sc(`F${row}`,0); sc(`G${row}`,0); sc(`H${row}`,0);
+        sc(`I${row}`,0); scn(`J${row}`,0);
       }
     });
 
@@ -835,7 +854,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     // ── Row 25: Total Labor ──
     scn('J25', tot.labor);
 
-    // ── EQUIPMENT rows 29-43 (15 items) ──
+    // ── EQUIPMENT rows 29-43 ──
     const equipRows=[...(report.equipment||[])];
     while(equipRows.length<15) equipRows.push(null);
     equipRows.slice(0,15).forEach((er,i)=>{
@@ -847,7 +866,8 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
         sc(`I${row}`, parseFloat(er.rate)||0);
         scn(`J${row}`, equipAmt(er));
       } else {
-        ['B','G','H','I'].forEach(c=>sc(`${c}${row}`,''));
+        sc(`B${row}`,'');
+        sc(`G${row}`,0); sc(`H${row}`,0); sc(`I${row}`,0);
         scn(`J${row}`,0);
       }
     });
@@ -855,32 +875,35 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     // ── Row 44: Total Equipment ──
     scn('J44', tot.equip);
 
-    // ── MATERIALS / RENTAL EQUIPMENT (rows 49-60, 3 items x 4 rows each) ──
-    // Two-column layout: left (B-F) and right (G-J)
+    // ── MATERIALS rows 49-60 ──
     const mats=report.materials||[];
-    // Item 1 (rows 49-52)
-    const m0=mats[0]||null;
-    const m1=mats[1]||null;
-    if(m0){sc('B49',m0.qty||'');sc('C49',m0.description||'');scn('F49',parseFloat(m0.amount)||0);scn('F52',parseFloat(m0.amount)||0);}
-    if(m1){sc('G49',m1.qty||'');sc('H49',m1.description||'');scn('J49',parseFloat(m1.amount)||0);scn('J52',parseFloat(m1.amount)||0);}
-    // Item 2 (rows 53-56)
-    const m2=mats[2]||null;
-    const m3=mats[3]||null;
-    if(m2){sc('B53',m2.qty||'');sc('C53',m2.description||'');scn('F54',parseFloat(m2.amount)||0);scn('F56',parseFloat(m2.amount)||0);}
-    if(m3){sc('G53',m3.qty||'');sc('H53',m3.description||'');scn('J54',parseFloat(m3.amount)||0);scn('J56',parseFloat(m3.amount)||0);}
-    // Item 3 (rows 57-60)
-    const m4=mats[4]||null;
-    const m5=mats[5]||null;
-    if(m4){sc('B57',m4.qty||'');sc('C57',m4.description||'');scn('F58',parseFloat(m4.amount)||0);scn('F60',parseFloat(m4.amount)||0);}
-    if(m5){sc('G57',m5.qty||'');sc('H57',m5.description||'');scn('J58',parseFloat(m5.amount)||0);scn('J60',parseFloat(m5.amount)||0);}
+    // Item 1 (row 49, totals in 52)
+    const m0=mats[0]||null;const m1=mats[1]||null;
+    sc('B49',m0?m0.qty||'':''); sc('C49',m0?m0.description||'':'');
+    scn('F49',m0?parseFloat(m0.amount)||0:0); scn('F52',m0?parseFloat(m0.amount)||0:0);
+    sc('G49',m1?m1.qty||'':''); sc('H49',m1?m1.description||'':'');
+    scn('J49',m1?parseFloat(m1.amount)||0:0); scn('J52',m1?parseFloat(m1.amount)||0:0);
+    scn0('F50'); scn0('J50');
+    // Item 2 (row 53, totals in 56)
+    const m2=mats[2]||null;const m3=mats[3]||null;
+    sc('B53',m2?m2.qty||'':''); sc('C53',m2?m2.description||'':'');
+    scn('F54',m2?parseFloat(m2.amount)||0:0); scn('F56',m2?parseFloat(m2.amount)||0:0);
+    sc('G53',m3?m3.qty||'':''); sc('H53',m3?m3.description||'':'');
+    scn('J54',m3?parseFloat(m3.amount)||0:0); scn('J56',m3?parseFloat(m3.amount)||0:0);
+    scn0('F53'); scn0('J53');
+    // Item 3 (row 57, totals in 60)
+    const m4=mats[4]||null;const m5=mats[5]||null;
+    sc('B57',m4?m4.qty||'':''); sc('C57',m4?m4.description||'':'');
+    scn('F58',m4?parseFloat(m4.amount)||0:0); scn('F60',m4?parseFloat(m4.amount)||0:0);
+    sc('G57',m5?m5.qty||'':''); sc('H57',m5?m5.description||'':'');
+    scn('J58',m5?parseFloat(m5.amount)||0:0); scn('J60',m5?parseFloat(m5.amount)||0:0);
+    scn0('F57'); scn0('J57');
 
-    // ── Row 61: Total Rental Equipment ──
+    // ── Totals ──
     scn('J61', tot.mats);
-
-    // ── Row 62: Grand Total ──
     scn('J62', tot.grand);
 
-    // ── Row 63-64: Signature ──
+    // ── Signature row ──
     sc('D64', dateStr);
     if(report.inspector_name){
       sc('B64', report.inspector_name);
@@ -888,11 +911,11 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     }
 
     // Rename sheet
-    wb.SheetNames[wb.SheetNames.indexOf('3-24-2026')]='Daily Report';
-    wb.Sheets['Daily Report']=ws;
-    delete wb.Sheets['3-24-2026'];
+    const shIdx=wb.SheetNames.indexOf('3-24-2026');
+    if(shIdx>=0){wb.SheetNames[shIdx]='Daily Report';wb.Sheets['Daily Report']=ws;delete wb.Sheets['3-24-2026'];}
 
-    XLSX.writeFile(wb, `AIME_${(project.name||'').replace(/\s+/g,'_')}_${(report.date||'').replace(/-/g,'')}.xlsx`);
+    XLSX.writeFile(wb, `AIME_${(project.name||'').replace(/\s+/g,'_')}_${(report.date||'').replace(/-/g,'')}.xlsx`,
+      {cellStyles:true, bookSST:false});
   }
   return(
     <div style={{background:T.bg,minHeight:"100vh",padding:16,fontFamily:"inherit"}}>
