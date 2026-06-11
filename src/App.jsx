@@ -584,6 +584,231 @@ function DailyReportForm({user,project,onSave,onCancel}){
 }
 
 
+
+/* ── PDF / PRINT REPORT ─────────────────────────────────────── */
+function printReport(report, project){
+  const positions = getPositions(project.division);
+  const tot = reportTotals(report, project.division);
+  const [yr,mo,dy] = (report.date||'').split('-');
+  const dateStr = `${mo}/${dy}/${yr}`;
+  const fmt2 = n => (parseFloat(n)||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2});
+
+  const laborRows = [...(report.labor||[]).filter(l=>l.classification!=='Per Diem')];
+  while(laborRows.length<14) laborRows.push(null);
+  const perDiemEntry = (report.labor||[]).find(l=>l.classification==='Per Diem');
+  const equipRows = [...(report.equipment||[])];
+  while(equipRows.length<15) equipRows.push(null);
+  const mats = report.materials||[];
+
+  function laborRow(lr,i){
+    if(!lr) return `<tr><td></td><td colspan="2"></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+    const pos = positions.find(p=>p.name===lr.classification);
+    return `<tr>
+      <td>${lr.name||''}</td>
+      <td colspan="2">${lr.classification||''}</td>
+      <td class="num">${pos&&!pos.flat?lr.regHrs||0:''}</td>
+      <td class="num">${pos&&!pos.flat?lr.otHrs||0:''}</td>
+      <td class="num">${pos&&!pos.flat?lr.travelHrs||0:''}</td>
+      <td class="num">${pos?pos.rate:''}</td>
+      <td class="num amt">${fmt2(laborAmt(lr,project.division))}</td>
+    </tr>`;
+  }
+
+  function equipRow(er){
+    if(!er) return `<tr><td colspan="4"></td><td></td><td></td><td></td><td class="num amt">$0.00</td></tr>`;
+    return `<tr>
+      <td colspan="4">${er.description||''}</td>
+      <td class="num">${er.qty||''}</td>
+      <td class="num">${er.usage||''}</td>
+      <td class="num">${er.rate||''}</td>
+      <td class="num amt">${fmt2(equipAmt(er))}</td>
+    </tr>`;
+  }
+
+  function matPair(left,right){
+    return `
+    <tr>
+      <td class="num">${left?left.qty||'':''}</td>
+      <td colspan="3">${left?left.description||'':''}</td>
+      <td class="num amt">${left?fmt2(parseFloat(left.amount)||0):'$0.00'}</td>
+      <td class="num">${right?right.qty||'':''}</td>
+      <td colspan="2">${right?right.description||'':''}</td>
+      <td class="num amt">${right?fmt2(parseFloat(right.amount)||0):'$0.00'}</td>
+    </tr>
+    <tr class="sub-row">
+      <td></td><td colspan="3" class="sub-label">Tax</td><td class="num">$0.00</td>
+      <td></td><td colspan="2" class="sub-label">Tax</td><td class="num">$0.00</td>
+    </tr>
+    <tr class="sub-row">
+      <td></td><td colspan="3" class="sub-label">Total</td>
+      <td class="num">${left?fmt2(parseFloat(left.amount)||0):'$0.00'}</td>
+      <td></td><td colspan="2" class="sub-label">Total</td>
+      <td class="num">${right?fmt2(parseFloat(right.amount)||0):'$0.00'}</td>
+    </tr>`;
+  }
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>AIME Daily Report — ${project.name} — ${dateStr}</title>
+<style>
+  @page { size: letter portrait; margin: 0.35in 0.3in; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+  body { font-size: 7.5pt; color: #000; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { border: 1px solid #000; padding: 2px 3px; vertical-align: middle; font-size: 7.5pt; }
+  .num { text-align: right; }
+  .amt { font-weight: 600; }
+  .section-header td { background: #d9e1f2; font-weight: bold; font-size: 8.5pt; text-align: center; padding: 3px; border: 2px solid #000; }
+  .col-header td { background: #f2f2f2; font-weight: bold; font-size: 7pt; text-align: center; border: 2px solid #000; }
+  .total-row td { background: #fff2cc; font-weight: bold; border: 2px solid #000; font-size: 8pt; }
+  .grand-total td { background: #ffd966; font-weight: bold; border: 2px solid #000; font-size: 9pt; }
+  .sub-row td { background: #fafafa; font-size: 6.5pt; }
+  .sub-label { font-style: italic; color: #555; }
+  .header-table td { border: 1px solid #000; padding: 3px 4px; }
+  .title-row td { background: #1f3864; color: #fff; font-size: 11pt; font-weight: bold; text-align: center; padding: 5px; border: 2px solid #000; letter-spacing: 1px; }
+  .sig-box { min-height: 40px; vertical-align: top; }
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style></head><body>
+
+<table class="header-table">
+  <!-- Title -->
+  <tr class="title-row"><td colspan="9">AIME DAILY REPORT</td></tr>
+
+  <!-- Row 2: Customer / PO / Date -->
+  <tr>
+    <td style="width:8%;font-weight:bold">Customer:</td>
+    <td colspan="2" style="width:22%">${project.client||''}</td>
+    <td style="width:13%;font-weight:bold;text-align:center">Work Order / PO #</td>
+    <td colspan="2" style="width:17%">${project.work_order||''}</td>
+    <td style="width:10%;font-weight:bold;text-align:center">Report Date:</td>
+    <td colspan="2" style="width:14%">${dateStr}</td>
+  </tr>
+
+  <!-- Row 3: Location -->
+  <tr>
+    <td style="font-weight:bold">Job Location:</td>
+    <td colspan="8">${project.location||''}</td>
+  </tr>
+
+  <!-- Row 4: Job Number / Report # -->
+  <tr>
+    <td style="font-weight:bold">Job Number:</td>
+    <td colspan="2">${project.name||''}</td>
+    <td style="font-weight:bold;text-align:center">Report #:</td>
+    <td colspan="5">${report.report_no||''}</td>
+  </tr>
+
+  <!-- Description -->
+  <tr>
+    <td style="font-weight:bold">Description of Work Done:</td>
+    <td colspan="8" style="min-height:16px">${report.description||''}</td>
+  </tr>
+</table>
+
+<br style="line-height:3px">
+
+<!-- LABOR -->
+<table>
+  <tr class="section-header"><td colspan="8">LABOR</td></tr>
+  <tr class="col-header">
+    <td style="width:18%">NAME</td>
+    <td colspan="2" style="width:22%">CLASSIFICATION</td>
+    <td style="width:8%">REG. HRS.</td>
+    <td style="width:8%">O.T. HRS.</td>
+    <td style="width:8%">TRAVEL HRS.</td>
+    <td style="width:12%">REGULAR RATE</td>
+    <td style="width:12%">AMOUNT</td>
+  </tr>
+  ${laborRows.map((lr,i)=>laborRow(lr,i)).join('')}
+  <!-- Per Diem row -->
+  <tr>
+    <td></td>
+    <td colspan="2" style="font-style:italic">Per Diem</td>
+    <td></td><td></td><td></td><td></td>
+    <td class="num amt">${fmt2(perDiemEntry?laborAmt(perDiemEntry,project.division):0)}</td>
+  </tr>
+  <tr class="total-row">
+    <td colspan="7" style="text-align:right;padding-right:6px">TOTAL LABOR</td>
+    <td class="num">${fmt2(tot.labor)}</td>
+  </tr>
+</table>
+
+<br style="line-height:3px">
+
+<!-- EQUIPMENT -->
+<table>
+  <tr class="section-header"><td colspan="8">EQUIPMENT</td></tr>
+  <tr class="col-header">
+    <td colspan="4" style="width:46%">DESCRIPTION</td>
+    <td style="width:8%">QUANTITY</td>
+    <td style="width:8%">HOURS/DAYS</td>
+    <td style="width:12%">RATE</td>
+    <td style="width:12%">AMOUNT</td>
+  </tr>
+  ${equipRows.map(er=>equipRow(er)).join('')}
+  <tr class="total-row">
+    <td colspan="7" style="text-align:right;padding-right:6px">TOTAL EQUIPMENT</td>
+    <td class="num">${fmt2(tot.equip)}</td>
+  </tr>
+</table>
+
+<br style="line-height:3px">
+
+<!-- RENTAL EQUIPMENT / MATERIALS -->
+<table>
+  <tr class="section-header"><td colspan="9">RENTAL EQUIPMENT</td></tr>
+  <tr><td colspan="9" style="font-size:6.5pt;font-style:italic;background:#f9f9f9;border:1px solid #000">MATERIAL &amp; MISCELLANEOUS — LIST OF MATERIAL &amp; ATTACH SUPPORTING INVOICES</td></tr>
+  <tr class="col-header">
+    <td style="width:5%">QTY</td>
+    <td colspan="3" style="width:27%">DESCRIPTION</td>
+    <td style="width:10%">AMOUNT</td>
+    <td style="width:5%">QTY</td>
+    <td colspan="2" style="width:27%">DESCRIPTION</td>
+    <td style="width:10%">AMOUNT</td>
+  </tr>
+  ${matPair(mats[0]||null, mats[1]||null)}
+  ${matPair(mats[2]||null, mats[3]||null)}
+  ${matPair(mats[4]||null, mats[5]||null)}
+  <tr class="total-row">
+    <td colspan="8" style="text-align:right;padding-right:6px">TOTAL RENTAL EQUIPMENT</td>
+    <td class="num">${fmt2(tot.mats)}</td>
+  </tr>
+  <tr class="grand-total">
+    <td colspan="8" style="text-align:right;padding-right:6px">GRAND TOTAL</td>
+    <td class="num">${fmt2(tot.grand)}</td>
+  </tr>
+</table>
+
+<br style="line-height:3px">
+
+<!-- SIGNATURE -->
+<table>
+  <tr class="col-header">
+    <td style="width:28%">ACCEPTED BY</td>
+    <td style="width:12%">DATE</td>
+    <td style="width:28%">CERTIFIED AS CORRECT BY CONTRACTOR'S REP</td>
+    <td style="width:12%">DATE</td>
+    <td style="width:20%">INSPECTOR SIGNATURE</td>
+  </tr>
+  <tr>
+    <td class="sig-box" style="height:50px">${report.inspector_name||''}</td>
+    <td class="sig-box">${report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleDateString():''}</td>
+    <td class="sig-box"></td>
+    <td class="sig-box"></td>
+    <td class="sig-box" style="text-align:center">${report.inspector_signature?`<img src="${report.inspector_signature}" style="max-height:44px;max-width:100%;object-fit:contain">`:''}</td>
+  </tr>
+</table>
+
+</body></html>`;
+
+  const win = window.open('','_blank','width=900,height=700');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(()=>{ win.print(); }, 400);
+}
+
 /* ── SIGNATURE PAD ──────────────────────────────────────────── */
 function SignaturePad({onSave,onCancel,reportName}){
   const canvasRef=useRef(null);
@@ -965,7 +1190,10 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
         </button>
       )}
 
-      <button onClick={exportXLSX} style={{...primBtn,background:divColor+"15",color:divColor,border:`1px solid ${divColor}40`,marginBottom:10,borderRadius:14}}>📥 Export to Excel (.xlsx)</button>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <button onClick={()=>printReport(report,project)} style={{...primBtn,background:"#1f3864",color:"#fff",borderRadius:14}}>🖨️ Print / Save PDF</button>
+        <button onClick={exportXLSX} style={{...primBtn,background:divColor+"15",color:divColor,border:`1px solid ${divColor}40`,borderRadius:14}}>📥 Excel (.xlsx)</button>
+      </div>
       <button onClick={()=>window.confirm("Delete this report?")&&onDelete(report.id)} style={dangerBtn}>🗑 Delete Report</button>
     </div>
   );
