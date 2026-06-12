@@ -2538,6 +2538,101 @@ function EmailSummaryModal({reports,projects,onClose}){
     return[emailFrom,emailTo];
   }
 
+  function printSummary(){
+    const totReg=summaryRows.reduce((s,w)=>s+w.reg,0);
+    const totOT=summaryRows.reduce((s,w)=>s+w.ot,0);
+    const totTravel=summaryRows.reduce((s,w)=>s+w.travel,0);
+    const totTotal=summaryRows.reduce((s,w)=>s+w.reg+w.ot+w.travel,0);
+    const totPay=summaryRows.reduce((s,w)=>s+w.pay,0);
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>AIME Field Pro — Hours Summary</title>
+<style>
+  @page{size:letter portrait;margin:0.5in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:10pt;color:#000;}
+  .header{border-bottom:3px solid #1f3864;padding-bottom:12px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;}
+  .logo{font-size:18pt;font-weight:900;color:#1f3864;}
+  .sub{font-size:9pt;color:#555;margin-top:3px;}
+  .meta{text-align:right;font-size:8pt;color:#888;}
+  .period{font-size:11pt;font-weight:700;color:#1f3864;margin-bottom:6px;}
+  .emp-note{font-size:9pt;color:#555;margin-bottom:14px;}
+  .totals-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px;}
+  .total-box{border:1px solid #ddd;border-radius:8px;padding:10px;text-align:center;}
+  .total-val{font-size:16pt;font-weight:900;color:#1f3864;}
+  .total-lbl{font-size:8pt;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;}
+  table{width:100%;border-collapse:collapse;}
+  th{background:#1f3864;color:#fff;padding:7px 10px;text-align:left;font-size:9pt;font-weight:700;border:1px solid #1f3864;}
+  th.num{text-align:right;}
+  td{padding:6px 10px;border:1px solid #ddd;font-size:9.5pt;vertical-align:middle;}
+  td.num{text-align:right;}
+  tr:nth-child(even) td{background:#f5f7fa;}
+  .name{font-weight:700;color:#000;}
+  .ot{color:#d97706;font-weight:600;}
+  .total-row td{background:#fff3cd!important;font-weight:700;border-top:2px solid #1f3864;}
+  .footer{margin-top:20px;font-size:7.5pt;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:8px;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+
+<div class="header">
+  <div>
+    <div class="logo">AIME Field Pro</div>
+    <div class="sub">Hours Summary Report</div>
+  </div>
+  <div class="meta">Generated: ${new Date().toLocaleString()}</div>
+</div>
+
+<div class="period">Period: ${emailFrom} → ${emailTo}</div>
+<div class="emp-note">${selEmps.length>0?`${summaryRows.length} selected employee${summaryRows.length!==1?"s":""}`:summaryRows.length+" employee"+(summaryRows.length!==1?"s":"")+" · All"}</div>
+
+<div class="totals-grid">
+  <div class="total-box"><div class="total-val">${totReg.toFixed(1)}h</div><div class="total-lbl">Regular</div></div>
+  <div class="total-box"><div class="total-val" style="color:#d97706">${totOT.toFixed(1)}h</div><div class="total-lbl">Overtime</div></div>
+  <div class="total-box"><div class="total-val" style="color:#2563eb">${totTotal.toFixed(1)}h</div><div class="total-lbl">Total Hours</div></div>
+  <div class="total-box"><div class="total-val" style="color:#16a34a">$${totPay.toLocaleString("en-US",{minimumFractionDigits:2})}</div><div class="total-lbl">Total Pay</div></div>
+</div>
+
+<table>
+  <thead><tr>
+    <th style="width:28%">Employee</th>
+    <th class="num" style="width:13%">Reg Hrs</th>
+    <th class="num" style="width:11%">OT Hrs</th>
+    <th class="num" style="width:12%">Travel Hrs</th>
+    <th class="num" style="width:12%">Total Hrs</th>
+    <th class="num" style="width:13%">Pay</th>
+    <th class="num" style="width:11%">OT%</th>
+  </tr></thead>
+  <tbody>
+    ${summaryRows.map(w=>{
+      const total=w.reg+w.ot+w.travel;
+      const otPct=total>0?((w.ot/total)*100).toFixed(0)+"%" :"—";
+      return`<tr>
+        <td class="name">${w.name}</td>
+        <td class="num">${w.reg.toFixed(1)}</td>
+        <td class="num ${w.ot>0?"ot":""}">${w.ot.toFixed(1)}</td>
+        <td class="num">${w.travel.toFixed(1)}</td>
+        <td class="num">${total.toFixed(1)}</td>
+        <td class="num">$${w.pay.toLocaleString("en-US",{minimumFractionDigits:2})}</td>
+        <td class="num ${w.ot>0?"ot":""}">${otPct}</td>
+      </tr>`;
+    }).join("")}
+    <tr class="total-row">
+      <td>TOTALS</td>
+      <td class="num">${totReg.toFixed(1)}</td>
+      <td class="num">${totOT.toFixed(1)}</td>
+      <td class="num">${totTravel.toFixed(1)}</td>
+      <td class="num">${totTotal.toFixed(1)}</td>
+      <td class="num">$${totPay.toLocaleString("en-US",{minimumFractionDigits:2})}</td>
+      <td class="num">${totTotal>0?((totOT/totTotal)*100).toFixed(0)+"%":"—"}</td>
+    </tr>
+  </tbody>
+</table>
+<div class="footer">AIME Field Pro · Confidential — Internal Use Only</div>
+</body></html>`;
+    const win=window.open("","_blank","width=900,height=700");
+    win.document.write(html);win.document.close();win.focus();
+    setTimeout(()=>win.print(),400);
+  }
+
   function sendEmail(){
     const subj=`AIME Field Pro — Hours Summary (${emailFrom} to ${emailTo})`;
     const pad=(s,n)=>String(s).padEnd(n);
@@ -2624,9 +2719,14 @@ function EmailSummaryModal({reports,projects,onClose}){
           {summaryRows.length>5&&<div style={{fontSize:11,color:T.muted,marginTop:6,textAlign:"center"}}>+{summaryRows.length-5} more employees</div>}
         </div>}
 
-        <button onClick={sendEmail} disabled={summaryRows.length===0} style={{...primBtn,borderRadius:14,background:summaryRows.length>0?T.blue:T.muted,marginBottom:10}}>
-          📧 Open in Email App
-        </button>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <button onClick={printSummary} disabled={summaryRows.length===0} style={{...primBtn,borderRadius:14,background:summaryRows.length>0?"#1f3864":T.muted}}>
+            🖨️ Print / PDF
+          </button>
+          <button onClick={sendEmail} disabled={summaryRows.length===0} style={{...primBtn,borderRadius:14,background:summaryRows.length>0?T.blue:T.muted}}>
+            📧 Email
+          </button>
+        </div>
         <button onClick={onClose} style={{...ghostBtn,width:"100%",textAlign:"center"}}>Cancel</button>
       </div>
     </div>
