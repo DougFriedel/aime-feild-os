@@ -179,7 +179,7 @@ const fmtShort=(d)=>d?new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekda
 const daysUntil=(d)=>{if(!d)return null;const diff=new Date(d+"T12:00:00")-new Date();return Math.ceil(diff/86400000);};
 function laborAmt(r,division){const positions=getPositions(division);const p=positions.find(x=>x.name===r.classification);if(!p)return 0;if(p.flat)return p.rate;return p.rate*((parseFloat(r.regHrs)||0)+(parseFloat(r.otHrs)||0)*1.5+(parseFloat(r.travelHrs)||0));}
 function equipAmt(r){return(parseFloat(r.rate)||0)*(parseFloat(r.qty)||0)*(parseFloat(r.usage)||0);}
-function reportTotals(r,division){const labor=(r.labor||[]).reduce((s,x)=>s+laborAmt(x,division),0);const equip=(r.equipment||[]).reduce((s,x)=>s+equipAmt(x),0);const mats=(r.materials||[]).reduce((s,x)=>s+(parseFloat(x.amount)||0),0);return{labor,equip,mats,grand:labor+equip+mats};}
+function reportTotals(r,division){const labor=(r.labor||[]).reduce((s,x)=>s+laborAmt(x,division),0);const equip=(r.equipment||[]).reduce((s,x)=>s+equipAmt(x),0);const rental=(r.rental_equipment||[]).reduce((s,x)=>s+(parseFloat(x.qty)||0)*(parseFloat(x.rate)||0)*(parseFloat(x.usage)||1),0);const mats=(r.materials||[]).reduce((s,x)=>s+(parseFloat(x.amount)||0),0);return{labor,equip,rental,mats,grand:labor+equip+rental+mats};}
 function calcHours(ci,co){if(!ci||!co)return 0;const[ih,im]=ci.split(":").map(Number);const[oh,om]=co.split(":").map(Number);const diff=(oh*60+om)-(ih*60+im);return diff>0?Math.round(diff/60*100)/100:0;}
 function getWeekStart(){const d=new Date();const day=d.getDay();d.setDate(d.getDate()-(day===0?6:day-1));return d.toISOString().split("T")[0];}
 async function compressImg(file,maxW=900,q=0.65){return new Promise(res=>{const rd=new FileReader();rd.onload=ev=>{const img=new Image();img.onload=()=>{const sc=Math.min(1,maxW/img.width);const c=document.createElement("canvas");c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);c.getContext("2d").drawImage(img,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",q));};img.src=ev.target.result;};rd.readAsDataURL(file);});}
@@ -197,6 +197,35 @@ function TopBar({title,sub,onBack,right}){return(<div style={{background:T.surfa
 /* ── FORM CARDS ─────────────────────────────────────────────── */
 function LaborCard({row,onChange,onRemove,division}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
 function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>set("qty",e.target.value)} style={inp}/></div><div><label style={lbl}>{eq?eq.unit:"Hrs/Days"}</label><input type="number" min="0" step="0.5" placeholder="0" value={row.usage||""} onChange={e=>set("usage",e.target.value)} style={inp}/></div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{eq?`$${eq.rate.toLocaleString()}/${eq.unit}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
+function RentedEquipCard({row,onChange,onRemove}){
+  const set=(k,v)=>onChange({...row,[k]:v});
+  const amt=(parseFloat(row.qty)||0)*(parseFloat(row.rate)||0)*(parseFloat(row.usage)||1);
+  return(
+    <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.purple}`}}>
+      <div style={{marginBottom:8}}>
+        <label style={lbl}>Equipment Name / Description</label>
+        <input type="text" placeholder="e.g. 40-Ton Crane, Scissor Lift, Generator…"
+          value={row.description||""} onChange={e=>set("description",e.target.value)} style={inp}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>Qty</label>
+          <input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>set("qty",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Days / Hrs</label>
+          <input type="number" min="0" step="0.5" placeholder="0" value={row.usage||""} onChange={e=>set("usage",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Rate / Unit</label>
+          <input type="number" min="0" placeholder="0.00" value={row.rate||""} onChange={e=>set("rate",e.target.value)} style={inp}/></div>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}>
+        <span style={{fontSize:11,color:T.muted}}>Qty × Rate × Days/Hrs</span>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          {amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}
+          <button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MatCard({row,onChange,onRemove}){const fileRef=useRef(null);const receipts=row.receipts||[];async function handleFiles(files){const n=[];for(const f of files){if(!f.type.startsWith("image/"))continue;const src=await compressImg(f,800,0.6);n.push({id:uid(),src});}onChange({...row,receipts:[...receipts,...n]});}return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}><div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}><img src={r.src} alt="" style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.blue}40`,display:"block"}}/><button onClick={()=>onChange({...row,receipts:receipts.filter(x=>x.id!==r.id)})} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>fileRef.current?.click()} style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>ADD</span></button><input ref={fileRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{row.amount>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(parseFloat(row.amount)||0)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
 
 /* ── LOGIN SCREEN ───────────────────────────────────────────── */
@@ -539,7 +568,7 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
 const RSTEPS=["Job Info","Labor","Equipment","Materials","Review"];
 function DailyReportForm({user,project,onSave,onCancel}){
   const [step,setStep]=useState(1);const [saving,setSaving]=useState(false);
-  const [rpt,setRpt]=useState({date:today(),description:"",report_no:"",labor:[],equipment:[],materials:[]});
+  const [rpt,setRpt]=useState({date:today(),description:"",report_no:"",labor:[],equipment:[],rental_equipment:[],materials:[]});
   const topRef=useRef(null);
   const setR=(k,v)=>setRpt(r=>({...r,[k]:v}));
   function add(key,item){setR(key,[...rpt[key],item]);}
@@ -563,13 +592,35 @@ function DailyReportForm({user,project,onSave,onCancel}){
           <div style={{marginBottom:12}}><label style={lbl}>Description of Work Done</label><textarea placeholder="Describe the work performed today…" value={rpt.description||""} onChange={e=>setR("description",e.target.value)} rows={4} style={{...inp,resize:"vertical",lineHeight:1.5}}/></div>
         </div>)}
         {step===2&&(<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontSize:17,fontWeight:800}}>👷 Labor</div>{tot.labor>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.labor)}</div>}</div>{rpt.labor.map((row,i)=><LaborCard key={row.id} row={row} onChange={r=>upd("labor",i,r)} onRemove={()=>del("labor",i)} division={project.division}/>)}<DashedAdd label="+ Add Worker" onClick={()=>add("labor",{id:uid(),name:"",classification:"",regHrs:"",otHrs:"",travelHrs:""})} color={T.orange}/></div>)}
-        {step===3&&(<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontSize:17,fontWeight:800}}>🚜 Equipment</div>{tot.equip>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.equip)}</div>}</div>{rpt.equipment.map((row,i)=><EquipCard key={row.id} row={row} onChange={r=>upd("equipment",i,r)} onRemove={()=>del("equipment",i)} division={project.division}/>)}<DashedAdd label="+ Add Equipment" onClick={()=>add("equipment",{id:uid(),description:"",qty:"",usage:"",rate:"",unit:""})} color={T.yellow}/></div>)}
+        {step===3&&(<div>
+          {/* Company Equipment */}
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+            <div style={{fontSize:17,fontWeight:800}}>🚜 Equipment</div>
+            {tot.equip>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.equip)}</div>}
+          </div>
+          {rpt.equipment.map((row,i)=><EquipCard key={row.id} row={row} onChange={r=>upd("equipment",i,r)} onRemove={()=>del("equipment",i)} division={project.division}/>)}
+          <DashedAdd label="+ Add Company Equipment" onClick={()=>add("equipment",{id:uid(),description:"",qty:"",usage:"",rate:"",unit:""})} color={T.yellow}/>
+
+          {/* Rented Equipment */}
+          <div style={{marginTop:18,marginBottom:10,paddingTop:14,borderTop:`2px dashed ${T.border}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontSize:17,fontWeight:800}}>🔑 Rented Equipment</div>
+              {(rpt.rental_equipment||[]).length>0&&can(user,"view_dashboard")&&
+                <div style={{fontSize:16,fontWeight:800,color:T.green}}>
+                  ${fmt((rpt.rental_equipment||[]).reduce((s,r)=>{const a=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);return s+a;},0))}
+                </div>}
+            </div>
+            <div style={{fontSize:12,color:T.muted,marginTop:2,marginBottom:10}}>Equipment you don't own — type any description</div>
+          </div>
+          {(rpt.rental_equipment||[]).map((row,i)=><RentedEquipCard key={row.id} row={row} onChange={r=>upd("rental_equipment",i,r)} onRemove={()=>del("rental_equipment",i)}/>)}
+          <DashedAdd label="+ Add Rented Equipment" onClick={()=>add("rental_equipment",{id:uid(),description:"",qty:"",usage:"",rate:""})} color={T.purple}/>
+        </div>)}
         {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/></div>)}
         {step===5&&(<div>
           <div style={{fontSize:17,fontWeight:800,marginBottom:12}}>✅ Review & Submit</div>
           <div style={{...cardS,marginBottom:12}}>
             <div style={{fontSize:11,color:divMeta.color,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Summary</div>
-            {[["Project",project.name],["Division",project.division],["Date",fmtDate(rpt.date)],["Report No.",rpt.report_no||"—"],["Workers",rpt.labor.length],["Equipment",rpt.equipment.length+" items"],["Materials",rpt.materials.length+" items"]].map(([l,v])=>(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.sub}}>{l}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span></div>))}
+            {[["Project",project.name],["Division",project.division],["Date",fmtDate(rpt.date)],["Report No.",rpt.report_no||"—"],["Workers",rpt.labor.length],["Equipment",rpt.equipment.length+" items"],["Rented Equip",(rpt.rental_equipment||[]).length+" items"],["Materials",rpt.materials.length+" items"]].map(([l,v])=>(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.sub}}>{l}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span></div>))}
             {[["Labor",tot.labor,T.green],["Equipment",tot.equip,T.green],["Materials",tot.mats,T.green]].map(([l,v,c])=>(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.sub}}>{l}</span><span style={{fontSize:13,fontWeight:700,color:c}}>${fmt(v)}</span></div>))}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:14}}><span style={{fontSize:16,fontWeight:800}}>Grand Total</span><span style={{fontSize:26,fontWeight:900,color:divMeta.color,letterSpacing:"-1px"}}>${fmt(tot.grand)}</span></div>
           </div>
@@ -599,6 +650,12 @@ function printReport(report, project){
   const equipRows = [...(report.equipment||[])];
   while(equipRows.length<15) equipRows.push(null);
   const mats = report.materials||[];
+  // Combine rented equipment into rental section for PDF
+  const rentals = (report.rental_equipment||[]).map(r=>({
+    qty:r.qty||'',
+    description:r.description||'',
+    amount:(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1)
+  }));
 
   function laborRow(lr,i){
     if(!lr) return `<tr><td></td><td colspan="2"></td><td></td><td></td><td></td><td></td><td></td></tr>`;
@@ -767,9 +824,10 @@ function printReport(report, project){
     <td colspan="2" style="width:27%">DESCRIPTION</td>
     <td style="width:10%">AMOUNT</td>
   </tr>
-  ${matPair(mats[0]||null, mats[1]||null)}
-  ${matPair(mats[2]||null, mats[3]||null)}
-  ${matPair(mats[4]||null, mats[5]||null)}
+  ${(rentals[0]||rentals[1])?matPair(rentals[0]||null,rentals[1]||null):''}
+  ${(rentals[2]||rentals[3])?matPair(rentals[2]||null,rentals[3]||null):''}
+  ${(rentals[4]||rentals[5])?matPair(rentals[4]||null,rentals[5]||null):''}
+  ${(!rentals[0]&&!rentals[1]&&!rentals[2]&&!rentals[3]&&!rentals[4]&&!rentals[5])?matPair(null,null):''}
   <tr class="total-row">
     <td colspan="8" style="text-align:right;padding-right:6px">TOTAL RENTAL EQUIPMENT</td>
     <td class="num">${fmt2(tot.mats)}</td>
@@ -1166,6 +1224,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       {report.description&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Work Done</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{report.description}</div></div>}
       {(report.labor||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Labor{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.labor)}</span>}</div>{report.labor.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.labor.length-1?`1px solid ${T.border}`:"none"}}><div><div style={{fontSize:14,fontWeight:600}}>{r.name||"—"}</div><div style={{fontSize:11,color:T.muted}}>{r.classification} · {r.regHrs||0}reg {r.otHrs||0}OT {r.travelHrs||0}tr</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(laborAmt(r))}</div>}</div>))}</div>}
       {(report.equipment||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.equip)}</span>}</div>{report.equipment.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty} x {r.usage} {r.unit}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(equipAmt(r))}</div>}</div>))}</div>}
+      {(report.rental_equipment||[]).length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`}}><div style={{fontSize:12,color:T.purple,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🔑 Rented Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt((report.rental_equipment||[]).reduce((s,r)=>s+(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1),0))}</span>}</div>{(report.rental_equipment||[]).map((r,i)=>{const amt=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);return(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.rental_equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty||0} × {r.usage||0} days/hrs @ ${r.rate||0}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(amt)}</div>}</div>);})}</div>}
       {(report.materials||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Materials{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.mats)}</span>}</div>{report.materials.map((r,i)=>(<div key={i} style={{padding:"8px 0",borderBottom:i<report.materials.length-1?`1px solid ${T.border}`:"none"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:r.receipts?.length>0?8:0}}><span style={{fontSize:13}}>{r.qty?`${r.qty}x `:""}{r.description}</span>{can(user,"view_dashboard")&&<span style={{fontSize:13,fontWeight:700,color:T.green}}>${fmt(parseFloat(r.amount)||0)}</span>}</div>{r.receipts?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{r.receipts.map(rc=><img key={rc.id} src={rc.src} alt="" onClick={()=>setLb(rc.src)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer"}}/>)}</div>}</div>))}</div>}
       {can(user,"view_dashboard")&&<div style={{...cardS,background:divColor+"12",border:`1px solid ${divColor}40`,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:15,fontWeight:800}}>Grand Total</span><span style={{fontSize:26,fontWeight:900,color:divColor,letterSpacing:"-1px"}}>${fmt(tot.grand)}</span></div>}
       {can(user,"approve_report")&&report.status==="submitted"&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><button onClick={()=>onApprove&&onApprove(report.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>✓ Approve</button><button onClick={()=>setFlagging(!flagging)} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:12}}>🚩 Flag</button></div>)}
