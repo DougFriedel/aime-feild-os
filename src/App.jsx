@@ -3143,7 +3143,123 @@ function PMDashboard({onBack,user}){
             <div style={{textAlign:"right"}}><div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(w.pay)}</div><div style={{fontSize:10,color:T.muted}}>{(w.reg+w.ot+w.travel).toFixed(1)}h</div></div>
           </div>)}
         </div>}
-        <button onClick={exportReport} style={{...primBtn,borderRadius:14}}>📥 Export Report (.xlsx)</button>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <button onClick={()=>{
+            const divLabel=selDivision==="all"?"All Divisions":selDivision;
+            const jobLabel=selJobs.length===0?"All Jobs":selJobs.length+" Jobs";
+            const fmtD=d=>{if(!d)return"";const[y,mo,dy]=d.split("-");return mo+"/"+dy+"/"+y.slice(2);};
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>AIME Field Pro — Division Report</title>
+<style>
+  @page{size:letter portrait;margin:0.45in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:9pt;color:#000;}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #1f3864;padding-bottom:10px;margin-bottom:14px;}
+  .title{font-size:16pt;font-weight:900;color:#1f3864;}
+  .sub{font-size:8.5pt;color:#444;margin-top:3px;}
+  .meta{text-align:right;font-size:7.5pt;color:#666;}
+  .summary-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px;}
+  .sum-box{border:1.5px solid #dde3f0;border-radius:8px;padding:10px;text-align:center;}
+  .sum-val{font-size:14pt;font-weight:900;color:#1f3864;}
+  .sum-lbl{font-size:7.5pt;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;}
+  .hrs-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px;}
+  .hrs-box{border:1px solid #e8eaf6;border-radius:8px;padding:8px;text-align:center;background:#f5f7fa;}
+  .hrs-val{font-size:13pt;font-weight:800;color:#374151;}
+  .hrs-lbl{font-size:7pt;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-top:1px;}
+  .section-title{font-size:10pt;font-weight:800;color:#1f3864;margin:14px 0 6px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1.5px solid #1f3864;padding-bottom:3px;}
+  table{width:100%;border-collapse:collapse;margin-bottom:14px;}
+  th{background:#1f3864;color:#fff;padding:5px 8px;text-align:left;font-size:8pt;font-weight:700;border:1px solid #1f3864;}
+  th.num{text-align:right;}
+  td{padding:4px 8px;border:1px solid #ddd;font-size:8.5pt;}
+  td.num{text-align:right;}
+  tr:nth-child(even) td{background:#f5f7fa;}
+  .total-row td{background:#fff3cd!important;font-weight:700;border-top:2px solid #f59e0b;}
+  .footer{margin-top:14px;font-size:7pt;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:8px;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+<div class="hdr">
+  <div><div class="title">AIME Field Pro</div><div class="sub">Division Report &nbsp;·&nbsp; ${divLabel} &nbsp;·&nbsp; ${jobLabel} &nbsp;·&nbsp; ${range}</div></div>
+  <div class="meta">Generated: ${new Date().toLocaleString()}</div>
+</div>
+<div class="summary-grid">
+  <div class="sum-box"><div class="sum-val" style="color:#16a34a">$${tot.g.toLocaleString("en-US",{minimumFractionDigits:2})}</div><div class="sum-lbl">Grand Total</div></div>
+  <div class="sum-box"><div class="sum-val">$${tot.l.toLocaleString("en-US",{minimumFractionDigits:2})}</div><div class="sum-lbl">Labor</div></div>
+  <div class="sum-box"><div class="sum-val">$${tot.e.toLocaleString("en-US",{minimumFractionDigits:2})}</div><div class="sum-lbl">Equipment</div></div>
+  <div class="sum-box"><div class="sum-val">$${tot.m.toLocaleString("en-US",{minimumFractionDigits:2})}</div><div class="sum-lbl">Materials</div></div>
+</div>
+<div class="hrs-grid">
+  <div class="hrs-box"><div class="hrs-val">${totalReg.toFixed(1)}h</div><div class="hrs-lbl">Regular</div></div>
+  <div class="hrs-box"><div class="hrs-val" style="color:#d97706">${totalOT.toFixed(1)}h</div><div class="hrs-lbl">Overtime</div></div>
+  <div class="hrs-box"><div class="hrs-val" style="color:#2563eb">${totalTravel.toFixed(1)}h</div><div class="hrs-lbl">Travel</div></div>
+</div>
+<div class="section-title">By Job</div>
+<table>
+  <thead><tr>
+    <th>Job Number</th><th>Division</th><th class="num">Reports</th>
+    <th class="num">Reg Hrs</th><th class="num">OT Hrs</th>
+    <th class="num">Labor</th><th class="num">Equipment</th><th class="num">Materials</th><th class="num">Total</th>
+  </tr></thead>
+  <tbody>
+    ${pr.map(p=>`<tr>
+      <td><strong>${p.name}</strong>${p.afe?" <span style='color:#666;font-size:7.5pt'>AFE: "+p.afe+"</span>":""}</td>
+      <td style="font-size:7.5pt">${p.division||""}</td>
+      <td class="num">${p.count}</td>
+      <td class="num">${p.laborHrs.toFixed(1)}</td>
+      <td class="num">${p.otHrs.toFixed(1)}</td>
+      <td class="num">$${p.labor.toLocaleString("en-US",{minimumFractionDigits:2})}</td>
+      <td class="num">$${p.equip.toLocaleString("en-US",{minimumFractionDigits:2})}</td>
+      <td class="num">$${p.mats.toLocaleString("en-US",{minimumFractionDigits:2})}</td>
+      <td class="num"><strong>$${p.grand.toLocaleString("en-US",{minimumFractionDigits:2})}</strong></td>
+    </tr>`).join("")}
+    <tr class="total-row">
+      <td colspan="2"><strong>TOTALS</strong></td>
+      <td class="num">${pr.reduce((s,p)=>s+p.count,0)}</td>
+      <td class="num">${totalReg.toFixed(1)}</td>
+      <td class="num">${totalOT.toFixed(1)}</td>
+      <td class="num">$${tot.l.toLocaleString("en-US",{minimumFractionDigits:2})}</td>
+      <td class="num">$${tot.e.toLocaleString("en-US",{minimumFractionDigits:2})}</td>
+      <td class="num">$${tot.m.toLocaleString("en-US",{minimumFractionDigits:2})}</td>
+      <td class="num"><strong>$${tot.g.toLocaleString("en-US",{minimumFractionDigits:2})}</strong></td>
+    </tr>
+  </tbody>
+</table>
+<div class="section-title">By Worker</div>
+<table>
+  <thead><tr>
+    <th>Worker</th><th class="num">Reg Hrs</th><th class="num">OT Hrs</th>
+    <th class="num">Travel Hrs</th><th class="num">Total Hrs</th><th class="num">Total Pay</th>
+  </tr></thead>
+  <tbody>
+    ${wr.map(w=>{
+      const dr=w.minDate===w.maxDate?fmtD(w.minDate):fmtD(w.minDate)+" – "+fmtD(w.maxDate);
+      const tot2=w.reg+w.ot+w.travel;
+      return`<tr>
+        <td><strong>${w.name}</strong><span style="color:#666;font-size:7.5pt"> (${dr})</span></td>
+        <td class="num">${w.reg.toFixed(1)}</td>
+        <td class="num">${w.ot.toFixed(1)}</td>
+        <td class="num">${w.travel.toFixed(1)}</td>
+        <td class="num">${tot2.toFixed(1)}</td>
+        <td class="num"><strong>$${w.pay.toLocaleString("en-US",{minimumFractionDigits:2})}</strong></td>
+      </tr>`;
+    }).join("")}
+    <tr class="total-row">
+      <td><strong>TOTALS</strong></td>
+      <td class="num">${totalReg.toFixed(1)}</td>
+      <td class="num">${totalOT.toFixed(1)}</td>
+      <td class="num">${totalTravel.toFixed(1)}</td>
+      <td class="num">${(totalReg+totalOT+totalTravel).toFixed(1)}</td>
+      <td class="num"><strong>$${wr.reduce((s,w)=>s+w.pay,0).toLocaleString("en-US",{minimumFractionDigits:2})}</strong></td>
+    </tr>
+  </tbody>
+</table>
+<div class="footer">AIME Field Pro &nbsp;·&nbsp; Confidential — Internal Use Only</div>
+</body></html>`;
+            const win=window.open("","_blank","width=900,height=750");
+            win.document.write(html);win.document.close();win.focus();
+            setTimeout(()=>win.print(),400);
+          }} style={{...primBtn,borderRadius:14,background:"#1f3864"}}>🖨️ Print / PDF</button>
+          <button onClick={exportReport} style={{...primBtn,borderRadius:14}}>📥 Excel (.xlsx)</button>
+        </div>
       </div>):(
         <div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>
           <div style={{fontSize:32,marginBottom:8}}>📊</div>
