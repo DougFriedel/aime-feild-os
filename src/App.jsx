@@ -2422,7 +2422,7 @@ function PMDashboard({onBack,user}){
   reports.forEach(r=>{if(!projMap[r.project_id])return;const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);const t=reportTotals(r,div);projMap[r.project_id].labor+=t.labor;projMap[r.project_id].equip+=t.equip;projMap[r.project_id].mats+=t.mats;projMap[r.project_id].grand+=t.grand;projMap[r.project_id].count++;});
   const projRows=Object.values(projMap).filter(p=>p.status==="active").sort((a,b)=>b.grand-a.grand);
 
-  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${pending.length>0?" ("+pending.length+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
+  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${pending.length>0?" ("+pending.length+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"history",l:"📋 Employee"},{id:"users",l:"👤 Users"}];
 
   function CustomReports(){
     const [selDivision,setSelDivision]=useState("all");
@@ -2637,11 +2637,187 @@ function PMDashboard({onBack,user}){
             {projRows.map(p=>(<div key={p.id} style={{...cardS,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontSize:15,fontWeight:700}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.division} · {p.count} reports</div></div><div style={{fontSize:18,fontWeight:900,color:T.green}}>${p.grand>=1000?(p.grand/1000).toFixed(1)+"k":fmt(p.grand)}</div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{[["Labor",p.labor,T.orange],["Equip",p.equip,T.yellow],["Mats",p.mats,T.blue]].map(([l,v,c])=>(<div key={l} style={{background:T.surface,borderRadius:8,padding:"8px",textAlign:"center"}}><div style={{fontSize:13,fontWeight:700,color:c}}>${v>=1000?(v/1000).toFixed(1)+"k":fmt(v)}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>{l}</div></div>))}</div></div>))}
           </div>)}
           {pmTab==="reports"&&<CustomReports/>}
+          {pmTab==="history"&&<EmployeeHistory/>}
           {pmTab==="users"&&(<div style={{textAlign:"center",padding:"40px 20px",color:T.muted}}><div style={{fontSize:40,marginBottom:12}}>👥</div><div style={{fontSize:16,fontWeight:700,color:T.text,marginBottom:6}}>User & Crew Management</div><div style={{fontSize:13,marginBottom:20}}>The Crew Directory now handles both contact info and app permissions in one place.</div><button onClick={onBack} style={{...primBtn,borderRadius:14}}>Go to Crew Directory →</button></div>)}
         </>)}
       </div>
     </div>
   );
+
+  function EmployeeHistory(){
+    const [selEmployee,setSelEmployee]=useState("");
+    const [dateFrom,setDateFrom]=useState("");
+    const [dateTo,setDateTo]=useState("");
+
+    // Find all reports this employee appears in
+    const empReports=selEmployee?reports.filter(r=>(r.labor||[]).some(l=>l.name===selEmployee)).sort((a,b)=>b.date.localeCompare(a.date)):[];
+
+    // Build per-report row with that employee's specific data
+    function getEmpData(report){
+      const div=report.projects?.division||(projects.find(p=>p.id===report.project_id)?.division);
+      const proj=projects.find(p=>p.id===report.project_id);
+      const entries=(report.labor||[]).filter(l=>l.name===selEmployee);
+      const regHrs=entries.reduce((s,l)=>s+(parseFloat(l.regHrs)||0),0);
+      const otHrs=entries.reduce((s,l)=>s+(parseFloat(l.otHrs)||0),0);
+      const travelHrs=entries.reduce((s,l)=>s+(parseFloat(l.travelHrs)||0),0);
+      const pay=entries.reduce((s,l)=>s+laborAmt(l,div),0);
+      return{proj,div,regHrs,otHrs,travelHrs,pay,entries};
+    }
+
+    const filtered=empReports.filter(r=>{
+      if(dateFrom&&r.date<dateFrom)return false;
+      if(dateTo&&r.date>dateTo)return false;
+      return true;
+    });
+
+    const totals=filtered.reduce((s,r)=>{
+      const d=getEmpData(r);
+      return{reg:s.reg+d.regHrs,ot:s.ot+d.otHrs,travel:s.travel+d.travelHrs,pay:s.pay+d.pay,reports:s.reports+1};
+    },{reg:0,ot:0,travel:0,pay:0,reports:0});
+
+    function exportHistory(){
+      const wb=XLSX.utils.book_new();
+      const rows=[
+        [`AIME Field Pro — Employee Report History`],
+        [`Employee: ${selEmployee}`],
+        [dateFrom||dateTo?`Period: ${dateFrom||"All"} to ${dateTo||"All"}`:"Period: All Time"],
+        [`Generated: ${new Date().toLocaleString()}`],
+        [],
+        [`SUMMARY`],
+        ["Total Reports","Reg Hours","OT Hours","Travel Hours","Total Hours","Total Pay"],
+        [totals.reports,totals.reg.toFixed(2),totals.ot.toFixed(2),totals.travel.toFixed(2),(totals.reg+totals.ot+totals.travel).toFixed(2),totals.pay],
+        [],
+        ["DETAIL"],
+        ["Date","Job Number","Division","Classification","Reg Hrs","OT Hrs","Travel Hrs","Total Hrs","Pay","Status"],
+      ];
+      filtered.forEach(r=>{
+        const d=getEmpData(r);
+        d.entries.forEach(entry=>{
+          rows.push([
+            r.date,
+            d.proj?.name||"Unknown",
+            d.div||"",
+            entry.classification||"",
+            parseFloat(entry.regHrs)||0,
+            parseFloat(entry.otHrs)||0,
+            parseFloat(entry.travelHrs)||0,
+            (parseFloat(entry.regHrs)||0)+(parseFloat(entry.otHrs)||0)+(parseFloat(entry.travelHrs)||0),
+            laborAmt(entry,d.div),
+            r.status||"submitted",
+          ]);
+        });
+      });
+      const ws=XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"]=[{wch:12},{wch:22},{wch:14},{wch:20},{wch:10},{wch:10},{wch:12},{wch:12},{wch:14},{wch:12}];
+      // Format pay column
+      const rng=XLSX.utils.decode_range(ws["!ref"]);
+      for(let r=11;r<=rng.e.r;r++){
+        const addr=XLSX.utils.encode_cell({r,c:8});
+        if(ws[addr]&&typeof ws[addr].v==="number") ws[addr].z='"$"#,##0.00';
+      }
+      XLSX.utils.book_append_sheet(wb,ws,"History");
+      XLSX.writeFile(wb,`AIME_History_${selEmployee.replace(/\s+/g,"_")}_${today()}.xlsx`);
+    }
+
+    return(
+      <div>
+        {/* Employee selector */}
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Select Employee</label>
+          <select value={selEmployee} onChange={e=>setSelEmployee(e.target.value)} style={inpSel}>
+            <option value="">— Pick an employee —</option>
+            {NAMES.map(n=><option key={n}>{n}</option>)}
+          </select>
+        </div>
+
+        {/* Date range filter */}
+        {selEmployee&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          <div><label style={lbl}>From (optional)</label><input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>To (optional)</label><input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={inp}/></div>
+        </div>}
+
+        {/* No employee selected */}
+        {!selEmployee&&<div style={{textAlign:"center",padding:"40px 20px",color:T.muted}}>
+          <div style={{fontSize:40,marginBottom:12}}>👤</div>
+          <div style={{fontSize:16,fontWeight:700,color:T.sub,marginBottom:6}}>Select an Employee</div>
+          <div style={{fontSize:13}}>Pick any crew member to see their complete work history across all jobs and divisions.</div>
+        </div>}
+
+        {/* Results */}
+        {selEmployee&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>
+          <div style={{fontSize:32,marginBottom:8}}>📋</div>
+          <div style={{fontWeight:700,color:T.sub}}>{empReports.length===0?"No reports found for "+selEmployee:"No reports in this date range"}</div>
+        </div>}
+
+        {selEmployee&&filtered.length>0&&(<div>
+          {/* Summary cards */}
+          <div style={{...cardS,marginBottom:14,background:T.orangeLow,border:`1px solid ${T.orange}40`}}>
+            <div style={{fontSize:13,fontWeight:700,color:T.orange,marginBottom:10}}>{selEmployee} · {totals.reports} report{totals.reports!==1?"s":""}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+              {[["💰 Total Pay","$"+fmt(totals.pay),T.green],["📋 Reports",totals.reports,T.orange]].map(([l,v,c])=>(
+                <div key={l} style={{background:T.card,borderRadius:10,padding:"10px",textAlign:"center"}}>
+                  <div style={{fontSize:18,fontWeight:900,color:c}}>{v}</div>
+                  <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",marginTop:2}}>{l}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+              {[["Reg Hrs",totals.reg.toFixed(1),T.green],["OT Hrs",totals.ot.toFixed(1),T.yellow],["Travel",totals.travel.toFixed(1),T.blue]].map(([l,v,c])=>(
+                <div key={l} style={{background:T.card,borderRadius:10,padding:"8px",textAlign:"center"}}>
+                  <div style={{fontSize:15,fontWeight:800,color:c}}>{v}h</div>
+                  <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",marginTop:1}}>{l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Report list */}
+          {filtered.map(r=>{
+            const d=getEmpData(r);
+            const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[r.status||"submitted"]||T.muted;
+            const totalHrs=d.regHrs+d.otHrs+d.travelHrs;
+            return(
+              <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${sc}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:800,color:T.orange}}>{fmtDate(r.date)}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:T.text,marginTop:2}}>{d.proj?.name||"Unknown Job"}</div>
+                    <div style={{fontSize:11,color:T.muted}}>{d.div}{d.proj?.afe?" · AFE: "+d.proj.afe:""}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:18,fontWeight:900,color:T.green}}>${fmt(d.pay)}</div>
+                    <span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span>
+                  </div>
+                </div>
+                {/* Classifications & hours for this employee */}
+                {d.entries.map((entry,i)=>{
+                  const pos=getPositions(d.div).find(p=>p.name===entry.classification);
+                  const regH=parseFloat(entry.regHrs)||0;
+                  const otH=parseFloat(entry.otHrs)||0;
+                  const trH=parseFloat(entry.travelHrs)||0;
+                  return(
+                    <div key={i} style={{background:T.surface,borderRadius:10,padding:"8px 10px",marginTop:6}}>
+                      <div style={{fontSize:12,fontWeight:700,marginBottom:4}}>{entry.classification||"—"}</div>
+                      <div style={{display:"flex",gap:12}}>
+                        <span style={{fontSize:12,color:T.green}}>{regH.toFixed(1)}h reg</span>
+                        {otH>0&&<span style={{fontSize:12,color:T.yellow}}>{otH.toFixed(1)}h OT</span>}
+                        {trH>0&&<span style={{fontSize:12,color:T.blue}}>{trH.toFixed(1)}h travel</span>}
+                        {pos&&!pos.flat&&<span style={{fontSize:11,color:T.muted}}>@ ${pos.rate}/hr</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+
+          <button onClick={exportHistory} style={{...primBtn,borderRadius:14,marginTop:4}}>
+            📥 Export to Excel (.xlsx)
+          </button>
+        </div>)}
+      </div>
+    );
+  }
 
   function UserManagement(){
     const [profs,setProfs]=useState([]);
