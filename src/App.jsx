@@ -556,7 +556,7 @@ function JobCard({p,onSelect,divColor}){
 
 /* ── PROJECT FORM ───────────────────────────────────────────── */
 function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr,onClearErr}){
-  const [f,setF]=useState(initial||{name:"",client:"",location:"",afe:"",work_order:"",start_date:today(),notes:"",status:"active",division:defaultDivision||"Pipeline",job_type:"T&M",contract_value:"",estimated_budget:""});
+  const [f,setF]=useState(initial||{name:"",client:"",location:"",afe:"",work_order:"",start_date:today(),notes:"",status:"active",division:defaultDivision||"Pipeline",job_type:"T&M",contract_value:"",contract_hours:"",estimated_budget:""});
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
@@ -582,7 +582,7 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
         </div>
 
         {/* Contract value — only shown for Contract jobs */}
-        {f.job_type==="Contract"&&(
+        {f.job_type==="Contract"&&(<>
           <div style={{marginBottom:12}}>
             <label style={lbl}>Contract Total Value ($)</label>
             <input
@@ -595,7 +595,20 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
               style={inp}
             />
           </div>
-        )}
+          <div style={{marginBottom:12}}>
+            <label style={lbl}>Contract Total Hours</label>
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              placeholder="e.g. 2000 — total hours budgeted for this contract"
+              value={f.contract_hours||""}
+              onChange={e=>set("contract_hours",e.target.value)}
+              style={inp}
+            />
+            <div style={{fontSize:11,color:T.muted,marginTop:4}}>Track hours used vs. contract hours — shows a progress bar on the job.</div>
+          </div>
+        </>)}
         {/* Estimated budget for T&M jobs */}
         {f.job_type==="T&M"&&(
           <div style={{marginBottom:12}}>
@@ -621,7 +634,7 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
         </div>
         <div style={{marginBottom:12}}><label style={lbl}>Start Date</label><input type="date" value={f.start_date||today()} onChange={e=>set("start_date",e.target.value)} style={inp}/></div>
         <div style={{marginBottom:20}}><label style={lbl}>Notes</label><textarea placeholder="Project notes, scope, special instructions…" value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={3} style={{...inp,resize:"vertical",lineHeight:1.5}}/></div>
-        <button onClick={()=>f.name.trim()&&!saving&&onSave({...f,contract_value:f.contract_value&&f.contract_value!==""?parseFloat(f.contract_value):null,estimated_budget:f.estimated_budget&&f.estimated_budget!==""?parseFloat(f.estimated_budget):null})} style={{...primBtn,opacity:f.name.trim()&&!saving?1:0.5}}>{saving?"Saving…":initial?"Save Changes":"Create Job"}</button>
+        <button onClick={()=>f.name.trim()&&!saving&&onSave({...f,contract_value:f.contract_value&&f.contract_value!==""?parseFloat(f.contract_value):null,contract_hours:f.contract_hours&&f.contract_hours!==""?parseFloat(f.contract_hours):null,estimated_budget:f.estimated_budget&&f.estimated_budget!==""?parseFloat(f.estimated_budget):null})} style={{...primBtn,opacity:f.name.trim()&&!saving?1:0.5}}>{saving?"Saving…":initial?"Save Changes":"Create Job"}</button>
       </div>
     </div>
   );
@@ -1796,7 +1809,7 @@ function WeatherTab({projectId,project,weather,onRefresh,onErr}){
 /* ── INFO TAB ───────────────────────────────────────────────── */
 function InfoTab({project,user,onEdit,onArchive,onDelete}){
   return(<div>
-    <div style={cardS}>{[["Division",project.division],["Job Type",project.job_type||"T&M"],["Contract Value",project.job_type==="Contract"&&project.contract_value?"$"+Number(project.contract_value).toLocaleString("en-US",{minimumFractionDigits:2}):null],["Est. Budget",project.job_type==="T&M"&&project.estimated_budget?"$"+Number(project.estimated_budget).toLocaleString("en-US",{minimumFractionDigits:2}):null],["Client",project.client],["Location",project.location],["AFE No.",project.afe],["PO #",project.work_order],["Start Date",fmtDate(project.start_date)],["Status",project.status],["Created By",project.created_by]].map(([l,v])=>v?(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"11px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>{l}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span></div>):null)}</div>
+    <div style={cardS}>{[["Division",project.division],["Job Type",project.job_type||"T&M"],["Contract Value",project.job_type==="Contract"&&project.contract_value?"$"+Number(project.contract_value).toLocaleString("en-US",{minimumFractionDigits:2}):null],["Est. Budget",project.job_type==="T&M"&&project.estimated_budget?"$"+Number(project.estimated_budget).toLocaleString("en-US",{minimumFractionDigits:2}):null],["Contract Hrs",project.job_type==="Contract"&&project.contract_hours?Number(project.contract_hours).toLocaleString("en-US")+"h":null],["Client",project.client],["Location",project.location],["AFE No.",project.afe],["PO #",project.work_order],["Start Date",fmtDate(project.start_date)],["Status",project.status],["Created By",project.created_by]].map(([l,v])=>v?(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"11px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>{l}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span></div>):null)}</div>
     {project.notes&&<div style={{...cardS,marginTop:12}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Notes</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{project.notes}</div></div>}
     {can(user,"edit_job")&&<div style={{marginTop:16,display:"flex",flexDirection:"column",gap:10}}><button onClick={onEdit} style={{...ghostBtn,width:"100%",textAlign:"center"}}>✏️ Edit Job</button><button onClick={onArchive} style={{...ghostBtn,width:"100%",textAlign:"center",color:T.muted}}>{project.status==="active"?"📦 Archive Job":"♻️ Restore Job"}</button><button onClick={onDelete} style={{...dangerBtn}}>🗑 Delete Job Permanently</button></div>}
   </div>);
@@ -2467,6 +2480,40 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
                 <span style={{fontSize:11,color:over?T.red:T.green,fontWeight:700}}>
                   {over?"⚠️ Over by $"+fmt(tot.g-budget):"$"+fmt(budget-tot.g)+" remaining"}
                 </span>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Contract Hours tracker — Contract jobs only, PM/Admin */}
+        {can(user,"view_dashboard")&&project.job_type==="Contract"&&project.contract_hours>0&&(()=>{
+          const usedHrs=totalReg+totalOT+totalTravel;
+          const budgetHrs=project.contract_hours;
+          const pct=Math.min(100,(usedHrs/budgetHrs)*100);
+          const over=usedHrs>budgetHrs;
+          const barColor=pct<75?T.green:pct<100?T.yellow:T.red;
+          return(
+            <div style={{marginTop:8,background:T.card,borderRadius:12,padding:"10px 12px",border:`1px solid ${over?T.red:T.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <div style={{fontSize:11,fontWeight:700,color:over?T.red:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>⏱️ Contract Hours</div>
+                <div style={{fontSize:12,fontWeight:700,color:over?T.red:T.muted}}>{usedHrs.toFixed(1)}h / {fmt(budgetHrs)}h</div>
+              </div>
+              <div style={{height:8,background:T.border,borderRadius:4,overflow:"hidden",marginBottom:4}}>
+                <div style={{height:"100%",background:barColor,borderRadius:4,width:pct+"%",transition:"width 0.4s"}}/>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <span style={{fontSize:11,color:barColor,fontWeight:700}}>{pct.toFixed(1)}% used</span>
+                <span style={{fontSize:11,color:over?T.red:T.green,fontWeight:700}}>
+                  {over?"⚠️ Over by "+fmt(usedHrs-budgetHrs)+"h":fmt(budgetHrs-usedHrs)+"h remaining"}
+                </span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginTop:8}}>
+                {[["Reg",totalReg,T.green],["OT",totalOT,T.yellow],["Travel",totalTravel,T.blue]].map(([l,v,c])=>(
+                  <div key={l} style={{background:T.surface,borderRadius:8,padding:"5px 8px",textAlign:"center"}}>
+                    <div style={{fontSize:12,fontWeight:800,color:c}}>{v.toFixed(1)}h</div>
+                    <div style={{fontSize:9,color:T.muted,textTransform:"uppercase"}}>{l}</div>
+                  </div>
+                ))}
               </div>
             </div>
           );
