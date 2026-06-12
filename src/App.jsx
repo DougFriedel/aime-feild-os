@@ -2492,8 +2492,12 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
 
         {/* Contract Hours tracker — Contract jobs only, PM/Admin */}
         {can(user,"view_dashboard")&&project.job_type==="Contract"&&project.contract_hours>0&&(()=>{
-          const usedHrs=totalReg+totalOT+totalTravel;
-          const budgetHrs=project.contract_hours;
+          const cReg=reports.reduce((s,r)=>(r.labor||[]).reduce((ss,l)=>ss+(parseFloat(l.regHrs)||0),s),0);
+          const cOT=reports.reduce((s,r)=>(r.labor||[]).reduce((ss,l)=>ss+(parseFloat(l.otHrs)||0),s),0);
+          const cTravel=reports.reduce((s,r)=>(r.labor||[]).reduce((ss,l)=>ss+(parseFloat(l.travelHrs)||0),s),0);
+          const usedHrs=cReg+cOT+cTravel;
+          const budgetHrs=parseFloat(project.contract_hours)||0;
+          if(!budgetHrs)return null;
           const pct=Math.min(100,(usedHrs/budgetHrs)*100);
           const over=usedHrs>budgetHrs;
           const barColor=pct<75?T.green:pct<100?T.yellow:T.red;
@@ -2501,19 +2505,19 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
             <div style={{marginTop:8,background:T.card,borderRadius:12,padding:"10px 12px",border:`1px solid ${over?T.red:T.border}`}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                 <div style={{fontSize:11,fontWeight:700,color:over?T.red:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>⏱️ Contract Hours</div>
-                <div style={{fontSize:12,fontWeight:700,color:over?T.red:T.muted}}>{usedHrs.toFixed(1)}h / {fmt(budgetHrs)}h</div>
+                <div style={{fontSize:12,fontWeight:700,color:over?T.red:T.muted}}>{usedHrs.toFixed(1)}h / {budgetHrs.toLocaleString()}h</div>
               </div>
               <div style={{height:8,background:T.border,borderRadius:4,overflow:"hidden",marginBottom:4}}>
                 <div style={{height:"100%",background:barColor,borderRadius:4,width:pct+"%",transition:"width 0.4s"}}/>
               </div>
-              <div style={{display:"flex",justifyContent:"space-between"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                 <span style={{fontSize:11,color:barColor,fontWeight:700}}>{pct.toFixed(1)}% used</span>
                 <span style={{fontSize:11,color:over?T.red:T.green,fontWeight:700}}>
-                  {over?"⚠️ Over by "+fmt(usedHrs-budgetHrs)+"h":fmt(budgetHrs-usedHrs)+"h remaining"}
+                  {over?"⚠️ Over by "+(usedHrs-budgetHrs).toFixed(1)+"h":(budgetHrs-usedHrs).toFixed(1)+"h remaining"}
                 </span>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginTop:8}}>
-                {[["Reg",totalReg,T.green],["OT",totalOT,T.yellow],["Travel",totalTravel,T.blue]].map(([l,v,c])=>(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                {[["Reg",cReg,T.green],["OT",cOT,T.yellow],["Travel",cTravel,T.blue]].map(([l,v,c])=>(
                   <div key={l} style={{background:T.surface,borderRadius:8,padding:"5px 8px",textAlign:"center"}}>
                     <div style={{fontSize:12,fontWeight:800,color:c}}>{v.toFixed(1)}h</div>
                     <div style={{fontSize:9,color:T.muted,textTransform:"uppercase"}}>{l}</div>
