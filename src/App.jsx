@@ -2426,7 +2426,12 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));await notify("report_flagged","Report Flagged",pm_notes,{project_id:project.id,report_id:id});await load(true);}catch(e){setErr(e.message);}}
   async function updateProject(data){
     const{_reports,_billed,_lastReport,...clean}=data;
-    const payload={...clean,contract_value:clean.contract_value&&clean.contract_value!==""?parseFloat(clean.contract_value):null};
+    const toNum=(v)=>v&&v!==""?parseFloat(v):null;
+    const payload={...clean,
+      contract_value:toNum(clean.contract_value),
+      contract_hours:toNum(clean.contract_hours),
+      estimated_budget:toNum(clean.estimated_budget),
+    };
     try{
       const result=await API.projects.update(project.id,payload);
       const u=Array.isArray(result)?result[0]:result;
