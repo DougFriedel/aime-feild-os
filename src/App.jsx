@@ -233,7 +233,14 @@ function TopBar({title,sub,onBack,right}){return(<div style={{background:T.surfa
 
 /* ── FORM CARDS ─────────────────────────────────────────────── */
 function LaborCard({row,onChange,onRemove,division}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
-function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>set("qty",e.target.value)} style={inp}/></div><div><label style={lbl}>{eq?eq.unit:"Hrs/Days"}</label><input type="number" min="0" step="0.5" placeholder="0" value={row.usage||""} onChange={e=>set("usage",e.target.value)} style={inp}/></div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{eq?`$${eq.rate.toLocaleString()}/${eq.unit}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
+function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>set("qty",e.target.value)} style={inp}/></div><div>
+              <label style={lbl}>
+                {eq
+                  ?<span>{eq.unit==="Hours"?"⏱️ Hours":eq.unit==="Days"?"📅 Days":eq.unit==="Ft"?"📏 Feet":eq.unit==="Week"?"📅 Weeks":eq.unit==="Month"?"📅 Months":"📊 "+eq.unit}</span>
+                  :"Hrs / Days"}
+              </label>
+              <input type="number" min="0" step="0.5" placeholder="0" value={row.usage||""} onChange={e=>set("usage",e.target.value)} style={inp}/>
+            </div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{eq?`$${eq.rate.toLocaleString()}/${eq.unit}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
 function RentedEquipCard({row,onChange,onRemove}){
   const set=(k,v)=>onChange({...row,[k]:v});
   const amt=(parseFloat(row.qty)||0)*(parseFloat(row.rate)||0)*(parseFloat(row.usage)||1);
@@ -549,7 +556,7 @@ function JobCard({p,onSelect,divColor}){
 
 /* ── PROJECT FORM ───────────────────────────────────────────── */
 function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr,onClearErr}){
-  const [f,setF]=useState(initial||{name:"",client:"",location:"",afe:"",work_order:"",start_date:today(),notes:"",status:"active",division:defaultDivision||"Pipeline",job_type:"T&M",contract_value:""});
+  const [f,setF]=useState(initial||{name:"",client:"",location:"",afe:"",work_order:"",start_date:today(),notes:"",status:"active",division:defaultDivision||"Pipeline",job_type:"T&M",contract_value:"",estimated_budget:""});
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -589,6 +596,22 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
             />
           </div>
         )}
+        {/* Estimated budget for T&M jobs */}
+        {f.job_type==="T&M"&&(
+          <div style={{marginBottom:12}}>
+            <label style={lbl}>Estimated Budget (optional, $)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="e.g. 50000.00 — leave blank if open-ended"
+              value={f.estimated_budget||""}
+              onChange={e=>set("estimated_budget",e.target.value)}
+              style={inp}
+            />
+            <div style={{fontSize:11,color:T.muted,marginTop:4}}>Used to show budget vs. actual billing progress on the job.</div>
+          </div>
+        )}
 
         <div style={{marginBottom:12}}>
           <label style={lbl}>Division</label>
@@ -598,7 +621,7 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
         </div>
         <div style={{marginBottom:12}}><label style={lbl}>Start Date</label><input type="date" value={f.start_date||today()} onChange={e=>set("start_date",e.target.value)} style={inp}/></div>
         <div style={{marginBottom:20}}><label style={lbl}>Notes</label><textarea placeholder="Project notes, scope, special instructions…" value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={3} style={{...inp,resize:"vertical",lineHeight:1.5}}/></div>
-        <button onClick={()=>f.name.trim()&&!saving&&onSave({...f,contract_value:f.contract_value&&f.contract_value!==""?parseFloat(f.contract_value):null})} style={{...primBtn,opacity:f.name.trim()&&!saving?1:0.5}}>{saving?"Saving…":initial?"Save Changes":"Create Job"}</button>
+        <button onClick={()=>f.name.trim()&&!saving&&onSave({...f,contract_value:f.contract_value&&f.contract_value!==""?parseFloat(f.contract_value):null,estimated_budget:f.estimated_budget&&f.estimated_budget!==""?parseFloat(f.estimated_budget):null})} style={{...primBtn,opacity:f.name.trim()&&!saving?1:0.5}}>{saving?"Saving…":initial?"Save Changes":"Create Job"}</button>
       </div>
     </div>
   );
@@ -634,12 +657,26 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
   async function submit(){
     setSaving(true);
     const reportData={...rpt,submitted_by:user.name,status:"submitted",project_id:project.id};
+
+    // ── Duplicate check ──
+    if(isOnline){
+      try{
+        const existing=await API.reports.forProject(project.id);
+        const dupe=(existing||[]).find(r=>r.date===rpt.date);
+        if(dupe){
+          const proceed=window.confirm(
+            `⚠️ A report for ${fmtDate(rpt.date)} already exists on this job (submitted by ${dupe.submitted_by||"someone"}).\n\nDo you still want to submit a second report for this date?`
+          );
+          if(!proceed){setSaving(false);return;}
+        }
+      }catch{/* ignore — if check fails just proceed */}
+    }
+
     if(!isOnline){
-      // Queue for later
       addToQueue({type:'report',data:reportData});
       clearDraft(draftKey);
       setSaving(false);
-      alert(`No connection — report saved and will sync automatically when you're back online.`);
+      alert("No connection — report saved and will sync automatically when you're back online.");
       onCancel();
       return;
     }
@@ -648,7 +685,6 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
       clearDraft(draftKey);
       await notify("report_submitted","New Report Submitted",`${user.name} submitted a report for ${project.name}`,{project_id:project.id});
     }catch(e){
-      // If save fails due to network, queue it
       addToQueue({type:'report',data:reportData});
       clearDraft(draftKey);
       alert("Couldn't reach server — report queued and will sync when reconnected.");
@@ -1123,6 +1159,18 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   const [report,setReport]=useState(initReport);
   const [lb,setLb]=useState(null);const [flagNote,setFlagNote]=useState("");const [flagging,setFlagging]=useState(false);
   const [showSigPad,setShowSigPad]=useState(false);const [sigSaving,setSigSaving]=useState(false);
+  const [editing,setEditing]=useState(false);const [editErr,setEditErr]=useState("");const [editSaving,setEditSaving]=useState(false);
+  const [editData,setEditData]=useState(null);
+
+  async function saveEdit(updated){
+    setEditSaving(true);setEditErr("");
+    try{
+      await API.reports.update(report.id,{...updated,status:"submitted",updated_at:new Date().toISOString()});
+      setReport(r=>({...r,...updated,status:"submitted"}));
+      setEditing(false);
+    }catch(e){setEditErr(e.message);}
+    setEditSaving(false);
+  }
   const tot=reportTotals(report,project.division);
   const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[report.status]||T.muted;
   const divColor=DIV_META[project.division]?.color||T.orange;
@@ -1300,6 +1348,26 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     XLSX.writeFile(wb, `AIME_${(project.name||'').replace(/\s+/g,'_')}_${(report.date||'').replace(/-/g,'')}.xlsx`,
       {cellStyles:true, bookSST:false});
   }
+  // If editing, render a simplified edit form
+  if(editing&&editData){
+    return(
+      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+        <TopBar title="Edit Report" onBack={()=>setEditing(false)}/>
+        <div style={{padding:"14px 16px 100px"}}>
+          <ErrBanner msg={editErr} onDismiss={()=>setEditErr("")}/>
+          <div style={{...cardS,marginBottom:12,background:T.yellowLow,border:`1px solid ${T.yellow}40`}}>
+            <div style={{fontSize:12,color:T.yellow}}>⚠️ Editing this report will reset its status to Submitted and require re-approval.</div>
+          </div>
+          <div style={{marginBottom:12}}><label style={lbl}>Date</label><input type="date" value={editData.date||""} onChange={e=>setEditData(d=>({...d,date:e.target.value}))} style={inp}/></div>
+          <div style={{marginBottom:12}}><label style={lbl}>Report No.</label><input type="text" value={editData.report_no||""} onChange={e=>setEditData(d=>({...d,report_no:e.target.value}))} style={inp}/></div>
+          <div style={{marginBottom:20}}><label style={lbl}>Description of Work Done</label><textarea rows={4} value={editData.description||""} onChange={e=>setEditData(d=>({...d,description:e.target.value}))} style={{...inp,resize:"vertical",lineHeight:1.5}}/></div>
+          <div style={{fontSize:13,color:T.muted,marginBottom:12}}>To edit labor, equipment, or materials in detail — delete this report and create a new one.</div>
+          <button onClick={()=>saveEdit(editData)} style={{...primBtn,opacity:editSaving?0.6:1,borderRadius:14}}>{editSaving?"Saving…":"Save Changes"}</button>
+        </div>
+      </div>
+    );
+  }
+
   return(
     <div style={{background:T.bg,minHeight:"100vh",padding:16,fontFamily:"inherit"}}>
       {showSigPad&&<SignaturePad reportName={`${project.name} · ${fmtDate(report.date)}`} onSave={saveSignature} onCancel={()=>setShowSigPad(false)}/>}
@@ -1340,6 +1408,11 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
         <button onClick={()=>printReport(report,project)} style={{...primBtn,background:"#1f3864",color:"#fff",borderRadius:14}}>🖨️ Print / Save PDF</button>
         <button onClick={exportXLSX} style={{...primBtn,background:divColor+"15",color:divColor,border:`1px solid ${divColor}40`,borderRadius:14}}>📥 Excel (.xlsx)</button>
       </div>
+      {can(user,"approve_report")&&!editing&&(
+        <button onClick={()=>{setEditData({date:report.date,report_no:report.report_no||"",description:report.description||""});setEditing(true);}} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10}}>
+          ✏️ Edit Report
+        </button>
+      )}
       <button onClick={()=>window.confirm("Delete this report?")&&onDelete(report.id)} style={dangerBtn}>🗑 Delete Report</button>
     </div>
   );
@@ -1723,7 +1796,7 @@ function WeatherTab({projectId,project,weather,onRefresh,onErr}){
 /* ── INFO TAB ───────────────────────────────────────────────── */
 function InfoTab({project,user,onEdit,onArchive,onDelete}){
   return(<div>
-    <div style={cardS}>{[["Division",project.division],["Job Type",project.job_type||"T&M"],["Contract Value",project.job_type==="Contract"&&project.contract_value?"$"+Number(project.contract_value).toLocaleString("en-US",{minimumFractionDigits:2}):null],["Client",project.client],["Location",project.location],["AFE No.",project.afe],["PO #",project.work_order],["Start Date",fmtDate(project.start_date)],["Status",project.status],["Created By",project.created_by]].map(([l,v])=>v?(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"11px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>{l}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span></div>):null)}</div>
+    <div style={cardS}>{[["Division",project.division],["Job Type",project.job_type||"T&M"],["Contract Value",project.job_type==="Contract"&&project.contract_value?"$"+Number(project.contract_value).toLocaleString("en-US",{minimumFractionDigits:2}):null],["Est. Budget",project.job_type==="T&M"&&project.estimated_budget?"$"+Number(project.estimated_budget).toLocaleString("en-US",{minimumFractionDigits:2}):null],["Client",project.client],["Location",project.location],["AFE No.",project.afe],["PO #",project.work_order],["Start Date",fmtDate(project.start_date)],["Status",project.status],["Created By",project.created_by]].map(([l,v])=>v?(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"11px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>{l}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span></div>):null)}</div>
     {project.notes&&<div style={{...cardS,marginTop:12}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Notes</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{project.notes}</div></div>}
     {can(user,"edit_job")&&<div style={{marginTop:16,display:"flex",flexDirection:"column",gap:10}}><button onClick={onEdit} style={{...ghostBtn,width:"100%",textAlign:"center"}}>✏️ Edit Job</button><button onClick={onArchive} style={{...ghostBtn,width:"100%",textAlign:"center",color:T.muted}}>{project.status==="active"?"📦 Archive Job":"♻️ Restore Job"}</button><button onClick={onDelete} style={{...dangerBtn}}>🗑 Delete Job Permanently</button></div>}
   </div>);
@@ -2372,6 +2445,32 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
           <span style={pill(project.status==="active"?T.green:T.muted)}>{project.status}</span>
         </div>
         <StatBar items={can(user,"view_dashboard")?[{label:"Reports",val:reports.length,color:divMeta.color},{label:"Labor",val:"$"+(tot.l>=1000?(tot.l/1000).toFixed(1)+"k":fmt(tot.l)),color:T.green},{label:"Equip",val:"$"+(tot.e>=1000?(tot.e/1000).toFixed(1)+"k":fmt(tot.e)),color:T.yellow},{label:"Total",val:"$"+(tot.g>=1000?(tot.g/1000).toFixed(1)+"k":fmt(tot.g)),color:T.blue}]:[{label:"Reports",val:reports.length,color:divMeta.color}]}/>
+        {/* Budget vs Actual tracker — PM/Admin only */}
+        {can(user,"view_dashboard")&&(()=>{
+          const budget=project.job_type==="Contract"?project.contract_value:project.estimated_budget;
+          if(!budget||budget<=0)return null;
+          const pct=Math.min(100,(tot.g/budget)*100);
+          const over=tot.g>budget;
+          const label=project.job_type==="Contract"?"Contract Value":"Estimated Budget";
+          const barColor=pct<75?T.green:pct<100?T.yellow:T.red;
+          return(
+            <div style={{marginTop:10,background:T.card,borderRadius:12,padding:"10px 12px",border:`1px solid ${over?T.red:T.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <div style={{fontSize:11,fontWeight:700,color:over?T.red:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>{label}</div>
+                <div style={{fontSize:12,fontWeight:700,color:over?T.red:T.muted}}>${fmt(tot.g)} / ${fmt(budget)}</div>
+              </div>
+              <div style={{height:8,background:T.border,borderRadius:4,overflow:"hidden",marginBottom:4}}>
+                <div style={{height:"100%",background:barColor,borderRadius:4,width:pct+"%",transition:"width 0.4s"}}/>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <span style={{fontSize:11,color:barColor,fontWeight:700}}>{pct.toFixed(1)}% billed</span>
+                <span style={{fontSize:11,color:over?T.red:T.green,fontWeight:700}}>
+                  {over?"⚠️ Over by $"+fmt(tot.g-budget):"$"+fmt(budget-tot.g)+" remaining"}
+                </span>
+              </div>
+            </div>
+          );
+        })()}
         <div style={{display:"flex",gap:4,marginTop:12,overflowX:"auto",paddingBottom:2,WebkitOverflowScrolling:"touch"}}>
           {visibleTabs.map(t=>(<button key={t.id} onClick={()=>setTab(t.id)} style={{flexShrink:0,background:tab===t.id?divMeta.color:"transparent",border:tab===t.id?"none":`1px solid ${T.border}`,borderRadius:10,padding:"8px 10px",fontSize:11,fontWeight:tab===t.id?800:500,cursor:"pointer",color:tab===t.id?"#09090B":T.sub,fontFamily:"inherit",whiteSpace:"nowrap"}}>{t.icon} {t.label}</button>))}
         </div>
@@ -2636,7 +2735,21 @@ function PMDashboard({onBack,user}){
             {pending.map(r=>{const rdiv2=r.projects?.division||(projects.find(x=>x.id===r.project_id)?.division);const t=reportTotals(r,rdiv2);const p=projects.find(x=>x.id===r.project_id);return(<div key={r.id} style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.yellow}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontSize:15,fontWeight:800}}>{fmtShort(r.date)}</div><div style={{fontSize:12,color:T.sub}}>{r.projects?.name||"Unknown"} · {r.projects?.division||""}</div><div style={{fontSize:12,color:T.muted}}>by {r.submitted_by||"Unknown"}</div>{r.description&&<div style={{fontSize:12,color:T.sub,marginTop:4,lineHeight:1.4}}>{r.description.slice(0,100)}{r.description.length>100?"…":""}</div>}</div><div style={{textAlign:"right",flexShrink:0,marginLeft:10}}><div style={{fontSize:18,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{display:"flex",gap:4,marginTop:6,justifyContent:"flex-end"}}>{(r.labor||[]).length>0&&<span style={pill(T.orange)}>👷{r.labor.length}</span>}{(r.equipment||[]).length>0&&<span style={pill(T.yellow)}>🚜{r.equipment.length}</span>}</div></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><button onClick={()=>approve(r.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:10,padding:"12px"}}>✓ Approve</button><button onClick={()=>{const n=window.prompt("Flag note:");if(n!==null)flag(r.id,n);}} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:10,padding:"12px"}}>🚩 Flag</button></div><button onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...ghostBtn,width:"100%",textAlign:"center",padding:"10px"}}>View Full Report →</button></div>);})}
           </div>)}
           {pmTab==="workers"&&(<div>
-            <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Hours from reports this month</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div style={{fontSize:12,color:T.muted}}>Hours from reports this month</div>
+              <button onClick={()=>{
+                const ms=new Date();ms.setDate(1);const msStr=ms.toISOString().split("T")[0];
+                const weekStart=getWeekStart();
+                const wkReports=reports.filter(r=>r.date>=weekStart);
+                const wm2={};
+                wkReports.forEach(r=>{const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);(r.labor||[]).forEach(l=>{if(!l.name)return;if(!wm2[l.name])wm2[l.name]={name:l.name,reg:0,ot:0};wm2[l.name].reg+=parseFloat(l.regHrs)||0;wm2[l.name].ot+=parseFloat(l.otHrs)||0;});});
+                const rows=Object.values(wm2).sort((a,b)=>a.name.localeCompare(b.name));
+                const body=`AIME Field Pro — Weekly Hours Summary%0AWeek of ${weekStart}%0A%0A`+rows.map(w=>`${w.name}: ${w.reg.toFixed(1)}h reg${w.ot>0?" + "+w.ot.toFixed(1)+"h OT":""}`).join("%0A")+`%0A%0AGenerated ${new Date().toLocaleString()}`;
+                window.location.href=`mailto:?subject=AIME Weekly Hours Summary - Week of ${weekStart}&body=${body}`;
+              }} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"7px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                📧 Email Summary
+              </button>
+            </div>
             {workerRows.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>👷</div><div>No labor entries this month.</div></div>}
             {workerRows.map(w=>(<div key={w.name} style={{...cardS,marginBottom:9}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div><div style={{fontSize:15,fontWeight:700}}>{w.name}</div><div style={{display:"flex",gap:10,marginTop:6}}><span style={{fontSize:12,color:T.sub}}>{w.reg.toFixed(1)} reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)} OT</span>}{w.travel>0&&<span style={{fontSize:12,color:T.blue}}>{w.travel.toFixed(1)} travel</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(w.pay)}</div><div style={{fontSize:10,color:T.muted}}>{(w.reg+w.ot+w.travel).toFixed(1)} total hrs</div></div></div></div>))}
           </div>)}
