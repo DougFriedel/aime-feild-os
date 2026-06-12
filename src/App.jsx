@@ -1769,6 +1769,8 @@ function CrewDirectoryScreen({onBack,user}){
   const [mode,setMode]=useState("list"); // list | view | edit | new
   const [active,setActive]=useState(null);
   const [saving,setSaving]=useState(false);
+  const [showPrintOpts,setShowPrintOpts]=useState(false);
+  const [printCols,setPrintCols]=useState({classification:false,email:false,emergency:false,role:false});
 
   const canEdit=user.role==="admin"||user.role==="pm";
 
@@ -2018,8 +2020,6 @@ function CrewDirectoryScreen({onBack,user}){
   }
 
   /* ── PRINT DIRECTORY ── */
-  const [showPrintOpts,setShowPrintOpts]=useState(false);
-  const [printCols,setPrintCols]=useState({classification:false,email:false,emergency:false,role:false});
   function toggleCol(k){setPrintCols(x=>({...x,[k]:!x[k]}));}
 
   function printCrewDirectory(){
