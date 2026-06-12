@@ -1978,42 +1978,75 @@ function CrewDirectoryScreen({onBack,user}){
           </div>
         </div>
         <div style={{padding:"16px 16px 80px"}}>
-          {/* Contact */}
-          {(m.phone||m.email)&&<div style={{...cardS,marginBottom:12}}>
-            <div style={{fontSize:11,color:T.blue,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Contact</div>
-            {m.phone&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>Cell</span><a href={`tel:${m.phone}`} style={{fontSize:13,fontWeight:700,color:T.blue,textDecoration:"none"}}>{m.phone}</a></div>}
-            {m.email&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0"}}><span style={{fontSize:13,color:T.muted}}>Email</span><a href={`mailto:${m.email}`} style={{fontSize:13,fontWeight:700,color:T.blue,textDecoration:"none"}}>{m.email}</a></div>}
-          </div>}
+          {/* Contact — always show */}
+          <div style={{...cardS,marginBottom:12}}>
+            <div style={{fontSize:11,color:T.blue,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>📋 Contact Info</div>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+              <span style={{fontSize:13,color:T.muted}}>Cell Phone</span>
+              {m.phone
+                ?<a href={`tel:${m.phone}`} style={{fontSize:13,fontWeight:700,color:T.blue,textDecoration:"none"}}>{m.phone}</a>
+                :<span style={{fontSize:13,color:T.muted,fontStyle:"italic"}}>Not on file</span>}
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+              <span style={{fontSize:13,color:T.muted}}>Email</span>
+              {m.email
+                ?<a href={`mailto:${m.email}`} style={{fontSize:13,fontWeight:700,color:T.blue,textDecoration:"none"}}>{m.email}</a>
+                :<span style={{fontSize:13,color:T.muted,fontStyle:"italic"}}>Not on file</span>}
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0"}}>
+              <span style={{fontSize:13,color:T.muted}}>Classification</span>
+              <span style={{fontSize:13,fontWeight:600}}>{m.classification||<span style={{color:T.muted,fontStyle:"italic"}}>Not set</span>}</span>
+            </div>
+          </div>
 
-          {/* Emergency */}
-          {(m.emergency_contact_name||m.emergency_contact_phone)&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.red}`}}>
+          {/* Emergency — always show */}
+          <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.red}`}}>
             <div style={{fontSize:11,color:T.red,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>🆘 Emergency Contact</div>
-            {m.emergency_contact_name&&<div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{m.emergency_contact_name}</div>}
-            {m.emergency_contact_phone&&<a href={`tel:${m.emergency_contact_phone}`} style={{fontSize:14,color:T.red,fontWeight:700,textDecoration:"none"}}>📞 {m.emergency_contact_phone}</a>}
-          </div>}
+            {m.emergency_contact_name
+              ?<div style={{fontSize:14,fontWeight:700,marginBottom:4,color:T.text}}>{m.emergency_contact_name}</div>
+              :<div style={{fontSize:13,color:T.muted,fontStyle:"italic",marginBottom:4}}>No contact on file</div>}
+            {m.emergency_contact_phone
+              ?<a href={`tel:${m.emergency_contact_phone}`} style={{fontSize:14,color:T.red,fontWeight:700,textDecoration:"none"}}>📞 {m.emergency_contact_phone}</a>
+              :<span style={{fontSize:13,color:T.muted,fontStyle:"italic"}}>No phone on file</span>}
+          </div>
 
-          {/* Certifications */}
-          {(m.certifications||[]).length>0&&<div style={{...cardS,marginBottom:12}}>
+          {/* Certifications — always show */}
+          <div style={{...cardS,marginBottom:12}}>
             <div style={{fontSize:11,color:T.blue,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🎖️ Certifications</div>
-            {(m.certifications||[]).map((cert,i)=>{
-              const exp=cert.expiry?daysUntil(cert.expiry):null;
-              const expired=exp!==null&&exp<0;const expiring=exp!==null&&exp>=0&&exp<=30;
-              return(<div key={cert.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<m.certifications.length-1?`1px solid ${T.border}`:"none"}}>
-                <div><div style={{fontSize:13,fontWeight:600}}>{cert.name}</div>{cert.cert_number&&<div style={{fontSize:11,color:T.muted}}>#{cert.cert_number}</div>}</div>
-                {cert.expiry&&<span style={pill(expired?T.red:expiring?T.yellow:T.green)}>{expired?"EXPIRED":expiring?`${exp}d`:fmtDate(cert.expiry)}</span>}
-              </div>);
-            })}
+            {(m.certifications||[]).length===0
+              ?<div style={{fontSize:13,color:T.muted,fontStyle:"italic",textAlign:"center",padding:"8px 0"}}>No certifications on file</div>
+              :(m.certifications||[]).map((cert,i)=>{
+                const exp=cert.expiry?daysUntil(cert.expiry):null;
+                const expired=exp!==null&&exp<0;const expiring=exp!==null&&exp>=0&&exp<=30;
+                return(<div key={cert.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<m.certifications.length-1?`1px solid ${T.border}`:"none"}}>
+                  <div><div style={{fontSize:13,fontWeight:600}}>{cert.name}</div>{cert.cert_number&&<div style={{fontSize:11,color:T.muted}}>#{cert.cert_number}</div>}</div>
+                  {cert.expiry&&<span style={pill(expired?T.red:expiring?T.yellow:T.green)}>{expired?"EXPIRED":expiring?`${exp}d`:fmtDate(cert.expiry)}</span>}
+                </div>);
+              })}
+          </div>
+
+          {/* Notes */}
+          {m.notes&&<div style={{...cardS,marginBottom:12}}>
+            <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Notes</div>
+            <div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{m.notes}</div>
           </div>}
 
-          {/* App access — show role to PM/Admin, hide PIN */}
-          {canEdit&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${roleColor[rc]||T.green}`}}>
+          {/* App Access — visible to all, PIN only to PM/Admin */}
+          <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${roleColor[rc]||T.green}`}}>
             <div style={{fontSize:11,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🔐 App Access</div>
-            <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>Role</span><span style={pill(roleColor[rc]||T.green)}>{ROLE_META[rc]?.label||"Field Crew"}</span></div>
-            <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>Division</span><span style={{fontSize:13,fontWeight:600}}>{p.division||"All Divisions"}</span></div>
-            <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0"}}><span style={{fontSize:13,color:T.muted}}>PIN</span><span style={{fontSize:13,fontWeight:600}}>{p.pin?"••••••":"Not set"}</span></div>
-          </div>}
-
-          {m.notes&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Notes</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{m.notes}</div></div>}
+            <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}>
+              <span style={{fontSize:13,color:T.muted}}>Role</span>
+              <span style={pill(roleColor[rc]||T.green)}>{ROLE_META[rc]?.label||"Field Crew"}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:canEdit?`1px solid ${T.border}`:"none"}}>
+              <span style={{fontSize:13,color:T.muted}}>Division</span>
+              <span style={{fontSize:13,fontWeight:600}}>{p.division||"All Divisions"}</span>
+            </div>
+            {canEdit&&<div style={{display:"flex",justifyContent:"space-between",padding:"7px 0"}}>
+              <span style={{fontSize:13,color:T.muted}}>PIN</span>
+              <span style={{fontSize:13,fontWeight:600}}>{p.pin?"••••••":"Not set"}</span>
+            </div>}
+          </div>
         </div>
       </div>
     );
