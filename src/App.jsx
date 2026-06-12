@@ -2017,6 +2017,84 @@ function CrewDirectoryScreen({onBack,user}){
     );
   }
 
+  /* ── PRINT DIRECTORY ── */
+  function printCrewDirectory(){
+    const activePeople=allNames.filter(n=>{const m=memberMap[n];return !m||m.active!==false;});
+    const rows=activePeople.map(name=>{
+      const m=memberMap[name]||{};
+      const p=profileMap[name]||{role:"crew"};
+      return{name,phone:m.phone||"",email:m.email||"",classification:m.classification||"",role:ROLE_META[p.role]?.label||"Field Crew",emergency_name:m.emergency_contact_name||"",emergency_phone:m.emergency_contact_phone||""};
+    });
+
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>AIME Field Pro — Crew Directory</title>
+<style>
+  @page{size:letter portrait;margin:0.5in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:10pt;color:#000;}
+  .header{text-align:center;margin-bottom:18px;border-bottom:3px solid #1f3864;padding-bottom:12px;}
+  .logo-text{font-size:22pt;font-weight:900;color:#1f3864;letter-spacing:2px;}
+  .sub{font-size:10pt;color:#555;margin-top:4px;}
+  .generated{font-size:8pt;color:#888;margin-top:4px;}
+  table{width:100%;border-collapse:collapse;margin-top:12px;}
+  th{background:#1f3864;color:#fff;font-size:8.5pt;font-weight:700;padding:6px 8px;text-align:left;border:1px solid #1f3864;}
+  td{padding:5px 8px;border:1px solid #ccc;font-size:9pt;vertical-align:middle;}
+  tr:nth-child(even) td{background:#f5f7fa;}
+  tr:hover td{background:#fff3e0;}
+  .name{font-weight:700;color:#000;}
+  .role-badge{display:inline-block;padding:1px 6px;border-radius:10px;font-size:7.5pt;font-weight:700;background:#e8f4fd;color:#1f3864;border:1px solid #b0d4ed;}
+  .no-phone{color:#aaa;font-style:italic;}
+  .emergency{font-size:8pt;color:#c0392b;}
+  .section-title{font-size:11pt;font-weight:700;color:#1f3864;margin:16px 0 6px;border-bottom:1px solid #ccc;padding-bottom:4px;}
+  .count{font-size:8pt;color:#666;font-weight:normal;margin-left:8px;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+
+<div class="header">
+  <div class="logo-text">AIME Field Pro</div>
+  <div class="sub">Crew Contact Directory</div>
+  <div class="generated">Generated: ${new Date().toLocaleString()}</div>
+</div>
+
+<div class="section-title">Active Crew<span class="count">(${rows.length} people)</span></div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:20%">Name</th>
+      <th style="width:16%">Role</th>
+      <th style="width:18%">Classification</th>
+      <th style="width:14%">Cell Phone</th>
+      <th style="width:18%">Email</th>
+      <th style="width:14%">Emergency Contact</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${rows.map((r,i)=>`
+    <tr>
+      <td class="name">${r.name}</td>
+      <td><span class="role-badge">${r.role}</span></td>
+      <td>${r.classification||'—'}</td>
+      <td>${r.phone?`<a href="tel:${r.phone}" style="color:#1f3864;text-decoration:none;font-weight:600">${r.phone}</a>`:'<span class="no-phone">Not on file</span>'}</td>
+      <td style="font-size:8pt">${r.email||'—'}</td>
+      <td class="emergency">${r.emergency_name?r.emergency_name+(r.emergency_phone?' · '+r.emergency_phone:''):'—'}</td>
+    </tr>`).join('')}
+  </tbody>
+</table>
+
+<div style="margin-top:24px;font-size:7.5pt;color:#999;text-align:center;border-top:1px solid #eee;padding-top:8px;">
+  AIME Field Pro · Confidential — Internal Use Only
+</div>
+
+</body></html>`;
+
+    const win=window.open('','_blank','width=900,height=700');
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(()=>win.print(),400);
+  }
+
   /* ── LIST ── */
   const activePeople=allNames.filter(n=>{const m=memberMap[n];return !m||m.active!==false;});
   const inactivePeople=allNames.filter(n=>{const m=memberMap[n];return m&&m.active===false;});
@@ -2030,7 +2108,10 @@ function CrewDirectoryScreen({onBack,user}){
             <div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👥 Crew Directory</div>
             <div style={{fontSize:12,color:T.muted}}>{activePeople.length} people · tap to view details</div>
           </div>
-          {canEdit&&<button onClick={()=>{setMf({...blankMember});setPf({...blankProfile});setActive(null);setMode("new");}} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>}
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={printCrewDirectory} style={{background:"#1f3864",color:"#fff",border:"none",borderRadius:10,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🖨️ Print</button>
+            {canEdit&&<button onClick={()=>{setMf({...blankMember});setPf({...blankProfile});setActive(null);setMode("new");}} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>}
+          </div>
         </div>
         <div style={{position:"relative"}}>
           <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:14,pointerEvents:"none"}}>🔍</span>
