@@ -87,10 +87,10 @@ const API={
 };
 
 /* ── THEME ──────────────────────────────────────────────────── */
-const T={bg:"#09090B",surface:"#111113",card:"#18181B",border:"#27272A",orange:"#F97316",orangeLow:"#F9731614",orangeMid:"#F9731630",green:"#22C55E",greenLow:"#22C55E14",red:"#EF4444",redLow:"#EF444414",yellow:"#EAB308",yellowLow:"#EAB30814",blue:"#3B82F6",blueLow:"#3B82F614",purple:"#A855F7",teal:"#14B8A6",text:"#FAFAFA",sub:"#CBD5E1",muted:"#A1A1AA"};
+const T={bg:"#09090B",surface:"#111113",card:"#18181B",border:"#27272A",orange:"#F97316",orangeLow:"#F9731614",orangeMid:"#F9731630",green:"#22C55E",greenLow:"#22C55E14",red:"#EF4444",redLow:"#EF444414",yellow:"#EAB308",yellowLow:"#EAB30814",blue:"#3B82F6",blueLow:"#3B82F614",purple:"#A855F7",teal:"#14B8A6",text:"#FFFFFF",sub:"#E4E4E7",muted:"#D4D4D8"};
 const inp={width:"100%",boxSizing:"border-box",background:"#0C0C0F",border:`1px solid ${T.border}`,borderRadius:12,color:T.text,fontSize:15,padding:"13px 14px",outline:"none",fontFamily:"inherit",appearance:"none",WebkitAppearance:"none"};
 const inpSel={...inp,color:T.orange};
-const lbl={display:"block",fontSize:11,fontWeight:700,color:"#94A3B8",letterSpacing:"1px",textTransform:"uppercase",marginBottom:6};
+const lbl={display:"block",fontSize:11,fontWeight:700,color:"#D4D4D8",letterSpacing:"1px",textTransform:"uppercase",marginBottom:6};
 const cardS={background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:"16px"};
 const pill=(c)=>({display:"inline-flex",alignItems:"center",background:c+"20",color:c,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:700});
 const primBtn={width:"100%",background:T.orange,color:"#09090B",border:"none",borderRadius:14,padding:"16px",fontSize:16,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:8};
@@ -226,7 +226,7 @@ async function notify(type,title,body,extra={}){try{await API.notifications.crea
 /* ── SHARED UI ──────────────────────────────────────────────── */
 function Spinner(){return(<div style={{display:"flex",justifyContent:"center",padding:"48px 0"}}><div style={{width:32,height:32,border:`3px solid ${T.border}`,borderTopColor:T.orange,borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}} select,select option{background:#1a1a1a !important;color:#F97316 !important;} select:focus{outline:none;} select *{color:#F97316 !important;background:#1a1a1a !important;}`}</style></div>);}
 function ErrBanner({msg,onDismiss}){if(!msg)return null;return(<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:13,color:T.red}}>⚠️ {msg}</span><button onClick={onDismiss} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:18,padding:"0 0 0 10px"}}>×</button></div>);}
-function Lightbox({src,onClose}){if(!src)return null;return(<div onClick={onClose} style={{position:"fixed",inset:0,zIndex:999,background:"rgba(0,0,0,0.95)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><img src={src} alt="" style={{maxWidth:"100%",maxHeight:"90vh",borderRadius:12}} onClick={e=>e.stopPropagation()}/><button onClick={onClose} style={{position:"absolute",top:16,right:16,background:"#A1A1AA",border:"none",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:18,cursor:"pointer"}}>×</button></div>);}
+function Lightbox({src,onClose}){if(!src)return null;return(<div onClick={onClose} style={{position:"fixed",inset:0,zIndex:999,background:"rgba(0,0,0,0.95)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><img src={src} alt="" style={{maxWidth:"100%",maxHeight:"90vh",borderRadius:12}} onClick={e=>e.stopPropagation()}/><button onClick={onClose} style={{position:"absolute",top:16,right:16,background:"#D4D4D8",border:"none",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:18,cursor:"pointer"}}>×</button></div>);}
 function DashedAdd({label,onClick,color}){const c=color||T.muted;return(<button onClick={onClick} style={{width:"100%",border:`2px dashed ${c}50`,background:c+"08",color:c,borderRadius:14,padding:"14px",fontSize:15,cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>{label}</button>);}
 function StatBar({items}){return(<div style={{display:"grid",gridTemplateColumns:`repeat(${items.length},1fr)`,gap:8}}>{items.map(({label,val,color})=>(<div key={label} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 8px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:900,color:color||T.text}}>{val}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.7px",marginTop:2}}>{label}</div></div>))}</div>);}
 function TopBar({title,sub,onBack,right}){return(<div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>{onBack&&<button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>}<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{title}</div>{sub&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{sub}</div>}</div>{right&&<div style={{flexShrink:0,marginLeft:12}}>{right}</div>}</div></div>);}
@@ -324,9 +324,9 @@ function LoginScreen({onLogin}){
         <div style={{marginBottom:14}}>
           <label style={lbl}>Select Your Name</label>
           <select value={name} onChange={e=>handleNameChange(e.target.value)} style={{...inp,color:T.orange}}>
-            <option value="" style={{background:"#A1A1AA",color:T.orange}}>— Select your name —</option>
-            {NAMES.map(n=><option key={n} style={{background:"#A1A1AA",color:T.orange}}>{n}</option>)}
-            <option value="Admin" style={{background:"#A1A1AA",color:T.orange}}>Admin</option>
+            <option value="" style={{background:"#D4D4D8",color:T.orange}}>— Select your name —</option>
+            {NAMES.map(n=><option key={n} style={{background:"#D4D4D8",color:T.orange}}>{n}</option>)}
+            <option value="Admin" style={{background:"#D4D4D8",color:T.orange}}>Admin</option>
           </select>
         </div>
 
@@ -1106,7 +1106,7 @@ function SignaturePad({onSave,onCancel,reportName}){
           <div style={{background:"#fff",borderRadius:14,border:`2px solid ${hasStrokes?T.orange:T.border}`,overflow:"hidden",position:"relative",userSelect:"none"}}>
             {!hasStrokes&&(
               <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-                <div style={{textAlign:"center",color:"#bbb"}}>
+                <div style={{textAlign:"center",color:"#D4D4D8"}}>
                   <div style={{fontSize:36,marginBottom:6}}>✍️</div>
                   <div style={{fontSize:14,fontWeight:600}}>Sign here</div>
                   <div style={{fontSize:11,marginTop:2}}>Use finger or stylus</div>
