@@ -2735,21 +2735,150 @@ function PMDashboard({onBack,user}){
             {pending.map(r=>{const rdiv2=r.projects?.division||(projects.find(x=>x.id===r.project_id)?.division);const t=reportTotals(r,rdiv2);const p=projects.find(x=>x.id===r.project_id);return(<div key={r.id} style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.yellow}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontSize:15,fontWeight:800}}>{fmtShort(r.date)}</div><div style={{fontSize:12,color:T.sub}}>{r.projects?.name||"Unknown"} · {r.projects?.division||""}</div><div style={{fontSize:12,color:T.muted}}>by {r.submitted_by||"Unknown"}</div>{r.description&&<div style={{fontSize:12,color:T.sub,marginTop:4,lineHeight:1.4}}>{r.description.slice(0,100)}{r.description.length>100?"…":""}</div>}</div><div style={{textAlign:"right",flexShrink:0,marginLeft:10}}><div style={{fontSize:18,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{display:"flex",gap:4,marginTop:6,justifyContent:"flex-end"}}>{(r.labor||[]).length>0&&<span style={pill(T.orange)}>👷{r.labor.length}</span>}{(r.equipment||[]).length>0&&<span style={pill(T.yellow)}>🚜{r.equipment.length}</span>}</div></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><button onClick={()=>approve(r.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:10,padding:"12px"}}>✓ Approve</button><button onClick={()=>{const n=window.prompt("Flag note:");if(n!==null)flag(r.id,n);}} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:10,padding:"12px"}}>🚩 Flag</button></div><button onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...ghostBtn,width:"100%",textAlign:"center",padding:"10px"}}>View Full Report →</button></div>);})}
           </div>)}
           {pmTab==="workers"&&(<div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-              <div style={{fontSize:12,color:T.muted}}>Hours from reports this month</div>
-              <button onClick={()=>{
-                const ms=new Date();ms.setDate(1);const msStr=ms.toISOString().split("T")[0];
-                const weekStart=getWeekStart();
-                const wkReports=reports.filter(r=>r.date>=weekStart);
-                const wm2={};
-                wkReports.forEach(r=>{const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);(r.labor||[]).forEach(l=>{if(!l.name)return;if(!wm2[l.name])wm2[l.name]={name:l.name,reg:0,ot:0};wm2[l.name].reg+=parseFloat(l.regHrs)||0;wm2[l.name].ot+=parseFloat(l.otHrs)||0;});});
-                const rows=Object.values(wm2).sort((a,b)=>a.name.localeCompare(b.name));
-                const body=`AIME Field Pro — Weekly Hours Summary%0AWeek of ${weekStart}%0A%0A`+rows.map(w=>`${w.name}: ${w.reg.toFixed(1)}h reg${w.ot>0?" + "+w.ot.toFixed(1)+"h OT":""}`).join("%0A")+`%0A%0AGenerated ${new Date().toLocaleString()}`;
-                window.location.href=`mailto:?subject=AIME Weekly Hours Summary - Week of ${weekStart}&body=${body}`;
-              }} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"7px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-                📧 Email Summary
-              </button>
-            </div>
+            {/* Email Summary Modal */}
+            {(()=>{
+              const [showEmailOpts,setShowEmailOpts]=React.useState(false);
+              const [emailFrom,setEmailFrom]=React.useState(getWeekStart());
+              const [emailTo,setEmailTo]=React.useState(today());
+              const [selEmps,setSelEmps]=React.useState([]);
+              const [emailTo2,setEmailTo2]=React.useState("");
+
+              // Get all employees who have reports in the date range
+              const rangeReports=reports.filter(r=>r.date>=emailFrom&&r.date<=emailTo);
+              const allEmpsInRange=[...new Set((rangeReports).flatMap(r=>(r.labor||[]).map(l=>l.name).filter(Boolean)))].sort();
+
+              function toggleEmp(n){setSelEmps(s=>s.includes(n)?s.filter(x=>x!==n):[...s,n]);}
+
+              // Build summary data
+              const targetEmps=selEmps.length>0?selEmps:allEmpsInRange;
+              const wm2={};
+              rangeReports.forEach(r=>{
+                const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);
+                (r.labor||[]).filter(l=>targetEmps.includes(l.name)).forEach(l=>{
+                  if(!l.name)return;
+                  if(!wm2[l.name])wm2[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0};
+                  wm2[l.name].reg+=parseFloat(l.regHrs)||0;
+                  wm2[l.name].ot+=parseFloat(l.otHrs)||0;
+                  wm2[l.name].travel+=parseFloat(l.travelHrs)||0;
+                  wm2[l.name].pay+=laborAmt(l,div);
+                });
+              });
+              const summaryRows=Object.values(wm2).sort((a,b)=>a.name.localeCompare(b.name));
+
+              function sendEmail(){
+                const subj=`AIME Field Pro — Hours Summary (${emailFrom} to ${emailTo})`;
+                const lines=[
+                  `AIME Field Pro — Hours Summary`,
+                  `Period: ${emailFrom} to ${emailTo}`,
+                  selEmps.length>0?`Employees: ${selEmps.join(", ")}`:"All Employees",
+                  ``,
+                  `NAME                     REG HRS   OT HRS   TRAVEL   TOTAL HRS   PAY`,
+                  `${"─".repeat(75)}`,
+                  ...summaryRows.map(w=>{
+                    const total=(w.reg+w.ot+w.travel).toFixed(1);
+                    return `${w.name.padEnd(25)} ${w.reg.toFixed(1).padStart(7)}   ${w.ot.toFixed(1).padStart(6)}   ${w.travel.toFixed(1).padStart(6)}   ${total.padStart(9)}   $${w.pay.toFixed(2)}`;
+                  }),
+                  `${"─".repeat(75)}`,
+                  `${"TOTALS".padEnd(25)} ${summaryRows.reduce((s,w)=>s+w.reg,0).toFixed(1).padStart(7)}   ${summaryRows.reduce((s,w)=>s+w.ot,0).toFixed(1).padStart(6)}   ${summaryRows.reduce((s,w)=>s+w.travel,0).toFixed(1).padStart(6)}   ${summaryRows.reduce((s,w)=>s+w.reg+w.ot+w.travel,0).toFixed(1).padStart(9)}   $${summaryRows.reduce((s,w)=>s+w.pay,0).toFixed(2)}`,
+                  ``,
+                  `Generated: ${new Date().toLocaleString()}`,
+                  `AIME Field Pro`,
+                ];
+                const body=lines.join("%0A");
+                const mailto=emailTo2?`mailto:${emailTo2}?subject=${encodeURIComponent(subj)}&body=${body}`:`mailto:?subject=${encodeURIComponent(subj)}&body=${body}`;
+                window.location.href=mailto;
+                setShowEmailOpts(false);
+              }
+
+              return(<>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                  <div style={{fontSize:12,color:T.muted}}>Hours from reports this month</div>
+                  <button onClick={()=>setShowEmailOpts(true)} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"7px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                    📧 Email Summary
+                  </button>
+                </div>
+
+                {/* Email Options Modal */}
+                {showEmailOpts&&(
+                  <div onClick={()=>setShowEmailOpts(false)} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.8)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+                    <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto"}}>
+                      <div style={{fontSize:17,fontWeight:900,marginBottom:4}}>📧 Email Hours Summary</div>
+                      <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Customize your report then open in your email app</div>
+
+                      {/* Date range */}
+                      <div style={{marginBottom:14}}>
+                        <label style={{...lbl,marginBottom:8}}>Date Range</label>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
+                          <div><label style={lbl}>From</label><input type="date" value={emailFrom} onChange={e=>setEmailFrom(e.target.value)} style={inp}/></div>
+                          <div><label style={lbl}>To</label><input type="date" value={emailTo} onChange={e=>setEmailTo(e.target.value)} style={inp}/></div>
+                        </div>
+                        {/* Quick presets */}
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          {[
+                            ["This Week",getWeekStart(),today()],
+                            ["Last Week",(()=>{const d=new Date();d.setDate(d.getDate()-7);const ws=new Date(d);ws.setDate(ws.getDate()-ws.getDay());return ws.toISOString().split("T")[0];})(),
+                              (()=>{const d=new Date();d.setDate(d.getDate()-d.getDay()-1);return d.toISOString().split("T")[0];})()],
+                            ["This Month",(()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})(),today()],
+                            ["Last 30 Days",(()=>{const d=new Date();d.setDate(d.getDate()-30);return d.toISOString().split("T")[0];})(),today()],
+                          ].map(([l,f,t])=>(
+                            <button key={l} onClick={()=>{setEmailFrom(f);setEmailTo(t);}} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${emailFrom===f&&emailTo===t?T.blue:T.border}`,background:emailFrom===f&&emailTo===t?T.blueLow:T.surface,color:emailFrom===f&&emailTo===t?T.blue:T.sub,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                              {l}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Employee selector */}
+                      <div style={{marginBottom:14}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                          <label style={lbl}>Employees ({selEmps.length===0?"All":selEmps.length+" selected"})</label>
+                          <div style={{display:"flex",gap:6}}>
+                            <button onClick={()=>setSelEmps(allEmpsInRange)} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:7,padding:"3px 8px",color:T.blue,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>All</button>
+                            <button onClick={()=>setSelEmps([])} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:7,padding:"3px 8px",color:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>None</button>
+                          </div>
+                        </div>
+                        {allEmpsInRange.length===0
+                          ?<div style={{fontSize:12,color:T.muted,fontStyle:"italic",textAlign:"center",padding:"10px 0"}}>No employees found in this date range</div>
+                          :allEmpsInRange.map(name=>{
+                            const sel=selEmps.length===0||selEmps.includes(name);
+                            const w=wm2[name];
+                            return(
+                              <div key={name} onClick={()=>toggleEmp(name)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:10,background:sel?T.blueLow:T.surface,border:`1px solid ${sel?T.blue:T.border}`,marginBottom:5,cursor:"pointer"}}>
+                                <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${sel?T.blue:T.border}`,background:sel?T.blue:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#fff",fontWeight:900,flexShrink:0}}>{sel?"✓":""}</div>
+                                <div style={{flex:1}}><span style={{fontSize:13,fontWeight:600,color:T.orange}}>{name}</span></div>
+                                {w&&<div style={{fontSize:11,color:T.muted}}>{(w.reg+w.ot).toFixed(1)}h</div>}
+                              </div>
+                            );
+                          })}
+                      </div>
+
+                      {/* Optional recipient */}
+                      <div style={{marginBottom:14}}>
+                        <label style={lbl}>Send To (optional)</label>
+                        <input type="email" placeholder="pm@aime.com — leave blank to choose in email app" value={emailTo2} onChange={e=>setEmailTo2(e.target.value)} style={inp}/>
+                      </div>
+
+                      {/* Preview */}
+                      {summaryRows.length>0&&<div style={{...cardS,marginBottom:14,background:T.surface}}>
+                        <div style={{fontSize:11,color:T.blue,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Preview — {summaryRows.length} employee{summaryRows.length!==1?"s":""}</div>
+                        {summaryRows.slice(0,5).map(w=>(
+                          <div key={w.name} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${T.border}`}}>
+                            <span style={{fontSize:12,color:T.orange}}>{w.name}</span>
+                            <span style={{fontSize:12,color:T.muted}}>{w.reg.toFixed(1)}h reg{w.ot>0?` + ${w.ot.toFixed(1)}h OT`:""}</span>
+                          </div>
+                        ))}
+                        {summaryRows.length>5&&<div style={{fontSize:11,color:T.muted,marginTop:6,textAlign:"center"}}>+{summaryRows.length-5} more</div>}
+                      </div>}
+
+                      <button onClick={sendEmail} style={{...primBtn,borderRadius:14,background:T.blue,marginBottom:10}} disabled={summaryRows.length===0}>
+                        📧 Open in Email App
+                      </button>
+                      <button onClick={()=>setShowEmailOpts(false)} style={{...ghostBtn,width:"100%",textAlign:"center"}}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </>);
+            })()}
             {workerRows.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>👷</div><div>No labor entries this month.</div></div>}
             {workerRows.map(w=>(<div key={w.name} style={{...cardS,marginBottom:9}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div><div style={{fontSize:15,fontWeight:700}}>{w.name}</div><div style={{display:"flex",gap:10,marginTop:6}}><span style={{fontSize:12,color:T.sub}}>{w.reg.toFixed(1)} reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)} OT</span>}{w.travel>0&&<span style={{fontSize:12,color:T.blue}}>{w.travel.toFixed(1)} travel</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(w.pay)}</div><div style={{fontSize:10,color:T.muted}}>{(w.reg+w.ot+w.travel).toFixed(1)} total hrs</div></div></div></div>))}
           </div>)}
