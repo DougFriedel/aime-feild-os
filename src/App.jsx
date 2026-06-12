@@ -2498,6 +2498,228 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
 }
 
 
+
+/* ── TIMECARD REPORT ─────────────────────────────────────────── */
+function TimecardReportScreen({reports,projects,onClose}){
+  const [dateFrom,setDateFrom]=useState((()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})());
+  const [dateTo,setDateTo]=useState(today());
+
+  const filtered=reports.filter(r=>r.date>=dateFrom&&r.date<=dateTo);
+
+  // Build job → employee → dates structure
+  const jobMap={};
+  filtered.forEach(r=>{
+    const proj=projects.find(p=>p.id===r.project_id)||{name:"Unknown",division:"",afe:""};
+    const pid=r.project_id||"unknown";
+    const div=proj.division||"";
+    if(!jobMap[pid]) jobMap[pid]={proj,pid,employees:{}};
+    (r.labor||[]).forEach(l=>{
+      if(!l.name)return;
+      if(!jobMap[pid].employees[l.name]) jobMap[pid].employees[l.name]={name:l.name,entries:[]};
+      const pos=getPositions(div).find(p=>p.name===l.classification);
+      const rate=pos?pos.rate:0;
+      const reg=parseFloat(l.regHrs)||0;
+      const ot=parseFloat(l.otHrs)||0;
+      const travel=parseFloat(l.travelHrs)||0;
+      const perDiem=l.classification==="Per Diem"?1:0;
+      jobMap[pid].employees[l.name].entries.push({
+        date:r.date,
+        classification:l.classification||"",
+        rate,reg,ot,travel,perDiem,
+        pay:laborAmt(l,div),
+      });
+    });
+  });
+  const jobRows=Object.values(jobMap).sort((a,b)=>(a.proj.name||"").localeCompare(b.proj.name||""));
+
+  function printReport(){
+    const grandTotReg=jobRows.reduce((s,j)=>s+Object.values(j.employees).reduce((ss,e)=>ss+e.entries.reduce((sss,en)=>sss+en.reg,0),0),0);
+    const grandTotOT=jobRows.reduce((s,j)=>s+Object.values(j.employees).reduce((ss,e)=>ss+e.entries.reduce((sss,en)=>sss+en.ot,0),0),0);
+    const grandTotTravel=jobRows.reduce((s,j)=>s+Object.values(j.employees).reduce((ss,e)=>ss+e.entries.reduce((sss,en)=>sss+en.travel,0),0),0);
+    const grandTotPay=jobRows.reduce((s,j)=>s+Object.values(j.employees).reduce((ss,e)=>ss+e.entries.reduce((sss,en)=>sss+en.pay,0),0),0);
+
+    const jobHTML=jobRows.map(({proj,employees})=>{
+      const empList=Object.values(employees).sort((a,b)=>a.name.localeCompare(b.name));
+      const empHTML=empList.map(emp=>{
+        const sortedEntries=[...emp.entries].sort((a,b)=>a.date.localeCompare(b.date));
+        const empReg=sortedEntries.reduce((s,e)=>s+e.reg,0);
+        const empOT=sortedEntries.reduce((s,e)=>s+e.ot,0);
+        const empTravel=sortedEntries.reduce((s,e)=>s+e.travel,0);
+        const empPay=sortedEntries.reduce((s,e)=>s+e.pay,0);
+        const empTotal=empReg+empOT+empTravel;
+        const rowsHTML=sortedEntries.flatMap(e=>{
+          const rows=[];
+          if(e.reg>0) rows.push(`<tr><td>${e.date}</td><td>${emp.name}</td><td>${e.classification}</td><td class="type reg">REG</td><td class="num">${e.reg.toFixed(3)}</td><td class="num">${e.rate?e.rate.toFixed(3):""}</td><td class="num">${e.reg>0&&e.rate?(e.reg*e.rate).toFixed(2):""}</td></tr>`);
+          if(e.ot>0) rows.push(`<tr><td>${e.date}</td><td>${emp.name}</td><td>${e.classification}</td><td class="type ot">OT</td><td class="num">${e.ot.toFixed(3)}</td><td class="num">${e.rate?e.rate.toFixed(3):""}</td><td class="num">${e.ot>0&&e.rate?(e.ot*e.rate*1.5).toFixed(2):""}</td></tr>`);
+          if(e.travel>0) rows.push(`<tr><td>${e.date}</td><td>${emp.name}</td><td>${e.classification}</td><td class="type trave">TRAVE</td><td class="num">${e.travel.toFixed(3)}</td><td class="num"></td><td class="num"></td></tr>`);
+          if(e.perDiem) rows.push(`<tr><td>${e.date}</td><td>${emp.name}</td><td>${e.classification}</td><td class="type per">PER</td><td class="num">1.000</td><td class="num"></td><td class="num">${e.pay.toFixed(2)}</td></tr>`);
+          return rows;
+        }).join("");
+        return`<tbody>
+          ${rowsHTML}
+          <tr class="emp-total">
+            <td colspan="3">Employee Totals: ${emp.name}</td>
+            <td class="type"></td>
+            <td class="num">${empTotal.toFixed(3)}</td>
+            <td></td>
+            <td class="num">$${empPay.toFixed(2)}</td>
+          </tr>
+          <tr class="emp-subtotals">
+            <td colspan="7" style="padding-left:16px;font-size:7.5pt">
+              REG: ${empReg.toFixed(3)}&nbsp;&nbsp;OT: ${empOT.toFixed(3)}&nbsp;&nbsp;TRAVE: ${empTravel.toFixed(3)}&nbsp;&nbsp;Total: ${empTotal.toFixed(3)}&nbsp;&nbsp;Pay: $${empPay.toFixed(2)}
+            </td>
+          </tr>
+        </tbody>`;
+      }).join("");
+
+      const jobReg=empList.reduce((s,e)=>s+e.entries.reduce((ss,en)=>ss+en.reg,0),0);
+      const jobOT=empList.reduce((s,e)=>s+e.entries.reduce((ss,en)=>ss+en.ot,0),0);
+      const jobTravel=empList.reduce((s,e)=>s+e.entries.reduce((ss,en)=>ss+en.travel,0),0);
+      const jobPay=empList.reduce((s,e)=>s+e.entries.reduce((ss,en)=>ss+en.pay,0),0);
+
+      return`
+        <div class="job-block">
+          <div class="job-header">Job: ${proj.name}${proj.afe?" &nbsp;|&nbsp; AFE: "+proj.afe:""} &nbsp;|&nbsp; ${proj.division}</div>
+          <table>
+            <thead><tr>
+              <th style="width:10%">Date</th>
+              <th style="width:20%">Employee</th>
+              <th style="width:20%">Classification</th>
+              <th style="width:7%">Type</th>
+              <th class="num" style="width:10%">Hours</th>
+              <th class="num" style="width:10%">Pay Rate</th>
+              <th class="num" style="width:13%">Amount</th>
+            </tr></thead>
+            ${empHTML}
+            <tbody>
+              <tr class="job-total">
+                <td colspan="3">Job Totals: ${proj.name}</td>
+                <td></td>
+                <td class="num">${(jobReg+jobOT+jobTravel).toFixed(3)}</td>
+                <td></td>
+                <td class="num">$${jobPay.toFixed(2)}</td>
+              </tr>
+              <tr class="job-subtotals">
+                <td colspan="7">REG: ${jobReg.toFixed(3)}&nbsp;&nbsp;OT: ${jobOT.toFixed(3)}&nbsp;&nbsp;TRAVE: ${jobTravel.toFixed(3)}&nbsp;&nbsp;Total: ${(jobReg+jobOT+jobTravel).toFixed(3)}&nbsp;&nbsp;Pay: $${jobPay.toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>`;
+    }).join("");
+
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>AIME Field Pro — Timecard List</title>
+<style>
+  @page{size:letter landscape;margin:0.4in 0.35in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:8pt;color:#000;}
+  .report-header{display:flex;justify-content:space-between;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:10px;}
+  .report-title{font-size:13pt;font-weight:900;color:#1f3864;}
+  .report-sub{font-size:8pt;color:#555;margin-top:3px;}
+  .report-meta{text-align:right;font-size:7.5pt;color:#666;}
+  .job-block{margin-bottom:16px;page-break-inside:avoid;}
+  .job-header{background:#1f3864;color:#fff;padding:5px 8px;font-size:9pt;font-weight:700;margin-bottom:0;}
+  table{width:100%;border-collapse:collapse;font-size:7.5pt;}
+  th{background:#dde3f0;padding:4px 6px;text-align:left;border:1px solid #aaa;font-weight:700;font-size:7pt;}
+  td{padding:3px 6px;border:1px solid #ddd;vertical-align:middle;}
+  .num{text-align:right;}
+  tr:nth-child(even) td{background:#f8f9fb;}
+  .type{text-align:center;font-weight:700;font-size:7pt;}
+  .type.reg{color:#166534;}
+  .type.ot{color:#92400e;}
+  .type.trave{color:#1e40af;}
+  .type.per{color:#6b21a8;}
+  .emp-total td{background:#e8f5e9!important;font-weight:700;border-top:1.5px solid #4caf50;}
+  .emp-subtotals td{background:#f0fdf4!important;color:#555;font-style:italic;}
+  .job-total td{background:#fff3cd!important;font-weight:700;border-top:2px solid #f59e0b;}
+  .job-subtotals td{background:#fffbeb!important;color:#666;font-style:italic;}
+  .grand-total td{background:#1f3864!important;color:#fff!important;font-weight:700;font-size:9pt;border-top:3px solid #000;}
+  .footer{margin-top:12px;font-size:7pt;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:6px;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+
+<div class="report-header">
+  <div>
+    <div class="report-title">AIME Field Pro — Timecard List</div>
+    <div class="report-sub">Atlantic Industrial Mechanical &nbsp;|&nbsp; Period: ${dateFrom} to ${dateTo}</div>
+  </div>
+  <div class="report-meta">Generated: ${new Date().toLocaleString()}<br>Page 1</div>
+</div>
+
+${jobHTML}
+
+<table style="margin-top:8px">
+  <tr class="grand-total">
+    <td colspan="3">GRAND TOTAL — All Jobs</td>
+    <td></td>
+    <td class="num">${(grandTotReg+grandTotOT+grandTotTravel).toFixed(3)}</td>
+    <td></td>
+    <td class="num">$${grandTotPay.toFixed(2)}</td>
+  </tr>
+  <tr><td colspan="7" style="background:#e8eaf6;color:#333;font-style:italic;padding:4px 6px;font-size:7.5pt">
+    REG: ${grandTotReg.toFixed(3)}&nbsp;&nbsp;&nbsp;OT: ${grandTotOT.toFixed(3)}&nbsp;&nbsp;&nbsp;TRAVEL: ${grandTotTravel.toFixed(3)}&nbsp;&nbsp;&nbsp;TOTAL HRS: ${(grandTotReg+grandTotOT+grandTotTravel).toFixed(3)}&nbsp;&nbsp;&nbsp;TOTAL PAY: $${grandTotPay.toFixed(2)}
+  </td></tr>
+</table>
+
+<div class="footer">AIME Field Pro &nbsp;·&nbsp; Confidential — Internal Use Only &nbsp;·&nbsp; * Pay Rate Rule Applied</div>
+</body></html>`;
+    const win=window.open("","_blank","width=1100,height=800");
+    win.document.write(html);win.document.close();win.focus();
+    setTimeout(()=>win.print(),500);
+  }
+
+  const totalReports=filtered.length;
+  const totalEmployees=new Set(filtered.flatMap(r=>(r.labor||[]).map(l=>l.name).filter(Boolean))).size;
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title="Timecard Report" onBack={onClose}/>
+      <div style={{padding:"14px 16px 100px"}}>
+        {/* Date range */}
+        <div style={{...cardS,marginBottom:14}}>
+          <div style={{fontSize:13,fontWeight:700,marginBottom:10}}>📅 Date Range</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>From</label><input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>To</label><input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={inp}/></div>
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {[
+              ["This Week",getWeekStart(),today()],
+              ["This Month",(()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})(),today()],
+              ["Last Month",(()=>{const d=new Date();d.setMonth(d.getMonth()-1);d.setDate(1);return d.toISOString().split("T")[0];})(),
+               (()=>{const d=new Date();d.setDate(0);return d.toISOString().split("T")[0];})()],
+            ].map(([l,f,t])=>(
+              <button key={l} onClick={()=>{setDateFrom(f);setDateTo(t);}} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${dateFrom===f&&dateTo===t?T.orange:T.border}`,background:dateFrom===f&&dateTo===t?T.orangeLow:T.surface,color:dateFrom===f&&dateTo===t?T.orange:T.sub,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Summary */}
+        {filtered.length>0&&<div style={{...cardS,marginBottom:14,background:T.orangeLow,border:`1px solid ${T.orange}40`}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            {[[jobRows.length,"Jobs",T.orange],[totalEmployees,"Employees",T.blue],[totalReports,"Reports",T.green]].map(([v,l,c])=>(
+              <div key={l} style={{background:T.card,borderRadius:10,padding:"10px",textAlign:"center"}}>
+                <div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div>
+                <div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>}
+
+        {filtered.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>
+          <div style={{fontSize:32,marginBottom:8}}>📋</div>
+          <div style={{fontWeight:700,color:T.sub}}>No reports found in this date range</div>
+        </div>}
+
+        {filtered.length>0&&<button onClick={printReport} style={{...primBtn,borderRadius:14,background:"#1f3864",fontSize:15}}>
+          🖨️ Print / Save PDF — Timecard Report
+        </button>}
+      </div>
+    </div>
+  );
+}
+
+
 /* ── EMAIL SUMMARY MODAL ────────────────────────────────────── */
 function EmailSummaryModal({reports,projects,onClose}){
   const [emailFrom,setEmailFrom]=useState(getWeekStart());
@@ -2737,7 +2959,7 @@ function EmailSummaryModal({reports,projects,onClose}){
 /* ── PM DASHBOARD ───────────────────────────────────────────── */
 function PMDashboard({onBack,user}){
   const [projects,setProjects]=useState([]);const [reports,setReports]=useState([]);const [pending,setPending]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");const [pmTab,setPmTab]=useState("overview");
-  const [activeReport,setActiveReport]=useState(null);const [activeProject,setActiveProject]=useState(null);const [unread,setUnread]=useState(0);const [showNotifs,setShowNotifs]=useState(false);const [showEmailModal,setShowEmailModal]=useState(false);
+  const [activeReport,setActiveReport]=useState(null);const [activeProject,setActiveProject]=useState(null);const [unread,setUnread]=useState(0);const [showNotifs,setShowNotifs]=useState(false);const [showEmailModal,setShowEmailModal]=useState(false);const [showTimecardReport,setShowTimecardReport]=useState(false);
 
   async function load(){setLoading(true);setErr("");try{const[projs,reps,pend,notifs]=await Promise.all([API.projects.list(),API.reports.all(),API.reports.pending(),API.notifications.unread()]);setProjects(projs||[]);setReports(reps||[]);setPending(pend||[]);setUnread((notifs||[]).length);}catch(e){setErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[]);
@@ -2747,6 +2969,9 @@ function PMDashboard({onBack,user}){
 
   if(showEmailModal) return(
     <EmailSummaryModal reports={reports} projects={projects} onClose={()=>setShowEmailModal(false)}/>
+  );
+  if(showTimecardReport) return(
+    <TimecardReportScreen reports={reports} projects={projects} onClose={()=>setShowTimecardReport(false)}/>
   );
 
   if(showNotifs) return(
@@ -2978,9 +3203,14 @@ function PMDashboard({onBack,user}){
           {pmTab==="workers"&&(<div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
               <div style={{fontSize:12,color:T.muted}}>Hours from reports this month</div>
-              <button onClick={()=>setShowEmailModal(true)} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"7px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-                📧 Email Summary
-              </button>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setShowTimecardReport(true)} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"7px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                  📋 Timecard Report
+                </button>
+                <button onClick={()=>setShowEmailModal(true)} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"7px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                  📧 Email Summary
+                </button>
+              </div>
             </div>
             {workerRows.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>👷</div><div>No labor entries this month.</div></div>}
             {workerRows.map(w=>(<div key={w.name} style={{...cardS,marginBottom:9}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div><div style={{fontSize:15,fontWeight:700}}>{w.name}</div><div style={{display:"flex",gap:10,marginTop:6}}><span style={{fontSize:12,color:T.sub}}>{w.reg.toFixed(1)} reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)} OT</span>}{w.travel>0&&<span style={{fontSize:12,color:T.blue}}>{w.travel.toFixed(1)} travel</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(w.pay)}</div><div style={{fontSize:10,color:T.muted}}>{(w.reg+w.ot+w.travel).toFixed(1)} total hrs</div></div></div></div>))}
@@ -3002,12 +3232,20 @@ function PMDashboard({onBack,user}){
     const [selEmployee,setSelEmployee]=useState("");
     const [dateFrom,setDateFrom]=useState("");
     const [dateTo,setDateTo]=useState("");
+    const [viewMode,setViewMode]=useState("byjob"); // byjob | bydate
+    const [expandedJob,setExpandedJob]=useState(null);
 
-    // Find all reports this employee appears in
-    const empReports=selEmployee?reports.filter(r=>(r.labor||[]).some(l=>l.name===selEmployee)).sort((a,b)=>b.date.localeCompare(a.date)):[];
+    const empReports=selEmployee
+      ?reports.filter(r=>(r.labor||[]).some(l=>l.name===selEmployee)).sort((a,b)=>b.date.localeCompare(a.date))
+      :[];
 
-    // Build per-report row with that employee's specific data
-    function getEmpData(report){
+    const filtered=empReports.filter(r=>{
+      if(dateFrom&&r.date<dateFrom)return false;
+      if(dateTo&&r.date>dateTo)return false;
+      return true;
+    });
+
+    function getEmpEntries(report){
       const div=report.projects?.division||(projects.find(p=>p.id===report.project_id)?.division);
       const proj=projects.find(p=>p.id===report.project_id);
       const entries=(report.labor||[]).filter(l=>l.name===selEmployee);
@@ -3018,65 +3256,82 @@ function PMDashboard({onBack,user}){
       return{proj,div,regHrs,otHrs,travelHrs,pay,entries};
     }
 
-    const filtered=empReports.filter(r=>{
-      if(dateFrom&&r.date<dateFrom)return false;
-      if(dateTo&&r.date>dateTo)return false;
-      return true;
+    // ── Build per-job summary ──
+    const jobMap={};
+    filtered.forEach(r=>{
+      const d=getEmpEntries(r);
+      const pid=r.project_id||"unknown";
+      if(!jobMap[pid]){
+        jobMap[pid]={
+          projectId:pid,
+          name:d.proj?.name||"Unknown Job",
+          afe:d.proj?.afe||"",
+          division:d.div||"",
+          regHrs:0,otHrs:0,travelHrs:0,pay:0,
+          reports:[],
+          dates:[],
+        };
+      }
+      jobMap[pid].regHrs+=d.regHrs;
+      jobMap[pid].otHrs+=d.otHrs;
+      jobMap[pid].travelHrs+=d.travelHrs;
+      jobMap[pid].pay+=d.pay;
+      jobMap[pid].reports.push({...r,_emp:d});
+      jobMap[pid].dates.push(r.date);
     });
+    const jobRows=Object.values(jobMap).sort((a,b)=>b.pay-a.pay);
 
     const totals=filtered.reduce((s,r)=>{
-      const d=getEmpData(r);
+      const d=getEmpEntries(r);
       return{reg:s.reg+d.regHrs,ot:s.ot+d.otHrs,travel:s.travel+d.travelHrs,pay:s.pay+d.pay,reports:s.reports+1};
     },{reg:0,ot:0,travel:0,pay:0,reports:0});
 
     function exportHistory(){
       const wb=XLSX.utils.book_new();
-      const rows=[
-        [`AIME Field Pro — Employee Report History`],
+
+      // Sheet 1: By Job Summary
+      const jobRows2=[
+        [`AIME Field Pro — Employee Work History`],
         [`Employee: ${selEmployee}`],
         [dateFrom||dateTo?`Period: ${dateFrom||"All"} to ${dateTo||"All"}`:"Period: All Time"],
         [`Generated: ${new Date().toLocaleString()}`],
         [],
-        [`SUMMARY`],
-        ["Total Reports","Reg Hours","OT Hours","Travel Hours","Total Hours","Total Pay"],
-        [totals.reports,totals.reg.toFixed(2),totals.ot.toFixed(2),totals.travel.toFixed(2),(totals.reg+totals.ot+totals.travel).toFixed(2),totals.pay],
-        [],
-        ["DETAIL"],
-        ["Date","Job Number","Division","Classification","Reg Hrs","OT Hrs","Travel Hrs","Total Hrs","Pay","Status"],
+        ["BY JOB SUMMARY"],
+        ["Job Number","Division","AFE","Reports","Reg Hrs","OT Hrs","Travel Hrs","Total Hrs","Total Pay","Date Range"],
       ];
-      filtered.forEach(r=>{
-        const d=getEmpData(r);
+      jobRows.forEach(j=>{
+        const sortedDates=j.dates.sort();
+        jobRows2.push([j.name,j.division,j.afe,j.reports.length,j.regHrs,j.otHrs,j.travelHrs,j.regHrs+j.otHrs+j.travelHrs,j.pay,
+          sortedDates[0]===sortedDates[sortedDates.length-1]?sortedDates[0]:`${sortedDates[0]} → ${sortedDates[sortedDates.length-1]}`]);
+      });
+      jobRows2.push([]);
+      jobRows2.push(["TOTALS","","",totals.reports,totals.reg,totals.ot,totals.travel,totals.reg+totals.ot+totals.travel,totals.pay,""]);
+      const ws1=XLSX.utils.aoa_to_sheet(jobRows2);
+      ws1["!cols"]=[{wch:22},{wch:14},{wch:12},{wch:9},{wch:10},{wch:10},{wch:12},{wch:12},{wch:14},{wch:24}];
+      XLSX.utils.book_append_sheet(wb,ws1,"By Job");
+
+      // Sheet 2: Daily Detail
+      const dRows=[["Date","Job Number","Division","Classification","Reg Hrs","OT Hrs","Travel Hrs","Total Hrs","Pay","Status"]];
+      filtered.sort((a,b)=>a.date.localeCompare(b.date)).forEach(r=>{
+        const d=getEmpEntries(r);
         d.entries.forEach(entry=>{
-          rows.push([
-            r.date,
-            d.proj?.name||"Unknown",
-            d.div||"",
-            entry.classification||"",
-            parseFloat(entry.regHrs)||0,
-            parseFloat(entry.otHrs)||0,
-            parseFloat(entry.travelHrs)||0,
+          dRows.push([r.date,d.proj?.name||"",d.div||"",entry.classification||"",
+            parseFloat(entry.regHrs)||0,parseFloat(entry.otHrs)||0,parseFloat(entry.travelHrs)||0,
             (parseFloat(entry.regHrs)||0)+(parseFloat(entry.otHrs)||0)+(parseFloat(entry.travelHrs)||0),
-            laborAmt(entry,d.div),
-            r.status||"submitted",
-          ]);
+            laborAmt(entry,d.div),r.status||"submitted"]);
         });
       });
-      const ws=XLSX.utils.aoa_to_sheet(rows);
-      ws["!cols"]=[{wch:12},{wch:22},{wch:14},{wch:20},{wch:10},{wch:10},{wch:12},{wch:12},{wch:14},{wch:12}];
-      // Format pay column
-      const rng=XLSX.utils.decode_range(ws["!ref"]);
-      for(let r=11;r<=rng.e.r;r++){
-        const addr=XLSX.utils.encode_cell({r,c:8});
-        if(ws[addr]&&typeof ws[addr].v==="number") ws[addr].z='"$"#,##0.00';
-      }
-      XLSX.utils.book_append_sheet(wb,ws,"History");
+      const ws2=XLSX.utils.aoa_to_sheet(dRows);
+      ws2["!cols"]=[{wch:12},{wch:22},{wch:14},{wch:20},{wch:10},{wch:10},{wch:12},{wch:12},{wch:14},{wch:12}];
+      XLSX.utils.book_append_sheet(wb,ws2,"Daily Detail");
+
       XLSX.writeFile(wb,`AIME_History_${selEmployee.replace(/\s+/g,"_")}_${today()}.xlsx`);
     }
 
     return(
       <div>
-        {/* Employee selector */}
-        <div style={{marginBottom:14}}>
+        {/* Employee + date selectors */}
+        <div style={{marginBottom:12}}>
           <label style={lbl}>Select Employee</label>
           <select value={selEmployee} onChange={e=>setSelEmployee(e.target.value)} style={inpSel}>
             <option value="">— Pick an employee —</option>
@@ -3084,29 +3339,35 @@ function PMDashboard({onBack,user}){
           </select>
         </div>
 
-        {/* Date range filter */}
-        {selEmployee&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+        {selEmployee&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
           <div><label style={lbl}>From (optional)</label><input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={inp}/></div>
           <div><label style={lbl}>To (optional)</label><input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={inp}/></div>
         </div>}
 
-        {/* No employee selected */}
+        {/* View toggle */}
+        {selEmployee&&filtered.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+          {[["byjob","🏗️ By Job"],["bydate","📅 By Date"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setViewMode(v)} style={{padding:"10px",borderRadius:10,border:`2px solid ${viewMode===v?T.orange:T.border}`,background:viewMode===v?T.orangeLow:T.surface,color:viewMode===v?T.orange:T.sub,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>{l}</button>
+          ))}
+        </div>}
+
         {!selEmployee&&<div style={{textAlign:"center",padding:"40px 20px",color:T.muted}}>
           <div style={{fontSize:40,marginBottom:12}}>👤</div>
           <div style={{fontSize:16,fontWeight:700,color:T.sub,marginBottom:6}}>Select an Employee</div>
-          <div style={{fontSize:13}}>Pick any crew member to see their complete work history across all jobs and divisions.</div>
+          <div style={{fontSize:13}}>Pick any crew member to see their complete work history across all jobs and dates.</div>
         </div>}
 
-        {/* Results */}
         {selEmployee&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>
           <div style={{fontSize:32,marginBottom:8}}>📋</div>
-          <div style={{fontWeight:700,color:T.sub}}>{empReports.length===0?"No reports found for "+selEmployee:"No reports in this date range"}</div>
+          <div style={{fontWeight:700,color:T.sub}}>{empReports.length===0?selEmployee+" hasn't been on any reports yet":"No reports in this date range"}</div>
         </div>}
 
         {selEmployee&&filtered.length>0&&(<div>
-          {/* Summary cards */}
+          {/* Summary banner */}
           <div style={{...cardS,marginBottom:14,background:T.orangeLow,border:`1px solid ${T.orange}40`}}>
-            <div style={{fontSize:13,fontWeight:700,color:T.orange,marginBottom:10}}>{selEmployee} · {totals.reports} report{totals.reports!==1?"s":""}</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.orange,marginBottom:10}}>
+              {selEmployee} · {jobRows.length} job{jobRows.length!==1?"s":""} · {totals.reports} report{totals.reports!==1?"s":""}
+            </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
               {[["💰 Total Pay","$"+fmt(totals.pay),T.green],["📋 Reports",totals.reports,T.orange]].map(([l,v,c])=>(
                 <div key={l} style={{background:T.card,borderRadius:10,padding:"10px",textAlign:"center"}}>
@@ -3125,45 +3386,119 @@ function PMDashboard({onBack,user}){
             </div>
           </div>
 
-          {/* Report list */}
-          {filtered.map(r=>{
-            const d=getEmpData(r);
-            const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[r.status||"submitted"]||T.muted;
-            const totalHrs=d.regHrs+d.otHrs+d.travelHrs;
-            return(
-              <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${sc}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                  <div>
-                    <div style={{fontSize:15,fontWeight:800,color:T.orange}}>{fmtDate(r.date)}</div>
-                    <div style={{fontSize:13,fontWeight:600,color:T.text,marginTop:2}}>{d.proj?.name||"Unknown Job"}</div>
-                    <div style={{fontSize:11,color:T.muted}}>{d.div}{d.proj?.afe?" · AFE: "+d.proj.afe:""}</div>
-                  </div>
-                  <div style={{textAlign:"right"}}>
-                    <div style={{fontSize:18,fontWeight:900,color:T.green}}>${fmt(d.pay)}</div>
-                    <span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span>
-                  </div>
-                </div>
-                {/* Classifications & hours for this employee */}
-                {d.entries.map((entry,i)=>{
-                  const pos=getPositions(d.div).find(p=>p.name===entry.classification);
-                  const regH=parseFloat(entry.regHrs)||0;
-                  const otH=parseFloat(entry.otHrs)||0;
-                  const trH=parseFloat(entry.travelHrs)||0;
-                  return(
-                    <div key={i} style={{background:T.surface,borderRadius:10,padding:"8px 10px",marginTop:6}}>
-                      <div style={{fontSize:12,fontWeight:700,marginBottom:4}}>{entry.classification||"—"}</div>
-                      <div style={{display:"flex",gap:12}}>
-                        <span style={{fontSize:12,color:T.green}}>{regH.toFixed(1)}h reg</span>
-                        {otH>0&&<span style={{fontSize:12,color:T.yellow}}>{otH.toFixed(1)}h OT</span>}
-                        {trH>0&&<span style={{fontSize:12,color:T.blue}}>{trH.toFixed(1)}h travel</span>}
-                        {pos&&!pos.flat&&<span style={{fontSize:11,color:T.muted}}>@ ${pos.rate}/hr</span>}
+          {/* ── BY JOB VIEW ── */}
+          {viewMode==="byjob"&&(<div>
+            {jobRows.map(job=>{
+              const isExpanded=expandedJob===job.projectId;
+              const sortedDates=job.dates.sort();
+              const minDate=sortedDates[0];const maxDate=sortedDates[sortedDates.length-1];
+              const divColor=DIV_META[job.division]?.color||T.orange;
+              const totalHrs=job.regHrs+job.otHrs+job.travelHrs;
+              return(
+                <div key={job.projectId} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${divColor}`}}>
+                  {/* Job header — tap to expand */}
+                  <div onClick={()=>setExpandedJob(isExpanded?null:job.projectId)} style={{cursor:"pointer"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                      <div style={{flex:1,paddingRight:10}}>
+                        <div style={{fontSize:15,fontWeight:800,color:T.orange}}>{job.name}</div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                          {DIV_META[job.division]?.icon} {job.division}
+                          {job.afe?" · AFE: "+job.afe:""}
+                        </div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                          {minDate===maxDate?fmtShort(minDate):`${fmtShort(minDate)} → ${fmtShort(maxDate)}`}
+                          {" · "}{job.reports.length} report{job.reports.length!==1?"s":""}
+                        </div>
+                      </div>
+                      <div style={{textAlign:"right",flexShrink:0}}>
+                        <div style={{fontSize:18,fontWeight:900,color:T.green}}>${fmt(job.pay)}</div>
+                        <div style={{fontSize:11,color:T.muted,marginTop:2}}>{totalHrs.toFixed(1)}h total</div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            );
-          })}
+                    {/* Hours bar */}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,paddingTop:8,borderTop:`1px solid ${T.border}`}}>
+                      {[["Reg",job.regHrs,T.green],["OT",job.otHrs,T.yellow],["Travel",job.travelHrs,T.blue]].map(([l,v,c])=>(
+                        <div key={l} style={{background:T.surface,borderRadius:8,padding:"6px 8px",textAlign:"center"}}>
+                          <div style={{fontSize:14,fontWeight:800,color:c}}>{v.toFixed(1)}h</div>
+                          <div style={{fontSize:9,color:T.muted,textTransform:"uppercase"}}>{l}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{textAlign:"center",fontSize:11,color:T.muted,marginTop:6}}>{isExpanded?"▲ Hide daily detail":"▼ Show daily detail"}</div>
+                  </div>
+
+                  {/* Expanded daily detail */}
+                  {isExpanded&&(
+                    <div style={{marginTop:10,borderTop:`1px solid ${T.border}`,paddingTop:10}}>
+                      <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Daily Breakdown</div>
+                      {job.reports.sort((a,b)=>a.date.localeCompare(b.date)).map((r,i)=>{
+                        const d=r._emp;
+                        const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[r.status||"submitted"]||T.muted;
+                        return(
+                          <div key={r.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<job.reports.length-1?`1px solid ${T.border}40`:"none"}}>
+                            <div>
+                              <div style={{fontSize:13,fontWeight:700}}>{fmtShort(r.date)}</div>
+                              <div style={{display:"flex",gap:8,marginTop:3}}>
+                                {d.entries.map((entry,ei)=>(
+                                  <div key={ei} style={{fontSize:11,color:T.muted}}>
+                                    {entry.classification} · {parseFloat(entry.regHrs)||0}h reg
+                                    {parseFloat(entry.otHrs)>0?` + ${parseFloat(entry.otHrs)}h OT`:""}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            <div style={{display:"flex",alignItems:"center",gap:8}}>
+                              <div style={{textAlign:"right"}}>
+                                <div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(d.pay)}</div>
+                                <span style={{...pill(sc),fontSize:9}}>{(r.status||"submitted").toUpperCase()}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>)}
+
+          {/* ── BY DATE VIEW ── */}
+          {viewMode==="bydate"&&(<div>
+            {filtered.map(r=>{
+              const d=getEmpEntries(r);
+              const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[r.status||"submitted"]||T.muted;
+              return(
+                <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${sc}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                    <div>
+                      <div style={{fontSize:15,fontWeight:800,color:T.orange}}>{fmtDate(r.date)}</div>
+                      <div style={{fontSize:13,fontWeight:600,color:T.text,marginTop:2}}>{d.proj?.name||"Unknown"}</div>
+                      <div style={{fontSize:11,color:T.muted}}>{d.div}{d.proj?.afe?" · AFE: "+d.proj.afe:""}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:18,fontWeight:900,color:T.green}}>${fmt(d.pay)}</div>
+                      <span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span>
+                    </div>
+                  </div>
+                  {d.entries.map((entry,i)=>{
+                    const pos=getPositions(d.div).find(p=>p.name===entry.classification);
+                    return(
+                      <div key={i} style={{background:T.surface,borderRadius:10,padding:"8px 10px",marginTop:6}}>
+                        <div style={{fontSize:12,fontWeight:700,marginBottom:4}}>{entry.classification||"—"}</div>
+                        <div style={{display:"flex",gap:12}}>
+                          <span style={{fontSize:12,color:T.green}}>{parseFloat(entry.regHrs)||0}h reg</span>
+                          {parseFloat(entry.otHrs)>0&&<span style={{fontSize:12,color:T.yellow}}>{parseFloat(entry.otHrs)}h OT</span>}
+                          {parseFloat(entry.travelHrs)>0&&<span style={{fontSize:12,color:T.blue}}>{parseFloat(entry.travelHrs)}h travel</span>}
+                          {pos&&!pos.flat&&<span style={{fontSize:11,color:T.muted}}>@ ${pos.rate}/hr</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>)}
 
           <button onClick={exportHistory} style={{...primBtn,borderRadius:14,marginTop:4}}>
             📥 Export to Excel (.xlsx)
