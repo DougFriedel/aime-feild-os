@@ -380,7 +380,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
   });
 
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       {/* Header */}
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px"}}>
         {/* Offline / pending banner */}
@@ -474,7 +474,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack}){
   const canCreate=user.role==="admin"||user.role==="pm"||can(user,"create_job");
 
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px 0"}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:10,padding:0,fontFamily:"inherit"}}>← Divisions</button>
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
@@ -559,7 +559,7 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
   const [f,setF]=useState(initial||{name:"",client:"",location:"",afe:"",work_order:"",start_date:today(),notes:"",status:"active",division:defaultDivision||"Pipeline",job_type:"T&M",contract_value:"",estimated_budget:""});
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <TopBar title={initial?"Edit Job":"New Job"} onBack={onCancel}/>
       <div style={{padding:"16px 16px 100px"}}>
         <ErrBanner msg={externalErr} onDismiss={onClearErr}/>
@@ -1108,7 +1108,7 @@ function SignaturePad({onSave,onCancel,reportName}){
               <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
                 <div style={{textAlign:"center",color:"#D4D4D8"}}>
                   <div style={{fontSize:36,marginBottom:6}}>✍️</div>
-                  <div style={{fontSize:14,fontWeight:600}}>Sign here</div>
+                  <div style={{fontSize:14,fontWeight:600,color:T.text}}>Sign here</div>
                   <div style={{fontSize:11,marginTop:2}}>Use finger or stylus</div>
                 </div>
               </div>
@@ -1351,7 +1351,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   // If editing, render a simplified edit form
   if(editing&&editData){
     return(
-      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
         <TopBar title="Edit Report" onBack={()=>setEditing(false)}/>
         <div style={{padding:"14px 16px 100px"}}>
           <ErrBanner msg={editErr} onDismiss={()=>setEditErr("")}/>
@@ -1377,9 +1377,9 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       {report.submitted_by&&<div style={{fontSize:12,color:T.muted,marginBottom:14}}>by {report.submitted_by}</div>}
       {report.pm_notes&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.red}`,background:T.redLow}}><div style={{fontSize:11,color:T.red,fontWeight:700,marginBottom:4}}>🚩 PM NOTE</div><div style={{fontSize:13,color:T.sub}}>{report.pm_notes}</div></div>}
       {report.description&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Work Done</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{report.description}</div></div>}
-      {(report.labor||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Labor{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.labor)}</span>}</div>{report.labor.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.labor.length-1?`1px solid ${T.border}`:"none"}}><div><div style={{fontSize:14,fontWeight:600}}>{r.name||"—"}</div><div style={{fontSize:11,color:T.muted}}>{r.classification} · {r.regHrs||0}reg {r.otHrs||0}OT {r.travelHrs||0}tr</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(laborAmt(r))}</div>}</div>))}</div>}
-      {(report.equipment||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.equip)}</span>}</div>{report.equipment.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty} x {r.usage} {r.unit}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(equipAmt(r,project.division))}</div>}</div>))}</div>}
-      {(report.rental_equipment||[]).length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`}}><div style={{fontSize:12,color:T.purple,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🔑 Rented Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt((report.rental_equipment||[]).reduce((s,r)=>s+(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1),0))}</span>}</div>{(report.rental_equipment||[]).map((r,i)=>{const amt=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);return(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.rental_equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty||0} × {r.usage||0} days/hrs @ ${r.rate||0}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(amt)}</div>}</div>);})}</div>}
+      {(report.labor||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Labor{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.labor)}</span>}</div>{report.labor.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.labor.length-1?`1px solid ${T.border}`:"none"}}><div><div style={{fontSize:14,fontWeight:600,color:T.text}}>{r.name||"—"}</div><div style={{fontSize:11,color:T.muted}}>{r.classification} · {r.regHrs||0}reg {r.otHrs||0}OT {r.travelHrs||0}tr</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(laborAmt(r))}</div>}</div>))}</div>}
+      {(report.equipment||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.equip)}</span>}</div>{report.equipment.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty} x {r.usage} {r.unit}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(equipAmt(r,project.division))}</div>}</div>))}</div>}
+      {(report.rental_equipment||[]).length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`}}><div style={{fontSize:12,color:T.purple,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🔑 Rented Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt((report.rental_equipment||[]).reduce((s,r)=>s+(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1),0))}</span>}</div>{(report.rental_equipment||[]).map((r,i)=>{const amt=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);return(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.rental_equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty||0} × {r.usage||0} days/hrs @ ${r.rate||0}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(amt)}</div>}</div>);})}</div>}
       {(report.materials||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Materials{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.mats)}</span>}</div>{report.materials.map((r,i)=>(<div key={i} style={{padding:"8px 0",borderBottom:i<report.materials.length-1?`1px solid ${T.border}`:"none"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:r.receipts?.length>0?8:0}}><span style={{fontSize:13}}>{r.qty?`${r.qty}x `:""}{r.description}</span>{can(user,"view_dashboard")&&<span style={{fontSize:13,fontWeight:700,color:T.green}}>${fmt(parseFloat(r.amount)||0)}</span>}</div>{r.receipts?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{r.receipts.map(rc=><img key={rc.id} src={rc.src} alt="" onClick={()=>setLb(rc.src)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer"}}/>)}</div>}</div>))}</div>}
       {can(user,"view_dashboard")&&<div style={{...cardS,background:divColor+"12",border:`1px solid ${divColor}40`,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:15,fontWeight:800}}>Grand Total</span><span style={{fontSize:26,fontWeight:900,color:divColor,letterSpacing:"-1px"}}>${fmt(tot.grand)}</span></div>}
       {can(user,"approve_report")&&report.status==="submitted"&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><button onClick={()=>onApprove&&onApprove(report.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>✓ Approve</button><button onClick={()=>setFlagging(!flagging)} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:12}}>🚩 Flag</button></div>)}
@@ -1443,11 +1443,11 @@ function TimeCardsTab({projectId,user,onErr}){
       <button onClick={save} style={{...primBtn,background:T.green,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Time Card"}</button>
     </div>}
     {loading&&<Spinner/>}
-    {!loading&&<>{workerRows.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>This Week</div>{workerRows.map(w=>(<div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:14,fontWeight:600}}>{w.name}</span><div style={{display:"flex",gap:12,alignItems:"center"}}><span style={{fontSize:12,color:T.muted}}>{w.reg.toFixed(1)}reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)}OT</span>}<span style={{fontSize:15,fontWeight:800,color:T.green}}>{w.total.toFixed(1)}h</span></div></div>))}</div>}
+    {!loading&&<>{workerRows.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>This Week</div>{workerRows.map(w=>(<div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:14,fontWeight:600,color:T.text}}>{w.name}</span><div style={{display:"flex",gap:12,alignItems:"center"}}><span style={{fontSize:12,color:T.muted}}>{w.reg.toFixed(1)}reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)}OT</span>}<span style={{fontSize:15,fontWeight:800,color:T.green}}>{w.total.toFixed(1)}h</span></div></div>))}</div>}
     {todayCards.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Today</div>}
-    {todayCards.map(c=><div key={c.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700}}>{c.worker_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(c.date)}{c.clock_in?" · "+c.clock_in:""}{c.clock_out?" → "+c.clock_out:""}</div>{c.notes&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{c.notes}</div>}</div><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div>{(c.ot_hours||0)>0&&<div style={{fontSize:10,color:T.yellow}}>{c.ot_hours.toFixed(1)} OT</div>}</div><button onClick={()=>remove(c.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div>)}
+    {todayCards.map(c=><div key={c.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700,color:T.text}}>{c.worker_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(c.date)}{c.clock_in?" · "+c.clock_in:""}{c.clock_out?" → "+c.clock_out:""}</div>{c.notes&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{c.notes}</div>}</div><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div>{(c.ot_hours||0)>0&&<div style={{fontSize:10,color:T.yellow}}>{c.ot_hours.toFixed(1)} OT</div>}</div><button onClick={()=>remove(c.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div>)}
     {recentCards.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 10px"}}>Recent</div>}
-    {recentCards.map(c=><div key={c.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700}}>{c.worker_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(c.date)}{c.clock_in?" · "+c.clock_in:""}{c.clock_out?" → "+c.clock_out:""}</div></div><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{fontSize:16,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div><button onClick={()=>remove(c.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div>)}
+    {recentCards.map(c=><div key={c.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700,color:T.text}}>{c.worker_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(c.date)}{c.clock_in?" · "+c.clock_in:""}{c.clock_out?" → "+c.clock_out:""}</div></div><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{fontSize:16,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div><button onClick={()=>remove(c.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div>)}
     {cards.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>⏱️</div><div>No time cards yet.</div></div>}</>}
   </div>);
 }
@@ -1472,7 +1472,7 @@ function CrewEquipTab({projectId,user,onErr}){
       <button onClick={save} style={{...primBtn,background:T.yellow,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Entry"}</button>
     </div>}
     {loading&&<Spinner/>}
-    {!loading&&<>{todayEquip.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>On Site Today</div>}{todayEquip.map(e=><div key={e.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.yellow}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700}}>{e.equipment_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(e.date)} · Qty {e.quantity||1}{e.operator_name?" · "+e.operator_name:""}{e.hours_used?" · "+e.hours_used+"h":""}</div></div><button onClick={()=>remove(e.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0,marginLeft:12}}>🗑</button></div>)}
+    {!loading&&<>{todayEquip.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>On Site Today</div>}{todayEquip.map(e=><div key={e.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.yellow}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700,color:T.text}}>{e.equipment_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(e.date)} · Qty {e.quantity||1}{e.operator_name?" · "+e.operator_name:""}{e.hours_used?" · "+e.hours_used+"h":""}</div></div><button onClick={()=>remove(e.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0,marginLeft:12}}>🗑</button></div>)}
     {prevEquip.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 10px"}}>Previous</div>}{prevEquip.map(e=><div key={e.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.yellow}40`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:13,fontWeight:700}}>{e.equipment_name}</div><div style={{fontSize:11,color:T.muted}}>{fmtShort(e.date)} · Qty {e.quantity||1}{e.operator_name?" · "+e.operator_name:""}</div></div><button onClick={()=>remove(e.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0,marginLeft:12}}>🗑</button></div>)}
     {equip.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🚜</div><div>No equipment logged.</div></div>}</>}
   </div>);
@@ -1788,7 +1788,7 @@ function WeatherTab({projectId,project,weather,onRefresh,onErr}){
     {!project.location&&<div style={{...cardS,marginBottom:14,background:T.yellowLow,border:`1px solid ${T.yellow}40`}}><div style={{fontSize:13,color:T.yellow}}>⚠️ Add a location to this job (Info tab) to auto-fetch weather.</div></div>}
     {liveWeather&&(()=>{const c=liveWeather.current;const[desc,icon]=WMO[c.weathercode]||["Unknown","🌡️"];return(<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.blue}`}}><div style={{fontSize:11,color:T.blue,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Live · {liveWeather.locationName}</div><div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}><span style={{fontSize:44}}>{icon}</span><div><div style={{fontSize:28,fontWeight:900,letterSpacing:"-1px"}}>{Math.round(c.temperature_2m)}°F</div><div style={{fontSize:14,color:T.sub}}>{desc}</div><div style={{fontSize:12,color:T.muted}}>Feels {Math.round(c.apparent_temperature)}°F</div></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>{[["Wind",Math.round(c.windspeed_10m)+" mph"],["High",Math.round(liveWeather.daily?.temperature_2m_max?.[0]||c.temperature_2m)+"°F"],["Precip",(liveWeather.daily?.precipitation_sum?.[0]||0).toFixed(2)+"in"]].map(([l,v])=>(<div key={l} style={{background:T.surface,borderRadius:10,padding:"8px",textAlign:"center"}}><div style={{fontSize:13,fontWeight:700}}>{v}</div><div style={{fontSize:10,color:T.muted}}>{l}</div></div>))}</div><div style={{marginBottom:10}}><label style={lbl}>Field Notes</label><input type="text" placeholder="Work impacted by weather?" value={manualNote} onChange={e=>setManualNote(e.target.value)} style={inp}/></div><button onClick={logWeather} style={{...primBtn,background:T.blue,borderRadius:12}}>{saving?"Saving…":"💾 Log This Weather"}</button></div>);})()}
     {weather.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>History</div>}
-    {weather.map(w=>{const entry=Object.entries(WMO).find(([,v])=>v[0]===w.conditions);const icon=entry?entry[1][1]:"🌡️";return(<div key={w.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:20}}>{icon}</span><div><div style={{fontSize:14,fontWeight:700}}>{w.conditions||"Logged"}</div><div style={{fontSize:11,color:T.muted}}>{fmtShort(w.date)}{w.wind_speed?" · "+Math.round(w.wind_speed)+"mph":""}{w.precipitation>0?" · "+w.precipitation+"in":""}</div></div></div>{w.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4}}>{w.notes}</div>}</div><div style={{display:"flex",alignItems:"center",gap:8}}>{w.temp_high&&<div style={{textAlign:"right"}}><div style={{fontSize:15,fontWeight:800,color:T.orange}}>{Math.round(w.temp_high)}°</div>{w.temp_low&&<div style={{fontSize:10,color:T.muted}}>{Math.round(w.temp_low)}° lo</div>}</div>}<button onClick={()=>del(w.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div>);})}
+    {weather.map(w=>{const entry=Object.entries(WMO).find(([,v])=>v[0]===w.conditions);const icon=entry?entry[1][1]:"🌡️";return(<div key={w.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:20}}>{icon}</span><div><div style={{fontSize:14,fontWeight:700,color:T.text}}>{w.conditions||"Logged"}</div><div style={{fontSize:11,color:T.muted}}>{fmtShort(w.date)}{w.wind_speed?" · "+Math.round(w.wind_speed)+"mph":""}{w.precipitation>0?" · "+w.precipitation+"in":""}</div></div></div>{w.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4}}>{w.notes}</div>}</div><div style={{display:"flex",alignItems:"center",gap:8}}>{w.temp_high&&<div style={{textAlign:"right"}}><div style={{fontSize:15,fontWeight:800,color:T.orange}}>{Math.round(w.temp_high)}°</div>{w.temp_low&&<div style={{fontSize:10,color:T.muted}}>{Math.round(w.temp_low)}° lo</div>}</div>}<button onClick={()=>del(w.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div>);})}
     {weather.length===0&&!liveWeather&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🌤️</div><div>No weather logs yet.</div></div>}
   </div>);
 }
@@ -1831,7 +1831,7 @@ function UserManagementScreen({onBack,currentUser}){
   const allNames=[...new Set([...NAMES,...profiles.map(p=>p.name)])].sort();
 
   if(mode==="edit") return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <TopBar title={active?"Edit User":"Add User"} onBack={()=>{setMode("list");setActive(null);setF({...blank});}}/>
       <div style={{padding:"16px 16px 100px"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
@@ -1867,7 +1867,7 @@ function UserManagementScreen({onBack,currentUser}){
   );
 
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2018,7 +2018,7 @@ function CrewDirectoryScreen({onBack,user}){
 
   /* ── EDIT / NEW FORM ── */
   if(mode==="edit"||mode==="new") return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <TopBar title={mode==="new"?"Add Person":`Edit: ${mf.name}`} onBack={()=>{setMode(active?"view":"list");}}/>
       <div style={{padding:"16px 16px 100px"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
@@ -2120,7 +2120,7 @@ function CrewDirectoryScreen({onBack,user}){
     const expiredCerts=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)<0);
     const expiringSoon=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)>=0&&daysUntil(c.expiry)<=30);
     return(
-      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
         <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
           <button onClick={()=>setMode("list")} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Directory</button>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -2179,7 +2179,7 @@ function CrewDirectoryScreen({onBack,user}){
                 const exp=cert.expiry?daysUntil(cert.expiry):null;
                 const expired=exp!==null&&exp<0;const expiring=exp!==null&&exp>=0&&exp<=30;
                 return(<div key={cert.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<m.certifications.length-1?`1px solid ${T.border}`:"none"}}>
-                  <div><div style={{fontSize:13,fontWeight:600}}>{cert.name}</div>{cert.cert_number&&<div style={{fontSize:11,color:T.muted}}>#{cert.cert_number}</div>}</div>
+                  <div><div style={{fontSize:13,fontWeight:600,color:T.text}}>{cert.name}</div>{cert.cert_number&&<div style={{fontSize:11,color:T.muted}}>#{cert.cert_number}</div>}</div>
                   {cert.expiry&&<span style={pill(expired?T.red:expiring?T.yellow:T.green)}>{expired?"EXPIRED":expiring?`${exp}d`:fmtDate(cert.expiry)}</span>}
                 </div>);
               })}
@@ -2289,7 +2289,7 @@ function CrewDirectoryScreen({onBack,user}){
   const inactivePeople=allNames.filter(n=>{const m=memberMap[n];return m&&m.active===false;});
 
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
@@ -2431,7 +2431,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   if(editProject&&can(user,"edit_job")) return <ProjectForm initial={project} onSave={updateProject} onCancel={()=>{setEditProject(false);setErr("");}} defaultDivision={project.division} externalErr={err} onClearErr={()=>setErr("")}/>;
 
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← {project.division}</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
@@ -2672,7 +2672,7 @@ ${jobHTML}
   const totalEmployees=new Set(filtered.flatMap(r=>(r.labor||[]).map(l=>l.name).filter(Boolean))).size;
 
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <TopBar title="Timecard Report" onBack={onClose}/>
       <div style={{padding:"14px 16px 100px"}}>
         {/* Date range */}
@@ -2975,7 +2975,7 @@ function PMDashboard({onBack,user}){
   );
 
   if(showNotifs) return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={()=>{setShowNotifs(false);load();}} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
         <div style={{fontSize:20,fontWeight:900}}>🔔 Notifications</div>
@@ -3163,12 +3163,12 @@ function PMDashboard({onBack,user}){
       {unread>0&&<button onClick={async()=>{await API.notifications.markAllRead();setUnread(0);await loadN();}} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:14}}>Mark all read</button>}
       {nl&&<Spinner/>}
       {!nl&&notifs.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>🔔</div><div>No notifications yet.</div></div>}
-      {!nl&&notifs.map(n=>(<div key={n.id} onClick={async()=>{if(!n.read){await API.notifications.markRead(n.id);setUnread(u=>Math.max(0,u-1));await loadN();}}} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${n.read?T.border:T.orange}`,opacity:n.read?0.6:1,cursor:n.read?"default":"pointer"}}><div style={{display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:18,flexShrink:0}}>{typeIcon[n.type]||"📬"}</span><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700}}>{n.title}</div>{n.body&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{n.body}</div>}<div style={{fontSize:11,color:T.muted,marginTop:4}}>{n.created_at?new Date(n.created_at).toLocaleString():""}</div></div>{!n.read&&<div style={{width:8,height:8,borderRadius:"50%",background:T.orange,flexShrink:0,marginTop:4}}/>}</div></div>))}
+      {!nl&&notifs.map(n=>(<div key={n.id} onClick={async()=>{if(!n.read){await API.notifications.markRead(n.id);setUnread(u=>Math.max(0,u-1));await loadN();}}} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${n.read?T.border:T.orange}`,opacity:n.read?0.6:1,cursor:n.read?"default":"pointer"}}><div style={{display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:18,flexShrink:0}}>{typeIcon[n.type]||"📬"}</span><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:T.text}}>{n.title}</div>{n.body&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{n.body}</div>}<div style={{fontSize:11,color:T.muted,marginTop:4}}>{n.created_at?new Date(n.created_at).toLocaleString():""}</div></div>{!n.read&&<div style={{width:8,height:8,borderRadius:"50%",background:T.orange,flexShrink:0,marginTop:4}}/>}</div></div>))}
     </div>);
   }
 
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Divisions</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
@@ -3781,7 +3781,7 @@ function TimeCardsScreen({user,projects,onBack}){
   function clearJobs(){ setSelectedJobs([]); }
 
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
@@ -3861,7 +3861,7 @@ function TimeCardsScreen({user,projects,onBack}){
                   return(
                     <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
                       <div>
-                        <div style={{fontSize:14,fontWeight:700}}>{c.worker_name}</div>
+                        <div style={{fontSize:14,fontWeight:700,color:T.text}}>{c.worker_name}</div>
                         <div style={{fontSize:11,color:T.muted}}>
                           {c.clock_in||"—"} → {c.clock_out||"—"}
                           {proj?" · "+proj.name:""}
@@ -3886,7 +3886,7 @@ function TimeCardsScreen({user,projects,onBack}){
               return(
                 <div key={c.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <div>
-                    <div style={{fontSize:14,fontWeight:700}}>{c.worker_name}</div>
+                    <div style={{fontSize:14,fontWeight:700,color:T.text}}>{c.worker_name}</div>
                     <div style={{fontSize:11,color:T.muted}}>
                       {fmtShort(c.date)} · {c.clock_in||"—"} → {c.clock_out||"—"}
                       {proj?" · "+proj.name:""}
@@ -4115,6 +4115,24 @@ function TimeCardsScreen({user,projects,onBack}){
 }
 
 /* ── ROOT APP ───────────────────────────────────────────────── */
+// Global style injection
+if(typeof document!=="undefined"&&!document.getElementById("aime-global-style")){
+  const s=document.createElement("style");
+  s.id="aime-global-style";
+  s.textContent=`
+    body{background:#09090B;color:#FFFFFF;}
+    *{box-sizing:border-box;}
+    div,span,p,h1,h2,h3,h4,h5,h6,li,td,th,label{color:inherit;}
+    input,select,textarea{color:#FFFFFF!important;background:#0C0C0F!important;}
+    input::placeholder,textarea::placeholder{color:#71717A!important;}
+    [style*="background:#18181B"],[style*="background: #18181B"]{color:#FFFFFF;}
+    [style*="background:#111113"],[style*="background: #111113"]{color:#FFFFFF;}
+    [style*="background:#09090B"],[style*="background: #09090B"]{color:#FFFFFF;}
+    [style*="background:#0C0C0F"],[style*="background: #0C0C0F"]{color:#FFFFFF;}
+  `;
+  document.head.appendChild(s);
+}
+
 export default function App(){
   const [user,setUser]           = useState(null);
   const [projects,setProjects]   = useState([]);
@@ -4223,7 +4241,7 @@ export default function App(){
   }
 
   if(!user) return(
-    <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+    <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif",color:T.text,background:T.bg,minHeight:"100vh"}}>
       <LoginScreen onLogin={handleLogin}/>
     </div>
   );
