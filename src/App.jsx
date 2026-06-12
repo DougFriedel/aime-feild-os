@@ -1863,7 +1863,22 @@ function CrewDirectoryScreen({onBack,user}){
 
         {/* Name */}
         {mode==="new"
-          ?<div style={{marginBottom:12}}><label style={lbl}>Name *</label><select value={mf.name} onChange={e=>{setM("name",e.target.value);setPf(x=>({...x,name:e.target.value}));}} style={inpSel}><option value="">— Select —</option>{NAMES.filter(n=>!memberMap[n]).map(n=><option key={n}>{n}</option>)}</select></div>
+          ?<div style={{marginBottom:12}}>
+            <label style={lbl}>Full Name *</label>
+            <input
+              type="text"
+              list="crew-names-list"
+              placeholder="Type a name or pick from list…"
+              value={mf.name}
+              onChange={e=>{setM("name",e.target.value);setPf(x=>({...x,name:e.target.value}));}}
+              style={inp}
+              autoComplete="off"
+            />
+            <datalist id="crew-names-list">
+              {NAMES.map(n=><option key={n} value={n}/>)}
+            </datalist>
+            <div style={{fontSize:11,color:T.muted,marginTop:4}}>Type any name — or pick an existing crew member from the suggestions.</div>
+          </div>
           :<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${roleColor[pf.role]||T.green}`}}><div style={{fontSize:17,fontWeight:800,color:T.orange}}>{mf.name}</div><div style={{fontSize:12,color:T.muted}}>Editing profile</div></div>
         }
 
