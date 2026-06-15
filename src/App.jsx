@@ -1286,12 +1286,10 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
 
   async function saveSignature(inspectorName,sigData){
     setSigSaving(true);
-    setErr("");
     try{
       if(!report||!report.id){
-        setErr("Cannot save — report ID missing. Please go back and reopen this report.");
         setSigSaving(false);
-        return;
+        throw new Error("Report ID missing. Please go back and reopen this report.");
       }
       // Compress signature further to avoid payload issues
       const compressSig=()=>new Promise(res=>{
