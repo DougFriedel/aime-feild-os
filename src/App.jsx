@@ -6394,6 +6394,17 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
   });
   const [showMarkup,setShowMarkup]=useState(false);
   const [showCatalog,setShowCatalog]=useState(false);
+  const [inclusions,setInclusions]=useState(estimate.inclusions||"");
+  const [exclusions,setExclusions]=useState(estimate.exclusions||"");
+  const [generalNotes,setGeneralNotes]=useState(estimate.general_notes||`General Note:
+- Due to current supply chain disruptions, materials are subject to pricing at time of release
+- Material availability and timeliness of shipments cannot be guaranteed
+- These terms supersede all other contractual provisions
+- All pricing and quotes are valid for 30 days from the date issued
+- Additionally, quotes are subject to change if any tariff, duty, or government intervention relating to the cost or availability of material is imposed
+- The increase related to any government action will be added to the cost of materials`);
+  const [savingNotes,setSavingNotes]=useState(false);
+  const [notesSaved,setNotesSaved]=useState(false);
   const [catalogCat,setCatalogCat]=useState("Materials");
   const [catalogSearch,setCatalogSearch]=useState("");
   const [catalogItems,setCatalogItems]=useState([]);
@@ -6441,6 +6452,15 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
   async function saveStatus(s){
     try{await API.estimates.update(estimate.id,{status:s});setStatus(s);onSaved&&onSaved();}
     catch(e){setErr(e.message);}
+  }
+
+  async function saveNotes(){
+    setSavingNotes(true);
+    try{
+      await API.estimates.update(estimate.id,{inclusions,exclusions,general_notes:generalNotes});
+      setNotesSaved(true);setTimeout(()=>setNotesSaved(false),2000);
+    }catch(e){setErr(e.message);}
+    setSavingNotes(false);
   }
 
   async function searchCatalog(q){
@@ -6571,7 +6591,7 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
             style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13,color:T.purple,border:`1px solid ${T.purple}40`}}>
             {showMarkup?"Hide":"⚙️ Markup %"}
           </button>
-          <button onClick={()=>printProposal(estimate,items,byCategory,markup,totalBid)}
+          <button onClick={()=>printProposal(estimate,items,byCategory,markup,totalBid,inclusions,exclusions,generalNotes)}
             style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13,color:"#1f3864",border:"1px solid #1f386440",background:"#1f386415"}}>
             🖨️ Proposal PDF
           </button>
@@ -6705,6 +6725,54 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
           );
         })}
 
+        {/* ── INCLUSIONS ── */}
+        <div style={{...cardS,marginBottom:10,padding:0,overflow:"hidden"}}>
+          <div style={{padding:"12px 14px",borderBottom:`1px solid ${T.border}`,background:`${T.green}10`}}>
+            <div style={{fontSize:14,fontWeight:800,color:T.green}}>✅ Inclusions</div>
+            <div style={{fontSize:11,color:T.muted}}>What is included in this bid</div>
+          </div>
+          <div style={{padding:"12px 14px"}}>
+            <textarea value={inclusions} onChange={e=>setInclusions(e.target.value)}
+              placeholder={"- Furnish all labor, equipment and materials
+- Site cleanup upon completion
+- Add specific inclusions here..."}
+              rows={5} style={{...inp,resize:"vertical",lineHeight:1.6,fontSize:13}}/>
+          </div>
+        </div>
+
+        {/* ── EXCLUSIONS ── */}
+        <div style={{...cardS,marginBottom:10,padding:0,overflow:"hidden"}}>
+          <div style={{padding:"12px 14px",borderBottom:`1px solid ${T.border}`,background:`${T.red}10`}}>
+            <div style={{fontSize:14,fontWeight:800,color:T.red}}>❌ Exclusions</div>
+            <div style={{fontSize:11,color:T.muted}}>What is NOT included in this bid</div>
+          </div>
+          <div style={{padding:"12px 14px"}}>
+            <textarea value={exclusions} onChange={e=>setExclusions(e.target.value)}
+              placeholder={"- Permits and inspections
+- Engineering and design
+- Add specific exclusions here..."}
+              rows={5} style={{...inp,resize:"vertical",lineHeight:1.6,fontSize:13}}/>
+          </div>
+        </div>
+
+        {/* ── GENERAL NOTES ── */}
+        <div style={{...cardS,marginBottom:10,padding:0,overflow:"hidden"}}>
+          <div style={{padding:"12px 14px",borderBottom:`1px solid ${T.border}`,background:`${T.yellow}10`}}>
+            <div style={{fontSize:14,fontWeight:800,color:T.yellow}}>📝 General Notes</div>
+            <div style={{fontSize:11,color:T.muted}}>Standard terms — edit as needed</div>
+          </div>
+          <div style={{padding:"12px 14px"}}>
+            <textarea value={generalNotes} onChange={e=>setGeneralNotes(e.target.value)}
+              rows={8} style={{...inp,resize:"vertical",lineHeight:1.7,fontSize:13}}/>
+          </div>
+        </div>
+
+        {/* Save notes button */}
+        <button onClick={saveNotes} disabled={savingNotes}
+          style={{...primBtn,borderRadius:12,marginBottom:14,background:notesSaved?T.green:T.orange,transition:"background 0.3s"}}>
+          {savingNotes?"Saving…":notesSaved?"✅ Saved!":"💾 Save Inclusions / Exclusions / Notes"}
+        </button>
+
         {/* Bottom total card */}
         {items.length>0&&<div style={{...cardS,marginTop:6,background:"#0f172a",border:"1px solid #1e293b"}}>
           <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Bid Summary</div>
@@ -6733,7 +6801,7 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
 }
 
 /* ── PROPOSAL PDF ────────────────────────────────────────────── */
-function printProposal(estimate,items,byCategory,markup,totalBid){
+function printProposal(estimate,items,byCategory,markup,totalBid,inclusions,exclusions,generalNotes){
   const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
   const dateStr=new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
   const CATS=["Labor","Equipment","Materials","Subcontractor","Rental Equipment","Other"];
@@ -6763,6 +6831,14 @@ function printProposal(estimate,items,byCategory,markup,totalBid){
   .terms h2{font-size:9pt;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#1f3864;padding-bottom:5px;border-bottom:1px solid #e5e7eb;margin-bottom:8px;}
   .terms ul{padding-left:16px;}
   .terms li{font-size:9.5pt;color:#444;margin-bottom:3px;}
+  .inc-exc{margin-bottom:16px;border-radius:6px;border:1px solid #e5e7eb;overflow:hidden;}
+  .inc-exc h2{font-size:9pt;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:8px 12px;margin:0;background:#f9fafb;border-bottom:1px solid #e5e7eb;}
+  .ie-body{padding:8px 12px;}
+  .ie-line{font-size:9.5pt;color:#333;margin-bottom:3px;padding-left:4px;}
+  .gen-notes{margin-bottom:20px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:12px 16px;}
+  .gen-notes h2{font-size:9pt;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#92400e;margin-bottom:8px;}
+  .gn-body{}
+  .gn-line{font-size:9pt;color:#444;margin-bottom:4px;line-height:1.5;}
   .sigs{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:36px;}
   .sig .line{border-bottom:1.5px solid #000;height:44px;margin-bottom:5px;}
   .sig .slbl{font-size:7.5pt;color:#777;text-transform:uppercase;letter-spacing:0.5px;}
@@ -6780,6 +6856,14 @@ function printProposal(estimate,items,byCategory,markup,totalBid){
   <div><div class="field-lbl">Project</div><div class="field-val">${estimate.project_name}</div><div style="font-size:9.5pt;color:#555;margin-top:2px">${estimate.division||""} Division</div></div>
 </div>
 <div class="scope"><h2>Scope of Work</h2><p>${estimate.description||"As discussed and agreed upon between the parties."}</p></div>
+${inclusions?`<div class="inc-exc">
+  <h2 style="color:#166534">✅ Inclusions</h2>
+  <div class="ie-body">${inclusions.split("\n").filter(l=>l.trim()).map(l=>`<div class="ie-line">${l.trim().startsWith("-")?l.trim():"- "+l.trim()}</div>`).join("")}</div>
+</div>`:""}
+${exclusions?`<div class="inc-exc">
+  <h2 style="color:#991b1b">❌ Exclusions</h2>
+  <div class="ie-body">${exclusions.split("\n").filter(l=>l.trim()).map(l=>`<div class="ie-line">${l.trim().startsWith("-")?l.trim():"- "+l.trim()}</div>`).join("")}</div>
+</div>`:""}
 <div class="price-box">
   <div class="p-lbl">Total Lump Sum Bid Price</div>
   <div class="p-val">${fmt(totalBid)}</div>
@@ -6796,6 +6880,10 @@ function printProposal(estimate,items,byCategory,markup,totalBid){
     <li>Owner to provide safe and unrestricted site access during scheduled work hours.</li>
   </ul>
 </div>
+${generalNotes?`<div class="gen-notes">
+  <h2>📝 General Notes</h2>
+  <div class="gn-body">${generalNotes.split("\n").filter(l=>l.trim()).map(l=>`<div class="gn-line">${l.trim()}</div>`).join("")}</div>
+</div>`:""}
 <div class="sigs">
   <div class="sig"><div class="line"></div><div class="slbl">Authorized by — AIME</div><div class="sname">${estimate.created_by||""}</div><div class="sdate">Date: ______________</div></div>
   <div class="sig"><div class="line"></div><div class="slbl">Accepted by — Client</div><div class="sname"></div><div class="sdate">Date: ______________</div></div>
