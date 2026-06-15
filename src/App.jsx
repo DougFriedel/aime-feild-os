@@ -114,6 +114,29 @@ const API={
     upsert:(d)=>sb("/user_profiles",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),
     remove:(id)=>sb(`/user_profiles?id=eq.${id}`,{method:"DELETE"}),
   },
+  catalog:{
+    list:(div,cat,search)=>{
+      let url="/cost_catalog?active=eq.true&order=name.asc&limit=200";
+      if(div) url+=`&division=eq.${encodeURIComponent(div)}`;
+      if(cat) url+=`&category=eq.${encodeURIComponent(cat)}`;
+      if(search) url+=`&name=ilike.${encodeURIComponent("*"+search+"*")}`;
+      return sb(url);
+    },
+    categories:(div)=>sb(`/cost_catalog?active=eq.true&division=eq.${encodeURIComponent(div)}&select=category&order=category.asc`),
+    update:(id,d)=>sb(`/cost_catalog?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
+    create:(d)=>sb("/cost_catalog",{method:"POST",body:d,prefer:"return=representation"}),
+    remove:(id)=>sb(`/cost_catalog?id=eq.${id}`,{method:"PATCH",body:{active:false}}),
+  },
+  estimates:{
+    list:()=>sb("/estimates?order=created_at.desc"),
+    create:(d)=>sb("/estimates",{method:"POST",body:d,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/estimates?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
+    remove:(id)=>sb(`/estimates?id=eq.${id}`,{method:"DELETE"}),
+    items:(eid)=>sb(`/estimate_items?estimate_id=eq.${eid}&order=sort_order.asc,category.asc`),
+    addItem:(d)=>sb("/estimate_items",{method:"POST",body:d,prefer:"return=representation"}),
+    updateItem:(id,d)=>sb(`/estimate_items?id=eq.${id}`,{method:"PATCH",body:d}),
+    removeItem:(id)=>sb(`/estimate_items?id=eq.${id}`,{method:"DELETE"}),
+  },
   changeOrders:{
     forProject:(pid)=>sb(`/change_orders?project_id=eq.${pid}&order=date_submitted.asc`),
     create:(d)=>sb("/change_orders",{method:"POST",body:d,prefer:"return=representation"}),
@@ -6019,46 +6042,279 @@ function printEmployeeTimecards(cards, from, to, selectedJobs, projects){
 
 
 /* ── ESTIMATING SCREEN ───────────────────────────────────────── */
+
+/* ── COST CATALOG SCREEN ─────────────────────────────────────── */
+function CostCatalogScreen({user,onBack}){
+  const canEdit=user.role==="admin"||user.role==="pm"||user.role==="estimator";
+  const DIVISIONS=["Mechanical","Pipeline","Structural"];
+  const CATEGORIES={
+    Mechanical:["Equipment","Labor","Materials","Subcontractor Buy Out copy","Travel / Per Diem / Mileage copy","General"],
+    Pipeline:["Equipment","Labor","Materials","Rental Equipment","Subcontractor","Travel/Perdiem","General"],
+    Structural:["Labor","Materials","Hardware","Rented Equipment","Subcontractor Buy Out","Delivery","Paint, Blasting, Galvanizing","Structural Take Off Material List","Owned Equipment","Buyout Items","Travel / Per Diem / Mileage","General"],
+  };
+
+  const [division,setDivision]=useState("Mechanical");
+  const [category,setCategory]=useState("All");
+  const [search,setSearch]=useState("");
+  const [items,setItems]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [editItem,setEditItem]=useState(null); // item being edited inline
+  const [editVals,setEditVals]=useState({});
+  const [saving,setSaving]=useState(false);
+  const [showAdd,setShowAdd]=useState(false);
+  const [newItem,setNewItem]=useState({name:"",description:"",unit:"ea",unit_cost:0,unit_labor_hrs:0,category:"Materials",item_type:"Part"});
+  const [err,setErr]=useState("");
+
+  useEffect(()=>{load();},[division,category,search]);
+
+  async function load(){
+    setLoading(true);
+    try{
+      const cat=category==="All"?null:category;
+      const srch=search.trim().length>1?search.trim():null;
+      const res=await API.catalog.list(division,cat,srch);
+      setItems(Array.isArray(res)?res:[]);
+    }catch(e){setErr(e.message);}
+    setLoading(false);
+  }
+
+  async function saveEdit(id){
+    setSaving(true);
+    try{
+      await API.catalog.update(id,{
+        unit_cost:parseFloat(editVals.unit_cost)||0,
+        unit_labor_hrs:parseFloat(editVals.unit_labor_hrs)||0,
+        unit:editVals.unit||"ea",
+        description:editVals.description||"",
+        notes:editVals.notes||"",
+      });
+      setItems(items.map(i=>i.id===id?{...i,...editVals,unit_cost:parseFloat(editVals.unit_cost)||0,unit_labor_hrs:parseFloat(editVals.unit_labor_hrs)||0}:i));
+      setEditItem(null);
+    }catch(e){setErr(e.message);}
+    setSaving(false);
+  }
+
+  async function addItem(){
+    setSaving(true);
+    try{
+      await API.catalog.create({...newItem,division,unit_cost:parseFloat(newItem.unit_cost)||0,unit_labor_hrs:parseFloat(newItem.unit_labor_hrs)||0,active:true});
+      setShowAdd(false);
+      setNewItem({name:"",description:"",unit:"ea",unit_cost:0,unit_labor_hrs:0,category:"Materials",item_type:"Part"});
+      await load();
+    }catch(e){setErr(e.message);}
+    setSaving(false);
+  }
+
+  async function archiveItem(id){
+    if(!window.confirm("Remove this item from the catalog?"))return;
+    try{await API.catalog.remove(id);setItems(items.filter(i=>i.id!==id));}
+    catch(e){setErr(e.message);}
+  }
+
+  const cats=["All",...(CATEGORIES[division]||[])];
+  const fmt=n=>Number(n||0).toFixed(2);
+
+  // Add item modal
+  if(showAdd) return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title="Add Catalog Item" onBack={()=>setShowAdd(false)}/>
+      <div style={{padding:"16px 16px 80px"}}>
+        <div style={{marginBottom:12}}><label style={lbl}>Item Name *</label><input value={newItem.name} onChange={e=>setNewItem(x=>({...x,name:e.target.value}))} placeholder="e.g. 4\" Gate Valve 300#" style={inp}/></div>
+        <div style={{marginBottom:12}}><label style={lbl}>Description</label><input value={newItem.description} onChange={e=>setNewItem(x=>({...x,description:e.target.value}))} placeholder="Optional detail" style={inp}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+          <div><label style={lbl}>Category</label>
+            <select value={newItem.category} onChange={e=>setNewItem(x=>({...x,category:e.target.value}))} style={inpSel}>
+              {(CATEGORIES[division]||[]).map(c=><option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div><label style={lbl}>Type</label>
+            <select value={newItem.item_type} onChange={e=>setNewItem(x=>({...x,item_type:e.target.value}))} style={inpSel}>
+              {["Part","Equipment","Labor","Subcontractor","Travel"].map(t=><option key={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16}}>
+          <div><label style={lbl}>Unit</label>
+            <select value={newItem.unit} onChange={e=>setNewItem(x=>({...x,unit:e.target.value}))} style={inpSel}>
+              {["ea","ft","lb","hrs","days","sq ft","ton","none"].map(u=><option key={u}>{u}</option>)}
+            </select>
+          </div>
+          <div><label style={lbl}>Unit Cost ($)</label><input type="number" value={newItem.unit_cost} onChange={e=>setNewItem(x=>({...x,unit_cost:e.target.value}))} style={inp}/></div>
+          <div><label style={lbl}>Labor (hrs)</label><input type="number" value={newItem.unit_labor_hrs} onChange={e=>setNewItem(x=>({...x,unit_labor_hrs:e.target.value}))} style={inp}/></div>
+        </div>
+        <button onClick={addItem} disabled={!newItem.name.trim()||saving}
+          style={{...primBtn,borderRadius:14,opacity:newItem.name.trim()&&!saving?1:0.5}}>
+          {saving?"Saving…":"Add to Catalog"}
+        </button>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title="📚 Cost Catalog" onBack={onBack}/>
+      <div style={{padding:"12px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+
+        {/* Division tabs */}
+        <div style={{display:"flex",gap:6,marginBottom:12}}>
+          {DIVISIONS.map(d=>(
+            <button key={d} onClick={()=>{setDivision(d);setCategory("All");setSearch("");}}
+              style={{flex:1,padding:"8px 4px",borderRadius:10,border:`1px solid ${division===d?T.purple:T.border}`,background:division===d?`${T.purple}20`:T.card,color:division===d?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              {d}
+            </button>
+          ))}
+        </div>
+
+        {/* Search */}
+        <div style={{position:"relative",marginBottom:10}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search items..." style={{...inp,paddingLeft:12}}/>
+          {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16}}>×</button>}
+        </div>
+
+        {/* Category scroll */}
+        <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:6,marginBottom:12,WebkitOverflowScrolling:"touch"}}>
+          {cats.map(c=>(
+            <button key={c} onClick={()=>setCategory(c)}
+              style={{flexShrink:0,padding:"5px 10px",borderRadius:8,border:`1px solid ${category===c?T.green:T.border}`,background:category===c?T.greenLow:T.card,color:category===c?T.green:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+              {c}
+            </button>
+          ))}
+        </div>
+
+        {/* Item count + Add button */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:12,color:T.muted}}>{loading?"Loading…":`${items.length} items`}</div>
+          {canEdit&&<button onClick={()=>setShowAdd(true)} style={{...primBtn,padding:"6px 14px",fontSize:12,borderRadius:10}}>+ Add Item</button>}
+        </div>
+
+        {/* Items list */}
+        {loading&&<Spinner/>}
+        {!loading&&items.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>
+          <div style={{fontSize:32,marginBottom:8}}>📭</div>
+          <div style={{fontWeight:700,color:T.sub}}>{search?"No items match your search":"No items in this category"}</div>
+          {!search&&<div style={{fontSize:12,marginTop:4}}>Run the SQL and import the CSV first</div>}
+        </div>}
+
+        {items.map(item=>{
+          const isEditing=editItem===item.id;
+          return(
+            <div key={item.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${item.unit_cost>0?T.green:T.border}`}}>
+              {isEditing?(
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:T.orange,marginBottom:10}}>{item.name}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+                    <div>
+                      <label style={lbl}>Unit Cost ($)</label>
+                      <input type="number" value={editVals.unit_cost} onChange={e=>setEditVals(x=>({...x,unit_cost:e.target.value}))}
+                        style={{...inp,borderColor:T.green}} autoFocus/>
+                    </div>
+                    <div>
+                      <label style={lbl}>Labor (hrs)</label>
+                      <input type="number" value={editVals.unit_labor_hrs} onChange={e=>setEditVals(x=>({...x,unit_labor_hrs:e.target.value}))} style={inp}/>
+                    </div>
+                    <div>
+                      <label style={lbl}>Unit</label>
+                      <select value={editVals.unit} onChange={e=>setEditVals(x=>({...x,unit:e.target.value}))} style={inpSel}>
+                        {["ea","ft","lb","hrs","days","sq ft","ton","none"].map(u=><option key={u}>{u}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{marginBottom:8}}>
+                    <label style={lbl}>Description / Notes</label>
+                    <input value={editVals.notes||""} onChange={e=>setEditVals(x=>({...x,notes:e.target.value}))} placeholder="Optional notes" style={inp}/>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>saveEdit(item.id)} disabled={saving}
+                      style={{...primBtn,flex:1,borderRadius:10,fontSize:13}}>
+                      {saving?"Saving…":"✓ Save"}
+                    </button>
+                    <button onClick={()=>setEditItem(null)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>Cancel</button>
+                  </div>
+                </div>
+              ):(
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div style={{flex:1,paddingRight:8}}>
+                    <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:2}}>{item.name}</div>
+                    {item.description&&<div style={{fontSize:11,color:T.muted,marginBottom:2}}>{item.description}</div>}
+                    {item.notes&&<div style={{fontSize:11,color:T.blue,fontStyle:"italic"}}>{item.notes}</div>}
+                    <div style={{display:"flex",gap:8,marginTop:4,flexWrap:"wrap"}}>
+                      <span style={{fontSize:10,background:T.surface,color:T.sub,padding:"2px 6px",borderRadius:5}}>{item.item_type}</span>
+                      <span style={{fontSize:10,background:T.surface,color:T.sub,padding:"2px 6px",borderRadius:5}}>{item.unit}</span>
+                      {item.unit_labor_hrs>0&&<span style={{fontSize:10,background:T.blueLow,color:T.blue,padding:"2px 6px",borderRadius:5}}>{item.unit_labor_hrs}hr labor</span>}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:17,fontWeight:900,color:item.unit_cost>0?T.green:T.muted,marginBottom:6}}>
+                      {item.unit_cost>0?`$${fmt(item.unit_cost)}`:"No price"}
+                    </div>
+                    {canEdit&&<div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                      <button onClick={()=>{setEditItem(item.id);setEditVals({unit_cost:item.unit_cost||0,unit_labor_hrs:item.unit_labor_hrs||0,unit:item.unit||"ea",description:item.description||"",notes:item.notes||""});}}
+                        style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:7,padding:"4px 10px",color:T.orange,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                        ✏️ Edit
+                      </button>
+                      <button onClick={()=>archiveItem(item.id)}
+                        style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:7,padding:"4px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
+                        🗑
+                      </button>
+                    </div>}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── ESTIMATES SCREEN (placeholder for next build) ───────────── */
+function EstimatesScreen({user,onBack}){
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title="📋 Estimates" onBack={onBack}/>
+      <div style={{padding:"20px 16px",textAlign:"center"}}>
+        <div style={{fontSize:48,marginBottom:12}}>📋</div>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:8}}>Estimates Coming Next</div>
+        <div style={{fontSize:13,color:T.muted}}>Set your item prices in the Cost Catalog first, then we'll build the estimate builder.</div>
+      </div>
+    </div>
+  );
+}
+
+
 function EstimatingScreen({user,onBack}){
+  const [view,setView]=useState("home"); // home | catalog | estimates
+  if(view==="catalog") return <CostCatalogScreen user={user} onBack={()=>setView("home")}/>;
+  if(view==="estimates") return <EstimatesScreen user={user} onBack={()=>setView("home")}/>;
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <TopBar title="📊 Estimating" onBack={onBack}/>
-      <div style={{padding:"20px 16px"}}>
-        {/* Header */}
-        <div style={{...cardS,marginBottom:16,background:`${T.purple}15`,border:`1px solid ${T.purple}40`,textAlign:"center",padding:"32px 20px"}}>
-          <div style={{fontSize:48,marginBottom:12}}>📊</div>
-          <div style={{fontSize:22,fontWeight:900,color:T.purple,marginBottom:6}}>AIME Estimating</div>
-          <div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>Bids · Proposals · Cost Catalog · Takeoffs</div>
+      <div style={{padding:"16px 16px 80px"}}>
+        <div style={{...cardS,marginBottom:20,background:`${T.purple}15`,border:`1px solid ${T.purple}40`,padding:"20px 16px"}}>
+          <div style={{fontSize:20,fontWeight:900,color:T.purple,marginBottom:4}}>AIME Estimating</div>
+          <div style={{fontSize:13,color:T.sub}}>Atlantic Industrial Mechanical & Environmental Inc.</div>
         </div>
-
-        {/* Coming soon modules */}
-        <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Modules</div>
         {[
-          {icon:"📋",title:"Estimates",desc:"Build detailed estimates using your cost catalog and labor rates",color:T.blue,soon:false},
-          {icon:"📚",title:"Cost Catalog",desc:"Labor, equipment, material & subcontractor unit costs",color:T.green,soon:false},
-          {icon:"📄",title:"Proposals",desc:"Generate professional bid proposals to send to clients",color:T.orange,soon:false},
-          {icon:"📐",title:"Takeoffs",desc:"Measure quantities from digital drawings",color:T.yellow,soon:true},
-          {icon:"🏆",title:"Bid Management",desc:"Track bid status, compare subs, win/loss history",color:T.purple,soon:true},
+          {icon:"📋",title:"Estimates",desc:"Build and manage project estimates",color:T.blue,view:"estimates"},
+          {icon:"📚",title:"Cost Catalog",desc:"Edit unit costs, labor hours and materials",color:T.green,view:"catalog"},
+          {icon:"📄",title:"Proposals",desc:"Generate professional bid proposals",color:T.orange,view:"estimates",soon:true},
+          {icon:"🏆",title:"Bid Management",desc:"Track win/loss and bid history",color:T.purple,view:"estimates",soon:true},
         ].map(m=>(
-          <div key={m.title} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${m.color}`,opacity:m.soon?0.6:1}}>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:28}}>{m.icon}</span>
-              <div style={{flex:1}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:15,fontWeight:800,color:m.soon?T.muted:T.text}}>{m.title}</span>
-                  {m.soon&&<span style={{fontSize:9,background:T.border,color:T.muted,padding:"2px 6px",borderRadius:6,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>Coming Soon</span>}
-                </div>
-                <div style={{fontSize:12,color:T.muted,marginTop:2}}>{m.desc}</div>
+          <button key={m.title} onClick={()=>!m.soon&&setView(m.view)}
+            style={{...ghostBtn,width:"100%",display:"flex",alignItems:"center",gap:14,padding:"16px",marginBottom:10,borderLeft:`4px solid ${m.color}`,opacity:m.soon?0.5:1,cursor:m.soon?"default":"pointer",textAlign:"left"}}>
+            <span style={{fontSize:30}}>{m.icon}</span>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
+                <span style={{fontSize:15,fontWeight:800,color:m.soon?T.muted:T.text}}>{m.title}</span>
+                {m.soon&&<span style={{fontSize:9,background:T.border,color:T.muted,padding:"2px 6px",borderRadius:6,fontWeight:700,textTransform:"uppercase"}}>Soon</span>}
               </div>
-              {!m.soon&&<span style={{color:T.muted,fontSize:18}}>›</span>}
+              <div style={{fontSize:12,color:T.muted}}>{m.desc}</div>
             </div>
-          </div>
+            {!m.soon&&<span style={{color:T.muted,fontSize:20}}>›</span>}
+          </button>
         ))}
-
-        <div style={{...cardS,marginTop:20,background:T.orangeLow,border:`1px solid ${T.orange}40`,textAlign:"center",padding:20}}>
-          <div style={{fontSize:14,fontWeight:700,color:T.orange,marginBottom:6}}>🚧 Under Construction</div>
-          <div style={{fontSize:13,color:T.sub,lineHeight:1.6}}>Upload your Cost Catalog and we'll build the full estimating platform around it. Ready when you are.</div>
-        </div>
       </div>
     </div>
   );
