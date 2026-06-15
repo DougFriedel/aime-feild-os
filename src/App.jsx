@@ -2596,7 +2596,14 @@ function ChangeOrdersTab({project,user,onErr}){
   async function save(){
     setSaving(true);
     try{
-      const payload={...f,project_id:project.id,amount:parseFloat(f.amount)||0};
+      const toDate=v=>v&&v.trim()&&v!=="Invalid Date"?v:null;
+      const payload={
+        ...f,
+        project_id:project.id,
+        amount:parseFloat(f.amount)||0,
+        date_submitted:toDate(f.date_submitted),
+        approved_date:toDate(f.approved_date),
+      };
       if(editing){await API.changeOrders.update(editing,payload);}
       else{await API.changeOrders.create(payload);}
       setShowForm(false);setEditing(null);setF(blank);await load();
@@ -2730,7 +2737,14 @@ function RFIsTab({project,user,onErr}){
   async function save(){
     setSaving(true);
     try{
-      const payload={...f,project_id:project.id};
+      const toDate=v=>v&&v.trim()&&v!=="Invalid Date"?v:null;
+      const payload={
+        ...f,
+        project_id:project.id,
+        date_submitted:toDate(f.date_submitted),
+        due_date:toDate(f.due_date),
+        response_date:toDate(f.response_date),
+      };
       if(editing){await API.rfis.update(editing,payload);}
       else{await API.rfis.create(payload);}
       setShowForm(false);setEditing(null);setF(blank);await load();
