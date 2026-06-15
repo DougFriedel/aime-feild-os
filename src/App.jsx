@@ -199,14 +199,15 @@ const WMO={0:["Clear Sky","☀️"],1:["Mainly Clear","🌤️"],2:["Partly Clou
 const DIVISIONS=["Mechanical","Pipeline","Structural"];
 const DIV_META={Mechanical:{icon:"⚙️",color:"#F97316",desc:"Mechanical projects and equipment"},Pipeline:{icon:"🔧",color:"#3B82F6",desc:"Pipeline construction and maintenance"},Structural:{icon:"🏗️",color:"#22C55E",desc:"Structural steel and civil work"}};
 const ROLES=["crew","foreman","pm","admin"];
-const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Submit daily reports and time cards"},foreman:{label:"Foreman",color:T.yellow,desc:"Reports, time, safety, equipment, docs, schedule"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, manage jobs, PM dashboard"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
+const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Submit daily reports and time cards"},foreman:{label:"Foreman",color:T.yellow,desc:"Reports, time, safety, equipment, docs, schedule"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, manage jobs, PM dashboard"},estimator:{label:"Estimator",color:T.purple,desc:"Estimating platform access only"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
 
 /* ── PERMISSIONS ────────────────────────────────────────────── */
 const PERMS={
-  admin:  ["manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications"],
-  pm:     ["create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications"],
-  foreman:["submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
-  crew:   ["submit_report","time_card","photos","crew_directory"],
+  admin:     ["manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
+  pm:        ["create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
+  estimator: ["estimating","view_dashboard","crew_directory"],
+  foreman:   ["submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
+  crew:      ["submit_report","time_card","photos","crew_directory"],
 };
 const can=(user,action)=>(PERMS[user?.role]||PERMS.crew).includes(action);
 
@@ -412,6 +413,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
             {can(user,"view_dashboard")&&<button onClick={onDash} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
             <button onClick={onTimeCards} style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",color:T.green,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⏱️</button>
             {can(user,"crew_directory")&&<button onClick={onCrew} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"8px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>👥</button>}
+            {can(user,"estimating")&&<button onClick={onEstimating} style={{background:`${T.purple}15`,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"8px 12px",color:T.purple,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
             <button onClick={onLogout} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>Out</button>
           </div>
         </div>
@@ -1557,9 +1559,9 @@ function DocsTab({projectId,user,onErr}){
   const [dragging,setDragging]=useState(false);const [uploading,setUploading]=useState(false);
   const [editPerms,setEditPerms]=useState(null); // doc being permission-edited
   const fileRef=useRef(null);
-  const allRoles=["admin","pm","foreman","crew"];
+  const allRoles=["admin","pm","estimator","foreman","crew"];
   const roleLabels={admin:"🔴 Admin",pm:"🟠 PM",foreman:"🟡 Foreman",crew:"🟢 Field Crew"};
-  const [f,setF]=useState({name:"",doc_type:"Drawing",notes:"",visible_to:["admin","pm","foreman","crew"],can_download:["admin","pm","foreman","crew"]});
+  const [f,setF]=useState({name:"",doc_type:"Drawing",notes:"",visible_to:["admin","pm","estimator","foreman","crew"],can_download:["admin","pm","estimator","foreman","crew"]});
   const docTypes=["Drawing","Specification","Manual","Permit","Contract","As-Built","ITP","Procedure","Safety Plan","Other"];
   const docIcons={Drawing:"📐",Specification:"📄",Manual:"📗",Permit:"🗂️",Contract:"📝","As-Built":"🗺️",ITP:"✅",Procedure:"📋","Safety Plan":"⛑️",Other:"📁"};
   const mimeIcons={"application/pdf":"📄","image/":"🖼️","application/vnd.openxmlformats-officedocument.spreadsheetml":"📊","application/vnd.openxmlformats-officedocument.wordprocessingml":"📝","application/vnd.openxmlformats-officedocument.presentationml":"📊","video/":"🎬","text/":"📝"};
@@ -1609,8 +1611,8 @@ function DocsTab({projectId,user,onErr}){
           doc_type:guessType(file.name),
           notes:"",
           uploaded_by:user.name,
-          visible_to:["admin","pm","foreman","crew"],
-          can_download:["admin","pm","foreman","crew"],
+          visible_to:["admin","pm","estimator","foreman","crew"],
+          can_download:["admin","pm","estimator","foreman","crew"],
         });
         uploaded++;
       }catch(e){onErr(`Failed to upload ${file.name}: ${e.message}`);}
@@ -1642,7 +1644,7 @@ function DocsTab({projectId,user,onErr}){
 
   // Filter docs user can see
   const visibleDocs=docs.filter(d=>{
-    const vt=d.visible_to||["admin","pm","foreman","crew"];
+    const vt=d.visible_to||["admin","pm","estimator","foreman","crew"];
     return vt.includes(user.role)||user.role==="admin";
   });
   const grouped={};visibleDocs.forEach(d=>{const t=d.doc_type||"Other";if(!grouped[t])grouped[t]=[];grouped[t].push(d);});
@@ -5575,6 +5577,54 @@ if(typeof document!=="undefined"&&!document.getElementById("aime-global-style"))
     [style*="background:#0C0C0F"],[style*="background: #0C0C0F"]{color:#FFFFFF;}
   `;
   document.head.appendChild(s);
+}
+
+
+
+/* ── ESTIMATING SCREEN ───────────────────────────────────────── */
+function EstimatingScreen({user,onBack}){
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title="📊 Estimating" onBack={onBack}/>
+      <div style={{padding:"20px 16px"}}>
+        {/* Header */}
+        <div style={{...cardS,marginBottom:16,background:`${T.purple}15`,border:`1px solid ${T.purple}40`,textAlign:"center",padding:"32px 20px"}}>
+          <div style={{fontSize:48,marginBottom:12}}>📊</div>
+          <div style={{fontSize:22,fontWeight:900,color:T.purple,marginBottom:6}}>AIME Estimating</div>
+          <div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>Bids · Proposals · Cost Catalog · Takeoffs</div>
+        </div>
+
+        {/* Coming soon modules */}
+        <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Modules</div>
+        {[
+          {icon:"📋",title:"Estimates",desc:"Build detailed estimates using your cost catalog and labor rates",color:T.blue,soon:false},
+          {icon:"📚",title:"Cost Catalog",desc:"Labor, equipment, material & subcontractor unit costs",color:T.green,soon:false},
+          {icon:"📄",title:"Proposals",desc:"Generate professional bid proposals to send to clients",color:T.orange,soon:false},
+          {icon:"📐",title:"Takeoffs",desc:"Measure quantities from digital drawings",color:T.yellow,soon:true},
+          {icon:"🏆",title:"Bid Management",desc:"Track bid status, compare subs, win/loss history",color:T.purple,soon:true},
+        ].map(m=>(
+          <div key={m.title} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${m.color}`,opacity:m.soon?0.6:1}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:28}}>{m.icon}</span>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:15,fontWeight:800,color:m.soon?T.muted:T.text}}>{m.title}</span>
+                  {m.soon&&<span style={{fontSize:9,background:T.border,color:T.muted,padding:"2px 6px",borderRadius:6,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>Coming Soon</span>}
+                </div>
+                <div style={{fontSize:12,color:T.muted,marginTop:2}}>{m.desc}</div>
+              </div>
+              {!m.soon&&<span style={{color:T.muted,fontSize:18}}>›</span>}
+            </div>
+          </div>
+        ))}
+
+        <div style={{...cardS,marginTop:20,background:T.orangeLow,border:`1px solid ${T.orange}40`,textAlign:"center",padding:20}}>
+          <div style={{fontSize:14,fontWeight:700,color:T.orange,marginBottom:6}}>🚧 Under Construction</div>
+          <div style={{fontSize:13,color:T.sub,lineHeight:1.6}}>Upload your Cost Catalog and we'll build the full estimating platform around it. Ready when you are.</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 
