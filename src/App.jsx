@@ -6382,6 +6382,7 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
   const [showCatalog,setShowCatalog]=useState(false);
   const [catalogSearch,setCatalogSearch]=useState("");
   const [catalogItems,setCatalogItems]=useState([]);
+  const [catalogQtys,setCatalogQtys]=useState({});
   const [catalogLoading,setCatalogLoading]=useState(false);
   const [err,setErr]=useState("");
   const [saving,setSaving]=useState(false);
@@ -6482,7 +6483,7 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
           {catalogSearch.length<2?"Type to search the catalog":"No items found — try a different search"}
         </div>}
         {catalogItems.map(item=>{
-          const [qty,setQty]=useState(1);
+          const qty=catalogQtys[item.id]||1;
           return(
             <div key={item.id} style={{...cardS,marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
               <div style={{flex:1}}>
@@ -6490,7 +6491,7 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
                 {item.description&&<div style={{fontSize:11,color:T.muted}}>{item.description}</div>}
                 <div style={{fontSize:11,color:T.green,marginTop:2}}>{item.unit_cost>0?`$${fmtN(item.unit_cost)}/${item.unit}`:"No price set"}{item.unit_labor_hrs>0?` · ${item.unit_labor_hrs}hr labor`:""}</div>
               </div>
-              <input type="number" value={qty} onChange={e=>setQty(e.target.value)} min={0} style={{...inp,width:60,textAlign:"center",padding:"8px 6px"}}/>
+              <input type="number" value={qty} onChange={e=>setCatalogQtys(q=>({...q,[item.id]:e.target.value}))} min={0} style={{...inp,width:60,textAlign:"center",padding:"8px 6px"}}/>
               <button onClick={()=>addFromCatalog(item,qty)} style={{...primBtn,padding:"8px 14px",fontSize:13,borderRadius:10}}>Add</button>
             </div>
           );
