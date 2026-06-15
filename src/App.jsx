@@ -204,7 +204,7 @@ const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Submit daily repor
 /* ── PERMISSIONS ────────────────────────────────────────────── */
 const PERMS={
   admin:     ["manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
-  pm:        ["create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
+  pm:        ["create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications"],
   estimator: ["estimating","view_dashboard","crew_directory"],
   foreman:   ["submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
   crew:      ["submit_report","time_card","photos","crew_directory"],
@@ -384,7 +384,7 @@ function LoginScreen({onLogin}){
 }
 
 /* ── DIVISION SELECTION SCREEN ──────────────────────────────── */
-function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,isOnline,pendingCount,onSync}){
+function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,isOnline,pendingCount,onSync}){
   const divStats=DIVISIONS.map(div=>{
     const divProjects=projects.filter(p=>p.division===div&&p.status==="active");
     const totalBilled=divProjects.reduce((s,p)=>s+(p._billed||0),0);
@@ -5988,6 +5988,7 @@ export default function App(){
           onCrew={()=>setScreen("crewDirectory")}
           onDash={()=>setScreen("pmDashboard")}
           onTimeCards={()=>setScreen("timeCards")}
+          onEstimating={()=>setScreen("estimating")}
           isOnline={isOnline}
           pendingCount={pendingCount}
           onSync={syncQueue}
@@ -6035,6 +6036,9 @@ export default function App(){
       )}
 
       {/* CREW DIRECTORY */}
+      {screen==="estimating"&&can(user,"estimating")&&(
+        <EstimatingScreen user={user} onBack={()=>setScreen("division")}/>
+      )}
       {screen==="crewDirectory"&&(
         <CrewDirectoryScreen
           user={user}
