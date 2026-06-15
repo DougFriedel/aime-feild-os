@@ -92,7 +92,7 @@ const API={
     all:()=>sb("/daily_reports?select=*,projects(id,name,division)&order=date.desc&limit=300"),
     pending:()=>sb("/daily_reports?status=eq.submitted&select=*,projects(id,name,division)&order=created_at.desc"),
     create:(d)=>sb("/daily_reports",{method:"POST",body:d,prefer:"return=representation"}),
-    update:(id,d)=>sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
     remove:(id)=>sb(`/daily_reports?id=eq.${id}`,{method:"DELETE"}),
   },
   safety:   {forProject:(pid)=>sb(`/safety_logs?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/safety_logs",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/safety_logs?id=eq.${id}`,{method:"DELETE"})},
@@ -1286,21 +1286,43 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
 
   async function saveSignature(inspectorName,sigData){
     setSigSaving(true);
+    setErr("");
     try{
+      if(!report||!report.id){
+        setErr("Cannot save — report ID missing. Please go back and reopen this report.");
+        setSigSaving(false);
+        return;
+      }
+      // Compress signature further to avoid payload issues
+      const compressSig=()=>new Promise(res=>{
+        const img=new Image();
+        img.onload=()=>{
+          const c=document.createElement("canvas");
+          c.width=Math.min(img.width,800);
+          c.height=Math.round(img.height*(c.width/img.width));
+          c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+          res(c.toDataURL("image/jpeg",0.5));
+        };
+        img.src=sigData;
+      });
+      const compressedSig=await compressSig();
       await API.reports.update(report.id,{
         inspector_name:inspectorName,
-        inspector_signature:sigData,
+        inspector_signature:compressedSig,
         inspector_signed_at:new Date().toISOString(),
         status:"signed",
       });
-      setReport(r=>({...r,inspector_name:inspectorName,inspector_signature:sigData,inspector_signed_at:new Date().toISOString(),status:"signed"}));
+      setReport(r=>({...r,inspector_name:inspectorName,inspector_signature:compressedSig,inspector_signed_at:new Date().toISOString(),status:"signed"}));
       setShowSigPad(false);
     }catch(e){
+      const msg=e.message||"Could not save signature.";
+      setErr("Signature save failed: "+msg);
+      throw new Error(msg);
+    }finally{
       setSigSaving(false);
-      throw new Error(e.message||"Could not save signature. Check connection.");
     }
-    setSigSaving(false);
   }
+  
   function exportXLSX(){
     const wb = XLSX.read(DAILY_REPORT_TEMPLATE_B64, {type:'base64', cellStyles:true, cellFormula:true});
     const ws = wb.Sheets['3-24-2026'];
