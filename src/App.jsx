@@ -2722,7 +2722,7 @@ function RFIsTab({project,user,onErr}){
   const [showForm,setShowForm]=useState(false);
   const [editing,setEditing]=useState(null);
   const [saving,setSaving]=useState(false);
-  const blank={rfi_number:"",date_submitted:today(),submitted_by:user.name,question:"",description:"",due_date:"",response:"",responded_by:"",response_date:"",status:"Open",notes:""};
+  const blank={rfi_number:"",date_submitted:today(),submitted_by:user.name,question:"",description:"",due_date:"",response:"",responded_by:"",response_date:"",status:"Open",notes:"",ball_in_court:"",ball_in_court_email:""};
   const [f,setF]=useState(blank);
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
 
@@ -2759,6 +2759,36 @@ function RFIsTab({project,user,onErr}){
   }
 
   const statusColor={Open:T.yellow,Answered:T.blue,Closed:T.green,Overdue:T.red};
+
+  function emailRFI(rfi){
+    const subj=`RFI ${rfi.rfi_number} — ${project.name}`;
+    const lines=[
+      `REQUEST FOR INFORMATION`,
+      ``,
+      `RFI #: ${rfi.rfi_number}`,
+      `Project: ${project.name}${project.afe?" | AFE: "+project.afe:""}`,
+      `Date Submitted: ${rfi.date_submitted||""}`,
+      `Submitted By: ${rfi.submitted_by||""}`,
+      `Response Due: ${rfi.due_date||"Not specified"}`,
+      rfi.ball_in_court?`Ball in Court: ${rfi.ball_in_court}`:"",
+      `Status: ${rfi.status}`,
+      ``,
+      `QUESTION / ISSUE:`,
+      rfi.question||"",
+      ``,
+      rfi.description?`DESCRIPTION:
+${rfi.description}
+`:"",
+      rfi.response?`RESPONSE (${rfi.responded_by||""} - ${rfi.response_date||""}):
+${rfi.response}`:"",
+      ``,
+      `—`,
+      `AIME Field Pro | Atlantic Industrial Mechanical & Electrical`,
+    ].filter(l=>l!=="");
+    const body=lines.map(l=>encodeURIComponent(l)).join("%0A");
+    const to=rfi.ball_in_court_email||"";
+    window.location.href=`mailto:${to}?subject=${encodeURIComponent(subj)}&body=${body}`;
+  }
   const open=rfis.filter(r=>r.status==="Open"||r.status==="Overdue").length;
   const answered=rfis.filter(r=>r.status==="Answered").length;
 
@@ -2780,6 +2810,13 @@ function RFIsTab({project,user,onErr}){
         <select value={f.status} onChange={e=>set("status",e.target.value)} style={inpSel}>
           {["Open","Answered","Closed","Overdue"].map(s=><option key={s}>{s}</option>)}
         </select>
+      </div>
+      <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`,background:T.orangeLow}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.orange,marginBottom:8}}>🏀 BALL IN COURT</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div><label style={lbl}>Person Responsible</label><input value={f.ball_in_court} onChange={e=>set("ball_in_court",e.target.value)} placeholder="Name of person who needs to act" style={inp}/></div>
+          <div><label style={lbl}>Their Email</label><input type="email" value={f.ball_in_court_email} onChange={e=>set("ball_in_court_email",e.target.value)} placeholder="email@company.com" style={inp}/></div>
+        </div>
       </div>
       {(f.status==="Answered"||f.status==="Closed")&&(<>
         <div style={{marginBottom:10}}><label style={lbl}>Response</label><textarea rows={3} value={f.response} onChange={e=>set("response",e.target.value)} placeholder="Response from client/engineer..." style={{...inp,resize:"vertical"}}/></div>
@@ -2829,6 +2866,9 @@ function RFIsTab({project,user,onErr}){
                 {rfi.due_date&&<div style={{fontSize:11,color:isOverdue?T.red:T.muted,marginTop:2}}>
                   {isOverdue?"⚠️ Overdue — ":"Due: "}{rfi.due_date}
                 </div>}
+              {rfi.ball_in_court&&<div style={{fontSize:11,color:T.orange,marginTop:2,fontWeight:600}}>
+                🏀 Ball in Court: {rfi.ball_in_court}
+              </div>}
               </div>
             </div>
             <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:4}}>{rfi.question}</div>
@@ -2837,10 +2877,13 @@ function RFIsTab({project,user,onErr}){
               <div style={{fontSize:11,fontWeight:700,color:T.green,marginBottom:4}}>✓ RESPONSE — {rfi.responded_by}{rfi.response_date?" · "+rfi.response_date:""}</div>
               <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{rfi.response}</div>
             </div>}
-            {canEdit&&<div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-              <button onClick={()=>{setEditing(rfi.id);setF({...rfi});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12}}>✏️ Edit</button>
-              <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`}}>🗑 Delete</button>
-            </div>}
+            <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+              <button onClick={()=>emailRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.blue,border:`1px solid ${T.blue}40`}}>📧 Email RFI</button>
+              {canEdit&&<>
+                <button onClick={()=>{setEditing(rfi.id);setF({...rfi,notes:rfi.notes||"",ball_in_court:rfi.ball_in_court||"",ball_in_court_email:rfi.ball_in_court_email||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12}}>✏️ Edit</button>
+                <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`}}>🗑 Delete</button>
+              </>}
+            </div>
           </div>
         );
       })}
