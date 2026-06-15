@@ -2881,6 +2881,40 @@ function RFIsTab({project,user,onErr}){
   }
 
   const statusColor={Open:T.yellow,Answered:T.blue,Closed:T.green,Overdue:T.red};
+  const appUrl=window.location.origin+window.location.pathname;
+
+  function shareRFI(rfi){
+    const link=`${appUrl}?rfi=${rfi.id}`;
+    const subject=`RFI #${rfi.rfi_number} — ${project.name} — Response Required`;
+    const body=[
+      `Hi ${rfi.ball_in_court||""},`,
+      ``,
+      `Please review and respond to the following Request for Information:`,
+      ``,
+      `RFI #: ${rfi.rfi_number}`,
+      `Project: ${project.name}`,
+      `Question: ${rfi.question}`,
+      rfi.due_date?`Response Due: ${rfi.due_date}`:"",
+      ``,
+      `Click the link below to view the RFI and submit your response directly:`,
+      ``,
+      link,
+      ``,
+      `(No login or account required — just open the link, fill in your response, and click Submit)`,
+      ``,
+      `Thank you,`,
+      `${rfi.submitted_by||"AIME Field Operations"}`,
+      `Atlantic Industrial Mechanical & Electrical`,
+    ].filter(Boolean).join("%0A");
+    const mailto=`mailto:${rfi.ball_in_court_email||""}?subject=${encodeURIComponent(subject)}&body=${body}`;
+
+    // Copy link to clipboard
+    if(navigator.clipboard){
+      navigator.clipboard.writeText(link).catch(()=>{});
+    }
+    // Open email
+    window.location.href=mailto;
+  }
 
   function printRFI(rfi){
     const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
@@ -3191,11 +3225,11 @@ ${rfi.response}`:"",
               <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{rfi.response}</div>
             </div>}
             <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
-              <button onClick={()=>printRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:"#1f3864",border:"1px solid #1f386440",minWidth:90}}>🖨️ PDF</button>
-              <button onClick={()=>emailRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.blue,border:`1px solid ${T.blue}40`,minWidth:90}}>📧 Email</button>
+              <button onClick={()=>shareRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.orange,border:`1px solid ${T.orange}40`,minWidth:90,fontWeight:700}}>📤 Send Link</button>
+              <button onClick={()=>printRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:"#CBD5E1",border:"1px solid #27272A",minWidth:70}}>🖨️ PDF</button>
               {canEdit&&<>
-                <button onClick={()=>{setEditing(rfi.id);setF({...rfi,notes:rfi.notes||"",ball_in_court:rfi.ball_in_court||"",ball_in_court_email:rfi.ball_in_court_email||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,minWidth:60}}>✏️ Edit</button>
-                <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`,minWidth:60}}>🗑</button>
+                <button onClick={()=>{setEditing(rfi.id);setF({...rfi,notes:rfi.notes||"",ball_in_court:rfi.ball_in_court||"",ball_in_court_email:rfi.ball_in_court_email||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,minWidth:60}}>✏️</button>
+                <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`,minWidth:50}}>🗑</button>
               </>}
             </div>
           </div>
@@ -5483,7 +5517,206 @@ if(typeof document!=="undefined"&&!document.getElementById("aime-global-style"))
   document.head.appendChild(s);
 }
 
+
+/* ── PUBLIC RFI FORM (no login required) ────────────────────── */
+function PublicRFIForm({rfiId}){
+  const [rfi,setRfi]=useState(null);
+  const [project,setProject]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [submitted,setSubmitted]=useState(false);
+  const [err,setErr]=useState("");
+  const [resp,setResp]=useState("");
+  const [respBy,setRespBy]=useState("");
+  const [respDate,setRespDate]=useState(today());
+  const [respTitle,setRespTitle]=useState("");
+
+  useEffect(()=>{
+    async function load(){
+      try{
+        const rfiData=await sb(`/rfis?id=eq.${rfiId}&limit=1`);
+        const r=Array.isArray(rfiData)?rfiData[0]:rfiData;
+        if(!r){setErr("RFI not found. Please check the link.");setLoading(false);return;}
+        setRfi(r);
+        // Check if already answered
+        if(r.response){setResp(r.response);setRespBy(r.responded_by||"");setRespDate(r.response_date||today());setSubmitted(true);}
+        const projData=await sb(`/projects?id=eq.${r.project_id}&limit=1`);
+        const p=Array.isArray(projData)?projData[0]:projData;
+        setProject(p||{name:"Unknown Project"});
+      }catch(e){setErr("Error loading RFI: "+e.message);}
+      setLoading(false);
+    }
+    load();
+  },[rfiId]);
+
+  async function submit(){
+    if(!resp.trim()){setErr("Please enter your response.");return;}
+    if(!respBy.trim()){setErr("Please enter your name.");return;}
+    setSaving(true);setErr("");
+    try{
+      await sb(`/rfis?id=eq.${rfiId}`,{
+        method:"PATCH",
+        body:{
+          response:resp,
+          responded_by:respBy+(respTitle?" ("+respTitle+")":""),
+          response_date:respDate||today(),
+          status:"Answered",
+        },
+        prefer:"return=representation"
+      });
+      setSubmitted(true);
+    }catch(e){setErr("Failed to submit: "+e.message);}
+    setSaving(false);
+  }
+
+  if(loading) return(
+    <div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif"}}>
+      <div style={{textAlign:"center",color:"#fff"}}>
+        <div style={{width:40,height:40,border:"3px solid #27272A",borderTopColor:"#F97316",borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto 12px"}}/>
+        <div>Loading RFI...</div>
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    </div>
+  );
+
+  if(err&&!rfi) return(
+    <div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif",padding:20}}>
+      <div style={{background:"#18181B",borderRadius:16,padding:32,maxWidth:400,textAlign:"center",border:"1px solid #EF444440"}}>
+        <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
+        <div style={{fontSize:18,fontWeight:700,color:"#fff",marginBottom:8}}>Link Not Found</div>
+        <div style={{fontSize:14,color:"#A1A1AA"}}>{err}</div>
+      </div>
+    </div>
+  );
+
+  if(submitted) return(
+    <div style={{background:"#09090B",minHeight:"100vh",fontFamily:"system-ui,sans-serif",padding:20}}>
+      <div style={{maxWidth:600,margin:"0 auto"}}>
+        {/* Header */}
+        <div style={{background:"#18181B",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",alignItems:"center",gap:12,border:"1px solid #27272A"}}>
+          <div style={{fontSize:22,fontWeight:900,color:"#F97316"}}>AIME</div>
+          <div style={{color:"#A1A1AA",fontSize:13}}>Field Pro · RFI Response Form</div>
+        </div>
+        <div style={{background:"#18181B",borderRadius:16,padding:32,textAlign:"center",border:"1px solid #22C55E40"}}>
+          <div style={{fontSize:48,marginBottom:12}}>✅</div>
+          <div style={{fontSize:20,fontWeight:800,color:"#22C55E",marginBottom:8}}>Response Submitted!</div>
+          <div style={{fontSize:14,color:"#A1A1AA",marginBottom:20}}>Your response to RFI #{rfi?.rfi_number} has been saved.<br/>AIME has been notified.</div>
+          <div style={{background:"#0C0C0F",borderRadius:12,padding:16,textAlign:"left",marginBottom:16}}>
+            <div style={{fontSize:11,color:"#F97316",fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Your Response</div>
+            <div style={{fontSize:14,color:"#fff",lineHeight:1.6}}>{resp}</div>
+            <div style={{fontSize:12,color:"#A1A1AA",marginTop:8}}>— {respBy} · {respDate}</div>
+          </div>
+          <div style={{fontSize:12,color:"#71717A"}}>You may close this window.</div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
+
+  return(
+    <div style={{background:"#09090B",minHeight:"100vh",fontFamily:"system-ui,sans-serif",color:"#fff",padding:"16px 16px 60px"}}>
+      <div style={{maxWidth:600,margin:"0 auto"}}>
+        {/* Header */}
+        <div style={{background:"#1f3864",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div>
+            <div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Electrical</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:18,fontWeight:800,color:"#fff"}}>RFI #{rfi.rfi_number}</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>Request for Information</div>
+          </div>
+        </div>
+
+        {/* Project info */}
+        <div style={{background:"#18181B",borderRadius:12,padding:"12px 16px",marginBottom:12,border:"1px solid #27272A"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            {[["Project",project?.name||"—"],["Client",project?.client||"—"],["Division",project?.division||"—"],["Date Submitted",rfi.date_submitted||"—"]].map(([l,v])=>(
+              <div key={l}>
+                <div style={{fontSize:10,color:"#71717A",textTransform:"uppercase",letterSpacing:"0.5px",fontWeight:700}}>{l}</div>
+                <div style={{fontSize:13,fontWeight:600,color:"#fff",marginTop:2}}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Ball in Court + Due Date */}
+        {rfi.ball_in_court&&<div style={{background:"#431407",borderRadius:12,padding:"12px 16px",marginBottom:12,border:"1px solid #9a3412"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:10,color:"#fb923c",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>🏀 Action Required From</div>
+              <div style={{fontSize:16,fontWeight:800,color:"#fdba74",marginTop:2}}>{rfi.ball_in_court}</div>
+            </div>
+            {rfi.due_date&&<div style={{textAlign:"right"}}>
+              <div style={{fontSize:10,color:"#fb923c",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>Response Due</div>
+              <div style={{fontSize:15,fontWeight:700,color:isOverdue?"#ef4444":"#4ade80",marginTop:2}}>{rfi.due_date}</div>
+              {isOverdue&&<div style={{fontSize:11,color:"#ef4444",fontWeight:700}}>⚠️ OVERDUE</div>}
+            </div>}
+          </div>
+        </div>}
+
+        {/* Question */}
+        <div style={{background:"#1f3864",borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.6)",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:6}}>Question / Issue</div>
+          <div style={{fontSize:16,fontWeight:700,color:"#fff",lineHeight:1.5}}>{rfi.question}</div>
+          {rfi.description&&<div style={{fontSize:13,color:"rgba(255,255,255,0.7)",marginTop:8,lineHeight:1.6}}>{rfi.description}</div>}
+        </div>
+
+        {err&&<div style={{background:"#EF444420",border:"1px solid #EF4444",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#EF4444"}}>{err}</div>}
+
+        {/* Response Form */}
+        <div style={{background:"#18181B",borderRadius:16,padding:20,border:"2px solid #22C55E40"}}>
+          <div style={{fontSize:14,fontWeight:800,color:"#22C55E",marginBottom:4}}>✏️ Your Response</div>
+          <div style={{fontSize:12,color:"#71717A",marginBottom:14}}>Fill in the fields below and tap Submit. Your response will be saved directly to AIME's system.</div>
+
+          <div style={{marginBottom:12}}>
+            <label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Response *</label>
+            <textarea
+              rows={6}
+              value={resp}
+              onChange={e=>setResp(e.target.value)}
+              placeholder="Enter your response, clarification, or answer here..."
+              style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",resize:"vertical",fontFamily:"inherit",lineHeight:1.6,outline:"none"}}
+            />
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+            <div>
+              <label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Your Name *</label>
+              <input type="text" value={respBy} onChange={e=>setRespBy(e.target.value)} placeholder="Full name" style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/>
+            </div>
+            <div>
+              <label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Date</label>
+              <input type="date" value={respDate} onChange={e=>setRespDate(e.target.value)} style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/>
+            </div>
+          </div>
+
+          <div style={{marginBottom:16}}>
+            <label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Company / Title (optional)</label>
+            <input type="text" value={respTitle} onChange={e=>setRespTitle(e.target.value)} placeholder="e.g. Colonial Pipeline · Field Engineer" style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/>
+          </div>
+
+          <button
+            onClick={submit}
+            disabled={saving||!resp.trim()||!respBy.trim()}
+            style={{width:"100%",background:saving||!resp.trim()||!respBy.trim()?"#27272A":"#22C55E",color:saving||!resp.trim()||!respBy.trim()?"#71717A":"#000",border:"none",borderRadius:12,padding:"14px",fontSize:16,fontWeight:800,cursor:saving||!resp.trim()||!respBy.trim()?"not-allowed":"pointer",fontFamily:"inherit",transition:"background 0.2s"}}
+          >
+            {saving?"Submitting…":"✅ Submit Response"}
+          </button>
+          <div style={{fontSize:11,color:"#52525B",textAlign:"center",marginTop:8}}>Your response will be saved directly to AIME Field Pro</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App(){
+  // Check if this is a public RFI link (?rfi=UUID)
+  const urlParams=new URLSearchParams(window.location.search);
+  const publicRfiId=urlParams.get("rfi");
+  if(publicRfiId) return <PublicRFIForm rfiId={publicRfiId}/>;
+
   const [user,setUser]           = useState(null);
   const [projects,setProjects]   = useState([]);
   const [loading,setLoading]     = useState(false);
