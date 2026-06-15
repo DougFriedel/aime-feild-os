@@ -6273,9 +6273,11 @@ function CostCatalogScreen({user,onBack}){
 function EstimatesScreen({user,onBack}){
   const [estimates,setEstimates]=useState([]);
   const [loading,setLoading]=useState(true);
-  const [view,setView]=useState("list"); // list | build | detail
+  const [view,setView]=useState("list");
   const [active,setActive]=useState(null);
   const [err,setErr]=useState("");
+  const [showNew,setShowNew]=useState(false);
+  const [nf,setNf]=useState({project_name:"",client:"",division:"Mechanical",description:"",overhead_pct:10,profit_pct:15,bond_pct:0});
 
   useEffect(()=>{load();},[]);
   async function load(){
@@ -6303,10 +6305,6 @@ function EstimatesScreen({user,onBack}){
   const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
 
   if(view==="build"&&active) return <EstimateBuilder estimate={active} user={user} onBack={()=>{setView("list");load();}} onSaved={load}/>;
-
-  // New estimate form
-  const [showNew,setShowNew]=useState(false);
-  const [nf,setNf]=useState({project_name:"",client:"",division:"Mechanical",description:"",overhead_pct:10,profit_pct:15,bond_pct:0});
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
