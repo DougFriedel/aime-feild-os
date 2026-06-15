@@ -2555,6 +2555,443 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
 
 
 
+
+/* ── FINANCIALS SCREEN ───────────────────────────────────────── */
+function FinancialsScreen({reports,projects,user}){
+  const [activeReport,setActiveReport]=useState(null);
+  const [dateFrom,setDateFrom]=useState((()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})());
+  const [dateTo,setDateTo]=useState(today());
+  const [selProject,setSelProject]=useState("all");
+  const [selDivision,setSelDivision]=useState("all");
+
+  const fmt2=n=>Number(n||0).toLocaleString("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2});
+
+  function presets(){return[
+    ["This Month",(()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})(),today()],
+    ["Last Month",(()=>{const d=new Date();d.setMonth(d.getMonth()-1);d.setDate(1);return d.toISOString().split("T")[0];})(),(()=>{const d=new Date();d.setDate(0);return d.toISOString().split("T")[0];})()],
+    ["This Quarter",(()=>{const d=new Date();const q=Math.floor(d.getMonth()/3);d.setMonth(q*3);d.setDate(1);return d.toISOString().split("T")[0];})(),(()=>{const d=new Date();const q=Math.floor(d.getMonth()/3);d.setMonth(q*3+3);d.setDate(0);return d.toISOString().split("T")[0];})()],
+    ["This Year",(()=>{const d=new Date();d.setMonth(0);d.setDate(1);return d.toISOString().split("T")[0];})(),(()=>{const d=new Date();d.setMonth(11);d.setDate(31);return d.toISOString().split("T")[0];})()],
+  ];}
+
+  // Filter reports by date + division + project
+  const filteredReports=reports.filter(r=>{
+    if(r.date<dateFrom||r.date>dateTo)return false;
+    const proj=projects.find(p=>p.id===r.project_id);
+    if(selDivision!=="all"&&proj?.division!==selDivision)return false;
+    if(selProject!=="all"&&r.project_id!==selProject)return false;
+    return true;
+  });
+
+  // ── REPORT 1: Invoice Summary ──────────────────────────────
+  function printInvoice(){
+    const proj=projects.find(p=>p.id===selProject);
+    const rpts=filteredReports.sort((a,b)=>a.date.localeCompare(b.date));
+    const totals={labor:0,equip:0,mats:0,grand:0};
+    rpts.forEach(r=>{const t=reportTotals(r,proj?.division||"Pipeline");totals.labor+=t.labor;totals.equip+=t.equip;totals.mats+=t.mats;totals.grand+=t.grand;});
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invoice Summary</title>
+<style>
+  @page{size:letter portrait;margin:0.5in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:9pt;color:#000;}
+  .inv-header{display:flex;justify-content:space-between;margin-bottom:20px;padding-bottom:12px;border-bottom:3px solid #1f3864;}
+  .company{font-size:18pt;font-weight:900;color:#1f3864;}
+  .company-sub{font-size:9pt;color:#555;margin-top:4px;}
+  .inv-to{font-size:9pt;}
+  .inv-to strong{font-size:11pt;display:block;margin-bottom:4px;}
+  .inv-meta{text-align:right;font-size:9pt;}
+  .inv-meta .inv-num{font-size:14pt;font-weight:900;color:#1f3864;}
+  .job-info{background:#f0f4ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+  .ji-label{font-size:7.5pt;color:#666;text-transform:uppercase;letter-spacing:0.5px;}
+  .ji-val{font-size:10pt;font-weight:700;color:#1f3864;margin-top:2px;}
+  table{width:100%;border-collapse:collapse;margin-bottom:12px;}
+  th{background:#1f3864;color:#fff;padding:6px 10px;text-align:left;font-size:8.5pt;}
+  th.num{text-align:right;}
+  td{padding:5px 10px;border-bottom:1px solid #eee;font-size:9pt;}
+  td.num{text-align:right;}
+  .section-lbl{background:#f5f7fa;font-weight:700;font-size:8pt;color:#555;text-transform:uppercase;letter-spacing:0.5px;}
+  .subtotal td{background:#fffbeb;font-weight:700;border-top:1.5px solid #f59e0b;}
+  .grand td{background:#1f3864;color:#fff;font-weight:900;font-size:11pt;}
+  .grand td.num{text-align:right;}
+  .footer{margin-top:24px;padding-top:12px;border-top:1px solid #ddd;font-size:8pt;color:#888;display:flex;justify-content:space-between;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+<div class="inv-header">
+  <div>
+    <div class="company">AIME</div>
+    <div class="company-sub">Atlantic Industrial Mechanical & Electrical<br>Field Operations</div>
+  </div>
+  <div class="inv-meta">
+    <div class="inv-num">Invoice Summary</div>
+    <div style="margin-top:6px">Period: ${dateFrom} to ${dateTo}</div>
+    <div>Generated: ${new Date().toLocaleDateString()}</div>
+  </div>
+</div>
+<div class="job-info">
+  <div><div class="ji-label">Job Number</div><div class="ji-val">${proj?.name||"—"}</div></div>
+  <div><div class="ji-label">Client</div><div class="ji-val">${proj?.client||"—"}</div></div>
+  <div><div class="ji-label">Division</div><div class="ji-val">${proj?.division||"—"}</div></div>
+  <div><div class="ji-label">AFE / PO</div><div class="ji-val">${proj?.afe||proj?.work_order||"—"}</div></div>
+  <div><div class="ji-label">Job Type</div><div class="ji-val">${proj?.job_type||"T&M"}</div></div>
+  <div><div class="ji-label">Reports</div><div class="ji-val">${rpts.length}</div></div>
+</div>
+<table>
+  <thead><tr><th>Date</th><th>Report #</th><th>Description</th><th class="num">Labor</th><th class="num">Equipment</th><th class="num">Materials</th><th class="num">Total</th></tr></thead>
+  <tbody>
+    ${rpts.map(r=>{const t=reportTotals(r,proj?.division||"Pipeline");return`<tr>
+      <td>${r.date}</td>
+      <td>${r.report_no||"—"}</td>
+      <td style="font-size:8pt;max-width:200px">${(r.description||"").slice(0,80)}</td>
+      <td class="num">${fmt2(t.labor)}</td>
+      <td class="num">${fmt2(t.equip)}</td>
+      <td class="num">${fmt2(t.mats)}</td>
+      <td class="num"><strong>${fmt2(t.grand)}</strong></td>
+    </tr>`;}).join("")}
+    <tr class="subtotal"><td colspan="3">SUBTOTALS</td><td class="num">${fmt2(totals.labor)}</td><td class="num">${fmt2(totals.equip)}</td><td class="num">${fmt2(totals.mats)}</td><td class="num">${fmt2(totals.grand)}</td></tr>
+    <tr class="grand"><td colspan="6">GRAND TOTAL</td><td class="num">${fmt2(totals.grand)}</td></tr>
+  </tbody>
+</table>
+${proj?.job_type==="Contract"&&proj?.contract_value?`<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;font-size:9pt"><strong>Contract Value:</strong> ${fmt2(proj.contract_value)} &nbsp;|&nbsp; <strong>Billed to Date:</strong> ${fmt2(totals.grand)} &nbsp;|&nbsp; <strong>Remaining:</strong> ${fmt2(proj.contract_value-totals.grand)}</div>`:""}
+<div class="footer"><div>AIME Field Pro · Confidential</div><div>* All amounts in USD</div></div>
+</body></html>`;
+    openPrint(html);
+  }
+
+  // ── REPORT 2: Job Profitability ────────────────────────────
+  function printProfitability(){
+    const contractJobs=projects.filter(p=>p.job_type==="Contract"||(p.contract_value>0));
+    const jobData=contractJobs.map(proj=>{
+      const projReports=reports.filter(r=>r.project_id===proj.id&&r.date>=dateFrom&&r.date<=dateTo);
+      const billed=projReports.reduce((s,r)=>s+reportTotals(r,proj.division).grand,0);
+      const hrs=projReports.reduce((s,r)=>(r.labor||[]).reduce((ss,l)=>ss+(parseFloat(l.regHrs)||0)+(parseFloat(l.otHrs)||0)+(parseFloat(l.travelHrs)||0),s),0);
+      const cv=parseFloat(proj.contract_value)||0;
+      const ch=parseFloat(proj.contract_hours)||0;
+      const margin=cv>0?((cv-billed)/cv*100):null;
+      const hrsUsedPct=ch>0?(hrs/ch*100):null;
+      return{proj,billed,hrs,cv,ch,margin,hrsUsedPct,reports:projReports.length};
+    }).filter(j=>j.reports>0||j.cv>0);
+
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Job Profitability</title>
+<style>
+  @page{size:letter landscape;margin:0.45in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:9pt;color:#000;}
+  .hdr{display:flex;justify-content:space-between;border-bottom:3px solid #1f3864;padding-bottom:10px;margin-bottom:14px;}
+  .title{font-size:15pt;font-weight:900;color:#1f3864;}
+  table{width:100%;border-collapse:collapse;}
+  th{background:#1f3864;color:#fff;padding:6px 8px;font-size:8pt;text-align:left;}
+  th.num{text-align:right;}
+  td{padding:6px 8px;border-bottom:1px solid #eee;font-size:8.5pt;}
+  td.num{text-align:right;}
+  tr:nth-child(even) td{background:#f8f9fb;}
+  .bar-wrap{background:#e5e7eb;border-radius:4px;height:8px;width:100%;margin-top:3px;}
+  .bar{height:8px;border-radius:4px;}
+  .green{background:#16a34a;} .yellow{background:#d97706;} .red{background:#dc2626;}
+  .pct-green{color:#16a34a;font-weight:700;}
+  .pct-yellow{color:#d97706;font-weight:700;}
+  .pct-red{color:#dc2626;font-weight:700;}
+  .total-row td{background:#fff3cd!important;font-weight:700;border-top:2px solid #f59e0b;}
+  .footer{margin-top:16px;font-size:7.5pt;color:#999;text-align:center;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+<div class="hdr">
+  <div><div class="title">AIME Field Pro — Job Profitability Report</div><div style="font-size:8.5pt;color:#555;margin-top:3px">Period: ${dateFrom} to ${dateTo} &nbsp;·&nbsp; Contract Jobs Only</div></div>
+  <div style="font-size:8pt;color:#666;text-align:right">Generated: ${new Date().toLocaleString()}</div>
+</div>
+<table>
+  <thead><tr>
+    <th>Job</th><th>Division</th><th>Client</th><th class="num">Contract Value</th>
+    <th class="num">Billed</th><th class="num">Remaining</th><th>$ Progress</th>
+    <th class="num">Contract Hrs</th><th class="num">Hrs Used</th><th>Hr Progress</th>
+    <th class="num">Margin %</th>
+  </tr></thead>
+  <tbody>
+    ${jobData.map(j=>{
+      const billedPct=j.cv>0?Math.min(100,j.billed/j.cv*100):0;
+      const hrsPct=j.ch>0?Math.min(100,j.hrs/j.ch*100):0;
+      const billedColor=billedPct<75?"green":billedPct<100?"yellow":"red";
+      const hrsColor=hrsPct<75?"green":hrsPct<100?"yellow":"red";
+      const marginClass=j.margin===null?"":j.margin>20?"pct-green":j.margin>0?"pct-yellow":"pct-red";
+      return`<tr>
+        <td><strong>${j.proj.name}</strong>${j.proj.afe?`<br><span style="font-size:7.5pt;color:#666">AFE: ${j.proj.afe}</span>`:""}${j.reports>0?`<br><span style="font-size:7.5pt;color:#888">${j.reports} reports</span>`:""}</td>
+        <td>${j.proj.division||"—"}</td>
+        <td style="font-size:8pt">${j.proj.client||"—"}</td>
+        <td class="num">${j.cv>0?fmt2(j.cv):"—"}</td>
+        <td class="num">${fmt2(j.billed)}</td>
+        <td class="num" style="${j.billed>j.cv&&j.cv>0?"color:#dc2626;font-weight:700":""}">${j.cv>0?fmt2(j.cv-j.billed):"—"}</td>
+        <td>${j.cv>0?`<div style="font-size:7.5pt;color:#555">${billedPct.toFixed(1)}%</div><div class="bar-wrap"><div class="bar ${billedColor}" style="width:${billedPct}%"></div></div>`:"—"}</td>
+        <td class="num">${j.ch>0?j.ch.toLocaleString()+"h":"—"}</td>
+        <td class="num">${j.hrs.toFixed(1)}h</td>
+        <td>${j.ch>0?`<div style="font-size:7.5pt;color:#555">${hrsPct.toFixed(1)}%</div><div class="bar-wrap"><div class="bar ${hrsColor}" style="width:${hrsPct}%"></div></div>`:"—"}</td>
+        <td class="num ${marginClass}">${j.margin!==null?j.margin.toFixed(1)+"%":"—"}</td>
+      </tr>`;
+    }).join("")}
+    <tr class="total-row">
+      <td colspan="3">TOTALS (${jobData.length} jobs)</td>
+      <td class="num">${fmt2(jobData.reduce((s,j)=>s+j.cv,0))}</td>
+      <td class="num">${fmt2(jobData.reduce((s,j)=>s+j.billed,0))}</td>
+      <td class="num">${fmt2(jobData.reduce((s,j)=>s+j.cv-j.billed,0))}</td>
+      <td></td>
+      <td class="num">${jobData.reduce((s,j)=>s+j.ch,0).toLocaleString()}h</td>
+      <td class="num">${jobData.reduce((s,j)=>s+j.hrs,0).toFixed(1)}h</td>
+      <td></td><td></td>
+    </tr>
+  </tbody>
+</table>
+<div class="footer">AIME Field Pro · Confidential — Internal Use Only · Green = healthy · Yellow = 75–100% · Red = over budget</div>
+</body></html>`;
+    openPrint(html);
+  }
+
+  // ── REPORT 3: Monthly Billing Summary ─────────────────────
+  function printMonthlyBilling(){
+    // Group by division, then by client
+    const divMap={};
+    filteredReports.forEach(r=>{
+      const proj=projects.find(p=>p.id===r.project_id);
+      const div=proj?.division||"Unknown";
+      const client=proj?.client||"Unknown";
+      const t=reportTotals(r,div);
+      if(!divMap[div])divMap[div]={division:div,clients:{},labor:0,equip:0,mats:0,grand:0};
+      if(!divMap[div].clients[client])divMap[div].clients[client]={client,jobs:{},labor:0,equip:0,mats:0,grand:0};
+      const jobId=r.project_id;
+      if(!divMap[div].clients[client].jobs[jobId])divMap[div].clients[client].jobs[jobId]={name:proj?.name||"Unknown",labor:0,equip:0,mats:0,grand:0};
+      divMap[div].clients[client].jobs[jobId].labor+=t.labor;
+      divMap[div].clients[client].jobs[jobId].equip+=t.equip;
+      divMap[div].clients[client].jobs[jobId].mats+=t.mats;
+      divMap[div].clients[client].jobs[jobId].grand+=t.grand;
+      divMap[div].clients[client].labor+=t.labor;divMap[div].clients[client].equip+=t.equip;divMap[div].clients[client].mats+=t.mats;divMap[div].clients[client].grand+=t.grand;
+      divMap[div].labor+=t.labor;divMap[div].equip+=t.equip;divMap[div].mats+=t.mats;divMap[div].grand+=t.grand;
+    });
+    const grandTot={labor:0,equip:0,mats:0,grand:0};
+    Object.values(divMap).forEach(d=>{grandTot.labor+=d.labor;grandTot.equip+=d.equip;grandTot.mats+=d.mats;grandTot.grand+=d.grand;});
+    const divRows=Object.values(divMap).sort((a,b)=>b.grand-a.grand);
+
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Monthly Billing Summary</title>
+<style>
+  @page{size:letter portrait;margin:0.45in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:9pt;color:#000;}
+  .hdr{display:flex;justify-content:space-between;border-bottom:3px solid #1f3864;padding-bottom:10px;margin-bottom:16px;}
+  .title{font-size:15pt;font-weight:900;color:#1f3864;}
+  .summary-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:16px;}
+  .sum-box{border:1.5px solid #dde3f0;border-radius:8px;padding:10px;text-align:center;}
+  .sum-val{font-size:13pt;font-weight:900;color:#1f3864;}
+  .sum-lbl{font-size:7.5pt;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;}
+  .div-header{background:#1f3864;color:#fff;padding:6px 10px;font-size:10pt;font-weight:700;margin:14px 0 0;}
+  .client-header{background:#e8eaf6;padding:5px 10px;font-weight:700;font-size:9pt;color:#1f3864;border-left:3px solid #1f3864;}
+  table{width:100%;border-collapse:collapse;}
+  th{background:#dde3f0;padding:5px 10px;text-align:left;font-size:8pt;font-weight:700;color:#1f3864;}
+  th.num{text-align:right;}
+  td{padding:4px 10px;border-bottom:1px solid #f0f0f0;font-size:8.5pt;}
+  td.num{text-align:right;}
+  .client-total td{background:#eff6ff!important;font-weight:700;}
+  .div-total td{background:#fff3cd!important;font-weight:700;border-top:2px solid #f59e0b;}
+  .grand-total td{background:#1f3864!important;color:#fff!important;font-weight:900;font-size:10pt;}
+  .footer{margin-top:16px;font-size:7.5pt;color:#aaa;text-align:center;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+<div class="hdr">
+  <div><div class="title">AIME Field Pro — Monthly Billing Summary</div><div style="font-size:8.5pt;color:#555;margin-top:3px">Period: ${dateFrom} to ${dateTo}</div></div>
+  <div style="font-size:8pt;color:#666;text-align:right">Generated: ${new Date().toLocaleString()}</div>
+</div>
+<div class="summary-grid">
+  <div class="sum-box"><div class="sum-val" style="color:#16a34a">${fmt2(grandTot.grand)}</div><div class="sum-lbl">Grand Total</div></div>
+  <div class="sum-box"><div class="sum-val">${fmt2(grandTot.labor)}</div><div class="sum-lbl">Labor</div></div>
+  <div class="sum-box"><div class="sum-val">${fmt2(grandTot.equip)}</div><div class="sum-lbl">Equipment</div></div>
+  <div class="sum-box"><div class="sum-val">${fmt2(grandTot.mats)}</div><div class="sum-lbl">Materials</div></div>
+</div>
+${divRows.map(div=>`
+  <div class="div-header">${div.division} Division</div>
+  ${Object.values(div.clients).sort((a,b)=>b.grand-a.grand).map(client=>`
+    <div class="client-header">${client.client}</div>
+    <table>
+      <thead><tr><th>Job Number</th><th class="num">Labor</th><th class="num">Equipment</th><th class="num">Materials</th><th class="num">Total</th></tr></thead>
+      <tbody>
+        ${Object.values(client.jobs).sort((a,b)=>b.grand-a.grand).map(j=>`<tr>
+          <td>${j.name}</td><td class="num">${fmt2(j.labor)}</td><td class="num">${fmt2(j.equip)}</td><td class="num">${fmt2(j.mats)}</td><td class="num"><strong>${fmt2(j.grand)}</strong></td>
+        </tr>`).join("")}
+        <tr class="client-total"><td>Client Total — ${client.client}</td><td class="num">${fmt2(client.labor)}</td><td class="num">${fmt2(client.equip)}</td><td class="num">${fmt2(client.mats)}</td><td class="num">${fmt2(client.grand)}</td></tr>
+      </tbody>
+    </table>`).join("")}
+  <table><tbody><tr class="div-total"><td>${div.division} Division Total</td><td class="num">${fmt2(div.labor)}</td><td class="num">${fmt2(div.equip)}</td><td class="num">${fmt2(div.mats)}</td><td class="num">${fmt2(div.grand)}</td></tr></tbody></table>
+`).join("")}
+<table style="margin-top:8px"><tbody>
+  <tr class="grand-total"><td>GRAND TOTAL — ALL DIVISIONS</td><td class="num">${fmt2(grandTot.labor)}</td><td class="num">${fmt2(grandTot.equip)}</td><td class="num">${fmt2(grandTot.mats)}</td><td class="num">${fmt2(grandTot.grand)}</td></tr>
+</tbody></table>
+<div class="footer">AIME Field Pro · Confidential — Internal Use Only</div>
+</body></html>`;
+    openPrint(html);
+  }
+
+  // ── REPORT 4: Labor Cost Breakdown ─────────────────────────
+  function printLaborBreakdown(){
+    // Group by classification
+    const classMap={};
+    filteredReports.forEach(r=>{
+      const proj=projects.find(p=>p.id===r.project_id);
+      const div=proj?.division||"Pipeline";
+      (r.labor||[]).forEach(l=>{
+        const cls=l.classification||"Unknown";
+        const pos=getPositions(div).find(p=>p.name===cls);
+        const rate=pos?pos.rate:0;
+        const reg=parseFloat(l.regHrs)||0;
+        const ot=parseFloat(l.otHrs)||0;
+        const travel=parseFloat(l.travelHrs)||0;
+        const pay=laborAmt(l,div);
+        if(!classMap[cls])classMap[cls]={classification:cls,rate,workers:{},reg:0,ot:0,travel:0,pay:0};
+        if(!classMap[cls].workers[l.name])classMap[cls].workers[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0};
+        classMap[cls].workers[l.name].reg+=reg;classMap[cls].workers[l.name].ot+=ot;classMap[cls].workers[l.name].travel+=travel;classMap[cls].workers[l.name].pay+=pay;
+        classMap[cls].reg+=reg;classMap[cls].ot+=ot;classMap[cls].travel+=travel;classMap[cls].pay+=pay;
+      });
+    });
+    const classRows=Object.values(classMap).sort((a,b)=>b.pay-a.pay);
+    const grandReg=classRows.reduce((s,c)=>s+c.reg,0);
+    const grandOT=classRows.reduce((s,c)=>s+c.ot,0);
+    const grandTravel=classRows.reduce((s,c)=>s+c.travel,0);
+    const grandPay=classRows.reduce((s,c)=>s+c.pay,0);
+
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Labor Cost Breakdown</title>
+<style>
+  @page{size:letter portrait;margin:0.45in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:9pt;color:#000;}
+  .hdr{display:flex;justify-content:space-between;border-bottom:3px solid #1f3864;padding-bottom:10px;margin-bottom:14px;}
+  .title{font-size:15pt;font-weight:900;color:#1f3864;}
+  .summary-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px;}
+  .sum-box{border:1.5px solid #dde3f0;border-radius:8px;padding:10px;text-align:center;}
+  .sum-val{font-size:13pt;font-weight:900;color:#1f3864;}
+  .sum-lbl{font-size:7.5pt;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;}
+  .class-header{background:#1f3864;color:#fff;padding:6px 10px;font-size:9.5pt;font-weight:700;margin:12px 0 0;display:flex;justify-content:space-between;}
+  table{width:100%;border-collapse:collapse;}
+  th{background:#dde3f0;padding:5px 10px;text-align:left;font-size:8pt;font-weight:700;}
+  th.num{text-align:right;}
+  td{padding:4px 10px;border-bottom:1px solid #f0f0f0;font-size:8.5pt;}
+  td.num{text-align:right;}
+  tr:nth-child(even) td{background:#f8f9fb;}
+  .class-total td{background:#fff3cd!important;font-weight:700;border-top:2px solid #f59e0b;}
+  .grand-total td{background:#1f3864!important;color:#fff!important;font-weight:900;font-size:10pt;}
+  .footer{margin-top:16px;font-size:7.5pt;color:#aaa;text-align:center;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+<div class="hdr">
+  <div><div class="title">AIME Field Pro — Labor Cost Breakdown</div><div style="font-size:8.5pt;color:#555;margin-top:3px">Period: ${dateFrom} to ${dateTo}${selDivision!=="all"?" · "+selDivision:""}</div></div>
+  <div style="font-size:8pt;color:#666;text-align:right">Generated: ${new Date().toLocaleString()}</div>
+</div>
+<div class="summary-grid">
+  <div class="sum-box"><div class="sum-val" style="color:#16a34a">${fmt2(grandPay)}</div><div class="sum-lbl">Total Labor Cost</div></div>
+  <div class="sum-box"><div class="sum-val">${grandReg.toFixed(1)}h</div><div class="sum-lbl">Regular Hours</div></div>
+  <div class="sum-box"><div class="sum-val" style="color:#d97706">${grandOT.toFixed(1)}h</div><div class="sum-lbl">OT Hours</div></div>
+  <div class="sum-box"><div class="sum-val">${(grandReg+grandOT+grandTravel).toFixed(1)}h</div><div class="sum-lbl">Total Hours</div></div>
+</div>
+${classRows.map(cls=>`
+  <div class="class-header"><span>${cls.classification}</span><span style="font-size:8.5pt">@ $${cls.rate}/hr · ${(cls.reg+cls.ot+cls.travel).toFixed(1)}h total · ${fmt2(cls.pay)}</span></div>
+  <table>
+    <thead><tr><th>Employee</th><th class="num">Reg Hrs</th><th class="num">OT Hrs</th><th class="num">Travel Hrs</th><th class="num">Total Hrs</th><th class="num">Pay</th></tr></thead>
+    <tbody>
+      ${Object.values(cls.workers).sort((a,b)=>b.pay-a.pay).map(w=>`<tr>
+        <td>${w.name}</td>
+        <td class="num">${w.reg.toFixed(1)}</td>
+        <td class="num">${w.ot.toFixed(1)}</td>
+        <td class="num">${w.travel.toFixed(1)}</td>
+        <td class="num">${(w.reg+w.ot+w.travel).toFixed(1)}</td>
+        <td class="num"><strong>${fmt2(w.pay)}</strong></td>
+      </tr>`).join("")}
+      <tr class="class-total">
+        <td>${cls.classification} Total</td>
+        <td class="num">${cls.reg.toFixed(1)}</td>
+        <td class="num">${cls.ot.toFixed(1)}</td>
+        <td class="num">${cls.travel.toFixed(1)}</td>
+        <td class="num">${(cls.reg+cls.ot+cls.travel).toFixed(1)}</td>
+        <td class="num">${fmt2(cls.pay)}</td>
+      </tr>
+    </tbody>
+  </table>`).join("")}
+<table style="margin-top:10px"><tbody>
+  <tr class="grand-total">
+    <td>GRAND TOTAL</td>
+    <td class="num">${grandReg.toFixed(1)}h</td>
+    <td class="num">${grandOT.toFixed(1)}h</td>
+    <td class="num">${grandTravel.toFixed(1)}h</td>
+    <td class="num">${(grandReg+grandOT+grandTravel).toFixed(1)}h</td>
+    <td class="num">${fmt2(grandPay)}</td>
+  </tr>
+</tbody></table>
+<div class="footer">AIME Field Pro · Confidential — Internal Use Only</div>
+</body></html>`;
+    openPrint(html);
+  }
+
+  function openPrint(html){
+    const win=window.open("","_blank","width=1000,height=750");
+    win.document.write(html);win.document.close();win.focus();
+    setTimeout(()=>win.print(),500);
+  }
+
+  const REPORTS=[
+    {id:"invoice",icon:"🧾",title:"Invoice Summary",desc:"Per-job line-item breakdown by report date — formatted for client billing",color:T.blue,action:printInvoice,needsJob:true},
+    {id:"profitability",icon:"📈",title:"Job Profitability",desc:"Contract value vs billed, margin %, hours used vs contract hours — for all contract jobs",color:T.green,action:printProfitability,needsJob:false},
+    {id:"monthly",icon:"📅",title:"Monthly Billing Summary",desc:"All jobs grouped by division and client — one-page accounting overview",color:T.orange,action:printMonthlyBilling,needsJob:false},
+    {id:"labor",icon:"👷",title:"Labor Cost Breakdown",desc:"Total labor cost by classification and employee for the period",color:T.purple,action:printLaborBreakdown,needsJob:false},
+  ];
+
+  return(
+    <div>
+      {/* Date Range */}
+      <div style={{...cardS,marginBottom:14}}>
+        <div style={{fontSize:13,fontWeight:700,marginBottom:10,color:T.text}}>📅 Date Range</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>From</label><input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>To</label><input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} style={inp}/></div>
+        </div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {presets().map(([l,f,t])=>(
+            <button key={l} onClick={()=>{setDateFrom(f);setDateTo(t);}} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${dateFrom===f&&dateTo===t?T.orange:T.border}`,background:dateFrom===f&&dateTo===t?T.orangeLow:T.surface,color:dateFrom===f&&dateTo===t?T.orange:T.sub,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Division filter */}
+      <div style={{...cardS,marginBottom:14}}>
+        <div style={{fontSize:13,fontWeight:700,marginBottom:10,color:T.text}}>🏗️ Division</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {[["all","All Divisions"],["Pipeline","Pipeline"],["Mechanical","Mechanical"],["Structural","Structural"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setSelDivision(v)} style={{padding:"8px",borderRadius:10,border:`2px solid ${selDivision===v?T.orange:T.border}`,background:selDivision===v?T.orangeLow:T.surface,color:selDivision===v?T.orange:T.sub,fontSize:12,fontWeight:selDivision===v?700:500,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Report cards */}
+      <div style={{fontSize:12,color:T.muted,marginBottom:10,textTransform:"uppercase",letterSpacing:"1px",fontWeight:700}}>Select Report</div>
+      {REPORTS.map(r=>(
+        <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${r.color}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div style={{flex:1,paddingRight:12}}>
+              <div style={{fontSize:16,marginBottom:4}}>{r.icon} <span style={{fontWeight:800,color:T.text}}>{r.title}</span></div>
+              <div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>{r.desc}</div>
+              {r.needsJob&&<div style={{marginTop:10}}>
+                <label style={lbl}>Select Job</label>
+                <select value={selProject} onChange={e=>setSelProject(e.target.value)} style={inpSel}>
+                  <option value="all">— Select a job —</option>
+                  {projects.filter(p=>selDivision==="all"||p.division===selDivision).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>}
+            </div>
+            <button
+              onClick={r.action}
+              disabled={r.needsJob&&selProject==="all"}
+              style={{background:r.needsJob&&selProject==="all"?T.muted:r.color,color:"#fff",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:700,cursor:r.needsJob&&selProject==="all"?"not-allowed":"pointer",fontFamily:"inherit",flexShrink:0,opacity:r.needsJob&&selProject==="all"?0.5:1}}
+            >
+              🖨️ Print
+            </button>
+          </div>
+        </div>
+      ))}
+      <div style={{fontSize:11,color:T.muted,textAlign:"center",marginTop:8}}>All reports open in a new window — use Print → Save as PDF</div>
+    </div>
+  );
+}
+
+
 /* ── TIMECARD REPORT ─────────────────────────────────────────── */
 function TimecardReportScreen({reports,projects,onClose}){
   const [dateFrom,setDateFrom]=useState((()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})());
@@ -3052,7 +3489,7 @@ function PMDashboard({onBack,user}){
   reports.forEach(r=>{if(!projMap[r.project_id])return;const div=r.projects?.division||(projects.find(p=>p.id===r.project_id)?.division);const t=reportTotals(r,div);projMap[r.project_id].labor+=t.labor;projMap[r.project_id].equip+=t.equip;projMap[r.project_id].mats+=t.mats;projMap[r.project_id].grand+=t.grand;projMap[r.project_id].count++;});
   const projRows=Object.values(projMap).filter(p=>p.status==="active").sort((a,b)=>b.grand-a.grand);
 
-  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${pending.length>0?" ("+pending.length+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"history",l:"📋 History"},{id:"users",l:"👤 Users"}];
+  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${pending.length>0?" ("+pending.length+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"history",l:"📋 History"},{id:"financials",l:"💵 Financials"},{id:"users",l:"👤 Users"}];
 
   function CustomReports(){
     const [selDivision,setSelDivision]=useState("all");
@@ -3394,6 +3831,7 @@ function PMDashboard({onBack,user}){
           </div>)}
           {pmTab==="reports"&&<CustomReports/>}
           {pmTab==="history"&&<EmployeeHistory/>}
+          {pmTab==="financials"&&<FinancialsScreen reports={reports} projects={projects} user={user}/>}
           {pmTab==="users"&&(<div style={{textAlign:"center",padding:"40px 20px",color:T.muted}}><div style={{fontSize:40,marginBottom:12}}>👥</div><div style={{fontSize:16,fontWeight:700,color:T.text,marginBottom:6}}>User & Crew Management</div><div style={{fontSize:13,marginBottom:20}}>The Crew Directory now handles both contact info and app permissions in one place.</div><button onClick={onBack} style={{...primBtn,borderRadius:14}}>Go to Crew Directory →</button></div>)}
         </>)}
       </div>
