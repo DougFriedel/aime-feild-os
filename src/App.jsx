@@ -2625,6 +2625,125 @@ function ChangeOrdersTab({project,user,onErr}){
 
   const statusColor={Pending:T.yellow,Approved:T.green,Rejected:T.red};
 
+  function printCO(co){
+    const contractVal=parseFloat(project.contract_value)||0;
+    const approvedTotal=cos.filter(c=>c.status==="Approved").reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Change Order ${co.co_number} — ${project.name}</title>
+<style>
+  @page{size:letter portrait;margin:0.6in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:10pt;color:#000;}
+  .letterhead{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:14px;border-bottom:3px solid #1f3864;}
+  .company{font-size:20pt;font-weight:900;color:#1f3864;}
+  .company-sub{font-size:9pt;color:#555;margin-top:4px;line-height:1.6;}
+  .doc-title{text-align:right;}
+  .doc-title h1{font-size:20pt;font-weight:900;color:#1f3864;margin-bottom:4px;}
+  .doc-title .co-num{font-size:13pt;color:#555;}
+  .status-badge{display:inline-block;padding:4px 14px;border-radius:20px;font-weight:700;font-size:10pt;margin-top:6px;
+    background:${ co.status==="Approved"?"#dcfce7":co.status==="Rejected"?"#fee2e2":"#fef9c3"};
+    color:${ co.status==="Approved"?"#166534":co.status==="Rejected"?"#991b1b":"#713f12"};
+    border:1.5px solid ${ co.status==="Approved"?"#86efac":co.status==="Rejected"?"#fca5a5":"#fde047"};}
+  .project-box{background:#f0f4ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px 16px;margin-bottom:20px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+  .field{margin-bottom:0;}
+  .field-label{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;margin-bottom:2px;}
+  .field-val{font-size:10pt;font-weight:600;color:#111;}
+  .section{margin-bottom:18px;}
+  .section h2{font-size:11pt;font-weight:800;color:#1f3864;border-bottom:1.5px solid #c7d2fe;padding-bottom:4px;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;}
+  .description-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:10pt;line-height:1.7;min-height:60px;}
+  .amount-box{background:#1f3864;color:#fff;border-radius:10px;padding:16px 20px;text-align:center;margin-bottom:18px;}
+  .amount-label{font-size:9pt;text-transform:uppercase;letter-spacing:1px;opacity:0.8;}
+  .amount-val{font-size:26pt;font-weight:900;margin-top:4px;}
+  .contract-table{width:100%;border-collapse:collapse;margin-bottom:18px;}
+  .contract-table td{padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:10pt;}
+  .contract-table td:last-child{text-align:right;font-weight:700;}
+  .contract-table tr.total td{background:#f0f4ff;font-weight:800;border-top:2px solid #1f3864;font-size:11pt;}
+  .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;}
+  .sig-box{border-top:1.5px solid #000;padding-top:8px;}
+  .sig-label{font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:0.5px;}
+  .sig-name{font-size:10pt;font-weight:700;margin-top:4px;}
+  .sig-date{font-size:9pt;color:#555;margin-top:2px;}
+  .notes-box{background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 12px;font-size:9.5pt;line-height:1.6;}
+  .footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+
+<div class="letterhead">
+  <div>
+    <div class="company">AIME</div>
+    <div class="company-sub">Atlantic Industrial Mechanical & Electrical<br>Field Operations Division</div>
+  </div>
+  <div class="doc-title">
+    <h1>Change Order</h1>
+    <div class="co-num">${co.co_number}</div>
+    <div><span class="status-badge">${co.status.toUpperCase()}</span></div>
+  </div>
+</div>
+
+<div class="project-box">
+  <div class="field"><div class="field-label">Project / Job No.</div><div class="field-val">${project.name||"—"}</div></div>
+  <div class="field"><div class="field-label">Client</div><div class="field-val">${project.client||"—"}</div></div>
+  <div class="field"><div class="field-label">Division</div><div class="field-val">${project.division||"—"}</div></div>
+  <div class="field"><div class="field-label">AFE / PO Number</div><div class="field-val">${project.afe||project.work_order||"—"}</div></div>
+  <div class="field"><div class="field-label">Date Submitted</div><div class="field-val">${co.date_submitted||"—"}</div></div>
+  <div class="field"><div class="field-label">Submitted By</div><div class="field-val">${co.submitted_by||"—"}</div></div>
+</div>
+
+<div class="amount-box">
+  <div class="amount-label">Change Order Amount</div>
+  <div class="amount-val">${co.status==="Rejected"?"—":("$"+(parseFloat(co.amount)||0).toLocaleString("en-US",{minimumFractionDigits:2}))}</div>
+</div>
+
+<div class="section">
+  <h2>Description of Change</h2>
+  <div class="description-box">${co.description||"—"}</div>
+</div>
+
+${contractVal>0?`<div class="section">
+  <h2>Contract Value Summary</h2>
+  <table class="contract-table">
+    <tr><td>Original Contract Value</td><td>$${contractVal.toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>
+    <tr><td>Previously Approved Change Orders</td><td>$${(approvedTotal-(co.status==="Approved"?parseFloat(co.amount)||0:0)).toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>
+    <tr><td>This Change Order (${co.co_number})</td><td>${co.status==="Rejected"?"Rejected":"$"+(parseFloat(co.amount)||0).toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>
+    <tr class="total"><td>Revised Contract Value</td><td>$${(contractVal+approvedTotal).toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>
+  </table>
+</div>`:""}
+
+${co.notes?`<div class="section"><h2>Notes</h2><div class="notes-box">${co.notes}</div></div>`:""}
+
+${co.status==="Approved"?`<div class="section">
+  <h2>Approval</h2>
+  <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:12px">
+    <div style="font-size:10pt">Approved by: <strong>${co.approved_by||"—"}</strong></div>
+    <div style="font-size:10pt;margin-top:4px">Approval Date: <strong>${co.approved_date||"—"}</strong></div>
+  </div>
+</div>`:""}
+
+<div class="sig-grid">
+  <div class="sig-box">
+    <div style="height:48px"></div>
+    <div class="sig-label">Authorized by (AIME)</div>
+    <div class="sig-name"></div>
+    <div class="sig-date">Date: ______________</div>
+  </div>
+  <div class="sig-box">
+    <div style="height:48px"></div>
+    <div class="sig-label">Accepted by (Client)</div>
+    <div class="sig-name"></div>
+    <div class="sig-date">Date: ______________</div>
+  </div>
+</div>
+
+<div class="footer">
+  <span>AIME Field Pro · Change Order ${co.co_number} · ${project.name}</span>
+  <span>Generated: ${new Date().toLocaleString()}</span>
+</div>
+</body></html>`;
+    const win=window.open("","_blank","width=900,height=750");
+    win.document.write(html);win.document.close();win.focus();
+    setTimeout(()=>win.print(),400);
+  }
+
   if(showForm||editing) return(
     <div style={{padding:"14px 16px 80px"}}>
       <button onClick={()=>{setShowForm(false);setEditing(null);setF(blank);}} style={{...ghostBtn,marginBottom:14}}>← Back</button>
@@ -2704,10 +2823,13 @@ function ChangeOrdersTab({project,user,onErr}){
           {co.description&&<div style={{fontSize:13,color:T.text,marginBottom:8,lineHeight:1.5}}>{co.description}</div>}
           {co.status==="Approved"&&co.approved_by&&<div style={{fontSize:11,color:T.green}}>✓ Approved by {co.approved_by}{co.approved_date?" on "+co.approved_date:""}</div>}
           {co.notes&&<div style={{fontSize:11,color:T.muted,marginTop:4,fontStyle:"italic"}}>{co.notes}</div>}
-          {canEdit&&<div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-            <button onClick={()=>{setEditing(co.id);setF({...co,amount:co.amount||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12}}>✏️ Edit</button>
-            <button onClick={()=>remove(co.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`}}>🗑 Delete</button>
-          </div>}
+          <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+            <button onClick={()=>printCO(co)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.blue,border:`1px solid ${T.blue}40`}}>🖨️ Print / PDF</button>
+            {canEdit&&<>
+              <button onClick={()=>{setEditing(co.id);setF({...co,amount:co.amount||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12}}>✏️ Edit</button>
+              <button onClick={()=>remove(co.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`}}>🗑 Delete</button>
+            </>}
+          </div>
         </div>
       ))}
     </div>
@@ -2759,6 +2881,124 @@ function RFIsTab({project,user,onErr}){
   }
 
   const statusColor={Open:T.yellow,Answered:T.blue,Closed:T.green,Overdue:T.red};
+
+  function printRFI(rfi){
+    const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
+    const effStatus=isOverdue?"Overdue":rfi.status;
+    const statusBg={Open:"#fef9c3",Answered:"#dbeafe",Closed:"#dcfce7",Overdue:"#fee2e2"};
+    const statusFg={Open:"#713f12",Answered:"#1e40af",Closed:"#166534",Overdue:"#991b1b"};
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>RFI ${rfi.rfi_number} — ${project.name}</title>
+<style>
+  @page{size:letter portrait;margin:0.6in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:10pt;color:#000;}
+  .letterhead{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:14px;border-bottom:3px solid #1f3864;}
+  .company{font-size:20pt;font-weight:900;color:#1f3864;}
+  .company-sub{font-size:9pt;color:#555;margin-top:4px;line-height:1.6;}
+  .doc-title{text-align:right;}
+  .doc-title h1{font-size:20pt;font-weight:900;color:#1f3864;margin-bottom:4px;}
+  .rfi-num{font-size:13pt;color:#555;}
+  .status-badge{display:inline-block;padding:4px 14px;border-radius:20px;font-weight:700;font-size:10pt;margin-top:6px;
+    background:${statusBg[effStatus]||"#f3f4f6"};color:${statusFg[effStatus]||"#374151"};
+    border:1.5px solid #ccc;}
+  .project-box{background:#f0f4ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+  .field-label{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;margin-bottom:2px;}
+  .field-val{font-size:10pt;font-weight:600;color:#111;}
+  .bic-box{background:#fff7ed;border:1.5px solid #fed7aa;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;}
+  .bic-label{font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#9a3412;}
+  .bic-name{font-size:13pt;font-weight:900;color:#c2410c;margin-top:2px;}
+  .bic-email{font-size:9pt;color:#9a3412;margin-top:2px;}
+  .section{margin-bottom:18px;}
+  .section h2{font-size:11pt;font-weight:800;color:#1f3864;border-bottom:1.5px solid #c7d2fe;padding-bottom:4px;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;}
+  .question-box{background:#1f3864;color:#fff;border-radius:8px;padding:14px 16px;font-size:12pt;font-weight:700;margin-bottom:12px;line-height:1.5;}
+  .desc-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:10pt;line-height:1.7;min-height:50px;}
+  .due-box{background:${isOverdue?"#fee2e2":"#f0fdf4"};border:1px solid ${isOverdue?"#fca5a5":"#86efac"};border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:10pt;}
+  .response-box{background:#f0fdf4;border:1.5px solid #86efac;border-radius:8px;padding:14px 16px;font-size:10pt;line-height:1.7;}
+  .response-header{font-size:8pt;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;}
+  .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;}
+  .sig-box{border-top:1.5px solid #000;padding-top:8px;}
+  .sig-label{font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:0.5px;}
+  .sig-date{font-size:9pt;color:#555;margin-top:8px;}
+  .footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+
+<div class="letterhead">
+  <div>
+    <div class="company">AIME</div>
+    <div class="company-sub">Atlantic Industrial Mechanical & Electrical<br>Field Operations Division</div>
+  </div>
+  <div class="doc-title">
+    <h1>Request for Information</h1>
+    <div class="rfi-num">RFI #${rfi.rfi_number}</div>
+    <div><span class="status-badge">${effStatus.toUpperCase()}</span></div>
+  </div>
+</div>
+
+<div class="project-box">
+  <div><div class="field-label">Project / Job No.</div><div class="field-val">${project.name||"—"}</div></div>
+  <div><div class="field-label">Client</div><div class="field-val">${project.client||"—"}</div></div>
+  <div><div class="field-label">Division</div><div class="field-val">${project.division||"—"}</div></div>
+  <div><div class="field-label">AFE / PO</div><div class="field-val">${project.afe||project.work_order||"—"}</div></div>
+  <div><div class="field-label">Date Submitted</div><div class="field-val">${rfi.date_submitted||"—"}</div></div>
+  <div><div class="field-label">Submitted By</div><div class="field-val">${rfi.submitted_by||"—"}</div></div>
+</div>
+
+${rfi.ball_in_court?`<div class="bic-box">
+  <div>
+    <div class="bic-label">🏀 Ball in Court</div>
+    <div class="bic-name">${rfi.ball_in_court}</div>
+    ${rfi.ball_in_court_email?`<div class="bic-email">${rfi.ball_in_court_email}</div>`:""}
+  </div>
+  <div style="font-size:8pt;color:#9a3412;text-align:right">
+    <div>Response Due:</div>
+    <div style="font-size:11pt;font-weight:700;color:${isOverdue?"#dc2626":"#166534"}">${rfi.due_date||"Not specified"}</div>
+    ${isOverdue?"<div style='color:#dc2626;font-weight:700'>⚠️ OVERDUE</div>":""}
+  </div>
+</div>`:`${rfi.due_date?`<div class="due-box">${isOverdue?"⚠️ <strong>OVERDUE</strong> — ":""}Response Due: <strong>${rfi.due_date}</strong></div>`:""}`}
+
+<div class="section">
+  <h2>Question / Issue</h2>
+  <div class="question-box">${rfi.question||"—"}</div>
+  ${rfi.description?`<div class="desc-box">${rfi.description}</div>`:""}
+</div>
+
+${rfi.response?`<div class="section">
+  <h2>Response</h2>
+  <div class="response-box">
+    <div class="response-header">Response from ${rfi.responded_by||"—"} · ${rfi.response_date||""}</div>
+    ${rfi.response}
+  </div>
+</div>`:`<div class="section">
+  <h2>Response</h2>
+  <div class="desc-box" style="color:#9ca3af;font-style:italic">No response received yet.</div>
+</div>`}
+
+<div class="sig-grid">
+  <div class="sig-box">
+    <div style="height:48px"></div>
+    <div class="sig-label">Submitted by (AIME)</div>
+    <div style="font-size:10pt;font-weight:700;margin-top:4px">${rfi.submitted_by||""}</div>
+    <div class="sig-date">Date: ${rfi.date_submitted||"______________"}</div>
+  </div>
+  <div class="sig-box">
+    <div style="height:48px"></div>
+    <div class="sig-label">Response by (Client)</div>
+    <div style="font-size:10pt;font-weight:700;margin-top:4px">${rfi.responded_by||""}</div>
+    <div class="sig-date">Date: ${rfi.response_date||"______________"}</div>
+  </div>
+</div>
+
+<div class="footer">
+  <span>AIME Field Pro · RFI #${rfi.rfi_number} · ${project.name}</span>
+  <span>Generated: ${new Date().toLocaleString()}</span>
+</div>
+</body></html>`;
+    const win=window.open("","_blank","width=900,height=750");
+    win.document.write(html);win.document.close();win.focus();
+    setTimeout(()=>win.print(),400);
+  }
 
   function emailRFI(rfi){
     const subj=`RFI ${rfi.rfi_number} — ${project.name}`;
@@ -2877,11 +3117,12 @@ ${rfi.response}`:"",
               <div style={{fontSize:11,fontWeight:700,color:T.green,marginBottom:4}}>✓ RESPONSE — {rfi.responded_by}{rfi.response_date?" · "+rfi.response_date:""}</div>
               <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{rfi.response}</div>
             </div>}
-            <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-              <button onClick={()=>emailRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.blue,border:`1px solid ${T.blue}40`}}>📧 Email RFI</button>
+            <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+              <button onClick={()=>printRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:"#1f3864",border:"1px solid #1f386440",minWidth:90}}>🖨️ PDF</button>
+              <button onClick={()=>emailRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.blue,border:`1px solid ${T.blue}40`,minWidth:90}}>📧 Email</button>
               {canEdit&&<>
-                <button onClick={()=>{setEditing(rfi.id);setF({...rfi,notes:rfi.notes||"",ball_in_court:rfi.ball_in_court||"",ball_in_court_email:rfi.ball_in_court_email||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12}}>✏️ Edit</button>
-                <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`}}>🗑 Delete</button>
+                <button onClick={()=>{setEditing(rfi.id);setF({...rfi,notes:rfi.notes||"",ball_in_court:rfi.ball_in_court||"",ball_in_court_email:rfi.ball_in_court_email||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,minWidth:60}}>✏️ Edit</button>
+                <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`,minWidth:60}}>🗑</button>
               </>}
             </div>
           </div>
