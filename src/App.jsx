@@ -2406,6 +2406,8 @@ const PTABS=[
   {id:"schedule",icon:"📅",label:"Schedule",perm:"schedule"},
   {id:"photos",icon:"📷",label:"Photos",perm:"photos"},
   {id:"weather",icon:"🌤️",label:"Weather",perm:"weather"},
+  {id:"co",icon:"📋",label:"CO",perm:"subs"},
+  {id:"rfi",icon:"📝",label:"RFI",perm:"subs"},
   {id:"info",icon:"ℹ️",label:"Info",perm:null},
 ];
 
@@ -2544,8 +2546,8 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
         {!loading&&tab==="subs"     &&can(user,"subs")        &&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="safety"   &&can(user,"safety")      &&<SafetyTab projectId={project.id} safety={safety} user={user} onRefresh={()=>load(true)} onErr={setErr}/>}
         {!loading&&tab==="docs"     &&can(user,"docs")        &&<DocsTab projectId={project.id} user={user} onErr={setErr}/>}
-        {!loading&&tab==="co"      &&(user.role==="admin"||user.role==="pm"||user.role==="foreman")&&<ChangeOrdersTab project={project} user={user} onErr={setErr}/>}
-        {!loading&&tab==="rfi"     &&(user.role==="admin"||user.role==="pm"||user.role==="foreman")&&<RFIsTab project={project} user={user} onErr={setErr}/>}
+        {!loading&&tab==="co"      &&<ChangeOrdersTab project={project} user={user} onErr={setErr}/>}
+        {!loading&&tab==="rfi"     &&<RFIsTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="schedule" &&can(user,"schedule")    &&<ScheduleTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="photos"   &&can(user,"photos")      &&<PhotosTab projectId={project.id} photos={photos} onRefresh={()=>load(true)} onErr={setErr}/>}
         {!loading&&tab==="weather"  &&can(user,"weather")     &&<WeatherTab projectId={project.id} project={project} weather={weather} onRefresh={()=>load(true)} onErr={setErr}/>}
