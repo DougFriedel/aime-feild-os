@@ -1,5 +1,35 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
+/* ── ERROR BOUNDARY ─────────────────────────────────────────── */
+class ErrorBoundary extends React.Component {
+  constructor(props){super(props);this.state={error:null};}
+  static getDerivedStateFromError(error){return{error};}
+  componentDidCatch(error,info){console.error("App Error:",error,info);}
+  render(){
+    if(this.state.error){
+      return(
+        <div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif",padding:20}}>
+          <div style={{background:"#18181B",border:"1px solid #EF4444",borderRadius:16,padding:24,maxWidth:480,width:"100%"}}>
+            <div style={{fontSize:24,marginBottom:8}}>⚠️</div>
+            <div style={{fontSize:16,fontWeight:700,color:"#EF4444",marginBottom:8}}>App Error</div>
+            <div style={{fontSize:12,color:"#A1A1AA",marginBottom:16,wordBreak:"break-all",background:"#0C0C0F",padding:12,borderRadius:8,lineHeight:1.6}}>
+              {this.state.error?.message||String(this.state.error)}
+            </div>
+            <div style={{fontSize:11,color:"#71717A",marginBottom:16}}>
+              Screenshot this message and send it to your developer.
+            </div>
+            <button onClick={()=>{this.setState({error:null});window.location.reload();}}
+              style={{background:"#F97316",color:"#000",border:"none",borderRadius:10,padding:"10px 20px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit",width:"100%"}}>
+              🔄 Reload App
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 /* ── OFFLINE / DRAFT UTILITIES ──────────────────────────────── */
 const QUEUE_KEY   = 'aime_pending_queue';
 const DRAFT_PREFIX = 'aime_draft_';
@@ -411,7 +441,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           </div>
           <div style={{display:"flex",gap:8}}>
             {can(user,"view_dashboard")&&<button onClick={onDash} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
-            <button onClick={onTimeCards} style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",color:T.green,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⏱️</button>
+            {(user.role==="admin"||user.role==="pm")&&<button onClick={onTimeCards} style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",color:T.green,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⏱️</button>}
             {can(user,"crew_directory")&&<button onClick={onCrew} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"8px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>👥</button>}
             {can(user,"estimating")&&<button onClick={onEstimating} style={{background:`${T.purple}15`,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"8px 12px",color:T.purple,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
             <button onClick={onLogout} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>Out</button>
@@ -728,7 +758,9 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
 
   async function submit(){
     setSaving(true);
-    const reportData={...rpt,submitted_by:user.name,status:"submitted",project_id:project.id};
+    // Strip fields not in DB schema before saving
+    const{rental_equipment,...rptClean}=rpt;
+    const reportData={...rptClean,submitted_by:user.name,status:"submitted",project_id:project.id,rental_equipment:rental_equipment||[]};
 
     // ── Duplicate check ──
     if(isOnline){
@@ -2477,7 +2509,7 @@ function CrewDirectoryScreen({onBack,user}){
 /* ── PROJECT DETAIL (ORCHESTRATOR) ─────────────────────────── */
 const PTABS=[
   {id:"reports",icon:"📋",label:"Reports",perm:"submit_report"},
-  {id:"time",icon:"⏱️",label:"Time",perm:"time_card"},
+  {id:"time",icon:"⏱️",label:"Time",perm:"approve_report"},
   {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
   {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
   {id:"safety",icon:"⛑️",label:"Safety",perm:"safety"},
@@ -2501,7 +2533,24 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   async function load(silent=false){if(!silent)setLoading(true);try{const[reps,saf,phs,wx]=await Promise.all([API.reports.forProject(project.id),API.safety.forProject(project.id),API.photos.forProject(project.id),API.weather.forProject(project.id)]);setReports(reps||[]);setSafety(saf||[]);setPhotos(phs||[]);setWeather(wx||[]);}catch(e){setErr(e.message);}if(!silent)setLoading(false);}
   useEffect(()=>{load();const firstTab=visibleTabs[0]?.id||"info";setTab(firstTab);},[project.id]);
 
-  async function saveReport(d){try{await API.reports.create({...d,project_id:project.id});await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
+  async async function saveReport(d){
+    try{
+      // Strip rental_equipment if column doesn't exist yet in DB
+      const{rental_equipment,...dbData}=d;
+      let saved=false;
+      try{
+        await API.reports.create({...dbData,rental_equipment,project_id:project.id});
+        saved=true;
+      }catch(colErr){
+        // If rental_equipment column missing, retry without it
+        if(colErr.message&&colErr.message.includes("rental_equipment")){
+          await API.reports.create({...dbData,project_id:project.id});
+          saved=true;
+        } else {throw colErr;}
+      }
+      if(saved){await load(true);setScreen("detail");}
+    }catch(e){setErr(e.message);}
+  }
   async function deleteReport(id){try{await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
   async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));await notify("report_flagged","Report Flagged",pm_notes,{project_id:project.id,report_id:id});await load(true);}catch(e){setErr(e.message);}}
@@ -5886,7 +5935,7 @@ function PublicRFIForm({rfiId}){
   );
 }
 
-export default function App(){
+function AppInner(){
   // Public RFI detection (must be before hooks but stored as constant)
   const [publicRfiId]            = useState(()=>new URLSearchParams(window.location.search).get("rfi"));
 
@@ -6131,5 +6180,13 @@ export default function App(){
         />
       )}
     </div>
+  );
+}
+
+export default function App(){
+  return(
+    <ErrorBoundary>
+      <AppInner/>
+    </ErrorBoundary>
   );
 }
