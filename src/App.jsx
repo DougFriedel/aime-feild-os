@@ -2544,6 +2544,8 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
         {!loading&&tab==="subs"     &&can(user,"subs")        &&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="safety"   &&can(user,"safety")      &&<SafetyTab projectId={project.id} safety={safety} user={user} onRefresh={()=>load(true)} onErr={setErr}/>}
         {!loading&&tab==="docs"     &&can(user,"docs")        &&<DocsTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="co"      &&(user.role==="admin"||user.role==="pm"||user.role==="foreman")&&<ChangeOrdersTab project={project} user={user} onErr={setErr}/>}
+        {!loading&&tab==="rfi"     &&(user.role==="admin"||user.role==="pm"||user.role==="foreman")&&<RFIsTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="schedule" &&can(user,"schedule")    &&<ScheduleTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="photos"   &&can(user,"photos")      &&<PhotosTab projectId={project.id} photos={photos} onRefresh={()=>load(true)} onErr={setErr}/>}
         {!loading&&tab==="weather"  &&can(user,"weather")     &&<WeatherTab projectId={project.id} project={project} weather={weather} onRefresh={()=>load(true)} onErr={setErr}/>}
@@ -2554,6 +2556,269 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
 }
 
 
+
+
+
+/* ── CHANGE ORDERS TAB ───────────────────────────────────────── */
+function ChangeOrdersTab({project,user,onErr}){
+  const canEdit=user.role==="admin"||user.role==="pm";
+  const [cos,setCos]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const blank={co_number:"",description:"",date_submitted:today(),amount:"",status:"Pending",submitted_by:user.name,approved_by:"",approved_date:"",notes:""};
+  const [f,setF]=useState(blank);
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+
+  useEffect(()=>{load();},[project.id]);
+  async function load(){
+    setLoading(true);
+    try{const r=await API.changeOrders.forProject(project.id);setCos(Array.isArray(r)?r:[]);}
+    catch(e){onErr(e.message);}
+    setLoading(false);
+  }
+
+  async function save(){
+    setSaving(true);
+    try{
+      const payload={...f,project_id:project.id,amount:parseFloat(f.amount)||0};
+      if(editing){await API.changeOrders.update(editing,payload);}
+      else{await API.changeOrders.create(payload);}
+      setShowForm(false);setEditing(null);setF(blank);await load();
+    }catch(e){onErr(e.message);}
+    setSaving(false);
+  }
+
+  async function remove(id){
+    if(!window.confirm("Delete this change order?"))return;
+    try{await API.changeOrders.remove(id);await load();}
+    catch(e){onErr(e.message);}
+  }
+
+  // Totals
+  const contractVal=parseFloat(project.contract_value)||0;
+  const approvedCOs=cos.filter(c=>c.status==="Approved").reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+  const pendingCOs=cos.filter(c=>c.status==="Pending").reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+  const revisedContract=contractVal+approvedCOs;
+
+  const statusColor={Pending:T.yellow,Approved:T.green,Rejected:T.red};
+
+  if(showForm||editing) return(
+    <div style={{padding:"14px 16px 80px"}}>
+      <button onClick={()=>{setShowForm(false);setEditing(null);setF(blank);}} style={{...ghostBtn,marginBottom:14}}>← Back</button>
+      <div style={{fontSize:17,fontWeight:800,marginBottom:16,color:T.text}}>{editing?"Edit":"New"} Change Order</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lbl}>CO Number *</label><input value={f.co_number} onChange={e=>set("co_number",e.target.value)} placeholder="CO-001" style={inp}/></div>
+        <div><label style={lbl}>Date</label><input type="date" value={f.date_submitted||""} onChange={e=>set("date_submitted",e.target.value)} style={inp}/></div>
+      </div>
+      <div style={{marginBottom:10}}><label style={lbl}>Description *</label><textarea rows={3} value={f.description} onChange={e=>set("description",e.target.value)} placeholder="Describe the change in scope..." style={{...inp,resize:"vertical"}}/></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lbl}>Amount ($)</label><input type="number" value={f.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00" style={inp}/></div>
+        <div><label style={lbl}>Status</label>
+          <select value={f.status} onChange={e=>set("status",e.target.value)} style={inpSel}>
+            {["Pending","Approved","Rejected"].map(s=><option key={s}>{s}</option>)}
+          </select>
+        </div>
+      </div>
+      {f.status==="Approved"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lbl}>Approved By</label><input value={f.approved_by} onChange={e=>set("approved_by",e.target.value)} placeholder="Name" style={inp}/></div>
+        <div><label style={lbl}>Approval Date</label><input type="date" value={f.approved_date||""} onChange={e=>set("approved_date",e.target.value)} style={inp}/></div>
+      </div>}
+      <div style={{marginBottom:14}}><label style={lbl}>Notes</label><textarea rows={2} value={f.notes} onChange={e=>set("notes",e.target.value)} placeholder="Additional notes..." style={{...inp,resize:"vertical"}}/></div>
+      <button onClick={save} disabled={!f.co_number.trim()||saving} style={{...primBtn,opacity:f.co_number.trim()&&!saving?1:0.5,borderRadius:14}}>{saving?"Saving…":"Save Change Order"}</button>
+    </div>
+  );
+
+  return(
+    <div style={{padding:"14px 16px 80px"}}>
+      {/* Contract summary */}
+      {contractVal>0&&<div style={{...cardS,marginBottom:14,background:T.blueLow,border:`1px solid ${T.blue}40`}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Contract Summary</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+          <div style={{background:T.card,borderRadius:10,padding:"8px 10px"}}>
+            <div style={{fontSize:11,color:T.muted}}>Original Contract</div>
+            <div style={{fontSize:15,fontWeight:800,color:T.text}}>${Number(contractVal).toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+          </div>
+          <div style={{background:T.card,borderRadius:10,padding:"8px 10px"}}>
+            <div style={{fontSize:11,color:T.muted}}>Approved COs</div>
+            <div style={{fontSize:15,fontWeight:800,color:T.green}}>+${Number(approvedCOs).toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+          </div>
+        </div>
+        {pendingCOs>0&&<div style={{background:T.card,borderRadius:10,padding:"8px 10px",marginBottom:8}}>
+          <div style={{fontSize:11,color:T.muted}}>Pending COs</div>
+          <div style={{fontSize:15,fontWeight:800,color:T.yellow}}>+${Number(pendingCOs).toLocaleString("en-US",{minimumFractionDigits:2})} (not yet approved)</div>
+        </div>}
+        <div style={{background:T.card,borderRadius:10,padding:"10px",textAlign:"center",border:`1px solid ${T.blue}40`}}>
+          <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Revised Contract Value</div>
+          <div style={{fontSize:22,fontWeight:900,color:T.blue}}>${Number(revisedContract).toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+        </div>
+      </div>}
+
+      {canEdit&&<button onClick={()=>setShowForm(true)} style={{...primBtn,borderRadius:14,marginBottom:14}}>+ New Change Order</button>}
+
+      {loading&&<Spinner/>}
+      {!loading&&cos.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>
+        <div style={{fontSize:32,marginBottom:8}}>📋</div>
+        <div style={{fontWeight:700,color:T.sub}}>No Change Orders Yet</div>
+        {canEdit&&<div style={{fontSize:12,marginTop:6}}>Tap "+ New Change Order" to add one</div>}
+      </div>}
+
+      {cos.map(co=>(
+        <div key={co.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${statusColor[co.status]||T.muted}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
+                <span style={{fontSize:15,fontWeight:800,color:T.orange}}>{co.co_number}</span>
+                <span style={pill(statusColor[co.status]||T.muted)}>{co.status}</span>
+              </div>
+              <div style={{fontSize:12,color:T.muted}}>{co.date_submitted} · {co.submitted_by}</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:18,fontWeight:900,color:co.status==="Rejected"?T.red:T.green}}>
+                {co.status==="Rejected"?"—":"+"} ${Number(co.amount||0).toLocaleString("en-US",{minimumFractionDigits:2})}
+              </div>
+            </div>
+          </div>
+          {co.description&&<div style={{fontSize:13,color:T.text,marginBottom:8,lineHeight:1.5}}>{co.description}</div>}
+          {co.status==="Approved"&&co.approved_by&&<div style={{fontSize:11,color:T.green}}>✓ Approved by {co.approved_by}{co.approved_date?" on "+co.approved_date:""}</div>}
+          {co.notes&&<div style={{fontSize:11,color:T.muted,marginTop:4,fontStyle:"italic"}}>{co.notes}</div>}
+          {canEdit&&<div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+            <button onClick={()=>{setEditing(co.id);setF({...co,amount:co.amount||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12}}>✏️ Edit</button>
+            <button onClick={()=>remove(co.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`}}>🗑 Delete</button>
+          </div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── RFIs TAB ────────────────────────────────────────────────── */
+function RFIsTab({project,user,onErr}){
+  const canEdit=user.role==="admin"||user.role==="pm";
+  const [rfis,setRfis]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const blank={rfi_number:"",date_submitted:today(),submitted_by:user.name,question:"",description:"",due_date:"",response:"",responded_by:"",response_date:"",status:"Open",notes:""};
+  const [f,setF]=useState(blank);
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+
+  useEffect(()=>{load();},[project.id]);
+  async function load(){
+    setLoading(true);
+    try{const r=await API.rfis.forProject(project.id);setRfis(Array.isArray(r)?r:[]);}
+    catch(e){onErr(e.message);}
+    setLoading(false);
+  }
+
+  async function save(){
+    setSaving(true);
+    try{
+      const payload={...f,project_id:project.id};
+      if(editing){await API.rfis.update(editing,payload);}
+      else{await API.rfis.create(payload);}
+      setShowForm(false);setEditing(null);setF(blank);await load();
+    }catch(e){onErr(e.message);}
+    setSaving(false);
+  }
+
+  async function remove(id){
+    if(!window.confirm("Delete this RFI?"))return;
+    try{await API.rfis.remove(id);await load();}
+    catch(e){onErr(e.message);}
+  }
+
+  const statusColor={Open:T.yellow,Answered:T.blue,Closed:T.green,Overdue:T.red};
+  const open=rfis.filter(r=>r.status==="Open"||r.status==="Overdue").length;
+  const answered=rfis.filter(r=>r.status==="Answered").length;
+
+  if(showForm||editing) return(
+    <div style={{padding:"14px 16px 80px"}}>
+      <button onClick={()=>{setShowForm(false);setEditing(null);setF(blank);}} style={{...ghostBtn,marginBottom:14}}>← Back</button>
+      <div style={{fontSize:17,fontWeight:800,marginBottom:16,color:T.text}}>{editing?"Edit":"New"} RFI</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lbl}>RFI Number *</label><input value={f.rfi_number} onChange={e=>set("rfi_number",e.target.value)} placeholder="RFI-001" style={inp}/></div>
+        <div><label style={lbl}>Date Submitted</label><input type="date" value={f.date_submitted||""} onChange={e=>set("date_submitted",e.target.value)} style={inp}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lbl}>Submitted By</label><input value={f.submitted_by} onChange={e=>set("submitted_by",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Response Due</label><input type="date" value={f.due_date||""} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
+      </div>
+      <div style={{marginBottom:10}}><label style={lbl}>Question / Issue *</label><input value={f.question} onChange={e=>set("question",e.target.value)} placeholder="Brief summary of the question..." style={inp}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Full Description</label><textarea rows={3} value={f.description} onChange={e=>set("description",e.target.value)} placeholder="Detailed description, background, drawings referenced..." style={{...inp,resize:"vertical"}}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Status</label>
+        <select value={f.status} onChange={e=>set("status",e.target.value)} style={inpSel}>
+          {["Open","Answered","Closed","Overdue"].map(s=><option key={s}>{s}</option>)}
+        </select>
+      </div>
+      {(f.status==="Answered"||f.status==="Closed")&&(<>
+        <div style={{marginBottom:10}}><label style={lbl}>Response</label><textarea rows={3} value={f.response} onChange={e=>set("response",e.target.value)} placeholder="Response from client/engineer..." style={{...inp,resize:"vertical"}}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Responded By</label><input value={f.responded_by} onChange={e=>set("responded_by",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Response Date</label><input type="date" value={f.response_date||""} onChange={e=>set("response_date",e.target.value)} style={inp}/></div>
+        </div>
+      </>)}
+      <button onClick={save} disabled={!f.rfi_number.trim()||!f.question.trim()||saving} style={{...primBtn,opacity:f.rfi_number.trim()&&f.question.trim()&&!saving?1:0.5,borderRadius:14}}>{saving?"Saving…":"Save RFI"}</button>
+    </div>
+  );
+
+  return(
+    <div style={{padding:"14px 16px 80px"}}>
+      {/* Status summary */}
+      {rfis.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+        {[[open,"Open / Overdue",T.yellow],[answered,"Answered",T.blue],[rfis.filter(r=>r.status==="Closed").length,"Closed",T.green]].map(([v,l,c])=>(
+          <div key={l} style={{background:T.card,borderRadius:10,padding:"10px",textAlign:"center",border:`1px solid ${c}30`}}>
+            <div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div>
+            <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",marginTop:2}}>{l}</div>
+          </div>
+        ))}
+      </div>}
+
+      {canEdit&&<button onClick={()=>setShowForm(true)} style={{...primBtn,borderRadius:14,marginBottom:14}}>+ New RFI</button>}
+
+      {loading&&<Spinner/>}
+      {!loading&&rfis.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>
+        <div style={{fontSize:32,marginBottom:8}}>📝</div>
+        <div style={{fontWeight:700,color:T.sub}}>No RFIs Yet</div>
+        {canEdit&&<div style={{fontSize:12,marginTop:6}}>Tap "+ New RFI" to log a request for information</div>}
+      </div>}
+
+      {rfis.map(rfi=>{
+        const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
+        const effStatus=isOverdue?"Overdue":rfi.status;
+        const sc=statusColor[effStatus]||T.muted;
+        return(
+          <div key={rfi.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${sc}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+              <div>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
+                  <span style={{fontSize:15,fontWeight:800,color:T.orange}}>{rfi.rfi_number}</span>
+                  <span style={pill(sc)}>{effStatus.toUpperCase()}</span>
+                </div>
+                <div style={{fontSize:12,color:T.muted}}>{rfi.date_submitted} · {rfi.submitted_by}</div>
+                {rfi.due_date&&<div style={{fontSize:11,color:isOverdue?T.red:T.muted,marginTop:2}}>
+                  {isOverdue?"⚠️ Overdue — ":"Due: "}{rfi.due_date}
+                </div>}
+              </div>
+            </div>
+            <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:4}}>{rfi.question}</div>
+            {rfi.description&&<div style={{fontSize:12,color:T.sub,marginBottom:8,lineHeight:1.5}}>{rfi.description}</div>}
+            {rfi.response&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px",marginTop:8}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.green,marginBottom:4}}>✓ RESPONSE — {rfi.responded_by}{rfi.response_date?" · "+rfi.response_date:""}</div>
+              <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{rfi.response}</div>
+            </div>}
+            {canEdit&&<div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+              <button onClick={()=>{setEditing(rfi.id);setF({...rfi});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12}}>✏️ Edit</button>
+              <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`}}>🗑 Delete</button>
+            </div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 
 /* ── FINANCIALS SCREEN ───────────────────────────────────────── */
@@ -4725,6 +4990,92 @@ function TimeCardsScreen({user,projects,onBack}){
 }
 
 /* ── ROOT APP ───────────────────────────────────────────────── */
+// ── SERVICE WORKER REGISTRATION (web/PWA) ───────────────────
+if(typeof navigator!=="undefined"&&"serviceWorker" in navigator){
+  window.addEventListener("load",()=>{
+    navigator.serviceWorker.register("/sw.js")
+      .then(reg=>{
+        console.log("AIME SW registered:",reg.scope);
+        // Listen for sync messages from SW
+        navigator.serviceWorker.addEventListener("message",e=>{
+          if(e.data?.type==="SYNC_QUEUE"){
+            // Trigger queue sync when SW requests it
+            window.dispatchEvent(new Event("online"));
+          }
+        });
+      })
+      .catch(err=>console.log("SW registration failed:",err));
+  });
+}
+
+// ── CAPACITOR DETECTION ──────────────────────────────────────
+const isNative=typeof window!=="undefined"&&window.Capacitor?.isNativePlatform?.();
+
+// ── CAPACITOR PUSH NOTIFICATIONS ────────────────────────────
+async function setupPushNotifications(){
+  if(!isNative)return;
+  try{
+    const{PushNotifications}=await import("@capacitor/push-notifications");
+    const{Network}=await import("@capacitor/network");
+    const{SplashScreen}=await import("@capacitor/splash-screen");
+    const{StatusBar,Style}=await import("@capacitor/status-bar");
+
+    // Hide splash screen
+    await SplashScreen.hide();
+
+    // Set status bar style
+    await StatusBar.setStyle({style:Style.Dark});
+    await StatusBar.setBackgroundColor({color:"#09090B"});
+
+    // Better online/offline detection via Capacitor Network plugin
+    Network.addListener("networkStatusChange",status=>{
+      window.dispatchEvent(new Event(status.connected?"online":"offline"));
+    });
+
+    // Request push notification permission
+    const permStatus=await PushNotifications.checkPermissions();
+    if(permStatus.receive==="prompt"){
+      await PushNotifications.requestPermissions();
+    }
+    if(permStatus.receive!=="granted")return;
+
+    await PushNotifications.register();
+
+    // Get device token — send to your backend/Supabase to store
+    PushNotifications.addListener("registration",token=>{
+      console.log("Push token:",token.value);
+      localStorage.setItem("push_token",token.value);
+      // TODO: Save token to Supabase user_profiles table
+      // API.userProfiles.updateToken(token.value)
+    });
+
+    PushNotifications.addListener("registrationError",err=>{
+      console.error("Push registration error:",err);
+    });
+
+    // Foreground notification received
+    PushNotifications.addListener("pushNotificationReceived",notification=>{
+      console.log("Push received:",notification);
+      // Show in-app toast
+      window.dispatchEvent(new CustomEvent("aime-notification",{detail:notification}));
+    });
+
+    // User tapped notification
+    PushNotifications.addListener("pushNotificationActionPerformed",action=>{
+      console.log("Push action:",action);
+      // Navigate based on notification data
+      const data=action.notification.data;
+      if(data?.screen) window.dispatchEvent(new CustomEvent("aime-navigate",{detail:data}));
+    });
+
+  }catch(e){
+    console.log("Capacitor not available (running in browser):",e.message);
+  }
+}
+
+// Initialize Capacitor features
+if(isNative) setupPushNotifications();
+
 // Global style injection
 if(typeof document!=="undefined"&&!document.getElementById("aime-global-style")){
   const s=document.createElement("style");
@@ -4754,6 +5105,18 @@ export default function App(){
   const [isOnline,setIsOnline]   = useState(navigator.onLine);
   const [pendingCount,setPendingCount] = useState(getQueue().length);
   const [syncMsg,setSyncMsg]     = useState("");
+  const [pushMsg,setPushMsg]     = useState(null);
+
+  // Listen for Capacitor push notifications
+  useEffect(()=>{
+    function handlePush(e){
+      const n=e.detail;
+      setPushMsg({title:n.title||"AIME Field Pro",body:n.body||""});
+      setTimeout(()=>setPushMsg(null),5000);
+    }
+    window.addEventListener("aime-notification",handlePush);
+    return()=>window.removeEventListener("aime-notification",handlePush);
+  },[]);
 
   useEffect(()=>{
     const link=document.createElement("link");
@@ -4866,6 +5229,19 @@ export default function App(){
       {syncMsg&&(
         <div style={{position:"fixed",bottom:80,left:"50%",transform:"translateX(-50%)",zIndex:300,background:syncMsg.startsWith("✅")?T.green:"#1f3864",color:"#fff",borderRadius:20,padding:"10px 20px",fontSize:13,fontWeight:700,boxShadow:"0 4px 20px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>
           {syncMsg}
+        </div>
+      )}
+      {pushMsg&&(
+        <div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:400,background:T.card,border:`1px solid ${T.orange}`,borderRadius:16,padding:"12px 16px",boxShadow:"0 4px 24px rgba(0,0,0,0.5)",maxWidth:340,width:"90%"}}
+          onClick={()=>setPushMsg(null)}>
+          <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+            <span style={{fontSize:20}}>🔔</span>
+            <div>
+              <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:2}}>{pushMsg.title}</div>
+              <div style={{fontSize:12,color:T.sub}}>{pushMsg.body}</div>
+            </div>
+            <button onClick={()=>setPushMsg(null)} style={{background:"none",border:"none",color:T.muted,fontSize:18,cursor:"pointer",padding:0,marginLeft:"auto"}}>×</button>
+          </div>
         </div>
       )}
 
