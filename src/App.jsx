@@ -4822,6 +4822,9 @@ function PMDashboard({onBack,user}){
                 <button onClick={()=>setShowTimecardReport(true)} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"7px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
                   📋 Timecard Report
                 </button>
+                <button onClick={()=>printEmployeeTimecards(cards,exportFrom,exportTo,selectedJobs,projects)} style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"7px 12px",color:T.green,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                  👤 By Employee
+                </button>
                 <button onClick={()=>setShowEmailModal(true)} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"7px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
                   📧 Email Summary
                 </button>
@@ -5839,6 +5842,180 @@ if(typeof document!=="undefined"&&!document.getElementById("aime-global-style"))
   document.head.appendChild(s);
 }
 
+
+
+
+/* ── EMPLOYEE TIMECARD REPORT (PDF) ─────────────────────────── */
+function printEmployeeTimecards(cards, from, to, selectedJobs, projects){
+  // Filter cards by date range
+  const filtered=cards.filter(c=>{
+    if(!c.date||c.date<from||c.date>to) return false;
+    if(selectedJobs&&selectedJobs.length>0&&c.project_id&&!selectedJobs.includes(c.project_id)) return false;
+    return true;
+  });
+
+  // Group by employee
+  const byEmployee={};
+  filtered.forEach(c=>{
+    const name=c.worker_name||"Unknown";
+    if(!byEmployee[name]) byEmployee[name]={name,entries:[],totalReg:0,totalOT:0,totalTravel:0,total:0};
+    const reg=parseFloat(c.reg_hours)||0;
+    const ot=parseFloat(c.ot_hours)||0;
+    const travel=parseFloat(c.travel_hours)||0;
+    const total=c.total_hours?parseFloat(c.total_hours):reg+ot+travel;
+    const proj=projects.find(p=>p.id===c.project_id);
+    byEmployee[name].entries.push({...c,reg,ot,travel,total,projName:proj?.name||"General",projAfe:proj?.afe||""});
+    byEmployee[name].totalReg+=reg;
+    byEmployee[name].totalOT+=ot;
+    byEmployee[name].totalTravel+=travel;
+    byEmployee[name].total+=total;
+  });
+
+  const employees=Object.values(byEmployee).sort((a,b)=>a.name.localeCompare(b.name));
+  const fmtDate=d=>{if(!d)return"";const[y,m,dy]=d.split("-");return`${m}/${dy}/${y}`;};
+  const fmt=n=>Number(n||0).toFixed(1);
+
+  const employeePages=employees.map(emp=>{
+    const rows=emp.entries.sort((a,b)=>a.date?.localeCompare(b.date)).map(e=>`
+      <tr>
+        <td>${fmtDate(e.date)}</td>
+        <td>${e.projName}</td>
+        <td style="text-align:center">${e.projAfe||"—"}</td>
+        <td style="text-align:center;color:#166534;font-weight:600">${fmt(e.reg)}</td>
+        <td style="text-align:center;color:#b45309;font-weight:600">${fmt(e.ot)}</td>
+        <td style="text-align:center;color:#1e40af;font-weight:600">${fmt(e.travel)}</td>
+        <td style="text-align:center;font-weight:800">${fmt(e.total)}</td>
+        ${e.notes?`<td style="color:#6b7280;font-size:8pt">${e.notes.replace("Auto-filled from daily report","Auto")}</td>`:"<td></td>"}
+      </tr>`).join("");
+
+    return `
+    <div class="employee-page">
+      <div class="emp-header">
+        <div class="emp-name">${emp.name}</div>
+        <div class="emp-period">Period: ${fmtDate(from)} — ${fmtDate(to)}</div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>Job / Project</th><th>AFE / PO</th>
+            <th>REG</th><th>OT</th><th>TRAVEL</th><th>TOTAL</th><th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr class="totals-row">
+            <td colspan="3">TOTALS</td>
+            <td>${fmt(emp.totalReg)}</td>
+            <td>${fmt(emp.totalOT)}</td>
+            <td>${fmt(emp.totalTravel)}</td>
+            <td>${fmt(emp.total)}</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="summary-boxes">
+        <div class="sum-box green"><div class="sum-label">Regular</div><div class="sum-val">${fmt(emp.totalReg)} hrs</div></div>
+        <div class="sum-box yellow"><div class="sum-label">Overtime</div><div class="sum-val">${fmt(emp.totalOT)} hrs</div></div>
+        <div class="sum-box blue"><div class="sum-label">Travel</div><div class="sum-val">${fmt(emp.totalTravel)} hrs</div></div>
+        <div class="sum-box dark"><div class="sum-label">TOTAL HOURS</div><div class="sum-val big">${fmt(emp.total)} hrs</div></div>
+      </div>
+      <div class="sig-section">
+        <div class="sig-box"><div class="sig-line"></div><div class="sig-label">Employee Signature</div></div>
+        <div class="sig-box"><div class="sig-line"></div><div class="sig-label">Supervisor Signature</div></div>
+        <div class="sig-box"><div class="sig-line"></div><div class="sig-label">Date Approved</div></div>
+      </div>
+    </div>`;
+  }).join('<div class="page-break"></div>');
+
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Employee Timecards ${fmtDate(from)} to ${fmtDate(to)}</title>
+<style>
+  @page{size:letter portrait;margin:0.5in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:10pt;color:#000;}
+  .page-break{page-break-after:always;}
+  .employee-page{padding-bottom:20px;}
+  /* Header */
+  .letterhead{display:flex;justify-content:space-between;align-items:center;padding-bottom:12px;border-bottom:3px solid #1f3864;margin-bottom:16px;}
+  .company-name{font-size:18pt;font-weight:900;color:#1f3864;}
+  .company-sub{font-size:8pt;color:#555;margin-top:2px;}
+  .doc-title{text-align:right;font-size:14pt;font-weight:800;color:#1f3864;}
+  .doc-sub{font-size:9pt;color:#555;}
+  /* Employee header */
+  .emp-header{background:#1f3864;color:#fff;border-radius:8px;padding:12px 16px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
+  .emp-name{font-size:16pt;font-weight:900;}
+  .emp-period{font-size:9pt;opacity:0.8;}
+  /* Table */
+  table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:9pt;}
+  th{background:#1f3864;color:#fff;padding:7px 8px;text-align:left;font-size:8pt;text-transform:uppercase;letter-spacing:0.5px;}
+  td{padding:6px 8px;border-bottom:1px solid #e5e7eb;}
+  tr:nth-child(even) td{background:#f9fafb;}
+  .totals-row td{background:#f0f4ff;font-weight:800;border-top:2px solid #1f3864;font-size:10pt;text-align:center;}
+  .totals-row td:first-child{text-align:left;}
+  /* Summary boxes */
+  .summary-boxes{display:grid;grid-template-columns:1fr 1fr 1fr 1.5fr;gap:10px;margin-bottom:16px;}
+  .sum-box{border-radius:8px;padding:10px 12px;text-align:center;}
+  .sum-box.green{background:#dcfce7;border:1px solid #86efac;}
+  .sum-box.yellow{background:#fef9c3;border:1px solid #fde047;}
+  .sum-box.blue{background:#dbeafe;border:1px solid #93c5fd;}
+  .sum-box.dark{background:#1f3864;border:1px solid #1f3864;}
+  .sum-label{font-size:7.5pt;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;color:#374151;}
+  .sum-box.dark .sum-label{color:rgba(255,255,255,0.7);}
+  .sum-val{font-size:14pt;font-weight:900;color:#111;margin-top:2px;}
+  .sum-box.dark .sum-val{color:#fff;}
+  .sum-val.big{font-size:18pt;}
+  /* Signature section */
+  .sig-section{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:20px;}
+  .sig-box{text-align:center;}
+  .sig-line{border-bottom:1.5px solid #000;height:40px;margin-bottom:6px;}
+  .sig-label{font-size:8pt;color:#555;text-transform:uppercase;letter-spacing:0.5px;}
+  /* Letterhead per page */
+  .lh{display:flex;justify-content:space-between;align-items:center;padding-bottom:10px;border-bottom:2px solid #1f3864;margin-bottom:14px;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.page-break{page-break-after:always;}}
+</style></head><body>
+  ${employees.length===0
+    ?`<div style="text-align:center;padding:60px;color:#9ca3af"><h2>No time card entries found</h2><p>for the selected period and jobs</p></div>`
+    :employees.map((emp,i)=>`
+    <div class="employee-page">
+      <div class="lh">
+        <div><div class="company-name">AIME</div><div style="font-size:8pt;color:#555">Atlantic Industrial Mechanical & Environmental Inc.</div></div>
+        <div style="text-align:right"><div style="font-size:13pt;font-weight:800;color:#1f3864">EMPLOYEE TIMECARD</div><div style="font-size:8pt;color:#555">${fmtDate(from)} — ${fmtDate(to)}</div></div>
+      </div>
+      <div class="emp-header"><div class="emp-name">${emp.name}</div><div class="emp-period">Period: ${fmtDate(from)} — ${fmtDate(to)}</div></div>
+      <table>
+        <thead><tr><th>Date</th><th>Job / Project</th><th>AFE / PO</th><th style="text-align:center">REG</th><th style="text-align:center">OT</th><th style="text-align:center">TRAVEL</th><th style="text-align:center">TOTAL</th><th>Notes</th></tr></thead>
+        <tbody>${emp.entries.sort((a,b)=>a.date?.localeCompare(b.date)).map(e=>`
+          <tr>
+            <td>${fmtDate(e.date)}</td>
+            <td>${e.projName}</td>
+            <td style="text-align:center">${e.projAfe||"—"}</td>
+            <td style="text-align:center;color:#166534;font-weight:600">${fmt(e.reg)}</td>
+            <td style="text-align:center;color:#b45309;font-weight:600">${fmt(e.ot)}</td>
+            <td style="text-align:center;color:#1e40af;font-weight:600">${fmt(e.travel)}</td>
+            <td style="text-align:center;font-weight:800">${fmt(e.total)}</td>
+            <td style="color:#6b7280;font-size:8pt">${(e.notes||"").replace("Auto-filled from daily report","Auto")}</td>
+          </tr>`).join("")}
+        </tbody>
+        <tfoot><tr class="totals-row"><td colspan="3">TOTALS FOR ${emp.name.toUpperCase()}</td><td>${fmt(emp.totalReg)}</td><td>${fmt(emp.totalOT)}</td><td>${fmt(emp.totalTravel)}</td><td>${fmt(emp.total)}</td><td></td></tr></tfoot>
+      </table>
+      <div class="summary-boxes">
+        <div class="sum-box green"><div class="sum-label">Regular</div><div class="sum-val">${fmt(emp.totalReg)} hrs</div></div>
+        <div class="sum-box yellow"><div class="sum-label">Overtime</div><div class="sum-val">${fmt(emp.totalOT)} hrs</div></div>
+        <div class="sum-box blue"><div class="sum-label">Travel</div><div class="sum-val">${fmt(emp.totalTravel)} hrs</div></div>
+        <div class="sum-box dark"><div class="sum-label">TOTAL HOURS</div><div class="sum-val big">${fmt(emp.total)}</div></div>
+      </div>
+      <div class="sig-section">
+        <div class="sig-box"><div class="sig-line"></div><div class="sig-label">Employee Signature</div></div>
+        <div class="sig-box"><div class="sig-line"></div><div class="sig-label">Supervisor Signature</div></div>
+        <div class="sig-box"><div class="sig-line"></div><div class="sig-label">Date Approved</div></div>
+      </div>
+    </div>${i<employees.length-1?'<div class="page-break"></div>':""}`).join("")}
+</body></html>`;
+
+  const win=window.open("","_blank","width=900,height=750");
+  win.document.write(html);win.document.close();win.focus();
+  setTimeout(()=>win.print(),500);
+}
 
 
 /* ── ESTIMATING SCREEN ───────────────────────────────────────── */
