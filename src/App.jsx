@@ -6119,7 +6119,7 @@ function CostCatalogScreen({user,onBack}){
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <TopBar title="Add Catalog Item" onBack={()=>setShowAdd(false)}/>
       <div style={{padding:"16px 16px 80px"}}>
-        <div style={{marginBottom:12}}><label style={lbl}>Item Name *</label><input value={newItem.name} onChange={e=>setNewItem(x=>({...x,name:e.target.value}))} placeholder="e.g. 4\" Gate Valve 300#" style={inp}/></div>
+        <div style={{marginBottom:12}}><label style={lbl}>Item Name *</label><input value={newItem.name} onChange={e=>setNewItem(x=>({...x,name:e.target.value}))} placeholder="e.g. 4in Gate Valve 300#" style={inp}/></div>
         <div style={{marginBottom:12}}><label style={lbl}>Description</label><input value={newItem.description} onChange={e=>setNewItem(x=>({...x,description:e.target.value}))} placeholder="Optional detail" style={inp}/></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
           <div><label style={lbl}>Category</label>
