@@ -2885,34 +2885,44 @@ function RFIsTab({project,user,onErr}){
 
   function shareRFI(rfi){
     const link=`${appUrl}?rfi=${rfi.id}`;
-    const subject=`RFI #${rfi.rfi_number} — ${project.name} — Response Required`;
-    const body=[
-      `Hi ${rfi.ball_in_court||""},`,
-      ``,
-      `Please review and respond to the following Request for Information:`,
-      ``,
-      `RFI #: ${rfi.rfi_number}`,
-      `Project: ${project.name}`,
-      `Question: ${rfi.question}`,
-      rfi.due_date?`Response Due: ${rfi.due_date}`:"",
-      ``,
-      `Click the link below to view the RFI and submit your response directly:`,
-      ``,
-      link,
-      ``,
-      `(No login or account required — just open the link, fill in your response, and click Submit)`,
-      ``,
-      `Thank you,`,
-      `${rfi.submitted_by||"AIME Field Operations"}`,
-      `Atlantic Industrial Mechanical & Electrical`,
-    ].filter(Boolean).join("%0A");
-    const mailto=`mailto:${rfi.ball_in_court_email||""}?subject=${encodeURIComponent(subject)}&body=${body}`;
+    const subj=`RFI #${rfi.rfi_number} — ${project.name} — Response Required`;
+    const ln="%0D%0A"; // CRLF for email line breaks
+    const sep="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
 
-    // Copy link to clipboard
-    if(navigator.clipboard){
-      navigator.clipboard.writeText(link).catch(()=>{});
-    }
-    // Open email
+    const body=[
+      `Hi ${rfi.ball_in_court||""},`,ln,ln,
+      `Please review and respond to the following Request for Information at your earliest convenience.`,ln,ln,
+      sep,ln,
+      `  📋  REQUEST FOR INFORMATION`,ln,
+      sep,ln,ln,
+      `  RFI Number:    ${rfi.rfi_number}`,ln,
+      `  Project:       ${project.name}`,ln,
+      project.client?`  Client:        ${project.client}${ln}`:"",
+      project.afe?`  AFE / PO:      ${project.afe}${ln}`:"",
+      `  Submitted By:  ${rfi.submitted_by||"AIME Field Operations"}`,ln,
+      `  Date:          ${rfi.date_submitted||""}`,ln,
+      rfi.due_date?`  Response Due:  ${rfi.due_date}${ln}`:"",ln,
+      `  QUESTION / ISSUE:`,ln,
+      `  ${rfi.question}`,ln,
+      rfi.description?`${ln}  DETAILS:${ln}  ${rfi.description}${ln}`:"",ln,
+      sep,ln,ln,
+      `To submit your response, click the link below:`,ln,ln,
+      `  ➤  ${link}`,ln,ln,
+      `(Opens in any web browser — no login or account required)`,ln,
+      `Simply fill in your response and click Submit.`,ln,ln,
+      sep,ln,ln,
+      `Thank you for your prompt attention to this matter.`,ln,ln,
+      `Best regards,`,ln,
+      `${rfi.submitted_by||"Field Operations"}`,ln,
+      `Atlantic Industrial Mechanical & Electrical`,ln,
+      `AIME Field Pro`,ln,
+    ].filter(Boolean).join("");
+
+    const mailto=`mailto:${rfi.ball_in_court_email||""}?subject=${encodeURIComponent(subj)}&body=${body}`;
+
+    // Also copy link to clipboard silently
+    if(navigator.clipboard) navigator.clipboard.writeText(link).catch(()=>{});
+
     window.location.href=mailto;
   }
 
