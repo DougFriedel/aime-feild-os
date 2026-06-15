@@ -2845,6 +2845,8 @@ function RFIsTab({project,user,onErr}){
   const [editing,setEditing]=useState(null);
   const [saving,setSaving]=useState(false);
   const blank={rfi_number:"",date_submitted:today(),submitted_by:user.name,question:"",description:"",due_date:"",response:"",responded_by:"",response_date:"",status:"Open",notes:"",ball_in_court:"",ball_in_court_email:""};
+  const [shareRfi,setShareRfi]=useState(null);
+  const [copied,setCopied]=useState(false);
   const [f,setF]=useState(blank);
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
 
@@ -2884,46 +2886,48 @@ function RFIsTab({project,user,onErr}){
   const appUrl=window.location.origin+window.location.pathname;
 
   function shareRFI(rfi){
+    setShareRfi(rfi);
+    setCopied(false);
+  }
+
+  function copyLink(rfi){
+    const link=`${appUrl}?rfi=${rfi.id}`;
+    navigator.clipboard.writeText(link).then(()=>{
+      setCopied(true);
+      setTimeout(()=>setCopied(false),3000);
+    }).catch(()=>{
+      // Fallback for older browsers
+      const el=document.createElement("textarea");
+      el.value=link;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);
+      setCopied(true);setTimeout(()=>setCopied(false),3000);
+    });
+  }
+
+  function openEmailDraft(rfi){
     const link=`${appUrl}?rfi=${rfi.id}`;
     const subj=`RFI #${rfi.rfi_number} — ${project.name} — Response Required`;
-    const ln="%0D%0A"; // CRLF for email line breaks
-    const sep="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
-
+    const ln="%0D%0A";
+    const sep="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
     const body=[
       `Hi ${rfi.ball_in_court||""},`,ln,ln,
-      `Please review and respond to the following Request for Information at your earliest convenience.`,ln,ln,
+      `Please review and respond to the RFI below.`,ln,ln,
       sep,ln,
-      `  📋  REQUEST FOR INFORMATION`,ln,
+      `  📋  REQUEST FOR INFORMATION — RFI #${rfi.rfi_number}`,ln,
       sep,ln,ln,
-      `  RFI Number:    ${rfi.rfi_number}`,ln,
-      `  Project:       ${project.name}`,ln,
-      project.client?`  Client:        ${project.client}${ln}`:"",
-      project.afe?`  AFE / PO:      ${project.afe}${ln}`:"",
-      `  Submitted By:  ${rfi.submitted_by||"AIME Field Operations"}`,ln,
-      `  Date:          ${rfi.date_submitted||""}`,ln,
-      rfi.due_date?`  Response Due:  ${rfi.due_date}${ln}`:"",ln,
-      `  QUESTION / ISSUE:`,ln,
-      `  ${rfi.question}`,ln,
-      rfi.description?`${ln}  DETAILS:${ln}  ${rfi.description}${ln}`:"",ln,
+      `  Project:    ${project.name}`,ln,
+      rfi.due_date?`  Due By:    ${rfi.due_date}${ln}`:"",ln,
+      `  QUESTION:`,ln,
+      `  ${rfi.question}`,ln,ln,
       sep,ln,ln,
-      `To submit your response, click the link below:`,ln,ln,
-      `  ➤  ${link}`,ln,ln,
-      `(Opens in any web browser — no login or account required)`,ln,
-      `Simply fill in your response and click Submit.`,ln,ln,
+      `To respond, click or copy this link into your browser:`,ln,ln,
+      `  ${link}`,ln,ln,
+      `(No login required — fill in the form and click Submit)`,ln,ln,
       sep,ln,ln,
-      `Thank you for your prompt attention to this matter.`,ln,ln,
-      `Best regards,`,ln,
-      `${rfi.submitted_by||"Field Operations"}`,ln,
+      `Thank you,`,ln,
+      `${rfi.submitted_by||"AIME Field Operations"}`,ln,
       `Atlantic Industrial Mechanical & Electrical`,ln,
-      `AIME Field Pro`,ln,
     ].filter(Boolean).join("");
-
-    const mailto=`mailto:${rfi.ball_in_court_email||""}?subject=${encodeURIComponent(subj)}&body=${body}`;
-
-    // Also copy link to clipboard silently
-    if(navigator.clipboard) navigator.clipboard.writeText(link).catch(()=>{});
-
-    window.location.href=mailto;
+    window.location.href=`mailto:${rfi.ball_in_court_email||""}?subject=${encodeURIComponent(subj)}&body=${body}`;
   }
 
   function printRFI(rfi){
@@ -3188,6 +3192,52 @@ ${rfi.response}`:"",
 
   return(
     <div style={{padding:"14px 16px 80px"}}>
+      {/* Share Modal */}
+      {shareRfi&&(
+        <div onClick={()=>setShareRfi(null)} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",width:"100%",maxWidth:480}}>
+            <div style={{fontSize:17,fontWeight:900,marginBottom:4,color:T.text}}>📤 Share RFI #{shareRfi.rfi_number}</div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:20}}>Send this link to {shareRfi.ball_in_court||"the recipient"} — they open it in any browser, fill in their response, and it saves directly to your app.</div>
+
+            {/* The link */}
+            <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"12px 14px",marginBottom:14,wordBreak:"break-all",fontSize:12,color:T.sub,lineHeight:1.5}}>
+              {`${appUrl}?rfi=${shareRfi.id}`}
+            </div>
+
+            {/* Copy link button — PRIMARY action */}
+            <button onClick={()=>copyLink(shareRfi)} style={{
+              ...primBtn,borderRadius:14,marginBottom:10,
+              background:copied?T.green:T.orange,
+              fontSize:16,fontWeight:800,
+              transition:"background 0.2s"
+            }}>
+              {copied?"✅ Link Copied! Paste it into your email":"📋 Copy Link to Clipboard"}
+            </button>
+
+            {copied&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:13,color:T.green,textAlign:"center",fontWeight:600}}>
+              ✓ Link copied! Now open your email app, paste it into the message body, and send.
+            </div>}
+
+            {/* Divider */}
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+              <div style={{flex:1,height:1,background:T.border}}/>
+              <span style={{fontSize:11,color:T.muted}}>OR</span>
+              <div style={{flex:1,height:1,background:T.border}}/>
+            </div>
+
+            {/* Open email draft */}
+            <button onClick={()=>openEmailDraft(shareRfi)} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10,fontSize:14}}>
+              📧 Open Email Draft {shareRfi.ball_in_court_email?`(to ${shareRfi.ball_in_court_email})`:""}
+            </button>
+            <div style={{fontSize:11,color:T.muted,textAlign:"center",marginBottom:14}}>
+              Note: Email drafts use plain text — the link won't be clickable. Use Copy Link above for best results.
+            </div>
+
+            <button onClick={()=>setShareRfi(null)} style={{...ghostBtn,width:"100%",textAlign:"center"}}>Done</button>
+          </div>
+        </div>
+      )}
+
       {/* Status summary */}
       {rfis.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
         {[[open,"Open / Overdue",T.yellow],[answered,"Answered",T.blue],[rfis.filter(r=>r.status==="Closed").length,"Closed",T.green]].map(([v,l,c])=>(
