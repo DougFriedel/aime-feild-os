@@ -6269,19 +6269,502 @@ function CostCatalogScreen({user,onBack}){
   );
 }
 
-/* ── ESTIMATES SCREEN (placeholder for next build) ───────────── */
+/* ── ESTIMATES SCREEN ────────────────────────────────────────── */
 function EstimatesScreen({user,onBack}){
+  const [estimates,setEstimates]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [view,setView]=useState("list"); // list | build | detail
+  const [active,setActive]=useState(null);
+  const [err,setErr]=useState("");
+
+  useEffect(()=>{load();},[]);
+  async function load(){
+    setLoading(true);
+    try{const r=await API.estimates.list();setEstimates(Array.isArray(r)?r:[]);}
+    catch(e){setErr(e.message);}
+    setLoading(false);
+  }
+
+  async function createEstimate(data){
+    try{
+      const r=await API.estimates.create({...data,created_by:user.name});
+      const est=Array.isArray(r)?r[0]:r;
+      setActive(est);setView("build");await load();
+    }catch(e){setErr(e.message);}
+  }
+
+  async function removeEstimate(id){
+    if(!window.confirm("Delete this estimate?"))return;
+    try{await API.estimates.remove(id);await load();}
+    catch(e){setErr(e.message);}
+  }
+
+  const statusColor={Draft:T.muted,Submitted:T.blue,Won:T.green,Lost:T.red};
+  const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
+
+  if(view==="build"&&active) return <EstimateBuilder estimate={active} user={user} onBack={()=>{setView("list");load();}} onSaved={load}/>;
+
+  // New estimate form
+  const [showNew,setShowNew]=useState(false);
+  const [nf,setNf]=useState({project_name:"",client:"",division:"Mechanical",description:"",overhead_pct:10,profit_pct:15,bond_pct:0});
+
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <TopBar title="📋 Estimates" onBack={onBack}/>
-      <div style={{padding:"20px 16px",textAlign:"center"}}>
-        <div style={{fontSize:48,marginBottom:12}}>📋</div>
-        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:8}}>Estimates Coming Next</div>
-        <div style={{fontSize:13,color:T.muted}}>Set your item prices in the Cost Catalog first, then we'll build the estimate builder.</div>
+      <div style={{padding:"14px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+
+        {showNew&&(
+          <div style={{...cardS,marginBottom:16,border:`1px solid ${T.blue}40`}}>
+            <div style={{fontSize:15,fontWeight:800,marginBottom:14}}>New Estimate</div>
+            <div style={{marginBottom:10}}><label style={lbl}>Project / Job Name *</label><input value={nf.project_name} onChange={e=>setNf(x=>({...x,project_name:e.target.value}))} placeholder="e.g. Pump Station 7 Replacement" style={inp}/></div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <div><label style={lbl}>Client</label><input value={nf.client} onChange={e=>setNf(x=>({...x,client:e.target.value}))} placeholder="Client name" style={inp}/></div>
+              <div><label style={lbl}>Division</label>
+                <select value={nf.division} onChange={e=>setNf(x=>({...x,division:e.target.value}))} style={inpSel}>
+                  {["Mechanical","Pipeline","Structural"].map(d=><option key={d}>{d}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{marginBottom:10}}><label style={lbl}>Scope Description</label><textarea rows={3} value={nf.description} onChange={e=>setNf(x=>({...x,description:e.target.value}))} placeholder="Brief description of work scope..." style={{...inp,resize:"vertical"}}/></div>
+            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Default Markup</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+              <div><label style={lbl}>Overhead %</label><input type="number" value={nf.overhead_pct} onChange={e=>setNf(x=>({...x,overhead_pct:e.target.value}))} style={inp}/></div>
+              <div><label style={lbl}>Profit %</label><input type="number" value={nf.profit_pct} onChange={e=>setNf(x=>({...x,profit_pct:e.target.value}))} style={inp}/></div>
+              <div><label style={lbl}>Bond %</label><input type="number" value={nf.bond_pct} onChange={e=>setNf(x=>({...x,bond_pct:e.target.value}))} style={inp}/></div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>createEstimate(nf)} disabled={!nf.project_name.trim()} style={{...primBtn,flex:2,borderRadius:12,opacity:nf.project_name.trim()?1:0.5}}>Create Estimate</button>
+              <button onClick={()=>setShowNew(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {!showNew&&<button onClick={()=>setShowNew(true)} style={{...primBtn,borderRadius:14,marginBottom:14}}>+ New Estimate</button>}
+
+        {loading&&<Spinner/>}
+        {!loading&&estimates.length===0&&!showNew&&(
+          <div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>
+            <div style={{fontSize:32,marginBottom:8}}>📋</div>
+            <div style={{fontWeight:700,color:T.sub}}>No estimates yet</div>
+            <div style={{fontSize:12,marginTop:4}}>Tap "+ New Estimate" to start your first bid</div>
+          </div>
+        )}
+
+        {estimates.map(est=>(
+          <div key={est.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${statusColor[est.status]||T.muted}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+              <div>
+                <div style={{fontSize:15,fontWeight:800,color:T.orange}}>{est.project_name}</div>
+                <div style={{fontSize:12,color:T.muted}}>{est.client&&est.client+" · "}{est.division} · {est.created_by}</div>
+                {est.description&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{est.description.substring(0,60)}{est.description.length>60?"…":""}</div>}
+              </div>
+              <span style={{...pill(statusColor[est.status]||T.muted),marginLeft:8}}>{est.status}</span>
+            </div>
+            <div style={{display:"flex",gap:6,marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`}}>
+              <button onClick={()=>{setActive(est);setView("build");}} style={{...primBtn,flex:2,fontSize:13,borderRadius:10}}>✏️ Open Estimate</button>
+              <button onClick={()=>removeEstimate(est.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13,color:T.red,border:`1px solid ${T.red}40`}}>🗑</button>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
+
+/* ── ESTIMATE BUILDER ────────────────────────────────────────── */
+function EstimateBuilder({estimate,user,onBack,onSaved}){
+  const SECTIONS=["Labor","Equipment","Materials","Subcontractor","Rental Equipment","Other"];
+  const [items,setItems]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [markup,setMarkup]=useState({labor:parseFloat(estimate.overhead_pct||10)+parseFloat(estimate.profit_pct||15),materials:parseFloat(estimate.profit_pct||15),equipment:parseFloat(estimate.profit_pct||15),subcontractor:10,other:parseFloat(estimate.profit_pct||15)});
+  const [section,setSection]=useState("Labor");
+  const [showCatalog,setShowCatalog]=useState(false);
+  const [catalogSearch,setCatalogSearch]=useState("");
+  const [catalogItems,setCatalogItems]=useState([]);
+  const [catalogLoading,setCatalogLoading]=useState(false);
+  const [err,setErr]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [status,setStatus]=useState(estimate.status||"Draft");
+
+  // Labor form
+  const positions=getPositions(estimate.division);
+  const [laborRow,setLaborRow]=useState({classification:positions[0]?.name||"",hours:0,rate:positions[0]?.rate||0,notes:""});
+
+  useEffect(()=>{loadItems();},[]);
+  async function loadItems(){
+    setLoading(true);
+    try{const r=await API.estimates.items(estimate.id);setItems(Array.isArray(r)?r:[]);}
+    catch(e){setErr(e.message);}
+    setLoading(false);
+  }
+
+  async function addLaborRow(){
+    if(!laborRow.hours||laborRow.hours<=0){setErr("Enter hours > 0");return;}
+    setSaving(true);
+    try{
+      const total_cost=(parseFloat(laborRow.hours)||0)*(parseFloat(laborRow.rate)||0);
+      await API.estimates.addItem({estimate_id:estimate.id,category:"Labor",name:laborRow.classification,unit:"hrs",qty:parseFloat(laborRow.hours)||0,unit_cost:parseFloat(laborRow.rate)||0,labor_rate:parseFloat(laborRow.rate)||0,total_cost,notes:laborRow.notes});
+      await loadItems();
+      setLaborRow({classification:positions[0]?.name||"",hours:0,rate:positions[0]?.rate||0,notes:""});
+    }catch(e){setErr(e.message);}
+    setSaving(false);
+  }
+
+  async function searchCatalog(q){
+    setCatalogLoading(true);
+    try{
+      const cat=section==="Labor"?null:section==="Rental Equipment"?"Rental Equipment":section==="Other"?null:section;
+      const r=await API.catalog.list(estimate.division,cat,q||null);
+      setCatalogItems(Array.isArray(r)?r:[]);
+    }catch(e){setErr(e.message);}
+    setCatalogLoading(false);
+  }
+
+  async function addFromCatalog(item,qty){
+    setSaving(true);
+    try{
+      const total_cost=(parseFloat(qty)||1)*(parseFloat(item.unit_cost)||0);
+      const total_labor=(parseFloat(qty)||1)*(parseFloat(item.unit_labor_hrs)||0);
+      await API.estimates.addItem({estimate_id:estimate.id,catalog_id:item.id,category:section,name:item.name,description:item.description,unit:item.unit,qty:parseFloat(qty)||1,unit_cost:parseFloat(item.unit_cost)||0,unit_labor_hrs:parseFloat(item.unit_labor_hrs)||0,total_cost,total_labor,notes:""});
+      await loadItems();setShowCatalog(false);setCatalogSearch("");
+    }catch(e){setErr(e.message);}
+    setSaving(false);
+  }
+
+  async function removeItem(id){
+    try{await API.estimates.removeItem(id);setItems(items.filter(i=>i.id!==id));}
+    catch(e){setErr(e.message);}
+  }
+
+  async function saveStatus(s){
+    try{await API.estimates.update(estimate.id,{status:s});setStatus(s);onSaved&&onSaved();}
+    catch(e){setErr(e.message);}
+  }
+
+  // Totals by category with markup
+  const byCategory={};
+  items.forEach(i=>{
+    if(!byCategory[i.category])byCategory[i.category]={cost:0,items:[]};
+    byCategory[i.category].cost+=(parseFloat(i.total_cost)||0);
+    byCategory[i.category].items.push(i);
+  });
+
+  const getMarkupKey=cat=>{
+    if(cat==="Labor")return "labor";
+    if(cat==="Materials")return "materials";
+    if(cat==="Equipment"||cat==="Rental Equipment")return "equipment";
+    if(cat==="Subcontractor")return "subcontractor";
+    return "other";
+  };
+
+  const totalCost=Object.entries(byCategory).reduce((s,[cat,v])=>s+v.cost,0);
+  const totalWithMarkup=Object.entries(byCategory).reduce((s,[cat,v])=>{
+    const pct=parseFloat(markup[getMarkupKey(cat)])||0;
+    return s+v.cost*(1+pct/100);
+  },0);
+
+  const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
+  const fmtN=n=>Number(n||0).toFixed(2);
+
+  // Catalog modal
+  if(showCatalog) return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title={`Add ${section} from Catalog`} onBack={()=>{setShowCatalog(false);setCatalogSearch("");}}/>
+      <div style={{padding:"12px 16px 80px"}}>
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          <input value={catalogSearch} onChange={e=>{setCatalogSearch(e.target.value);if(e.target.value.length>1||e.target.value.length===0)searchCatalog(e.target.value);}}
+            placeholder="Search catalog..." style={{...inp,flex:1}} autoFocus/>
+          <button onClick={()=>searchCatalog(catalogSearch)} style={{...primBtn,padding:"10px 16px",borderRadius:10}}>Search</button>
+        </div>
+        {catalogLoading&&<Spinner/>}
+        {!catalogLoading&&catalogItems.length===0&&<div style={{textAlign:"center",padding:30,color:T.muted}}>
+          {catalogSearch.length<2?"Type to search the catalog":"No items found — try a different search"}
+        </div>}
+        {catalogItems.map(item=>{
+          const [qty,setQty]=useState(1);
+          return(
+            <div key={item.id} style={{...cardS,marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.text}}>{item.name}</div>
+                {item.description&&<div style={{fontSize:11,color:T.muted}}>{item.description}</div>}
+                <div style={{fontSize:11,color:T.green,marginTop:2}}>{item.unit_cost>0?`$${fmtN(item.unit_cost)}/${item.unit}`:"No price set"}{item.unit_labor_hrs>0?` · ${item.unit_labor_hrs}hr labor`:""}</div>
+              </div>
+              <input type="number" value={qty} onChange={e=>setQty(e.target.value)} min={0} style={{...inp,width:60,textAlign:"center",padding:"8px 6px"}}/>
+              <button onClick={()=>addFromCatalog(item,qty)} style={{...primBtn,padding:"8px 14px",fontSize:13,borderRadius:10}}>Add</button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title={estimate.project_name} onBack={onBack}/>
+      <div style={{padding:"12px 16px 100px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+
+        {/* Status + header */}
+        <div style={{...cardS,marginBottom:14,background:`${T.blue}10`,border:`1px solid ${T.blue}30`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:800,color:T.text}}>{estimate.project_name}</div>
+              <div style={{fontSize:12,color:T.muted}}>{estimate.client&&estimate.client+" · "}{estimate.division}</div>
+            </div>
+            <select value={status} onChange={e=>saveStatus(e.target.value)} style={{...inpSel,width:"auto",fontSize:12,padding:"6px 10px"}}>
+              {["Draft","Submitted","Won","Lost"].map(s=><option key={s}>{s}</option>)}
+            </select>
+          </div>
+          {estimate.description&&<div style={{fontSize:12,color:T.sub,lineHeight:1.5}}>{estimate.description}</div>}
+        </div>
+
+        {/* Running total banner */}
+        <div style={{background:"#1f3864",borderRadius:14,padding:"14px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,0.6)",textTransform:"uppercase",letterSpacing:"1px"}}>Total Cost</div>
+            <div style={{fontSize:15,fontWeight:700,color:"rgba(255,255,255,0.8)"}}>{fmt(totalCost)}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:11,color:"rgba(255,255,255,0.6)",textTransform:"uppercase",letterSpacing:"1px"}}>Bid Price</div>
+            <div style={{fontSize:24,fontWeight:900,color:"#22C55E"}}>{fmt(totalWithMarkup)}</div>
+          </div>
+        </div>
+
+        {/* Section tabs */}
+        <div style={{display:"flex",gap:5,overflowX:"auto",paddingBottom:6,marginBottom:12,WebkitOverflowScrolling:"touch"}}>
+          {SECTIONS.map(s=>(
+            <button key={s} onClick={()=>setSection(s)}
+              style={{flexShrink:0,padding:"6px 12px",borderRadius:8,border:`1px solid ${section===s?T.orange:T.border}`,background:section===s?T.orangeLow:T.card,color:section===s?T.orange:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              {s}{byCategory[s]?` (${byCategory[s].items.length})`:""}
+            </button>
+          ))}
+        </div>
+
+        {/* Markup for current section */}
+        <div style={{...cardS,marginBottom:12,background:T.surface}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:12,fontWeight:700,color:T.muted}}>
+              {section} Markup %
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="number" value={markup[getMarkupKey(section)]}
+                onChange={e=>setMarkup(x=>({...x,[getMarkupKey(section)]:e.target.value}))}
+                style={{...inp,width:70,textAlign:"center",padding:"6px 8px"}}/>
+              <span style={{fontSize:12,color:T.muted}}>%</span>
+            </div>
+          </div>
+          {byCategory[section]&&<div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",fontSize:12}}>
+            <span style={{color:T.muted}}>Cost: {fmt(byCategory[section]?.cost||0)}</span>
+            <span style={{color:T.green,fontWeight:700}}>Billed: {fmt((byCategory[section]?.cost||0)*(1+(parseFloat(markup[getMarkupKey(section)])||0)/100))}</span>
+          </div>}
+        </div>
+
+        {/* Labor input */}
+        {section==="Labor"&&(
+          <div style={{...cardS,marginBottom:12,border:`1px solid ${T.orange}30`}}>
+            <div style={{fontSize:12,fontWeight:700,color:T.orange,marginBottom:10}}>Add Labor Row</div>
+            <div style={{marginBottom:8}}>
+              <label style={lbl}>Classification</label>
+              <select value={laborRow.classification}
+                onChange={e=>{const pos=positions.find(p=>p.name===e.target.value);setLaborRow(x=>({...x,classification:e.target.value,rate:pos?.rate||0}));}}
+                style={inpSel}>
+                {positions.map(p=><option key={p.name}>{p.name}</option>)}
+              </select>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <div><label style={lbl}>Hours</label><input type="number" value={laborRow.hours} onChange={e=>setLaborRow(x=>({...x,hours:e.target.value}))} min={0} style={inp}/></div>
+              <div><label style={lbl}>Rate ($/hr)</label><input type="number" value={laborRow.rate} onChange={e=>setLaborRow(x=>({...x,rate:e.target.value}))} style={inp}/></div>
+            </div>
+            <div style={{marginBottom:8}}><label style={lbl}>Notes</label><input value={laborRow.notes} onChange={e=>setLaborRow(x=>({...x,notes:e.target.value}))} placeholder="Optional" style={inp}/></div>
+            {laborRow.hours>0&&<div style={{fontSize:12,color:T.green,marginBottom:8,fontWeight:700}}>
+              Subtotal: {fmt((parseFloat(laborRow.hours)||0)*(parseFloat(laborRow.rate)||0))}
+            </div>}
+            <button onClick={addLaborRow} disabled={saving||!laborRow.hours||laborRow.hours<=0}
+              style={{...primBtn,borderRadius:10,opacity:saving||!laborRow.hours||laborRow.hours<=0?0.5:1}}>
+              {saving?"Adding…":"+ Add Labor"}
+            </button>
+          </div>
+        )}
+
+        {/* Catalog add button for non-labor sections */}
+        {section!=="Labor"&&(
+          <button onClick={()=>{setShowCatalog(true);searchCatalog("");}}
+            style={{...primBtn,borderRadius:12,marginBottom:12,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`}}>
+            + Add from Catalog
+          </button>
+        )}
+
+        {/* Items in current section */}
+        {loading&&<Spinner/>}
+        {!loading&&(byCategory[section]?.items||[]).length===0&&(
+          <div style={{textAlign:"center",padding:"20px 0",color:T.muted,fontSize:13}}>
+            No {section.toLowerCase()} items yet
+          </div>
+        )}
+        {(byCategory[section]?.items||[]).map(item=>(
+          <div key={item.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div style={{flex:1,paddingRight:10}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text}}>{item.name}</div>
+              {item.description&&<div style={{fontSize:11,color:T.muted}}>{item.description}</div>}
+              <div style={{fontSize:11,color:T.sub,marginTop:2}}>
+                {item.qty} {item.unit} × ${fmtN(item.unit_cost)}/{item.unit}
+                {item.notes&&<span style={{color:T.muted}}> · {item.notes}</span>}
+              </div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div style={{fontSize:15,fontWeight:800,color:T.green,marginBottom:4}}>{fmt(item.total_cost)}</div>
+              <button onClick={()=>removeItem(item.id)}
+                style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:13}}>🗑</button>
+            </div>
+          </div>
+        ))}
+
+        {/* Summary + Proposal button */}
+        {items.length>0&&(
+          <div style={{marginTop:16}}>
+            <div style={{...cardS,marginBottom:10,background:"#1f3864"}}>
+              <div style={{fontSize:12,fontWeight:700,color:"rgba(255,255,255,0.6)",textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Cost Summary</div>
+              {Object.entries(byCategory).map(([cat,v])=>{
+                const pct=parseFloat(markup[getMarkupKey(cat)])||0;
+                const billed=v.cost*(1+pct/100);
+                return(
+                  <div key={cat} style={{display:"flex",justifyContent:"space-between",marginBottom:6,fontSize:13}}>
+                    <span style={{color:"rgba(255,255,255,0.8)"}}>{cat}</span>
+                    <div style={{textAlign:"right"}}>
+                      <span style={{color:"rgba(255,255,255,0.5)",fontSize:11,marginRight:8}}>cost {fmt(v.cost)}</span>
+                      <span style={{color:"#22C55E",fontWeight:700}}>{fmt(billed)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{borderTop:"1px solid rgba(255,255,255,0.2)",marginTop:10,paddingTop:10,display:"flex",justifyContent:"space-between"}}>
+                <span style={{fontSize:15,fontWeight:800,color:"#fff"}}>Total Bid</span>
+                <span style={{fontSize:22,fontWeight:900,color:"#22C55E"}}>{fmt(totalWithMarkup)}</span>
+              </div>
+            </div>
+            <button onClick={()=>printProposal(estimate,items,byCategory,markup,totalWithMarkup,getMarkupKey)}
+              style={{...primBtn,borderRadius:14,background:"#1f3864",fontSize:15}}>
+              🖨️ Print Proposal PDF
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── PROPOSAL PDF ────────────────────────────────────────────── */
+function printProposal(estimate,items,byCategory,markup,totalBid,getMarkupKey){
+  const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
+  const today2=new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Proposal — ${estimate.project_name}</title>
+<style>
+  @page{size:letter portrait;margin:1in 0.75in;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+  body{font-size:11pt;color:#111;line-height:1.6;}
+  .letterhead{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:16px;border-bottom:4px solid #1f3864;margin-bottom:28px;}
+  .co-name{font-size:22pt;font-weight:900;color:#1f3864;letter-spacing:-0.5px;}
+  .co-sub{font-size:9pt;color:#555;margin-top:4px;}
+  .doc-label{text-align:right;}
+  .doc-label h1{font-size:18pt;font-weight:900;color:#1f3864;}
+  .doc-label p{font-size:10pt;color:#555;margin-top:4px;}
+  .to-from{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-bottom:28px;}
+  .to-from .label{font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#777;margin-bottom:4px;}
+  .to-from .val{font-size:12pt;font-weight:700;color:#111;}
+  .to-from .sub{font-size:10pt;color:#555;margin-top:2px;}
+  .scope{background:#f8f9ff;border-left:4px solid #1f3864;padding:16px 20px;margin-bottom:28px;border-radius:0 6px 6px 0;}
+  .scope h2{font-size:11pt;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#1f3864;margin-bottom:8px;}
+  .scope p{font-size:11pt;color:#333;line-height:1.7;}
+  .price-box{background:#1f3864;border-radius:12px;padding:28px 32px;text-align:center;margin:28px 0;}
+  .price-label{font-size:11pt;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:2px;margin-bottom:8px;}
+  .price-val{font-size:32pt;font-weight:900;color:#22C55E;letter-spacing:-1px;}
+  .price-note{font-size:9pt;color:rgba(255,255,255,0.5);margin-top:8px;}
+  .terms{margin-bottom:28px;}
+  .terms h2{font-size:10pt;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#1f3864;margin-bottom:10px;border-bottom:1px solid #e5e7eb;padding-bottom:6px;}
+  .terms ul{padding-left:18px;}
+  .terms li{font-size:10pt;color:#444;margin-bottom:4px;}
+  .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:40px;}
+  .sig-box .line{border-bottom:1.5px solid #000;height:48px;margin-bottom:6px;}
+  .sig-box .sig-label{font-size:8pt;color:#777;text-transform:uppercase;letter-spacing:0.5px;}
+  .sig-box .sig-name{font-size:10pt;font-weight:700;color:#111;margin-top:4px;}
+  .footer{margin-top:32px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:8pt;color:#aaa;display:flex;justify-content:space-between;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+
+<div class="letterhead">
+  <div>
+    <div class="co-name">AIME</div>
+    <div class="co-sub">Atlantic Industrial Mechanical & Environmental Inc.<br>Field Operations Division · ${estimate.division}</div>
+  </div>
+  <div class="doc-label">
+    <h1>Proposal</h1>
+    <p>Date: ${today2}</p>
+  </div>
+</div>
+
+<div class="to-from">
+  <div>
+    <div class="label">Submitted To</div>
+    <div class="val">${estimate.client||"___________________"}</div>
+  </div>
+  <div>
+    <div class="label">Project</div>
+    <div class="val">${estimate.project_name}</div>
+    <div class="sub">${estimate.division} Division</div>
+  </div>
+</div>
+
+<div class="scope">
+  <h2>Scope of Work</h2>
+  <p>${estimate.description||"As discussed and agreed upon between the parties."}</p>
+</div>
+
+<div class="price-box">
+  <div class="price-label">Total Lump Sum Bid Price</div>
+  <div class="price-val">${fmt(totalBid)}</div>
+  <div class="price-note">All labor, equipment, materials and supervision included</div>
+</div>
+
+<div class="terms">
+  <h2>Terms & Conditions</h2>
+  <ul>
+    <li>This proposal is valid for 30 days from the date above.</li>
+    <li>Work to be performed during normal business hours unless otherwise agreed.</li>
+    <li>Payment terms: Net 30 days from invoice date.</li>
+    <li>Any changes to the scope of work will require a written Change Order.</li>
+    <li>AIME carries all required insurance and certifications for this work.</li>
+  </ul>
+</div>
+
+<div class="sig-grid">
+  <div class="sig-box">
+    <div class="line"></div>
+    <div class="sig-label">Authorized by — AIME</div>
+    <div class="sig-name">${estimate.created_by||""}</div>
+    <div style="font-size:9pt;color:#777;margin-top:2px">Date: ______________</div>
+  </div>
+  <div class="sig-box">
+    <div class="line"></div>
+    <div class="sig-label">Accepted by — Client</div>
+    <div class="sig-name"></div>
+    <div style="font-size:9pt;color:#777;margin-top:2px">Date: ______________</div>
+  </div>
+</div>
+
+<div class="footer">
+  <span>Atlantic Industrial Mechanical & Environmental Inc. · AIME Field Pro</span>
+  <span>Generated: ${new Date().toLocaleString()}</span>
+</div>
+</body></html>`;
+
+  const win=window.open("","_blank","width=900,height=750");
+  win.document.write(html);win.document.close();win.focus();
+  setTimeout(()=>win.print(),400);
+}
+
 
 
 function EstimatingScreen({user,onBack}){
