@@ -2887,118 +2887,191 @@ function RFIsTab({project,user,onErr}){
     const effStatus=isOverdue?"Overdue":rfi.status;
     const statusBg={Open:"#fef9c3",Answered:"#dbeafe",Closed:"#dcfce7",Overdue:"#fee2e2"};
     const statusFg={Open:"#713f12",Answered:"#1e40af",Closed:"#166534",Overdue:"#991b1b"};
+    // Build reply-to email for the "send back" button
+    const replyTo=rfi.submitted_by||"";
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>RFI ${rfi.rfi_number} — ${project.name}</title>
 <style>
   @page{size:letter portrait;margin:0.6in;}
   *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
-  body{font-size:10pt;color:#000;}
+  body{font-size:10pt;color:#000;background:#fff;}
+  /* ── Action bar — hidden when printing ── */
+  .action-bar{background:#1f3864;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px;position:sticky;top:0;z-index:100;}
+  .action-bar h2{font-size:12pt;font-weight:700;margin:0;}
+  .action-bar .btns{display:flex;gap:10px;}
+  .btn{padding:8px 16px;border-radius:8px;border:none;font-size:11pt;font-weight:700;cursor:pointer;font-family:inherit;}
+  .btn-print{background:#F97316;color:#000;}
+  .btn-email{background:#22C55E;color:#000;}
+  .btn-clear{background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.4);}
+  @media print{.action-bar{display:none!important;}.no-print{display:none!important;}.fillable{border:none!important;background:transparent!important;}.fillable:focus{outline:none;}}
+  /* ── Document ── */
+  .doc{max-width:750px;margin:0 auto;padding:24px 20px 40px;}
   .letterhead{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:14px;border-bottom:3px solid #1f3864;}
   .company{font-size:20pt;font-weight:900;color:#1f3864;}
   .company-sub{font-size:9pt;color:#555;margin-top:4px;line-height:1.6;}
   .doc-title{text-align:right;}
   .doc-title h1{font-size:20pt;font-weight:900;color:#1f3864;margin-bottom:4px;}
   .rfi-num{font-size:13pt;color:#555;}
-  .status-badge{display:inline-block;padding:4px 14px;border-radius:20px;font-weight:700;font-size:10pt;margin-top:6px;
-    background:${statusBg[effStatus]||"#f3f4f6"};color:${statusFg[effStatus]||"#374151"};
-    border:1.5px solid #ccc;}
+  .status-badge{display:inline-block;padding:4px 14px;border-radius:20px;font-weight:700;font-size:10pt;margin-top:6px;background:${statusBg[effStatus]||"#f3f4f6"};color:${statusFg[effStatus]||"#374151"};border:1.5px solid #ccc;}
   .project-box{background:#f0f4ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
   .field-label{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;margin-bottom:2px;}
   .field-val{font-size:10pt;font-weight:600;color:#111;}
   .bic-box{background:#fff7ed;border:1.5px solid #fed7aa;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;}
   .bic-label{font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#9a3412;}
   .bic-name{font-size:13pt;font-weight:900;color:#c2410c;margin-top:2px;}
-  .bic-email{font-size:9pt;color:#9a3412;margin-top:2px;}
   .section{margin-bottom:18px;}
   .section h2{font-size:11pt;font-weight:800;color:#1f3864;border-bottom:1.5px solid #c7d2fe;padding-bottom:4px;margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;}
   .question-box{background:#1f3864;color:#fff;border-radius:8px;padding:14px 16px;font-size:12pt;font-weight:700;margin-bottom:12px;line-height:1.5;}
-  .desc-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:10pt;line-height:1.7;min-height:50px;}
-  .due-box{background:${isOverdue?"#fee2e2":"#f0fdf4"};border:1px solid ${isOverdue?"#fca5a5":"#86efac"};border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:10pt;}
-  .response-box{background:#f0fdf4;border:1.5px solid #86efac;border-radius:8px;padding:14px 16px;font-size:10pt;line-height:1.7;}
-  .response-header{font-size:8pt;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;}
-  .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;}
+  .desc-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:10pt;line-height:1.7;min-height:40px;}
+  /* ── FILLABLE fields ── */
+  .response-section{background:#f0fdf4;border:2px solid #22c55e;border-radius:10px;padding:16px;margin-bottom:18px;}
+  .response-section h2{color:#166534;border-bottom-color:#86efac;margin-bottom:12px;}
+  .fill-hint{background:#dcfce7;border:1px solid #86efac;border-radius:6px;padding:8px 12px;font-size:9pt;color:#166534;margin-bottom:12px;font-weight:600;}
+  .fillable{width:100%;min-height:100px;border:1.5px dashed #22c55e;border-radius:6px;padding:10px 12px;font-size:10pt;line-height:1.7;background:#fff;color:#000;font-family:Arial,sans-serif;resize:vertical;}
+  textarea.fillable:focus{outline:none;border-color:#16a34a;border-style:solid;}
+  .fill-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;}
+  .fill-field{display:flex;flex-direction:column;gap:4px;}
+  .fill-label{font-size:8pt;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:0.5px;}
+  input.fillable{min-height:auto;height:38px;}
+  .sig-area{border:1.5px dashed #22c55e;border-radius:6px;height:60px;margin-top:6px;background:#fff;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:9pt;}
+  /* ── Sig lines ── */
+  .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;}
   .sig-box{border-top:1.5px solid #000;padding-top:8px;}
-  .sig-label{font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:0.5px;}
-  .sig-date{font-size:9pt;color:#555;margin-top:8px;}
   .footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
-  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.fill-hint{display:none;}}
 </style></head><body>
 
-<div class="letterhead">
+<div class="action-bar">
   <div>
-    <div class="company">AIME</div>
-    <div class="company-sub">Atlantic Industrial Mechanical & Electrical<br>Field Operations Division</div>
+    <h2>📝 RFI #${rfi.rfi_number} — Fill in your response below, then Print/Save as PDF and email back</h2>
   </div>
-  <div class="doc-title">
-    <h1>Request for Information</h1>
-    <div class="rfi-num">RFI #${rfi.rfi_number}</div>
-    <div><span class="status-badge">${effStatus.toUpperCase()}</span></div>
+  <div class="btns">
+    <button class="btn btn-clear" onclick="document.getElementById('resp').value='';document.getElementById('respBy').value='';document.getElementById('respDate').value='';">🗑 Clear</button>
+    <button class="btn btn-email" onclick="sendBack()">📧 Email Response to AIME</button>
+    <button class="btn btn-print" onclick="window.print()">🖨️ Print / Save as PDF</button>
   </div>
 </div>
 
-<div class="project-box">
-  <div><div class="field-label">Project / Job No.</div><div class="field-val">${project.name||"—"}</div></div>
-  <div><div class="field-label">Client</div><div class="field-val">${project.client||"—"}</div></div>
-  <div><div class="field-label">Division</div><div class="field-val">${project.division||"—"}</div></div>
-  <div><div class="field-label">AFE / PO</div><div class="field-val">${project.afe||project.work_order||"—"}</div></div>
-  <div><div class="field-label">Date Submitted</div><div class="field-val">${rfi.date_submitted||"—"}</div></div>
-  <div><div class="field-label">Submitted By</div><div class="field-val">${rfi.submitted_by||"—"}</div></div>
-</div>
+<div class="doc">
+  <div class="letterhead">
+    <div>
+      <div class="company">AIME</div>
+      <div class="company-sub">Atlantic Industrial Mechanical & Electrical<br>Field Operations Division</div>
+    </div>
+    <div class="doc-title">
+      <h1>Request for Information</h1>
+      <div class="rfi-num">RFI #${rfi.rfi_number}</div>
+      <span class="status-badge">${effStatus.toUpperCase()}</span>
+    </div>
+  </div>
 
-${rfi.ball_in_court?`<div class="bic-box">
-  <div>
-    <div class="bic-label">🏀 Ball in Court</div>
+  <div class="project-box">
+    <div><div class="field-label">Project / Job No.</div><div class="field-val">${project.name||"—"}</div></div>
+    <div><div class="field-label">Client</div><div class="field-val">${project.client||"—"}</div></div>
+    <div><div class="field-label">Division</div><div class="field-val">${project.division||"—"}</div></div>
+    <div><div class="field-label">AFE / PO</div><div class="field-val">${project.afe||project.work_order||"—"}</div></div>
+    <div><div class="field-label">Date Submitted</div><div class="field-val">${rfi.date_submitted||"—"}</div></div>
+    <div><div class="field-label">Submitted By</div><div class="field-val">${rfi.submitted_by||"—"}</div></div>
+  </div>
+
+  ${rfi.ball_in_court?`<div class="bic-box">
+    <div><div class="bic-label">🏀 Ball in Court — Action Required</div>
     <div class="bic-name">${rfi.ball_in_court}</div>
-    ${rfi.ball_in_court_email?`<div class="bic-email">${rfi.ball_in_court_email}</div>`:""}
-  </div>
-  <div style="font-size:8pt;color:#9a3412;text-align:right">
-    <div>Response Due:</div>
-    <div style="font-size:11pt;font-weight:700;color:${isOverdue?"#dc2626":"#166534"}">${rfi.due_date||"Not specified"}</div>
-    ${isOverdue?"<div style='color:#dc2626;font-weight:700'>⚠️ OVERDUE</div>":""}
-  </div>
-</div>`:`${rfi.due_date?`<div class="due-box">${isOverdue?"⚠️ <strong>OVERDUE</strong> — ":""}Response Due: <strong>${rfi.due_date}</strong></div>`:""}`}
+    ${rfi.ball_in_court_email?`<div style="font-size:9pt;color:#9a3412">${rfi.ball_in_court_email}</div>`:""}
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:8pt;color:#9a3412">Response Due</div>
+      <div style="font-size:13pt;font-weight:900;color:${isOverdue?"#dc2626":"#166534"}">${rfi.due_date||"—"}</div>
+      ${isOverdue?"<div style='color:#dc2626;font-weight:700;font-size:9pt'>⚠️ OVERDUE</div>":""}
+    </div>
+  </div>`:""}
 
-<div class="section">
-  <h2>Question / Issue</h2>
-  <div class="question-box">${rfi.question||"—"}</div>
-  ${rfi.description?`<div class="desc-box">${rfi.description}</div>`:""}
+  <div class="section">
+    <h2>Question / Issue</h2>
+    <div class="question-box">${rfi.question||"—"}</div>
+    ${rfi.description?`<div class="desc-box">${rfi.description}</div>`:""}
+  </div>
+
+  <!-- ── FILLABLE RESPONSE SECTION ── -->
+  <div class="response-section">
+    <h2>Response <span style="font-weight:400;font-size:9pt;text-transform:none">(Please complete and return)</span></h2>
+    <div class="fill-hint">✏️ Type your response below, then click "Print / Save as PDF" and email back to AIME</div>
+    <textarea id="resp" class="fillable" placeholder="Enter your response here..." rows="6"></textarea>
+    <div class="fill-row">
+      <div class="fill-field">
+        <div class="fill-label">Responded By (Print Name)</div>
+        <input id="respBy" type="text" class="fillable" placeholder="Your name">
+      </div>
+      <div class="fill-field">
+        <div class="fill-label">Response Date</div>
+        <input id="respDate" type="date" class="fillable" value="${today()}">
+      </div>
+    </div>
+    <div class="fill-row" style="margin-top:12px">
+      <div class="fill-field">
+        <div class="fill-label">Signature</div>
+        <div class="sig-area">Sign PDF after saving / or sign printed copy</div>
+      </div>
+      <div class="fill-field">
+        <div class="fill-label">Company / Title</div>
+        <input id="respTitle" type="text" class="fillable" placeholder="Your company and title">
+      </div>
+    </div>
+  </div>
+
+  <div class="sig-grid">
+    <div class="sig-box">
+      <div style="font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:0.5px">Submitted by (AIME)</div>
+      <div style="font-size:10pt;font-weight:700;margin-top:4px">${rfi.submitted_by||""}</div>
+      <div style="font-size:9pt;color:#555;margin-top:6px">Date: ${rfi.date_submitted||"______________"}</div>
+    </div>
+    <div class="sig-box">
+      <div style="font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:0.5px">Response by (Client)</div>
+      <div style="height:24px"></div>
+      <div style="font-size:9pt;color:#555;margin-top:6px">Date: ______________</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>AIME Field Pro · RFI #${rfi.rfi_number} · ${project.name}</span>
+    <span>Generated: ${new Date().toLocaleString()}</span>
+  </div>
 </div>
 
-${rfi.response?`<div class="section">
-  <h2>Response</h2>
-  <div class="response-box">
-    <div class="response-header">Response from ${rfi.responded_by||"—"} · ${rfi.response_date||""}</div>
-    ${rfi.response}
-  </div>
-</div>`:`<div class="section">
-  <h2>Response</h2>
-  <div class="desc-box" style="color:#9ca3af;font-style:italic">No response received yet.</div>
-</div>`}
-
-<div class="sig-grid">
-  <div class="sig-box">
-    <div style="height:48px"></div>
-    <div class="sig-label">Submitted by (AIME)</div>
-    <div style="font-size:10pt;font-weight:700;margin-top:4px">${rfi.submitted_by||""}</div>
-    <div class="sig-date">Date: ${rfi.date_submitted||"______________"}</div>
-  </div>
-  <div class="sig-box">
-    <div style="height:48px"></div>
-    <div class="sig-label">Response by (Client)</div>
-    <div style="font-size:10pt;font-weight:700;margin-top:4px">${rfi.responded_by||""}</div>
-    <div class="sig-date">Date: ${rfi.response_date||"______________"}</div>
-  </div>
-</div>
-
-<div class="footer">
-  <span>AIME Field Pro · RFI #${rfi.rfi_number} · ${project.name}</span>
-  <span>Generated: ${new Date().toLocaleString()}</span>
-</div>
+<script>
+function sendBack(){
+  const resp=document.getElementById("resp").value;
+  const respBy=document.getElementById("respBy").value;
+  const respDate=document.getElementById("respDate").value;
+  const respTitle=document.getElementById("respTitle").value;
+  if(!resp.trim()){alert("Please enter your response before emailing.");return;}
+  const subj=encodeURIComponent("RE: RFI ${rfi.rfi_number} — ${project.name}");
+  const body=[
+    "RE: RFI #${rfi.rfi_number} — ${project.name}",
+    "Project: ${project.name}",
+    "Original Question: ${rfi.question}",
+    "",
+    "RESPONSE:",
+    resp,
+    "",
+    "Responded by: "+respBy+(respTitle?" ("+respTitle+")":""),
+    "Date: "+respDate,
+    "",
+    "— Please also attach the filled PDF if you have printed and signed it.",
+    "AIME Field Pro",
+  ].map(l=>encodeURIComponent(l)).join("%0A");
+  window.location.href="mailto:?subject="+subj+"&body="+body;
+}
+// Set today's date if empty
+if(!document.getElementById("respDate").value){
+  document.getElementById("respDate").value=new Date().toISOString().split("T")[0];
+}
+</script>
 </body></html>`;
-    const win=window.open("","_blank","width=900,height=750");
+    const win=window.open("","_blank","width=850,height=800");
     win.document.write(html);win.document.close();win.focus();
-    setTimeout(()=>win.print(),400);
   }
+
 
   function emailRFI(rfi){
     const subj=`RFI ${rfi.rfi_number} — ${project.name}`;
