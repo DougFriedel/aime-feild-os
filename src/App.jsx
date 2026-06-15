@@ -703,10 +703,14 @@ async function autoPopulateTimeCards(report, project){
       const card=Array.isArray(existing)?existing[0]:null;
       if(card){
         // Add hours to existing card (worker may have multiple report entries)
+        const newReg=(parseFloat(card.reg_hours)||0)+reg;
+        const newOT=(parseFloat(card.ot_hours)||0)+ot;
+        const newTravel=(parseFloat(card.travel_hours)||0)+travel;
         await API.timeCards.update(card.id,{
-          reg_hours:(parseFloat(card.reg_hours)||0)+reg,
-          ot_hours:(parseFloat(card.ot_hours)||0)+ot,
-          travel_hours:(parseFloat(card.travel_hours)||0)+travel,
+          reg_hours:newReg,
+          ot_hours:newOT,
+          travel_hours:newTravel,
+          total_hours:newReg+newOT+newTravel,
         });
         updated++;
       }else{
@@ -720,6 +724,7 @@ async function autoPopulateTimeCards(report, project){
           reg_hours:reg,
           ot_hours:ot,
           travel_hours:travel,
+          total_hours:reg+ot+travel,
           notes:`Auto-filled from daily report${report.report_no?" #"+report.report_no:""} · ${project.name}`,
         });
         created++;
