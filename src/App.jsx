@@ -2765,6 +2765,47 @@ function ChangeOrdersTab({project,user,onErr}){
   const revisedContract=contractVal+approvedCOs;
 
   const statusColor={Pending:T.yellow,Approved:T.green,Rejected:T.red};
+  const [shareCo,setShareCo]=useState(null);
+  const [coCopied,setCoCopied]=useState(false);
+  const appUrl=window.location.origin+window.location.pathname;
+
+  function copyCoLink(co){
+    const link=`${appUrl}?co=${co.id}`;
+    navigator.clipboard.writeText(link).then(()=>{setCoCopied(true);setTimeout(()=>setCoCopied(false),3000);}).catch(()=>{
+      const el=document.createElement("textarea");el.value=link;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);
+      setCoCopied(true);setTimeout(()=>setCoCopied(false),3000);
+    });
+  }
+
+  function emailCO(co){
+    const link=`${appUrl}?co=${co.id}`;
+    const subj=`Change Order ${co.co_number} — ${project.name} — Signature Required`;
+    const ln="%0D%0A";
+    const sep="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    const body=[
+      `Please review and sign the following Change Order:`,ln,ln,
+      sep,ln,
+      `  📋  CHANGE ORDER — ${co.co_number}`,ln,
+      sep,ln,ln,
+      `  Project:      ${project.name}`,ln,
+      project.client?`  Client:       ${project.client}${ln}`:"",
+      `  Date:         ${co.date_submitted||""}`,ln,
+      `  Submitted By: ${co.submitted_by||""}`,ln,ln,
+      `  DESCRIPTION:`,ln,
+      `  ${co.description||""}`,ln,ln,
+      `  AMOUNT: $${Number(co.amount||0).toLocaleString("en-US",{minimumFractionDigits:2})}`,ln,ln,
+      sep,ln,ln,
+      `To review and sign this Change Order, click or copy the link below:`,ln,ln,
+      `  ➤  ${link}`,ln,ln,
+      `(No login required — open in any browser, sign, and click Approve)`,ln,ln,
+      sep,ln,ln,
+      `Thank you,`,ln,
+      `${co.submitted_by||"AIME Field Operations"}`,ln,
+      `Atlantic Industrial Mechanical & Electrical`,ln,
+    ].filter(Boolean).join("");
+    if(navigator.clipboard) navigator.clipboard.writeText(link).catch(()=>{});
+    window.location.href=`mailto:?subject=${encodeURIComponent(subj)}&body=${body}`;
+  }
 
   function printCO(co){
     const contractVal=parseFloat(project.contract_value)||0;
@@ -2938,6 +2979,50 @@ ${co.status==="Approved"?`<div class="section">
 
   return(
     <div style={{padding:"14px 16px 80px"}}>
+      {/* Share Modal */}
+      {shareCo&&(
+        <div onClick={()=>{setShareCo(null);setCoCopied(false);}} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",width:"100%",maxWidth:480}}>
+            <div style={{fontSize:17,fontWeight:900,marginBottom:4,color:T.text}}>📤 Send CO {shareCo.co_number}</div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Send this link to the client — they open it in any browser, review the Change Order, sign it, and it saves directly to your app.</div>
+
+            {/* Amount highlight */}
+            <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:12,color:T.sub}}>{shareCo.description?.substring(0,50)}{shareCo.description?.length>50?"…":""}</span>
+              <span style={{fontSize:16,fontWeight:800,color:T.green}}>${Number(shareCo.amount||0).toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+            </div>
+
+            {/* Link display */}
+            <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 14px",marginBottom:14,wordBreak:"break-all",fontSize:12,color:T.sub,lineHeight:1.5}}>
+              {`${appUrl}?co=${shareCo.id}`}
+            </div>
+
+            {/* Copy link — primary */}
+            <button onClick={()=>copyCoLink(shareCo)} style={{...primBtn,borderRadius:14,marginBottom:10,background:coCopied?T.green:T.orange,fontSize:15,fontWeight:800,transition:"background 0.2s"}}>
+              {coCopied?"✅ Link Copied! Paste into your email":"📋 Copy Link to Clipboard"}
+            </button>
+            {coCopied&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:13,color:T.green,textAlign:"center",fontWeight:600}}>
+              ✓ Paste this link into an email or text to your client
+            </div>}
+
+            {/* Divider */}
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+              <div style={{flex:1,height:1,background:T.border}}/><span style={{fontSize:11,color:T.muted}}>OR</span><div style={{flex:1,height:1,background:T.border}}/>
+            </div>
+
+            {/* Email draft */}
+            <button onClick={()=>emailCO(shareCo)} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10,fontSize:14}}>
+              📧 Open Email Draft with Link
+            </button>
+            <div style={{fontSize:11,color:T.muted,textAlign:"center",marginBottom:14}}>
+              Note: Copy Link above gives a clickable link. Email draft is plain text only.
+            </div>
+
+            <button onClick={()=>{setShareCo(null);setCoCopied(false);}} style={{...ghostBtn,width:"100%",textAlign:"center"}}>Done</button>
+          </div>
+        </div>
+      )}
+
       {/* Contract summary */}
       {contractVal>0&&<div style={{...cardS,marginBottom:14,background:T.blueLow,border:`1px solid ${T.blue}40`}}>
         <div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Contract Summary</div>
@@ -2993,11 +3078,12 @@ ${co.status==="Approved"?`<div class="section">
             <img src={co.client_signature} alt="Client signature" style={{width:"100%",maxHeight:60,objectFit:"contain",borderRadius:6}}/>
           </div>}
           {co.notes&&<div style={{fontSize:11,color:T.muted,marginTop:4,fontStyle:"italic"}}>{co.notes}</div>}
-          <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-            <button onClick={()=>printCO(co)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.blue,border:`1px solid ${T.blue}40`}}>🖨️ Print / PDF</button>
+          <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+            <button onClick={()=>{setShareCo(co);setCoCopied(false);}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.orange,border:`1px solid ${T.orange}40`,fontWeight:700,minWidth:90}}>📤 Send Link</button>
+            <button onClick={()=>printCO(co)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:"#CBD5E1",border:"1px solid #27272A",minWidth:70}}>🖨️ PDF</button>
             {canEdit&&<>
-              <button onClick={()=>{setEditing(co.id);setF({...co,amount:co.amount||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12}}>✏️ Edit</button>
-              <button onClick={()=>remove(co.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`}}>🗑 Delete</button>
+              <button onClick={()=>{setEditing(co.id);setF({...co,amount:co.amount||"",client_signature:co.client_signature||null,client_signed_by:co.client_signed_by||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,minWidth:50}}>✏️</button>
+              <button onClick={()=>remove(co.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`,minWidth:40}}>🗑</button>
             </>}
           </div>
         </div>
@@ -5802,6 +5888,192 @@ function EstimatingScreen({user,onBack}){
 }
 
 
+
+/* ── PUBLIC CO FORM (no login required) ─────────────────────── */
+function PublicCOForm({coId}){
+  const [co,setCo]=useState(null);
+  const [project,setProject]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [submitted,setSubmitted]=useState(false);
+  const [err,setErr]=useState("");
+  const [signerName,setSignerName]=useState("");
+  const [signerTitle,setSignerTitle]=useState("");
+  const [sigData,setSigData]=useState(null);
+  const [drawing,setDrawing]=useState(false);
+  const sigCanvasRef=React.useRef(null);
+  const lastPos=React.useRef(null);
+
+  useEffect(()=>{
+    async function load(){
+      try{
+        const coData=await sb(`/change_orders?id=eq.${coId}&limit=1`);
+        const c=Array.isArray(coData)?coData[0]:coData;
+        if(!c){setErr("Change Order not found. Please check the link.");setLoading(false);return;}
+        setCo(c);
+        if(c.client_signature){setSubmitted(true);}
+        const projData=await sb(`/projects?id=eq.${c.project_id}&limit=1`);
+        setProject(Array.isArray(projData)?projData[0]:projData||{name:"Unknown Project"});
+      }catch(e){setErr("Error loading Change Order: "+e.message);}
+      setLoading(false);
+    }
+    load();
+  },[coId]);
+
+  function getSigPos(e,canvas){
+    const rect=canvas.getBoundingClientRect();
+    const sx=canvas.width/rect.width;const sy=canvas.height/rect.height;
+    if(e.touches&&e.touches[0])return{x:(e.touches[0].clientX-rect.left)*sx,y:(e.touches[0].clientY-rect.top)*sy};
+    return{x:(e.clientX-rect.left)*sx,y:(e.clientY-rect.top)*sy};
+  }
+  function startSig(e){e.preventDefault();const c=sigCanvasRef.current;if(!c)return;const pos=getSigPos(e,c);const ctx=c.getContext("2d");ctx.beginPath();ctx.moveTo(pos.x,pos.y);lastPos.current=pos;setDrawing(true);}
+  function drawSig(e){e.preventDefault();if(!drawing)return;const c=sigCanvasRef.current;if(!c)return;const ctx=c.getContext("2d");const pos=getSigPos(e,c);ctx.lineWidth=2.5;ctx.lineCap="round";ctx.lineJoin="round";ctx.strokeStyle="#1f3864";ctx.lineTo(pos.x,pos.y);ctx.stroke();ctx.beginPath();ctx.moveTo(pos.x,pos.y);lastPos.current=pos;}
+  function endSig(e){e.preventDefault();if(!drawing)return;setDrawing(false);const c=sigCanvasRef.current;if(c)setSigData(c.toDataURL("image/jpeg",0.7));}
+  function clearSig(){const c=sigCanvasRef.current;if(c){c.getContext("2d").clearRect(0,0,c.width,c.height);}setSigData(null);}
+
+  async function submit(){
+    if(!signerName.trim()||!sigData){setErr("Please enter your name and signature.");return;}
+    setSaving(true);setErr("");
+    try{
+      await sb(`/change_orders?id=eq.${coId}`,{
+        method:"PATCH",
+        body:{
+          client_signature:sigData,
+          client_signed_by:signerName+(signerTitle?" ("+signerTitle+")":""),
+          client_signed_date:today(),
+          status:"Approved",
+        },
+        prefer:"return=representation"
+      });
+      setSubmitted(true);
+    }catch(e){setErr("Failed to submit: "+e.message);}
+    setSaving(false);
+  }
+
+  const fmt2=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
+
+  if(loading)return(
+    <div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif"}}>
+      <div style={{textAlign:"center",color:"#fff"}}>
+        <div style={{width:40,height:40,border:"3px solid #27272A",borderTopColor:"#F97316",borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto 12px"}}/>
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        <div>Loading Change Order...</div>
+      </div>
+    </div>
+  );
+
+  if(err&&!co)return(
+    <div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif",padding:20}}>
+      <div style={{background:"#18181B",borderRadius:16,padding:32,maxWidth:400,textAlign:"center",border:"1px solid #EF444440"}}>
+        <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
+        <div style={{fontSize:18,fontWeight:700,color:"#fff",marginBottom:8}}>Not Found</div>
+        <div style={{fontSize:14,color:"#A1A1AA"}}>{err}</div>
+      </div>
+    </div>
+  );
+
+  if(submitted)return(
+    <div style={{background:"#09090B",minHeight:"100vh",fontFamily:"system-ui,sans-serif",padding:20}}>
+      <div style={{maxWidth:560,margin:"0 auto"}}>
+        <div style={{background:"#1f3864",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div><div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div><div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Electrical</div></div>
+          <div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:"#fff"}}>{co?.co_number}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>Change Order</div></div>
+        </div>
+        <div style={{background:"#18181B",borderRadius:16,padding:32,textAlign:"center",border:"1px solid #22C55E40"}}>
+          <div style={{fontSize:48,marginBottom:12}}>✅</div>
+          <div style={{fontSize:20,fontWeight:800,color:"#22C55E",marginBottom:8}}>Change Order Signed!</div>
+          <div style={{fontSize:14,color:"#A1A1AA",marginBottom:20}}>Change Order {co?.co_number} has been approved and signed.<br/>AIME has been notified.</div>
+          <div style={{background:"#0C0C0F",borderRadius:12,padding:16,textAlign:"left",marginBottom:16}}>
+            <div style={{fontSize:11,color:"#F97316",fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>CO Details</div>
+            <div style={{fontSize:14,color:"#fff",marginBottom:4}}>{co?.description}</div>
+            <div style={{fontSize:16,fontWeight:800,color:"#22C55E"}}>Amount: {fmt2(co?.amount)}</div>
+          </div>
+          <div style={{fontSize:12,color:"#71717A"}}>You may close this window.</div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{background:"#09090B",minHeight:"100vh",fontFamily:"system-ui,sans-serif",color:"#fff",padding:"16px 16px 60px"}}>
+      <div style={{maxWidth:560,margin:"0 auto"}}>
+        {/* Header */}
+        <div style={{background:"#1f3864",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div><div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div><div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Electrical</div></div>
+          <div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800,color:"#fff"}}>{co.co_number}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>Change Order</div></div>
+        </div>
+
+        {/* Project info */}
+        <div style={{background:"#18181B",borderRadius:12,padding:"12px 16px",marginBottom:12,border:"1px solid #27272A"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            {[["Project",project?.name||"—"],["Client",project?.client||"—"],["Division",project?.division||"—"],["Date",co.date_submitted||"—"]].map(([l,v])=>(
+              <div key={l}><div style={{fontSize:10,color:"#71717A",textTransform:"uppercase",letterSpacing:"0.5px",fontWeight:700}}>{l}</div><div style={{fontSize:13,fontWeight:600,color:"#fff",marginTop:2}}>{v}</div></div>
+            ))}
+          </div>
+        </div>
+
+        {/* CO Details */}
+        <div style={{background:"#1f3864",borderRadius:12,padding:"16px",marginBottom:12}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.6)",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:6}}>Description of Change</div>
+          <div style={{fontSize:15,fontWeight:700,color:"#fff",lineHeight:1.5,marginBottom:12}}>{co.description}</div>
+          <div style={{background:"rgba(255,255,255,0.1)",borderRadius:10,padding:"12px",textAlign:"center"}}>
+            <div style={{fontSize:10,color:"rgba(255,255,255,0.6)",textTransform:"uppercase",letterSpacing:"1px"}}>Change Order Amount</div>
+            <div style={{fontSize:28,fontWeight:900,color:"#22C55E",marginTop:4}}>{fmt2(co.amount)}</div>
+          </div>
+        </div>
+
+        {co.notes&&<div style={{background:"#18181B",borderRadius:12,padding:"12px 16px",marginBottom:12,border:"1px solid #27272A"}}>
+          <div style={{fontSize:10,color:"#71717A",textTransform:"uppercase",letterSpacing:"0.5px",fontWeight:700,marginBottom:4}}>Notes</div>
+          <div style={{fontSize:13,color:"#CBD5E1"}}>{co.notes}</div>
+        </div>}
+
+        {err&&<div style={{background:"#EF444420",border:"1px solid #EF4444",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#EF4444"}}>{err}</div>}
+
+        {/* Sign Form */}
+        <div style={{background:"#18181B",borderRadius:16,padding:20,border:"2px solid #F9731640"}}>
+          <div style={{fontSize:14,fontWeight:800,color:"#F97316",marginBottom:4}}>✍️ Sign & Approve Change Order</div>
+          <div style={{fontSize:12,color:"#71717A",marginBottom:16}}>By signing below you authorize this change order. Your signature will be saved directly to AIME's system.</div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+            <div>
+              <label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Your Name *</label>
+              <input type="text" value={signerName} onChange={e=>setSignerName(e.target.value)} placeholder="Full name" style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/>
+            </div>
+            <div>
+              <label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Title / Company</label>
+              <input type="text" value={signerTitle} onChange={e=>setSignerTitle(e.target.value)} placeholder="Your title" style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/>
+            </div>
+          </div>
+
+          {/* Signature canvas */}
+          <div style={{marginBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <label style={{fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px"}}>Signature *</label>
+              {sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#EF4444",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
+            </div>
+            <div style={{background:"#fff",borderRadius:10,overflow:"hidden",border:"2px solid #F97316"}}>
+              <canvas ref={sigCanvasRef} width={600} height={160}
+                style={{width:"100%",height:160,display:"block",touchAction:"none",cursor:"crosshair"}}
+                onMouseDown={startSig} onMouseMove={drawSig} onMouseUp={endSig} onMouseLeave={endSig}
+                onTouchStart={startSig} onTouchMove={drawSig} onTouchEnd={endSig}
+              />
+            </div>
+            {!sigData&&<div style={{fontSize:11,color:"#71717A",textAlign:"center",marginTop:4}}>Draw your signature above</div>}
+            {sigData&&<div style={{fontSize:11,color:"#22C55E",textAlign:"center",marginTop:4}}>✓ Signature captured</div>}
+          </div>
+
+          <button onClick={submit} disabled={saving||!signerName.trim()||!sigData}
+            style={{width:"100%",background:saving||!signerName.trim()||!sigData?"#27272A":"#F97316",color:saving||!signerName.trim()||!sigData?"#71717A":"#000",border:"none",borderRadius:12,padding:"14px",fontSize:16,fontWeight:800,cursor:saving||!signerName.trim()||!sigData?"not-allowed":"pointer",fontFamily:"inherit"}}>
+            {saving?"Submitting…":"✅ Sign & Approve Change Order"}
+          </button>
+          <div style={{fontSize:11,color:"#52525B",textAlign:"center",marginTop:6}}>Name and signature required · Date: {today()}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 /* ── PUBLIC RFI FORM (no login required) ────────────────────── */
 function PublicRFIForm({rfiId}){
   const [rfi,setRfi]=useState(null);
@@ -6035,6 +6307,7 @@ function PublicRFIForm({rfiId}){
 function AppInner(){
   // Public RFI detection (must be before hooks but stored as constant)
   const [publicRfiId]            = useState(()=>new URLSearchParams(window.location.search).get("rfi"));
+  const [publicCoId]             = useState(()=>new URLSearchParams(window.location.search).get("co"));
 
   const [user,setUser]           = useState(null);
   const [projects,setProjects]   = useState([]);
@@ -6159,6 +6432,8 @@ function AppInner(){
 
   // Show public RFI form if URL has ?rfi=UUID (no login needed)
   if(publicRfiId) return <PublicRFIForm rfiId={publicRfiId}/>;
+  // Show public CO form if URL has ?co=UUID (no login needed)
+  if(publicCoId) return <PublicCOForm coId={publicCoId}/>;
 
   if(!user) return(
     <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif",color:T.text,background:T.bg,minHeight:"100vh"}}>
