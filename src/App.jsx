@@ -2555,7 +2555,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   async function load(silent=false){if(!silent)setLoading(true);try{const[reps,saf,phs,wx]=await Promise.all([API.reports.forProject(project.id),API.safety.forProject(project.id),API.photos.forProject(project.id),API.weather.forProject(project.id)]);setReports(reps||[]);setSafety(saf||[]);setPhotos(phs||[]);setWeather(wx||[]);}catch(e){setErr(e.message);}if(!silent)setLoading(false);}
   useEffect(()=>{load();const firstTab=visibleTabs[0]?.id||"info";setTab(firstTab);},[project.id]);
 
-  async async function saveReport(d){
+  async function saveReport(d){
     try{
       // Strip rental_equipment if column doesn't exist yet in DB
       const{rental_equipment,...dbData}=d;
