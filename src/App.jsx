@@ -2722,7 +2722,7 @@ function ChangeOrdersTab({project,user,onErr}){
   const [showForm,setShowForm]=useState(false);
   const [editing,setEditing]=useState(null);
   const [saving,setSaving]=useState(false);
-  const blank={co_number:"",description:"",date_submitted:today(),amount:"",status:"Pending",submitted_by:user.name,approved_by:"",approved_date:"",notes:""};
+  const blank={co_number:"",description:"",date_submitted:today(),amount:"",status:"Pending",submitted_by:user.name,approved_by:"",approved_date:"",notes:"",client_signature:null,client_signed_by:""};
   const [f,setF]=useState(blank);
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
 
@@ -2864,14 +2864,16 @@ ${co.status==="Approved"?`<div class="section">
   <div class="sig-box">
     <div style="height:48px"></div>
     <div class="sig-label">Authorized by (AIME)</div>
-    <div class="sig-name"></div>
+    <div class="sig-name">${co.aime_signed_by||""}</div>
     <div class="sig-date">Date: ______________</div>
   </div>
   <div class="sig-box">
-    <div style="height:48px"></div>
+    ${co.client_signature
+      ?`<img src="${co.client_signature}" style="max-height:60px;max-width:220px;object-fit:contain;display:block;margin-bottom:4px"/>`
+      :`<div style="height:60px;border-bottom:1px solid #000;margin-bottom:4px"></div>`}
     <div class="sig-label">Accepted by (Client)</div>
-    <div class="sig-name"></div>
-    <div class="sig-date">Date: ______________</div>
+    <div class="sig-name">${co.client_signed_by||""}</div>
+    <div class="sig-date">Date: ${co.approved_date||"______________"}</div>
   </div>
 </div>
 
@@ -2902,10 +2904,33 @@ ${co.status==="Approved"?`<div class="section">
           </select>
         </div>
       </div>
-      {f.status==="Approved"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-        <div><label style={lbl}>Approved By</label><input value={f.approved_by} onChange={e=>set("approved_by",e.target.value)} placeholder="Name" style={inp}/></div>
-        <div><label style={lbl}>Approval Date</label><input type="date" value={f.approved_date||""} onChange={e=>set("approved_date",e.target.value)} style={inp}/></div>
-      </div>}
+      {f.status==="Approved"&&<>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Approved By</label><input value={f.approved_by} onChange={e=>set("approved_by",e.target.value)} placeholder="Name" style={inp}/></div>
+          <div><label style={lbl}>Approval Date</label><input type="date" value={f.approved_date||""} onChange={e=>set("approved_date",e.target.value)} style={inp}/></div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <label style={lbl}>Client Signature</label>
+            {f.client_signature&&<button onClick={()=>set("client_signature",null)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>Clear</button>}
+          </div>
+          <div style={{background:"#fff",borderRadius:10,border:`2px solid ${T.green}`,overflow:"hidden"}}>
+            <canvas id="co-sig-canvas" width={600} height={130}
+              style={{width:"100%",height:130,display:"block",touchAction:"none",cursor:"crosshair"}}
+              onMouseDown={e=>{const c=e.target;const r=c.getBoundingClientRect();const ctx=c.getContext("2d");ctx.beginPath();ctx.moveTo((e.clientX-r.left)*(c.width/r.width),(e.clientY-r.top)*(c.height/r.height));c._drawing=true;}}
+              onMouseMove={e=>{const c=e.target;if(!c._drawing)return;const r=c.getBoundingClientRect();const ctx=c.getContext("2d");ctx.lineWidth=2.5;ctx.lineCap="round";ctx.strokeStyle="#1f3864";ctx.lineTo((e.clientX-r.left)*(c.width/r.width),(e.clientY-r.top)*(c.height/r.height));ctx.stroke();ctx.beginPath();ctx.moveTo((e.clientX-r.left)*(c.width/r.width),(e.clientY-r.top)*(c.height/r.height));}}
+              onMouseUp={e=>{e.target._drawing=false;set("client_signature",e.target.toDataURL("image/jpeg",0.7));}}
+              onMouseLeave={e=>{e.target._drawing=false;if(e.target.toDataURL()!==document.createElement("canvas").toDataURL())set("client_signature",e.target.toDataURL("image/jpeg",0.7));}}
+              onTouchStart={e=>{e.preventDefault();const c=e.target;const t=e.touches[0];const r=c.getBoundingClientRect();const ctx=c.getContext("2d");ctx.beginPath();ctx.moveTo((t.clientX-r.left)*(c.width/r.width),(t.clientY-r.top)*(c.height/r.height));c._drawing=true;}}
+              onTouchMove={e=>{e.preventDefault();const c=e.target;if(!c._drawing)return;const t=e.touches[0];const r=c.getBoundingClientRect();const ctx=c.getContext("2d");ctx.lineWidth=2.5;ctx.lineCap="round";ctx.strokeStyle="#1f3864";ctx.lineTo((t.clientX-r.left)*(c.width/r.width),(t.clientY-r.top)*(c.height/r.height));ctx.stroke();ctx.beginPath();ctx.moveTo((t.clientX-r.left)*(c.width/r.width),(t.clientY-r.top)*(c.height/r.height));}}
+              onTouchEnd={e=>{e.target._drawing=false;set("client_signature",e.target.toDataURL("image/jpeg",0.7));}}
+            />
+          </div>
+          {!f.client_signature&&<div style={{fontSize:11,color:T.muted,textAlign:"center",marginTop:4}}>Draw client signature above</div>}
+          {f.client_signature&&<div style={{fontSize:11,color:T.green,textAlign:"center",marginTop:4}}>✓ Signature captured</div>}
+        </div>
+        <div style={{marginBottom:10}}><label style={lbl}>Client Name / Company</label><input value={f.client_signed_by||""} onChange={e=>set("client_signed_by",e.target.value)} placeholder="Client name and company" style={inp}/></div>
+      </>}
       <div style={{marginBottom:14}}><label style={lbl}>Notes</label><textarea rows={2} value={f.notes} onChange={e=>set("notes",e.target.value)} placeholder="Additional notes..." style={{...inp,resize:"vertical"}}/></div>
       <button onClick={save} disabled={!f.co_number.trim()||saving} style={{...primBtn,opacity:f.co_number.trim()&&!saving?1:0.5,borderRadius:14}}>{saving?"Saving…":"Save Change Order"}</button>
     </div>
@@ -2963,6 +2988,10 @@ ${co.status==="Approved"?`<div class="section">
           </div>
           {co.description&&<div style={{fontSize:13,color:T.text,marginBottom:8,lineHeight:1.5}}>{co.description}</div>}
           {co.status==="Approved"&&co.approved_by&&<div style={{fontSize:11,color:T.green}}>✓ Approved by {co.approved_by}{co.approved_date?" on "+co.approved_date:""}</div>}
+          {co.client_signature&&<div style={{background:"#fff",borderRadius:8,padding:4,marginTop:6}}>
+            <div style={{fontSize:9,color:"#999",paddingLeft:4,marginBottom:2}}>CLIENT SIGNATURE — {co.client_signed_by||""}</div>
+            <img src={co.client_signature} alt="Client signature" style={{width:"100%",maxHeight:60,objectFit:"contain",borderRadius:6}}/>
+          </div>}
           {co.notes&&<div style={{fontSize:11,color:T.muted,marginTop:4,fontStyle:"italic"}}>{co.notes}</div>}
           <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
             <button onClick={()=>printCO(co)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.blue,border:`1px solid ${T.blue}40`}}>🖨️ Print / PDF</button>
@@ -3199,7 +3228,9 @@ function RFIsTab({project,user,onErr}){
     <div class="fill-row" style="margin-top:12px">
       <div class="fill-field">
         <div class="fill-label">Signature</div>
-        <div class="sig-area">Sign PDF after saving / or sign printed copy</div>
+        ${rfi.response_signature
+          ?`<div style="background:#fff;border:1px solid #86efac;border-radius:6px;padding:6px"><img src="${rfi.response_signature}" style="max-height:60px;width:100%;object-fit:contain;display:block"/><div style="font-size:7.5pt;color:#166534;margin-top:2px">Signed by ${rfi.responded_by||""}</div></div>`
+          :`<div class="sig-area">Draw signature here</div>`}
       </div>
       <div class="fill-field">
         <div class="fill-label">Company / Title</div>
@@ -3424,6 +3455,10 @@ ${rfi.response}`:"",
             {rfi.response&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px",marginTop:8}}>
               <div style={{fontSize:11,fontWeight:700,color:T.green,marginBottom:4}}>✓ RESPONSE — {rfi.responded_by}{rfi.response_date?" · "+rfi.response_date:""}</div>
               <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{rfi.response}</div>
+              {rfi.response_signature&&<div style={{marginTop:8,background:"#fff",borderRadius:8,padding:4}}>
+                <div style={{fontSize:9,color:"#999",marginBottom:2,paddingLeft:4}}>SIGNATURE</div>
+                <img src={rfi.response_signature} alt="Signature" style={{width:"100%",maxHeight:80,objectFit:"contain",display:"block",borderRadius:6}}/>
+              </div>}
             </div>}
             <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
               <button onClick={()=>shareRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.orange,border:`1px solid ${T.orange}40`,minWidth:90,fontWeight:700}}>📤 Send Link</button>
@@ -5779,6 +5814,21 @@ function PublicRFIForm({rfiId}){
   const [respBy,setRespBy]=useState("");
   const [respDate,setRespDate]=useState(today());
   const [respTitle,setRespTitle]=useState("");
+  const [sigData,setSigData]=useState(null);
+  const [drawing,setDrawing]=useState(false);
+  const sigCanvasRef=React.useRef(null);
+  const lastSigPos=React.useRef(null);
+
+  function getSigPos(e,canvas){
+    const rect=canvas.getBoundingClientRect();
+    const scaleX=canvas.width/rect.width;const scaleY=canvas.height/rect.height;
+    if(e.touches&&e.touches[0])return{x:(e.touches[0].clientX-rect.left)*scaleX,y:(e.touches[0].clientY-rect.top)*scaleY};
+    return{x:(e.clientX-rect.left)*scaleX,y:(e.clientY-rect.top)*scaleY};
+  }
+  function startSig(e){e.preventDefault();const c=sigCanvasRef.current;if(!c)return;const pos=getSigPos(e,c);const ctx=c.getContext("2d");ctx.beginPath();ctx.moveTo(pos.x,pos.y);lastSigPos.current=pos;setDrawing(true);}
+  function drawSig(e){e.preventDefault();if(!drawing)return;const c=sigCanvasRef.current;if(!c)return;const ctx=c.getContext("2d");const pos=getSigPos(e,c);ctx.lineWidth=2.5;ctx.lineCap="round";ctx.lineJoin="round";ctx.strokeStyle="#1f3864";ctx.lineTo(pos.x,pos.y);ctx.stroke();ctx.beginPath();ctx.moveTo(pos.x,pos.y);lastSigPos.current=pos;}
+  function endSig(e){e.preventDefault();if(!drawing)return;setDrawing(false);const c=sigCanvasRef.current;if(c)setSigData(c.toDataURL("image/jpeg",0.7));}
+  function clearSig(){const c=sigCanvasRef.current;if(c){const ctx=c.getContext("2d");ctx.clearRect(0,0,c.width,c.height);}setSigData(null);}
 
   useEffect(()=>{
     async function load(){
@@ -5810,6 +5860,8 @@ function PublicRFIForm({rfiId}){
           responded_by:respBy+(respTitle?" ("+respTitle+")":""),
           response_date:respDate||today(),
           status:"Answered",
+          response_signature:sigData||null,
+          signer_title:respTitle||null,
         },
         prefer:"return=representation"
       });
@@ -5946,13 +5998,33 @@ function PublicRFIForm({rfiId}){
             <input type="text" value={respTitle} onChange={e=>setRespTitle(e.target.value)} placeholder="e.g. Colonial Pipeline · Field Engineer" style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/>
           </div>
 
+          {/* Signature */}
+          <div style={{marginBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <label style={{fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px"}}>Signature *</label>
+              {sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#EF4444",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
+            </div>
+            <div style={{background:"#fff",borderRadius:10,overflow:"hidden",border:"2px solid #22C55E"}}>
+              <canvas
+                ref={sigCanvasRef}
+                width={600} height={160}
+                style={{width:"100%",height:160,display:"block",touchAction:"none",cursor:"crosshair"}}
+                onMouseDown={startSig} onMouseMove={drawSig} onMouseUp={endSig} onMouseLeave={endSig}
+                onTouchStart={startSig} onTouchMove={drawSig} onTouchEnd={endSig}
+              />
+            </div>
+            {!sigData&&<div style={{fontSize:11,color:"#71717A",marginTop:4,textAlign:"center"}}>Draw your signature above</div>}
+            {sigData&&<div style={{fontSize:11,color:"#22C55E",marginTop:4,textAlign:"center"}}>✓ Signature captured</div>}
+          </div>
+
           <button
             onClick={submit}
-            disabled={saving||!resp.trim()||!respBy.trim()}
-            style={{width:"100%",background:saving||!resp.trim()||!respBy.trim()?"#27272A":"#22C55E",color:saving||!resp.trim()||!respBy.trim()?"#71717A":"#000",border:"none",borderRadius:12,padding:"14px",fontSize:16,fontWeight:800,cursor:saving||!resp.trim()||!respBy.trim()?"not-allowed":"pointer",fontFamily:"inherit",transition:"background 0.2s"}}
+            disabled={saving||!resp.trim()||!respBy.trim()||!sigData}
+            style={{width:"100%",background:saving||!resp.trim()||!respBy.trim()||!sigData?"#27272A":"#22C55E",color:saving||!resp.trim()||!respBy.trim()||!sigData?"#71717A":"#000",border:"none",borderRadius:12,padding:"14px",fontSize:16,fontWeight:800,cursor:saving||!resp.trim()||!respBy.trim()||!sigData?"not-allowed":"pointer",fontFamily:"inherit",transition:"background 0.2s"}}
           >
-            {saving?"Submitting…":"✅ Submit Response"}
+            {saving?"Submitting…":"✅ Submit Signed Response"}
           </button>
+          <div style={{fontSize:11,color:"#52525B",textAlign:"center",marginTop:6}}>Response, name, and signature are required</div>
           <div style={{fontSize:11,color:"#52525B",textAlign:"center",marginTop:8}}>Your response will be saved directly to AIME Field Pro</div>
         </div>
       </div>
