@@ -5822,10 +5822,8 @@ function PublicRFIForm({rfiId}){
 }
 
 export default function App(){
-  // Check if this is a public RFI link (?rfi=UUID)
-  const urlParams=new URLSearchParams(window.location.search);
-  const publicRfiId=urlParams.get("rfi");
-  if(publicRfiId) return <PublicRFIForm rfiId={publicRfiId}/>;
+  // Public RFI detection (must be before hooks but stored as constant)
+  const [publicRfiId]            = useState(()=>new URLSearchParams(window.location.search).get("rfi"));
 
   const [user,setUser]           = useState(null);
   const [projects,setProjects]   = useState([]);
@@ -5944,6 +5942,9 @@ export default function App(){
     setActiveProject(p);
     setScreen("projectDetail");
   }
+
+  // Show public RFI form if URL has ?rfi=UUID (no login needed)
+  if(publicRfiId) return <PublicRFIForm rfiId={publicRfiId}/>;
 
   if(!user) return(
     <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif",color:T.text,background:T.bg,minHeight:"100vh"}}>
