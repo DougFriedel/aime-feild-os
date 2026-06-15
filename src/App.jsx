@@ -84,6 +84,18 @@ const API={
     upsert:(d)=>sb("/user_profiles",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),
     remove:(id)=>sb(`/user_profiles?id=eq.${id}`,{method:"DELETE"}),
   },
+  changeOrders:{
+    forProject:(pid)=>sb(`/change_orders?project_id=eq.${pid}&order=date_submitted.asc`),
+    create:(d)=>sb("/change_orders",{method:"POST",body:d,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/change_orders?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
+    remove:(id)=>sb(`/change_orders?id=eq.${id}`,{method:"DELETE"}),
+  },
+  rfis:{
+    forProject:(pid)=>sb(`/rfis?project_id=eq.${pid}&order=date_submitted.asc`),
+    create:(d)=>sb("/rfis",{method:"POST",body:d,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/rfis?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
+    remove:(id)=>sb(`/rfis?id=eq.${id}`,{method:"DELETE"}),
+  },
 };
 
 /* ── THEME ──────────────────────────────────────────────────── */
