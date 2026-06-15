@@ -67,7 +67,7 @@ const API={
   },
   safety:   {forProject:(pid)=>sb(`/safety_logs?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/safety_logs",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/safety_logs?id=eq.${id}`,{method:"DELETE"})},
   photos:   {forProject:(pid)=>sb(`/project_photos?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/project_photos",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/project_photos?id=eq.${id}`,{method:"DELETE"})},
-  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
+  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
@@ -656,6 +656,51 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
 
 /* ── DAILY REPORT FORM ──────────────────────────────────────── */
 const RSTEPS=["Job Info","Labor","Equipment","Materials","Review"];
+
+/* ── AUTO-POPULATE TIME CARDS FROM DAILY REPORT ─────────────── */
+async function autoPopulateTimeCards(report, project){
+  const labor=(report.labor||[]).filter(l=>l.name&&l.name.trim());
+  if(!labor.length) return {created:0,updated:0};
+  let created=0,updated=0;
+  for(const entry of labor){
+    const reg=parseFloat(entry.regHrs)||0;
+    const ot=parseFloat(entry.otHrs)||0;
+    const travel=parseFloat(entry.travelHrs)||0;
+    if(reg+ot+travel===0) continue;
+    try{
+      // Check for existing time card for this worker+date+job
+      const existing=await API.timeCards.find(entry.name,report.date,project.id);
+      const card=Array.isArray(existing)?existing[0]:null;
+      if(card){
+        // Add hours to existing card (worker may have multiple report entries)
+        await API.timeCards.update(card.id,{
+          reg_hours:(parseFloat(card.reg_hours)||0)+reg,
+          ot_hours:(parseFloat(card.ot_hours)||0)+ot,
+          travel_hours:(parseFloat(card.travel_hours)||0)+travel,
+        });
+        updated++;
+      }else{
+        // Create new time card
+        await API.timeCards.create({
+          worker_name:entry.name,
+          date:report.date,
+          project_id:project.id,
+          division:project.division,
+          classification:entry.classification||"",
+          reg_hours:reg,
+          ot_hours:ot,
+          travel_hours:travel,
+          notes:`Auto-filled from daily report${report.report_no?" #"+report.report_no:""} · ${project.name}`,
+        });
+        created++;
+      }
+    }catch(e){
+      console.warn("Time card auto-fill failed for",entry.name,":",e.message);
+    }
+  }
+  return{created,updated};
+}
+
 function DailyReportForm({user,project,onSave,onCancel,isOnline}){
   const draftKey=`${project.id}_${user.name}`;
   const existingDraft=loadDraft(draftKey);
@@ -710,6 +755,11 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
     try{
       await onSave(reportData);
       clearDraft(draftKey);
+      // Auto-populate time cards for each worker on this report
+      try{
+        const tcResult=await autoPopulateTimeCards(reportData,project);
+        console.log(`Time cards: ${tcResult.created} created, ${tcResult.updated} updated`);
+      }catch(e){console.warn("Time card auto-fill error:",e);}
       await notify("report_submitted","New Report Submitted",`${user.name} submitted a report for ${project.name}`,{project_id:project.id});
     }catch(e){
       addToQueue({type:'report',data:reportData});
@@ -1460,6 +1510,9 @@ function TimeCardsTab({projectId,user,onErr}){
   const todayCards=cards.filter(c=>c.date===today());
   const recentCards=cards.filter(c=>c.date!==today()).slice(0,30);
   return(<div>
+    <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
+      <strong>⚡ Auto-filled from daily reports</strong> — hours are added automatically when a foreman submits a daily report. Manual entries below for anything not on a daily.
+    </div>
     <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"⏱️ Log Time"}</button>
     {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`}}>
       <div style={{marginBottom:10}}><label style={lbl}>Worker</label><select value={f.worker_name} onChange={e=>setF(x=>({...x,worker_name:e.target.value}))} style={inpSel}>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
@@ -1489,6 +1542,9 @@ function CrewEquipTab({projectId,user,onErr}){
   async function remove(id){try{await API.equipment.remove(id);await load();}catch(e){onErr(e.message);}}
   const todayEquip=equip.filter(e=>e.date===today());const prevEquip=equip.filter(e=>e.date!==today()).slice(0,20);
   return(<div>
+    <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
+      <strong>⚡ Auto-filled from daily reports</strong> — hours are added automatically when a foreman submits a daily report. Manual entries below for anything not on a daily.
+    </div>
     <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"🚜 Log Equipment On Site"}</button>
     {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.yellow}`}}>
       <div style={{marginBottom:10}}><label style={lbl}>Equipment</label><select value={f.equipment_name} onChange={e=>setF(x=>({...x,equipment_name:e.target.value}))} style={inpSel}><option value="">— Select —</option>{EQUIP_LIST.filter(e=>!e.section).map(e=><option key={e.name} value={e.name}>{e.name}</option>)}</select></div>
@@ -1516,6 +1572,9 @@ function SubsTab({projectId,user,onErr}){
   async function remove(id){try{await API.subs.remove(id);await load();}catch(e){onErr(e.message);}}
   const trades=["Electrical","Mechanical","Civil","Welding","Coating","Survey","Inspection","HDD","Boring","Concrete","Other"];
   return(<div>
+    <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
+      <strong>⚡ Auto-filled from daily reports</strong> — hours are added automatically when a foreman submits a daily report. Manual entries below for anything not on a daily.
+    </div>
     <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"🏢 Log Subcontractor"}</button>
     {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.purple}`}}>
       <div style={{marginBottom:10}}><label style={lbl}>Company Name *</label><input type="text" placeholder="Sub company name" value={f.company_name} onChange={e=>set("company_name",e.target.value)} style={inp}/></div>
@@ -1538,6 +1597,9 @@ function SafetyTab({projectId,safety,user,onRefresh,onErr}){
   async function save(){if(!f.topic.trim())return;setSaving(true);try{await API.safety.create({...f,type,project_id:projectId,created_by:user.name});await onRefresh();setShowForm(false);setF({date:today(),topic:"",notes:"",severity:"low"});}catch(e){onErr(e.message);}setSaving(false);}
   async function del(id){try{await API.safety.remove(id);await onRefresh();}catch(e){onErr(e.message);}}
   return(<div>
+    <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
+      <strong>⚡ Auto-filled from daily reports</strong> — hours are added automatically when a foreman submits a daily report. Manual entries below for anything not on a daily.
+    </div>
     <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"⛑️ Log Safety Entry"}</button>
     {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.yellow}`}}>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>{Object.entries(TL).map(([k,v])=>(<button key={k} onClick={()=>setType(k)} style={{padding:"10px",borderRadius:10,border:`2px solid ${type===k?TC[k]:T.border}`,background:type===k?TC[k]+"20":T.surface,color:type===k?TC[k]:T.sub,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{v}</button>))}</div>
@@ -1776,6 +1838,9 @@ function ScheduleTab({projectId,user,onErr}){
   const statusIcon={pending:"○",in_progress:"◐",completed:"●",delayed:"⚠️"};
   const completed=milestones.filter(m=>m.status==="completed").length;const total=milestones.length;
   return(<div>
+    <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
+      <strong>⚡ Auto-filled from daily reports</strong> — hours are added automatically when a foreman submits a daily report. Manual entries below for anything not on a daily.
+    </div>
     <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"📅 + Add Milestone"}</button>
     {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.blue}`}}>
       <div style={{marginBottom:10}}><label style={lbl}>Milestone Title *</label><input type="text" placeholder="e.g. HDD Bore Complete" value={f.title} onChange={e=>set("title",e.target.value)} style={inp}/></div>
@@ -5878,8 +5943,11 @@ export default function App(){
     for(const item of q){
       try{
         if(item.type==='report'){
-          await API.reports.create(item.data);
+          const savedReport=await API.reports.create(item.data);
           removeFromQueue(item.qid);
+          // Auto-populate time cards on sync too
+          const proj=(await API.projects.list().catch(()=>[])||[]).find(p=>p.id===item.data.project_id);
+          if(proj) await autoPopulateTimeCards(item.data,proj).catch(()=>{});
           synced++;
         } else if(item.type==='timecard'){
           await API.timeCards.create(item.data);
