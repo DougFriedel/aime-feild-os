@@ -5015,17 +5015,21 @@ const isNative=typeof window!=="undefined"&&window.Capacitor?.isNativePlatform?.
 async function setupPushNotifications(){
   if(!isNative)return;
   try{
-    const{PushNotifications}=await import("@capacitor/push-notifications");
-    const{Network}=await import("@capacitor/network");
-    const{SplashScreen}=await import("@capacitor/splash-screen");
-    const{StatusBar,Style}=await import("@capacitor/status-bar");
+    // Use variable imports to prevent Vite from trying to bundle Capacitor
+    const cap=window.Capacitor?.Plugins;
+    if(!cap)return;
+    const{PushNotifications}=cap;
+    const{Network}=cap;
+    const{SplashScreen}=cap;
+    const{StatusBar}=cap;
+    const Style={Dark:"DARK"};
 
     // Hide splash screen
-    await SplashScreen.hide();
+    if(SplashScreen)await SplashScreen.hide();
 
     // Set status bar style
-    await StatusBar.setStyle({style:Style.Dark});
-    await StatusBar.setBackgroundColor({color:"#09090B"});
+    if(StatusBar)await StatusBar.setStyle({style:Style.Dark});
+    if(StatusBar)await StatusBar.setBackgroundColor({color:"#09090B"});
 
     // Better online/offline detection via Capacitor Network plugin
     Network.addListener("networkStatusChange",status=>{
