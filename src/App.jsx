@@ -2801,7 +2801,7 @@ function ChangeOrdersTab({project,user,onErr}){
       sep,ln,ln,
       `Thank you,`,ln,
       `${co.submitted_by||"AIME Field Operations"}`,ln,
-      `Atlantic Industrial Mechanical & Electrical`,ln,
+      `Atlantic Industrial Mechanical & Environmental Inc.`,ln,
     ].filter(Boolean).join("");
     if(navigator.clipboard) navigator.clipboard.writeText(link).catch(()=>{});
     window.location.href=`mailto:?subject=${encodeURIComponent(subj)}&body=${body}`;
@@ -2853,7 +2853,7 @@ function ChangeOrdersTab({project,user,onErr}){
 <div class="letterhead">
   <div>
     <div class="company">AIME</div>
-    <div class="company-sub">Atlantic Industrial Mechanical & Electrical<br>Field Operations Division</div>
+    <div class="company-sub">Atlantic Industrial Mechanical & Environmental Inc.<br>Field Operations Division</div>
   </div>
   <div class="doc-title">
     <h1>Change Order</h1>
@@ -3181,7 +3181,7 @@ function RFIsTab({project,user,onErr}){
       sep,ln,ln,
       `Thank you,`,ln,
       `${rfi.submitted_by||"AIME Field Operations"}`,ln,
-      `Atlantic Industrial Mechanical & Electrical`,ln,
+      `Atlantic Industrial Mechanical & Environmental Inc.`,ln,
     ].filter(Boolean).join("");
     window.location.href=`mailto:${rfi.ball_in_court_email||""}?subject=${encodeURIComponent(subj)}&body=${body}`;
   }
@@ -3260,7 +3260,7 @@ function RFIsTab({project,user,onErr}){
   <div class="letterhead">
     <div>
       <div class="company">AIME</div>
-      <div class="company-sub">Atlantic Industrial Mechanical & Electrical<br>Field Operations Division</div>
+      <div class="company-sub">Atlantic Industrial Mechanical & Environmental Inc.<br>Field Operations Division</div>
     </div>
     <div class="doc-title">
       <h1>Request for Information</h1>
@@ -3402,7 +3402,7 @@ ${rfi.description}
 ${rfi.response}`:"",
       ``,
       `—`,
-      `AIME Field Pro | Atlantic Industrial Mechanical & Electrical`,
+      `AIME Field Pro | Atlantic Industrial Mechanical & Environmental Inc.`,
     ].filter(l=>l!=="");
     const body=lines.map(l=>encodeURIComponent(l)).join("%0A");
     const to=rfi.ball_in_court_email||"";
@@ -3624,7 +3624,7 @@ function FinancialsScreen({reports,projects,user}){
 <div class="inv-header">
   <div>
     <div class="company">AIME</div>
-    <div class="company-sub">Atlantic Industrial Mechanical & Electrical<br>Field Operations</div>
+    <div class="company-sub">Atlantic Industrial Mechanical & Environmental Inc.<br>Field Operations</div>
   </div>
   <div class="inv-meta">
     <div class="inv-num">Invoice Summary</div>
@@ -5976,7 +5976,7 @@ function PublicCOForm({coId}){
     <div style={{background:"#09090B",minHeight:"100vh",fontFamily:"system-ui,sans-serif",padding:20}}>
       <div style={{maxWidth:560,margin:"0 auto"}}>
         <div style={{background:"#1f3864",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div><div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div><div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Electrical</div></div>
+          <div><div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div><div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Environmental Inc.</div></div>
           <div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:"#fff"}}>{co?.co_number}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>Change Order</div></div>
         </div>
         <div style={{background:"#18181B",borderRadius:16,padding:32,textAlign:"center",border:"1px solid #22C55E40"}}>
@@ -5999,7 +5999,7 @@ function PublicCOForm({coId}){
       <div style={{maxWidth:560,margin:"0 auto"}}>
         {/* Header */}
         <div style={{background:"#1f3864",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div><div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div><div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Electrical</div></div>
+          <div><div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div><div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Environmental Inc.</div></div>
           <div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800,color:"#fff"}}>{co.co_number}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>Change Order</div></div>
         </div>
 
@@ -6194,7 +6194,7 @@ function PublicRFIForm({rfiId}){
         <div style={{background:"#1f3864",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
             <div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div>
-            <div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Electrical</div>
+            <div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Environmental Inc.</div>
           </div>
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:18,fontWeight:800,color:"#fff"}}>RFI #{rfi.rfi_number}</div>
