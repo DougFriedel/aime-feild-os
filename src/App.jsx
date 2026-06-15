@@ -6733,9 +6733,7 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
           </div>
           <div style={{padding:"12px 14px"}}>
             <textarea value={inclusions} onChange={e=>setInclusions(e.target.value)}
-              placeholder={"- Furnish all labor, equipment and materials
-- Site cleanup upon completion
-- Add specific inclusions here..."}
+              placeholder="- Furnish all labor, equipment and materials&#10;- Site cleanup upon completion&#10;- Add specific inclusions here..."
               rows={5} style={{...inp,resize:"vertical",lineHeight:1.6,fontSize:13}}/>
           </div>
         </div>
@@ -6748,9 +6746,7 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
           </div>
           <div style={{padding:"12px 14px"}}>
             <textarea value={exclusions} onChange={e=>setExclusions(e.target.value)}
-              placeholder={"- Permits and inspections
-- Engineering and design
-- Add specific exclusions here..."}
+              placeholder="- Permits and inspections&#10;- Engineering and design&#10;- Add specific exclusions here..."
               rows={5} style={{...inp,resize:"vertical",lineHeight:1.6,fontSize:13}}/>
           </div>
         </div>
