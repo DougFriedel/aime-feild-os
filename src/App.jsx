@@ -753,7 +753,7 @@ async function autoPopulateTimeCards(report, project){
         created++;
       }
     }catch(e){
-      console.warn("Time card auto-fill failed for",entry.name,":",e.message);
+
     }
   }
   return{created,updated};
@@ -818,8 +818,8 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
       // Auto-populate time cards for each worker on this report
       try{
         const tcResult=await autoPopulateTimeCards(reportData,project);
-        console.log(`Time cards: ${tcResult.created} created, ${tcResult.updated} updated`);
-      }catch(e){console.warn("Time card auto-fill error:",e);}
+
+      }catch(e){}
       await notify("report_submitted","New Report Submitted",`${user.name} submitted a report for ${project.name}`,{project_id:project.id});
     }catch(e){
       addToQueue({type:'report',data:reportData});
@@ -893,7 +893,6 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
     </div>
   );
 }
-
 
 
 /* ── PDF / PRINT REPORT ─────────────────────────────────────── */
@@ -1348,7 +1347,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       setSigSaving(false);
     }
   }
-  
+
   function exportXLSX(){
     const wb = XLSX.read(DAILY_REPORT_TEMPLATE_B64, {type:'base64', cellStyles:true, cellFormula:true});
     const ws = wb.Sheets['3-24-2026'];
@@ -2734,9 +2733,6 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
 }
 
 
-
-
-
 /* ── CHANGE ORDERS TAB ───────────────────────────────────────── */
 function ChangeOrdersTab({project,user,onErr}){
   const canEdit=user.role==="admin"||user.role==="pm";
@@ -3401,199 +3397,6 @@ if(!document.getElementById("respDate").value){
     win.document.write(html);win.document.close();win.focus();
   }
 
-
-  function emailRFI(rfi){
-    const subj=`RFI ${rfi.rfi_number} — ${project.name}`;
-    const lines=[
-      `REQUEST FOR INFORMATION`,
-      ``,
-      `RFI #: ${rfi.rfi_number}`,
-      `Project: ${project.name}${project.afe?" | AFE: "+project.afe:""}`,
-      `Date Submitted: ${rfi.date_submitted||""}`,
-      `Submitted By: ${rfi.submitted_by||""}`,
-      `Response Due: ${rfi.due_date||"Not specified"}`,
-      rfi.ball_in_court?`Ball in Court: ${rfi.ball_in_court}`:"",
-      `Status: ${rfi.status}`,
-      ``,
-      `QUESTION / ISSUE:`,
-      rfi.question||"",
-      ``,
-      rfi.description?`DESCRIPTION:
-${rfi.description}
-`:"",
-      rfi.response?`RESPONSE (${rfi.responded_by||""} - ${rfi.response_date||""}):
-${rfi.response}`:"",
-      ``,
-      `—`,
-      `AIME Field Pro | Atlantic Industrial Mechanical & Environmental Inc.`,
-    ].filter(l=>l!=="");
-    const body=lines.map(l=>encodeURIComponent(l)).join("%0A");
-    const to=rfi.ball_in_court_email||"";
-    window.location.href=`mailto:${to}?subject=${encodeURIComponent(subj)}&body=${body}`;
-  }
-  const open=rfis.filter(r=>r.status==="Open"||r.status==="Overdue").length;
-  const answered=rfis.filter(r=>r.status==="Answered").length;
-
-  if(showForm||editing) return(
-    <div style={{padding:"14px 16px 80px"}}>
-      <button onClick={()=>{setShowForm(false);setEditing(null);setF(blank);}} style={{...ghostBtn,marginBottom:14}}>← Back</button>
-      <div style={{fontSize:17,fontWeight:800,marginBottom:16,color:T.text}}>{editing?"Edit":"New"} RFI</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-        <div><label style={lbl}>RFI Number *</label><input value={f.rfi_number} onChange={e=>set("rfi_number",e.target.value)} placeholder="RFI-001" style={inp}/></div>
-        <div><label style={lbl}>Date Submitted</label><input type="date" value={f.date_submitted||""} onChange={e=>set("date_submitted",e.target.value)} style={inp}/></div>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-        <div><label style={lbl}>Submitted By</label><input value={f.submitted_by} onChange={e=>set("submitted_by",e.target.value)} style={inp}/></div>
-        <div><label style={lbl}>Response Due</label><input type="date" value={f.due_date||""} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
-      </div>
-      <div style={{marginBottom:10}}><label style={lbl}>Question / Issue *</label><input value={f.question} onChange={e=>set("question",e.target.value)} placeholder="Brief summary of the question..." style={inp}/></div>
-      <div style={{marginBottom:10}}><label style={lbl}>Full Description</label><textarea rows={3} value={f.description} onChange={e=>set("description",e.target.value)} placeholder="Detailed description, background, drawings referenced..." style={{...inp,resize:"vertical"}}/></div>
-      <div style={{marginBottom:10}}><label style={lbl}>Status</label>
-        <select value={f.status} onChange={e=>set("status",e.target.value)} style={inpSel}>
-          {["Open","Answered","Closed","Overdue"].map(s=><option key={s}>{s}</option>)}
-        </select>
-      </div>
-      <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`,background:T.orangeLow}}>
-        <div style={{fontSize:12,fontWeight:700,color:T.orange,marginBottom:8}}>🏀 BALL IN COURT</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-          <div><label style={lbl}>Person Responsible</label><input value={f.ball_in_court} onChange={e=>set("ball_in_court",e.target.value)} placeholder="Name of person who needs to act" style={inp}/></div>
-          <div><label style={lbl}>Their Email</label><input type="email" value={f.ball_in_court_email} onChange={e=>set("ball_in_court_email",e.target.value)} placeholder="email@company.com" style={inp}/></div>
-        </div>
-      </div>
-      {(f.status==="Answered"||f.status==="Closed")&&(<>
-        <div style={{marginBottom:10}}><label style={lbl}>Response</label><textarea rows={3} value={f.response} onChange={e=>set("response",e.target.value)} placeholder="Response from client/engineer..." style={{...inp,resize:"vertical"}}/></div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Responded By</label><input value={f.responded_by} onChange={e=>set("responded_by",e.target.value)} style={inp}/></div>
-          <div><label style={lbl}>Response Date</label><input type="date" value={f.response_date||""} onChange={e=>set("response_date",e.target.value)} style={inp}/></div>
-        </div>
-      </>)}
-      <button onClick={save} disabled={!f.rfi_number.trim()||!f.question.trim()||saving} style={{...primBtn,opacity:f.rfi_number.trim()&&f.question.trim()&&!saving?1:0.5,borderRadius:14}}>{saving?"Saving…":"Save RFI"}</button>
-    </div>
-  );
-
-  return(
-    <div style={{padding:"14px 16px 80px"}}>
-      {/* Share Modal */}
-      {shareRfi&&(
-        <div onClick={()=>setShareRfi(null)} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",width:"100%",maxWidth:480}}>
-            <div style={{fontSize:17,fontWeight:900,marginBottom:4,color:T.text}}>📤 Share RFI #{shareRfi.rfi_number}</div>
-            <div style={{fontSize:12,color:T.muted,marginBottom:20}}>Send this link to {shareRfi.ball_in_court||"the recipient"} — they open it in any browser, fill in their response, and it saves directly to your app.</div>
-
-            {/* The link */}
-            <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"12px 14px",marginBottom:14,wordBreak:"break-all",fontSize:12,color:T.sub,lineHeight:1.5}}>
-              {`${appUrl}?rfi=${shareRfi.id}`}
-            </div>
-
-            {/* Copy link button — PRIMARY action */}
-            <button onClick={()=>copyLink(shareRfi)} style={{
-              ...primBtn,borderRadius:14,marginBottom:10,
-              background:copied?T.green:T.orange,
-              fontSize:16,fontWeight:800,
-              transition:"background 0.2s"
-            }}>
-              {copied?"✅ Link Copied! Paste it into your email":"📋 Copy Link to Clipboard"}
-            </button>
-
-            {copied&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:13,color:T.green,textAlign:"center",fontWeight:600}}>
-              ✓ Link copied! Now open your email app, paste it into the message body, and send.
-            </div>}
-
-            {/* Divider */}
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-              <div style={{flex:1,height:1,background:T.border}}/>
-              <span style={{fontSize:11,color:T.muted}}>OR</span>
-              <div style={{flex:1,height:1,background:T.border}}/>
-            </div>
-
-            {/* Open email draft */}
-            <button onClick={()=>openEmailDraft(shareRfi)} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10,fontSize:14}}>
-              📧 Open Email Draft {shareRfi.ball_in_court_email?`(to ${shareRfi.ball_in_court_email})`:""}
-            </button>
-            <div style={{fontSize:11,color:T.muted,textAlign:"center",marginBottom:14}}>
-              Note: Email drafts use plain text — the link won't be clickable. Use Copy Link above for best results.
-            </div>
-
-            <button onClick={()=>setShareRfi(null)} style={{...ghostBtn,width:"100%",textAlign:"center"}}>Done</button>
-          </div>
-        </div>
-      )}
-
-      {/* Status summary */}
-      {rfis.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
-        {[[open,"Open / Overdue",T.yellow],[answered,"Answered",T.blue],[rfis.filter(r=>r.status==="Closed").length,"Closed",T.green]].map(([v,l,c])=>(
-          <div key={l} style={{background:T.card,borderRadius:10,padding:"10px",textAlign:"center",border:`1px solid ${c}30`}}>
-            <div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div>
-            <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",marginTop:2}}>{l}</div>
-          </div>
-        ))}
-      </div>}
-
-      {canEdit&&<button onClick={()=>setShowForm(true)} style={{...primBtn,borderRadius:14,marginBottom:14}}>+ New RFI</button>}
-
-      {loading&&<Spinner/>}
-      {!loading&&rfis.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>
-        <div style={{fontSize:32,marginBottom:8}}>📝</div>
-        <div style={{fontWeight:700,color:T.sub}}>No RFIs Yet</div>
-        {canEdit&&<div style={{fontSize:12,marginTop:6}}>Tap "+ New RFI" to log a request for information</div>}
-      </div>}
-
-      {rfis.map(rfi=>{
-        const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
-        const effStatus=isOverdue?"Overdue":rfi.status;
-        const sc=statusColor[effStatus]||T.muted;
-        return(
-          <div key={rfi.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${sc}`}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-              <div>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
-                  <span style={{fontSize:15,fontWeight:800,color:T.orange}}>{rfi.rfi_number}</span>
-                  <span style={pill(sc)}>{effStatus.toUpperCase()}</span>
-                </div>
-                <div style={{fontSize:12,color:T.muted}}>{rfi.date_submitted} · {rfi.submitted_by}</div>
-                {rfi.due_date&&<div style={{fontSize:11,color:isOverdue?T.red:T.muted,marginTop:2}}>
-                  {isOverdue?"⚠️ Overdue — ":"Due: "}{rfi.due_date}
-                </div>}
-              {rfi.ball_in_court&&<div style={{fontSize:11,color:T.orange,marginTop:2,fontWeight:600}}>
-                🏀 Ball in Court: {rfi.ball_in_court}
-              </div>}
-              </div>
-            </div>
-            <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:4}}>{rfi.question}</div>
-            {rfi.description&&<div style={{fontSize:12,color:T.sub,marginBottom:8,lineHeight:1.5}}>{rfi.description}</div>}
-            {rfi.response&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px",marginTop:8}}>
-              <div style={{fontSize:11,fontWeight:700,color:T.green,marginBottom:4}}>✓ RESPONSE — {rfi.responded_by}{rfi.response_date?" · "+rfi.response_date:""}</div>
-              <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{rfi.response}</div>
-              {rfi.response_signature&&<div style={{marginTop:8,background:"#fff",borderRadius:8,padding:4}}>
-                <div style={{fontSize:9,color:"#999",marginBottom:2,paddingLeft:4}}>SIGNATURE</div>
-                <img src={rfi.response_signature} alt="Signature" style={{width:"100%",maxHeight:80,objectFit:"contain",display:"block",borderRadius:6}}/>
-              </div>}
-            </div>}
-            <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
-              <button onClick={()=>shareRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.orange,border:`1px solid ${T.orange}40`,minWidth:90,fontWeight:700}}>📤 Send Link</button>
-              <button onClick={()=>printRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:"#CBD5E1",border:"1px solid #27272A",minWidth:70}}>🖨️ PDF</button>
-              {canEdit&&<>
-                <button onClick={()=>{setEditing(rfi.id);setF({...rfi,notes:rfi.notes||"",ball_in_court:rfi.ball_in_court||"",ball_in_court_email:rfi.ball_in_court_email||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,minWidth:60}}>✏️</button>
-                <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`,minWidth:50}}>🗑</button>
-              </>}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-
-/* ── FINANCIALS SCREEN ───────────────────────────────────────── */
-function FinancialsScreen({reports,projects,user}){
-  const [activeReport,setActiveReport]=useState(null);
-  const [dateFrom,setDateFrom]=useState((()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})());
-  const [dateTo,setDateTo]=useState(today());
-  const [selProject,setSelProject]=useState("all");
-  const [selDivision,setSelDivision]=useState("all");
-
-  const fmt2=n=>Number(n||0).toLocaleString("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2});
 
   function presets(){return[
     ["This Month",(()=>{const d=new Date();d.setDate(1);return d.toISOString().split("T")[0];})(),today()],
@@ -5866,8 +5669,6 @@ if(typeof document!=="undefined"&&!document.getElementById("aime-global-style"))
 }
 
 
-
-
 /* ── EMPLOYEE TIMECARD REPORT (PDF) ─────────────────────────── */
 function printEmployeeTimecards(cards, from, to, selectedJobs, projects){
   // Filter cards by date range
@@ -6648,7 +6449,7 @@ function EstimateBuilder({estimate,user,onBack,onSaved}){
                       {item.description&&<div style={{fontSize:11,color:T.muted}}>{item.description}</div>}
                       <div style={{fontSize:11,color:T.sub,marginTop:1}}>
                         {item.qty} {item.unit}
-                        {cat!=="Labor"&&item.unit_cost>0?` × $${fmtN(item.unit_cost)}`:""} 
+                        {cat!=="Labor"&&item.unit_cost>0?` × $${fmtN(item.unit_cost)}`:""}
                         {cat==="Labor"?` × $${fmtN(item.unit_cost)}/hr`:""}
                         {item.unit_labor_hrs>0?` · ${item.unit_labor_hrs}hr labor`:""}
                         {item.notes?` · ${item.notes}`:""}
@@ -6893,7 +6694,6 @@ ${generalNotes?`<div class="gen-notes">
 }
 
 
-
 function EstimatingScreen({user,onBack}){
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -6912,7 +6712,6 @@ function EstimatingScreen({user,onBack}){
     </div>
   );
 }
-
 
 
 /* ── PUBLIC CO FORM (no login required) ─────────────────────── */
