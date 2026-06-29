@@ -3191,7 +3191,7 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision}){
 }
 
 /* ── DAILY REPORT FORM ──────────────────────────────────────── */
-const RSTEPS=["Job Info","Labor","Equipment","Materials","Review"];
+// steps defined above
 
 
 function LoginScreen({onLogin}){
@@ -3303,7 +3303,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash}){
           </div>
           <div style={{display:"flex",gap:8}}>
             {can(user,"view_dashboard")&&<button onClick={onDash} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
-            {can(user,"crew_directory")&&{can(user,"estimating")&&<button onClick={onEstimating} style={{background:`${T.purple}15`,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"8px 12px",color:T.purple,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
+            {can(user,"estimating")&&<button onClick={onEstimating} style={{background:`${T.purple}15`,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"8px 12px",color:T.purple,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
             <button onClick={onCrew} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"8px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>👥</button>}
             <button onClick={onLogout} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>Out</button>
           </div>
