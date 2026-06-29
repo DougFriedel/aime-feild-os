@@ -2561,18 +2561,7 @@ function CrewDirectoryScreen({onBack,user}){
 }
 
 /* ── PROJECT DETAIL (ORCHESTRATOR) ─────────────────────────── */
-const PTABS=[
-  {id:"reports",icon:"📋",label:"Reports",perm:"submit_report"},
-  {id:"time",icon:"⏱️",label:"Time",perm:"time_card"},
-  {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
-  {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
-  {id:"safety",icon:"⛑️",label:"Safety",perm:"safety"},
-  {id:"docs",icon:"📁",label:"Docs",perm:"docs"},
-  {id:"schedule",icon:"📅",label:"Schedule",perm:"schedule"},
-  {id:"photos",icon:"📷",label:"Photos",perm:"photos"},
-  {id:"weather",icon:"🌤️",label:"Weather",perm:"weather"},
-  {id:"info",icon:"ℹ️",label:"Info",perm:null},
-];
+
 
 function UserManagementScreen({onBack,currentUser}){
   const [profiles,setProfiles]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
