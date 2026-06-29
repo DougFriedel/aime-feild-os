@@ -2348,6 +2348,356 @@ function InfoTab({project,user,onEdit,onArchive,onDelete}){
 
 
 
+
+const PTABS=[
+  {id:"reports",icon:"📋",label:"Reports",perm:"submit_report"},
+  {id:"time",icon:"⏱️",label:"Time",perm:"approve_report"},
+  {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
+  {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
+  {id:"safety",icon:"⛑️",label:"Safety",perm:"safety"},
+  {id:"docs",icon:"📁",label:"Docs",perm:"docs"},
+  {id:"schedule",icon:"📅",label:"Schedule",perm:"schedule"},
+  {id:"photos",icon:"📷",label:"Photos",perm:"photos"},
+  {id:"weather",icon:"🌤️",label:"Weather",perm:"weather"},
+  {id:"co",icon:"📋",label:"CO",perm:"subs"},
+  {id:"rfi",icon:"📝",label:"RFI",perm:"subs"},
+  {id:"info",icon:"ℹ️",label:"Info",perm:null},
+];
+
+function PMDashboard({onBack,user}){
+  const [projects,setProjects]=useState([]);const [reports,setReports]=useState([]);const [pending,setPending]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");const [pmTab,setPmTab]=useState("overview");
+  const [activeReport,setActiveReport]=useState(null);const [activeProject,setActiveProject]=useState(null);const [unread,setUnread]=useState(0);const [showNotifs,setShowNotifs]=useState(false);
+
+  async function load(){setLoading(true);setErr("");try{const[projs,reps,pend,notifs]=await Promise.all([API.projects.list(),API.reports.all(),API.reports.pending(),API.notifications.unread()]);setProjects(projs||[]);setReports(reps||[]);setPending(pend||[]);setUnread((notifs||[]).length);}catch(e){setErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[]);
+
+  async function approve(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});await load();}catch(e){setErr(e.message);}}
+  async function flag(id,notes){try{await API.reports.update(id,{status:"flagged",pm_notes:notes});await notify("report_flagged","Report Flagged",notes,{report_id:id});await load();}catch(e){setErr(e.message);}}
+
+  if(showNotifs) return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={()=>{setShowNotifs(false);load();}} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
+        <div style={{fontSize:20,fontWeight:900}}>🔔 Notifications</div>
+      </div>
+      <NotificationsPanel onClose={()=>{setShowNotifs(false);load();}}/>
+    </div>
+  );
+
+  if(activeReport&&activeProject) return(<ReportDetail report={activeReport} project={activeProject} user={user} onBack={()=>{setActiveReport(null);setActiveProject(null);load();}} onDelete={async(id)=>{await API.reports.remove(id);setActiveReport(null);setActiveProject(null);load();}} onApprove={approve} onFlag={flag}/>);
+
+  const allTot=reports.reduce((s,r)=>{const t=reportTotals(r);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
+  const thisWeek=reports.filter(r=>{const d=new Date(r.date+"T12:00:00");return(Date.now()-d.getTime())/86400000<=7;});
+  const monthStart=new Date();monthStart.setDate(1);const ms=monthStart.toISOString().split("T")[0];
+  const workerHours={};
+  reports.filter(r=>r.date>=ms).forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!workerHours[l.name])workerHours[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0};workerHours[l.name].reg+=parseFloat(l.regHrs)||0;workerHours[l.name].ot+=parseFloat(l.otHrs)||0;workerHours[l.name].travel+=parseFloat(l.travelHrs)||0;workerHours[l.name].pay+=laborAmt(l);}));
+  const workerRows=Object.values(workerHours).sort((a,b)=>b.pay-a.pay);
+  const projMap={};projects.forEach(p=>{projMap[p.id]={...p,labor:0,equip:0,mats:0,grand:0,count:0};});
+  reports.forEach(r=>{if(!projMap[r.project_id])return;const t=reportTotals(r);projMap[r.project_id].labor+=t.labor;projMap[r.project_id].equip+=t.equip;projMap[r.project_id].mats+=t.mats;projMap[r.project_id].grand+=t.grand;projMap[r.project_id].count++;});
+  const projRows=Object.values(projMap).filter(p=>p.status==="active").sort((a,b)=>b.grand-a.grand);
+
+  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${pending.length>0?" ("+pending.length+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
+
+function CrewDirectoryScreen({onBack,user}){
+  const [members,setMembers]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
+  const [mode,setMode]=useState("list");const [active,setActive]=useState(null);const [saving,setSaving]=useState(false);
+  const blank={name:"",classification:"",phone:"",email:"",emergency_contact_name:"",emergency_contact_phone:"",certifications:[],notes:"",active:true};
+  const [f,setF]=useState({...blank});const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  async function load(){setLoading(true);try{setMembers(await API.crew.list()||[]);}catch(e){setErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[]);
+  async function save(){if(!f.name.trim())return;setSaving(true);try{if(active){await API.crew.update(active.id,f);setActive({...active,...f});}else{await API.crew.create(f);}await load();setMode("list");setActive(null);setF({...blank});}catch(e){setErr(e.message);}setSaving(false);}
+  async function remove(id){if(!window.confirm("Remove crew member?"))return;try{await API.crew.remove(id);await load();setMode("list");setActive(null);}catch(e){setErr(e.message);}}
+
+function UserManagementScreen({onBack,currentUser}){
+  const [profiles,setProfiles]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
+  const [mode,setMode]=useState("list");// list | edit
+  const [active,setActive]=useState(null);const [saving,setSaving]=useState(false);
+  const blank={name:"",role:"crew",division:null,pin:"",active:true};
+  const [f,setF]=useState({...blank});
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+
+  async function load(){setLoading(true);try{setProfiles(await API.userProfiles.list()||[]);}catch(e){setErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[]);
+
+  async function save(){
+    if(!f.name.trim())return;setSaving(true);
+    try{
+      if(active){await API.userProfiles.update(active.id,{role:f.role,division:f.division,pin:f.pin,active:f.active});}
+      else{await API.userProfiles.upsert({name:f.name,role:f.role,division:f.division||null,pin:f.pin||null,active:true});}
+      await load();setMode("list");setActive(null);setF({...blank});
+    }catch(e){setErr(e.message);}setSaving(false);
+  }
+
+  async function remove(id){if(!window.confirm("Remove this user profile?"))return;try{await API.userProfiles.remove(id);await load();}catch(e){setErr(e.message);}}
+
+  // Build map of who has a profile
+  const profileMap={};profiles.forEach(p=>profileMap[p.name]=p);
+  // Everyone in NAMES list + any extra profiles
+  const allNames=[...new Set([...NAMES,...profiles.map(p=>p.name)])].sort();
+
+  if(mode==="edit") return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title={active?"Edit User":"Add User"} onBack={()=>{setMode("list");setActive(null);setF({...blank});}}/>
+      <div style={{padding:"16px 16px 100px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {!active&&<div style={{marginBottom:14}}><label style={lbl}>Name</label><select value={f.name} onChange={e=>set("name",e.target.value)} style={inp}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>}
+        {active&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:16,fontWeight:800}}>{active.name}</div><div style={{fontSize:12,color:T.muted}}>Editing permissions</div></div>}
+
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Permission Level</label>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {ROLES.map(role=>{const m=ROLE_META[role];return(<button key={role} onClick={()=>set("role",role)} style={{display:"flex",alignItems:"center",gap:12,padding:"14px",borderRadius:12,border:`2px solid ${f.role===role?m.color:T.border}`,background:f.role===role?m.color+"18":T.surface,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+              <div style={{width:12,height:12,borderRadius:"50%",background:m.color,flexShrink:0}}/>
+              <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:f.role===role?m.color:T.text}}>{m.label}</div><div style={{fontSize:12,color:T.muted}}>{m.desc}</div></div>
+              {f.role===role&&<div style={{fontSize:16,color:m.color}}>✓</div>}
+            </button>);})}
+          </div>
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Assigned Division (optional)</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button onClick={()=>set("division",null)} style={{padding:"12px",borderRadius:12,border:`2px solid ${f.division===null?T.orange:T.border}`,background:f.division===null?T.orangeLow:T.surface,color:f.division===null?T.orange:T.sub,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>All Divisions</button>
+            {DIVISIONS.map(div=>{const m=DIV_META[div];return(<button key={div} onClick={()=>set("division",div)} style={{padding:"12px",borderRadius:12,border:`2px solid ${f.division===div?m.color:T.border}`,background:f.division===div?m.color+"18":T.surface,color:f.division===div?m.color:T.sub,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>{m.icon} {div}</button>);})}
+          </div>
+        </div>
+
+        {(f.role==="pm"||f.role==="admin")&&<div style={{marginBottom:14}}><label style={lbl}>{f.role==="admin"?"Admin PIN":"PM PIN"} (required)</label><input type="text" maxLength={6} placeholder="Set a PIN (numbers)" value={f.pin||""} onChange={e=>set("pin",e.target.value)} style={inp}/><div style={{fontSize:11,color:T.muted,marginTop:4}}>This person will need to enter this PIN to sign in.</div></div>}
+
+        {active&&<div style={{marginBottom:14}}><label style={lbl}>Status</label><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>{[true,false].map(v=>(<button key={String(v)} onClick={()=>set("active",v)} style={{padding:"12px",borderRadius:12,border:`2px solid ${f.active===v?(v?T.green:T.red):T.border}`,background:f.active===v?(v?T.greenLow:T.redLow):T.surface,color:f.active===v?(v?T.green:T.red):T.sub,fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>{v?"✅ Active":"❌ Inactive"}</button>))}</div></div>}
+
+        <button onClick={save} style={{...primBtn,opacity:f.name&&!saving?1:0.5}}>{saving?"Saving…":active?"Save Changes":"Add User"}</button>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👤 User Management</div><div style={{fontSize:12,color:T.muted}}>Set permission levels for your crew</div></div>
+          <button onClick={()=>{setF({...blank});setMode("edit");}} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>
+        </div>
+      </div>
+      <div style={{padding:"14px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {loading&&<Spinner/>}
+        {!loading&&<>
+          {/* Users with profiles */}
+          <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>Configured Users ({profiles.length})</div>
+          {profiles.length===0&&<div style={{...cardS,marginBottom:14,background:T.yellowLow,border:`1px solid ${T.yellow}40`}}><div style={{fontSize:13,color:T.yellow}}>⚠️ No user profiles set. All users will sign in as Field Crew until you configure them.</div></div>}
+          {profiles.map(p=>{
+            const m=ROLE_META[p.role]||ROLE_META.crew;
+            return(<div key={p.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${m.color}`,opacity:p.active?1:0.5}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:10,height:10,borderRadius:"50%",background:m.color,flexShrink:0}}/>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:700}}>{p.name}</div>
+                  <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                    <span style={pill(m.color)}>{m.label}</span>
+                    {p.division&&<span style={pill(DIV_META[p.division]?.color||T.muted)}>{DIV_META[p.division]?.icon} {p.division}</span>}
+                    {!p.active&&<span style={pill(T.red)}>INACTIVE</span>}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>{setActive(p);setF({name:p.name,role:p.role,division:p.division||null,pin:p.pin||"",active:p.active});setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"6px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
+                  {p.name!==currentUser.name&&<button onClick={()=>remove(p.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>}
+                </div>
+              </div>
+            </div>);
+          })}
+
+          {/* Everyone else defaults to Crew */}
+          <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 10px"}}>Unconfigured (Default: Field Crew)</div>
+          {NAMES.filter(n=>!profileMap[n]).slice(0,15).map(n=>(
+            <div key={n} style={{...cardS,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",opacity:0.5}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:10,height:10,borderRadius:"50%",background:T.green}}/><span style={{fontSize:13}}>{n}</span><span style={pill(T.green)}>Field Crew</span></div>
+              <button onClick={()=>{setF({...blank,name:n});setMode("edit");}} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",color:T.sub,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Set Role</button>
+            </div>
+          ))}
+          {NAMES.filter(n=>!profileMap[n]).length>15&&<div style={{fontSize:12,color:T.muted,textAlign:"center",padding:"8px 0"}}>+ {NAMES.filter(n=>!profileMap[n]).length-15} more (tap + Add to configure)</div>}
+        </>}
+      </div>
+    </div>
+  );
+}
+
+/* ── CREW DIRECTORY SCREEN ──────────────────────────────────── */
+
+function NotificationsPanel(){
+    const [notifs,setNotifs]=useState([]);const [nl,setNl]=useState(true);
+    async function loadN(){setNl(true);try{setNotifs(await API.notifications.list()||[]);}catch{}setNl(false);}
+    useEffect(()=>{loadN();},[]);
+    const typeIcon={report_submitted:"📋",report_flagged:"🚩",report_approved:"✅"};
+    return(<div style={{padding:"14px 16px 80px"}}>
+      {unread>0&&<button onClick={async()=>{await API.notifications.markAllRead();setUnread(0);await loadN();}} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:14}}>Mark all read</button>}
+      {nl&&<Spinner/>}
+      {!nl&&notifs.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>🔔</div><div>No notifications yet.</div></div>}
+      {!nl&&notifs.map(n=>(<div key={n.id} onClick={async()=>{if(!n.read){await API.notifications.markRead(n.id);setUnread(u=>Math.max(0,u-1));await loadN();}}} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${n.read?T.border:T.orange}`,opacity:n.read?0.6:1,cursor:n.read?"default":"pointer"}}><div style={{display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:18,flexShrink:0}}>{typeIcon[n.type]||"📬"}</span><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700}}>{n.title}</div>{n.body&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{n.body}</div>}<div style={{fontSize:11,color:T.muted,marginTop:4}}>{n.created_at?new Date(n.created_at).toLocaleString():""}</div></div>{!n.read&&<div style={{width:8,height:8,borderRadius:"50%",background:T.orange,flexShrink:0,marginTop:4}}/>}</div></div>))}
+    </div>);
+  }
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Divisions</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>PM Dashboard</div>
+          <button onClick={()=>setShowNotifs(true)} style={{background:unread>0?T.orangeLow:T.card,border:`1px solid ${unread>0?T.orange:T.border}`,borderRadius:10,padding:"8px 12px",color:unread>0?T.orange:T.muted,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",position:"relative"}}>
+            🔔{unread>0&&<span style={{position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:"50%",background:T.orange,color:"#09090B",fontSize:9,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{unread}</span>}
+          </button>
+        </div>
+        <div style={{display:"flex",gap:6,overflowX:"auto"}}>
+          {DMTABS.map(t=>(<button key={t.id} onClick={()=>setPmTab(t.id)} style={{flexShrink:0,background:pmTab===t.id?T.orange:"transparent",border:pmTab===t.id?"none":`1px solid ${T.border}`,borderRadius:10,padding:"9px 12px",fontSize:12,fontWeight:pmTab===t.id?800:500,cursor:"pointer",color:pmTab===t.id?"#09090B":T.sub,fontFamily:"inherit"}}>{t.l}</button>))}
+        </div>
+      </div>
+      <div style={{padding:"14px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {loading&&<Spinner/>}
+        {!loading&&(<>
+          {pmTab==="overview"&&(<div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
+              {[{icon:"💰",label:"Total Billed",val:"$"+fmt(allTot.g),color:T.green},{icon:"📋",label:"This Week",val:thisWeek.length,color:T.orange},{icon:"🏗️",label:"Active Jobs",val:projects.filter(p=>p.status==="active").length,color:T.blue},{icon:"✅",label:"Pending",val:pending.length,color:pending.length>0?T.yellow:T.muted}].map(k=>(<div key={k.label} style={cardS}><div style={{fontSize:24,marginBottom:6}}>{k.icon}</div><div style={{fontSize:22,fontWeight:900,color:k.color,letterSpacing:"-0.5px"}}>{k.val}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{k.label}</div></div>))}
+            </div>
+            {/* Division breakdown */}
+            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>By Division</div>
+            {DIVISIONS.map(div=>{const dp=projects.filter(p=>p.division===div);const dr=reports.filter(r=>dp.find(p=>p.id===r.project_id));const dt=dr.reduce((s,r)=>{const t=reportTotals(r);return{g:s.g+t.grand};},{g:0});const m=DIV_META[div];return(<div key={div} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${m.color}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:20}}>{m.icon}</span><div><div style={{fontSize:15,fontWeight:700}}>{div}</div><div style={{fontSize:11,color:T.muted}}>{dp.filter(p=>p.status==="active").length} active jobs · {dr.length} reports</div></div></div><div style={{fontSize:18,fontWeight:900,color:T.green}}>${dt.g>=1000?(dt.g/1000).toFixed(1)+"k":fmt(dt.g)}</div></div></div>);})}
+            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 12px"}}>Recent Reports</div>
+            {reports.slice(0,15).map(r=>{const t=reportTotals(r);const p=projects.find(x=>x.id===r.project_id);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...cardS,marginBottom:8,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:13,fontWeight:700}}>{fmtShort(r.date)} · {r.projects?.name||"Unknown"}</div><div style={{fontSize:11,color:T.muted}}>{r.projects?.division||""} · {r.submitted_by||"Unknown"} · <span style={{color:sc}}>{(r.status||"submitted").toUpperCase()}</span></div></div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${fmt(t.grand)}</div></div>);})}
+            {reports.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>No reports yet.</div>}
+          </div>)}
+          {pmTab==="approvals"&&(<div>
+            {pending.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:40,marginBottom:10}}>✅</div><div style={{fontSize:16,fontWeight:700}}>All caught up!</div></div>}
+            {pending.map(r=>{const t=reportTotals(r);const p=projects.find(x=>x.id===r.project_id);return(<div key={r.id} style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.yellow}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontSize:15,fontWeight:800}}>{fmtShort(r.date)}</div><div style={{fontSize:12,color:T.sub}}>{r.projects?.name||"Unknown"} · {r.projects?.division||""}</div><div style={{fontSize:12,color:T.muted}}>by {r.submitted_by||"Unknown"}</div>{r.description&&<div style={{fontSize:12,color:T.sub,marginTop:4,lineHeight:1.4}}>{r.description.slice(0,100)}{r.description.length>100?"…":""}</div>}</div><div style={{textAlign:"right",flexShrink:0,marginLeft:10}}><div style={{fontSize:18,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{display:"flex",gap:4,marginTop:6,justifyContent:"flex-end"}}>{(r.labor||[]).length>0&&<span style={pill(T.orange)}>👷{r.labor.length}</span>}{(r.equipment||[]).length>0&&<span style={pill(T.yellow)}>🚜{r.equipment.length}</span>}</div></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><button onClick={()=>approve(r.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:10,padding:"12px"}}>✓ Approve</button><button onClick={()=>{const n=window.prompt("Flag note:");if(n!==null)flag(r.id,n);}} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:10,padding:"12px"}}>🚩 Flag</button></div><button onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...ghostBtn,width:"100%",textAlign:"center",padding:"10px"}}>View Full Report →</button></div>);})}
+          </div>)}
+          {pmTab==="workers"&&(<div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Hours from reports this month</div>
+            {workerRows.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>👷</div><div>No labor entries this month.</div></div>}
+            {workerRows.map(w=>(<div key={w.name} style={{...cardS,marginBottom:9}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div><div style={{fontSize:15,fontWeight:700}}>{w.name}</div><div style={{display:"flex",gap:10,marginTop:6}}><span style={{fontSize:12,color:T.sub}}>{w.reg.toFixed(1)} reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)} OT</span>}{w.travel>0&&<span style={{fontSize:12,color:T.blue}}>{w.travel.toFixed(1)} travel</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(w.pay)}</div><div style={{fontSize:10,color:T.muted}}>{(w.reg+w.ot+w.travel).toFixed(1)} total hrs</div></div></div></div>))}
+          </div>)}
+          {pmTab==="billing"&&(<div>
+            <div style={{...cardS,marginBottom:16,background:T.orangeLow,border:`1px solid ${T.orange}40`}}><div style={{fontSize:12,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>All-Time Totals</div>{[["Labor",allTot.l,T.green],["Equipment",allTot.e,T.yellow],["Materials",allTot.m,T.blue],["Grand Total",allTot.g,T.orange]].map(([l,v,c])=>(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:14,color:T.sub,fontWeight:l==="Grand Total"?800:400}}>{l}</span><span style={{fontSize:l==="Grand Total"?20:14,fontWeight:800,color:c}}>${fmt(v)}</span></div>))}</div>
+            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>By Job</div>
+            {projRows.map(p=>(<div key={p.id} style={{...cardS,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontSize:15,fontWeight:700}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.division} · {p.count} reports</div></div><div style={{fontSize:18,fontWeight:900,color:T.green}}>${p.grand>=1000?(p.grand/1000).toFixed(1)+"k":fmt(p.grand)}</div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{[["Labor",p.labor,T.orange],["Equip",p.equip,T.yellow],["Mats",p.mats,T.blue]].map(([l,v,c])=>(<div key={l} style={{background:T.surface,borderRadius:8,padding:"8px",textAlign:"center"}}><div style={{fontSize:13,fontWeight:700,color:c}}>${v>=1000?(v/1000).toFixed(1)+"k":fmt(v)}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>{l}</div></div>))}</div></div>))}
+          </div>)}
+          {pmTab==="reports"&&<CustomReports/>}
+          {pmTab==="users"&&(can(user,"manage_users")?<UserManagement/>:<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>🔒</div><div>Admin access required.</div></div>)}
+        </>)}
+      </div>
+    </div>
+  );
+
+function CustomReports(){
+    const [range,setRange]=useState("month");const [selProj,setSelProj]=useState("all");
+    function getStart(){const d=new Date();if(range==="week"){d.setDate(d.getDate()-7);}else if(range==="month"){d.setDate(1);}else if(range==="quarter"){const q=Math.floor(d.getMonth()/3);d.setMonth(q*3);d.setDate(1);}else if(range==="year"){d.setMonth(0);d.setDate(1);}return d.toISOString().split("T")[0];}
+    const fr=reports.filter(r=>{const start=range==="all"?"2000-01-01":getStart();const md=r.date>=start;const mp=selProj==="all"||r.project_id===selProj;return md&&mp;});
+    const tot=fr.reduce((s,r)=>{const t=reportTotals(r);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
+    const wm={};fr.forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!wm[l.name])wm[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0};wm[l.name].reg+=parseFloat(l.regHrs)||0;wm[l.name].ot+=parseFloat(l.otHrs)||0;wm[l.name].travel+=parseFloat(l.travelHrs)||0;wm[l.name].pay+=laborAmt(l);}));
+    const wr=Object.values(wm).sort((a,b)=>b.pay-a.pay);
+    const pm2={};projects.forEach(p=>{pm2[p.id]={name:p.name,division:p.division,labor:0,equip:0,mats:0,grand:0,count:0};});
+    fr.forEach(r=>{if(!pm2[r.project_id])return;const t=reportTotals(r);pm2[r.project_id].labor+=t.labor;pm2[r.project_id].equip+=t.equip;pm2[r.project_id].mats+=t.mats;pm2[r.project_id].grand+=t.grand;pm2[r.project_id].count++;});
+    const pr=Object.values(pm2).filter(p=>p.count>0).sort((a,b)=>b.grand-a.grand);
+    function exportReport(){
+      const wb=XLSX.utils.book_new();
+      const sumRows=[["AIME Field OS — Custom Report"],[`Period: ${range} · Project: ${selProj==="all"?"All":projects.find(p=>p.id===selProj)?.name||"—"}`],[`Generated: ${new Date().toLocaleString()}`],[],["TOTALS"],["Labor","Equipment","Materials","Grand Total"],[tot.l,tot.e,tot.m,tot.g],[],["WORKERS"],["Name","Reg Hrs","OT Hrs","Travel Hrs","Total Pay"],...wr.map(w=>[w.name,w.reg,w.ot,w.travel,w.pay]),[],["PROJECTS"],["Project","Division","Reports","Labor","Equip","Mats","Total"],...pr.map(p=>[p.name,p.division||"",p.count,p.labor,p.equip,p.mats,p.grand])];
+      const ws1=XLSX.utils.aoa_to_sheet(sumRows);ws1["!cols"]=[{wch:30},{wch:15},{wch:15},{wch:15},{wch:15},{wch:15},{wch:15}];XLSX.utils.book_append_sheet(wb,ws1,"Summary");
+      const dRows=[["Date","Project","Division","By","Status","Labor","Equip","Mats","Total"]];fr.forEach(r=>{const t=reportTotals(r);const p=projects.find(x=>x.id===r.project_id);dRows.push([r.date,p?.name||"",p?.division||"",r.submitted_by||"",r.status||"",t.labor,t.equip,t.mats,t.grand]);});
+      const ws2=XLSX.utils.aoa_to_sheet(dRows);XLSX.utils.book_append_sheet(wb,ws2,"Detail");
+      XLSX.writeFile(wb,`AIME_Report_${range}_${today()}.xlsx`);
+    }
+    return(<div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}><div><label style={lbl}>Time Range</label><select value={range} onChange={e=>setRange(e.target.value)} style={inp}><option value="week">This Week</option><option value="month">This Month</option><option value="quarter">This Quarter</option><option value="year">This Year</option><option value="all">All Time</option></select></div><div><label style={lbl}>Project</label><select value={selProj} onChange={e=>setSelProj(e.target.value)} style={inp}><option value="all">All Projects</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div></div>
+      <div style={{...cardS,marginBottom:14,background:T.orangeLow,border:`1px solid ${T.orange}40`}}><div style={{fontSize:11,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>{fr.length} Reports</div>{[["Labor",tot.l,T.green],["Equipment",tot.e,T.yellow],["Materials",tot.m,T.blue],["Grand Total",tot.g,T.orange]].map(([l,v,c])=>(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.sub,fontWeight:l==="Grand Total"?700:400}}>{l}</span><span style={{fontSize:l==="Grand Total"?18:13,fontWeight:800,color:c}}>${fmt(v)}</span></div>))}</div>
+      {/* By Division */}
+      {["Mechanical","Pipeline","Structural"].map(div=>{const dr=fr.filter(r=>r.projects?.division===div||projects.find(p=>p.id===r.project_id)?.division===div);if(dr.length===0)return null;const dt=dr.reduce((s,r)=>{const t=reportTotals(r);return{g:s.g+t.grand};},{g:0});return(<div key={div} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${DIV_META[div]?.color||T.border}`}}><div style={{display:"flex",justifyContent:"space-between"}}><div style={{fontSize:14,fontWeight:700}}>{DIV_META[div]?.icon} {div}</div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${dt.g>=1000?(dt.g/1000).toFixed(1)+"k":fmt(dt.g)}</div></div><div style={{fontSize:11,color:T.muted,marginTop:2}}>{dr.length} reports</div></div>);})}
+      {pr.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>By Job</div>{pr.map(p=>(<div key={p.name} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><div><div style={{fontSize:13,fontWeight:700}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.division} · {p.count} reports</div></div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${fmt(p.grand)}</div></div>))}</div>}
+      {wr.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>By Worker</div>{wr.map(w=>(<div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><div><div style={{fontSize:13,fontWeight:700}}>{w.name}</div><div style={{fontSize:11,color:T.muted}}>{w.reg.toFixed(1)}reg {w.ot.toFixed(1)}OT {w.travel.toFixed(1)}tr hrs</div></div><div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(w.pay)}</div></div>))}</div>}
+      <button onClick={exportReport} style={{...primBtn,borderRadius:14}}>📥 Export Full Report (.xlsx)</button>
+    </div>);
+  }
+
+
+/* ── TIME CARDS SCREEN ───────────────────────────────────────── */
+function TimeCardsScreen({user,projects,onBack}){
+  const [cards,setCards]=useState([]);const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState('');
+  useEffect(()=>{(async()=>{setLoading(true);try{const r=await API.timeCards.all();setCards(Array.isArray(r)?r:[]);}catch(e){setErr(e.message);}setLoading(false);})();},[]);
+  async function remove(id){try{await API.timeCards.remove(id);setCards(c=>c.filter(x=>x.id!==id));}catch(e){setErr(e.message);}}
+  const byWorker={};const wkStart=getWeekStart();const weekCards=cards.filter(c=>c.date>=wkStart);
+  weekCards.forEach(c=>{const n=c.worker_name||'?';if(!byWorker[n])byWorker[n]={name:n,total:0,ot:0};const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;byWorker[n].total+=tot;byWorker[n].ot+=ot;});
+  const workerRows=Object.values(byWorker).sort((a,b)=>b.total-a.total);
+  const todayCards=cards.filter(c=>c.date===today());
+  const recentCards=cards.filter(c=>c.date!==today()).slice(0,30);
+  const fmt=n=>Number(n||0).toFixed(1);
+  return(
+    <div style={{background:T.bg,minHeight:'100vh',fontFamily:'inherit'}}>
+      <TopBar title="⏱️ Time Cards" onBack={onBack}/>
+      <div style={{padding:'12px 16px 80px'}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr('')}/>
+        <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:'10px 14px',marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
+          <strong>⚡ Auto-filled from daily reports</strong> — hours are added automatically when a foreman submits a daily report.
+        </div>
+        {workerRows.length>0&&<div style={{...cardS,marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:'uppercase',letterSpacing:'1px',marginBottom:10}}>THIS WEEK</div>
+          {workerRows.map(w=><div key={w.name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+            <span style={{fontSize:13,color:T.text}}>{w.name}</span>
+            <div style={{display:'flex',gap:10,fontSize:12}}>
+              {w.ot>0&&<span style={{color:T.yellow}}>{fmt(w.ot)}OT</span>}
+              <span style={{color:T.green,fontWeight:800}}>{fmt(w.total)}h</span>
+            </div>
+          </div>)}
+        </div>}
+        {loading&&<Spinner/>}
+        {!loading&&todayCards.length===0&&recentCards.length===0&&<div style={{textAlign:'center',padding:'40px 0',color:T.muted}}><div style={{fontSize:32}}>⏱️</div><div style={{marginTop:8}}>No time cards yet</div></div>}
+        {todayCards.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:'uppercase',letterSpacing:'1px',marginBottom:8}}>TODAY</div>}
+        {[...todayCards,...recentCards].map(c=>{
+          const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
+          const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
+          const proj=projects.find(p=>p.id===c.project_id);
+          return(<div key={c.id} style={{...cardS,marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{c.worker_name}</div>
+              <div style={{fontSize:11,color:T.muted}}>{c.date}{proj?` · ${proj.name}`:''}</div>
+              {c.notes&&<div style={{fontSize:11,color:T.muted,fontStyle:'italic',marginTop:2}}>{c.notes}</div>}
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:16,fontWeight:800,color:T.green}}>{fmt(tot)}h</div>
+                {ot>0&&<div style={{fontSize:10,color:T.yellow}}>{fmt(ot)} OT</div>}
+                {trav>0&&<div style={{fontSize:10,color:T.blue}}>{fmt(trav)} travel</div>}
+              </div>
+              <button onClick={()=>remove(c.id)} style={{background:'none',border:'none',color:T.red,cursor:'pointer',fontSize:14}}>🗑</button>
+            </div>
+          </div>);
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── ESTIMATING SCREEN (Maintenance) ────────────────────────── */
+function EstimatingScreen({user,onBack}){
+  return(
+    <div style={{background:T.bg,minHeight:'100vh',fontFamily:'inherit'}}>
+      <TopBar title="📊 Estimating" onBack={onBack}/>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'60px 24px',textAlign:'center'}}>
+        <div style={{fontSize:64,marginBottom:20}}>🚧</div>
+        <div style={{fontSize:22,fontWeight:900,color:T.text,marginBottom:8}}>Under Maintenance</div>
+        <div style={{fontSize:14,color:T.muted,lineHeight:1.7,maxWidth:320}}>The Estimating platform is currently being updated. Check back soon.</div>
+      </div>
+    </div>
+  );
+}
+
+/* ── EMPLOYEE HISTORY / FINANCIALS STUBS ─────────────────────── */
+function EmployeeHistory({user,projects,onBack}){return <TimeCardsScreen user={user} projects={projects} onBack={onBack}/>;}
+function FinancialsScreen({user,projects,onBack,onErr}){return(<div style={{background:T.bg,minHeight:'100vh'}}><TopBar title="💵 Financials" onBack={onBack}/><div style={{padding:20,color:T.muted,textAlign:'center',marginTop:40}}>Financials coming soon</div></div>);}
+function TimecardReportScreen({user,projects,onBack}){return <TimeCardsScreen user={user} projects={projects} onBack={onBack}/>;}
+function EmailSummaryModal({user,projects,onClose}){return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200}}><div style={{background:T.card,borderRadius:16,padding:24,maxWidth:400,width:'90%'}}><div style={{fontSize:16,fontWeight:800,color:T.text,marginBottom:12}}>📧 Email Summary</div><button onClick={onClose} style={{...primBtn,borderRadius:12}}>Close</button></div></div>);}
+
+
+
 function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   const [project,setProject]=useState(initP);
   const [reports,setReports]=useState([]);const [safety,setSafety]=useState([]);const [photos,setPhotos]=useState([]);const [weather,setWeather]=useState([]);
