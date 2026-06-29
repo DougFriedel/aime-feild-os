@@ -3074,33 +3074,7 @@ function AppInner(){
   );
 }
 
-/* ── ERROR BOUNDARY ─────────────────────────────────────────── */
-class ErrorBoundary extends React.Component{
-  constructor(props){super(props);this.state={error:null};}
-  static getDerivedStateFromError(error){return{error};}
-  componentDidCatch(error,info){console.error("App Error:",error,info);}
-  render(){
-    if(this.state.error){
-      return(
-        <div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif",padding:20}}>
-          <div style={{background:"#18181B",border:"1px solid #EF4444",borderRadius:16,padding:24,maxWidth:480,width:"100%"}}>
-            <div style={{fontSize:24,marginBottom:8}}>⚠️</div>
-            <div style={{fontSize:16,fontWeight:700,color:"#EF4444",marginBottom:8}}>App Error</div>
-            <div style={{fontSize:12,color:"#A1A1AA",marginBottom:16,wordBreak:"break-all",background:"#0C0C0F",padding:12,borderRadius:8,lineHeight:1.6}}>
-              {this.state.error?.message||String(this.state.error)}
-            </div>
-            <div style={{fontSize:11,color:"#71717A",marginBottom:16}}>Screenshot this message and send it to your developer.</div>
-            <button onClick={()=>{this.setState({error:null});window.location.reload();}}
-              style={{background:"#F97316",color:"#000",border:"none",borderRadius:10,padding:"10px 20px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit",width:"100%"}}>
-              🔄 Reload App
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
+
 
 export default function App(){
   return(
