@@ -2319,3 +2319,2021 @@ function PhotosTab({projectId,photos,onRefresh,onErr}){
     </div>
   );
 }
+
+
+function WeatherTab({projectId,project,weather,onRefresh,onErr}){
+  const [fetching,setFetching]=useState(false);const [liveWeather,setLiveWeather]=useState(null);const [manualNote,setManualNote]=useState("");const [saving,setSaving]=useState(false);
+  async function autoFetch(){if(!project.location){onErr("Add a location to this job (Info tab).");return;}setFetching(true);setLiveWeather(null);try{setLiveWeather(await fetchWeather(project.location));}catch(e){onErr(e.message);}setFetching(false);}
+  async function logWeather(){if(!liveWeather)return;setSaving(true);const c=liveWeather.current;const[desc]=WMO[c.weathercode]||["Unknown"];try{await API.weather.upsert({project_id:projectId,date:today(),temp_high:liveWeather.daily?.temperature_2m_max?.[0]||c.temperature_2m,temp_low:liveWeather.daily?.temperature_2m_min?.[0]||c.temperature_2m,conditions:desc,wind_speed:c.windspeed_10m,precipitation:liveWeather.daily?.precipitation_sum?.[0]||0,notes:manualNote});await onRefresh();setLiveWeather(null);setManualNote("");}catch(e){onErr(e.message);}setSaving(false);}
+  async function del(id){try{await API.weather.remove(id);await onRefresh();}catch(e){onErr(e.message);}}
+  return(<div>
+    <button onClick={autoFetch} style={{...primBtn,marginBottom:14,borderRadius:14,opacity:fetching?0.6:1}}>{fetching?"🌐 Fetching…":"🌤️ Auto-Fetch Today's Weather"}</button>
+    {!project.location&&<div style={{...cardS,marginBottom:14,background:T.yellowLow,border:`1px solid ${T.yellow}40`}}><div style={{fontSize:13,color:T.yellow}}>⚠️ Add a location to this job (Info tab) to auto-fetch weather.</div></div>}
+    {liveWeather&&(()=>{const c=liveWeather.current;const[desc,icon]=WMO[c.weathercode]||["Unknown","🌡️"];return(<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.blue}`}}><div style={{fontSize:11,color:T.blue,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Live · {liveWeather.locationName}</div><div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}><span style={{fontSize:44}}>{icon}</span><div><div style={{fontSize:28,fontWeight:900,letterSpacing:"-1px"}}>{Math.round(c.temperature_2m)}°F</div><div style={{fontSize:14,color:T.sub}}>{desc}</div><div style={{fontSize:12,color:T.muted}}>Feels {Math.round(c.apparent_temperature)}°F</div></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>{[["Wind",Math.round(c.windspeed_10m)+" mph"],["High",Math.round(liveWeather.daily?.temperature_2m_max?.[0]||c.temperature_2m)+"°F"],["Precip",(liveWeather.daily?.precipitation_sum?.[0]||0).toFixed(2)+"in"]].map(([l,v])=>(<div key={l} style={{background:T.surface,borderRadius:10,padding:"8px",textAlign:"center"}}><div style={{fontSize:13,fontWeight:700}}>{v}</div><div style={{fontSize:10,color:T.muted}}>{l}</div></div>))}</div><div style={{marginBottom:10}}><label style={lbl}>Field Notes</label><input type="text" placeholder="Work impacted by weather?" value={manualNote} onChange={e=>setManualNote(e.target.value)} style={inp}/></div><button onClick={logWeather} style={{...primBtn,background:T.blue,borderRadius:12}}>{saving?"Saving…":"💾 Log This Weather"}</button></div>);})()}
+    {weather.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>History</div>}
+    {weather.map(w=>{const entry=Object.entries(WMO).find(([,v])=>v[0]===w.conditions);const icon=entry?entry[1][1]:"🌡️";return(<div key={w.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:20}}>{icon}</span><div><div style={{fontSize:14,fontWeight:700}}>{w.conditions||"Logged"}</div><div style={{fontSize:11,color:T.muted}}>{fmtShort(w.date)}{w.wind_speed?" · "+Math.round(w.wind_speed)+"mph":""}{w.precipitation>0?" · "+w.precipitation+"in":""}</div></div></div>{w.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4}}>{w.notes}</div>}</div><div style={{display:"flex",alignItems:"center",gap:8}}>{w.temp_high&&<div style={{textAlign:"right"}}><div style={{fontSize:15,fontWeight:800,color:T.orange}}>{Math.round(w.temp_high)}°</div>{w.temp_low&&<div style={{fontSize:10,color:T.muted}}>{Math.round(w.temp_low)}° lo</div>}</div>}<button onClick={()=>del(w.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div>);})}
+    {weather.length===0&&!liveWeather&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🌤️</div><div>No weather logs yet.</div></div>}
+  </div>);
+}
+
+/* ── INFO TAB ───────────────────────────────────────────────── */
+
+function InfoTab({project,user,onEdit,onArchive,onDelete}){
+  return(<div>
+    <div style={cardS}>{[["Division",project.division],["Client",project.client],["Location",project.location],["AFE No.",project.afe],["Work Order",project.work_order],["Start Date",fmtDate(project.start_date)],["Status",project.status],["Created By",project.created_by]].map(([l,v])=>v?(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"11px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>{l}</span><span style={{fontSize:13,fontWeight:600}}>{v}</span></div>):null)}</div>
+    {project.notes&&<div style={{...cardS,marginTop:12}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Notes</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{project.notes}</div></div>}
+    {can(user,"edit_job")&&<div style={{marginTop:16,display:"flex",flexDirection:"column",gap:10}}><button onClick={onEdit} style={{...ghostBtn,width:"100%",textAlign:"center"}}>✏️ Edit Job</button><button onClick={onArchive} style={{...ghostBtn,width:"100%",textAlign:"center",color:T.muted}}>{project.status==="active"?"📦 Archive Job":"♻️ Restore Job"}</button><button onClick={onDelete} style={{...dangerBtn}}>🗑 Delete Job Permanently</button></div>}
+  </div>);
+}
+
+/* ── USER MANAGEMENT SCREEN (Admin only) ───────────────────── */
+
+function ScheduleTab({projectId,user,onErr}){
+  const [milestones,setMilestones]=useState([]);const [loading,setLoading]=useState(true);const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
+  const [f,setF]=useState({title:"",description:"",target_date:"",status:"pending"});
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  async function load(){setLoading(true);try{setMilestones(await API.milestones.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[projectId]);
+  async function save(){if(!f.title.trim())return;setSaving(true);try{await API.milestones.create({...f,project_id:projectId,sort_order:milestones.length});await load();setShowForm(false);setF({title:"",description:"",target_date:"",status:"pending"});}catch(e){onErr(e.message);}setSaving(false);}
+  async function toggleStatus(m){const next={pending:"in_progress",in_progress:"completed",completed:"pending"};const completed_date=next[m.status]==="completed"?today():null;try{const[u]=await API.milestones.update(m.id,{status:next[m.status],completed_date});setMilestones(ms=>ms.map(x=>x.id===m.id?u:x));}catch(e){onErr(e.message);}}
+  async function del(id){try{await API.milestones.remove(id);await load();}catch(e){onErr(e.message);}}
+  const statusColor={pending:T.muted,in_progress:T.orange,completed:T.green,delayed:T.red};
+  const statusIcon={pending:"○",in_progress:"◐",completed:"●",delayed:"⚠️"};
+  const completed=milestones.filter(m=>m.status==="completed").length;const total=milestones.length;
+  return(<div>
+    <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"📅 + Add Milestone"}</button>
+    {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.blue}`}}>
+      <div style={{marginBottom:10}}><label style={lbl}>Milestone Title *</label><input type="text" placeholder="e.g. HDD Bore Complete" value={f.title} onChange={e=>set("title",e.target.value)} style={inp}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Description</label><input type="text" placeholder="Optional details…" value={f.description} onChange={e=>set("description",e.target.value)} style={inp}/></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><div><label style={lbl}>Target Date</label><input type="date" value={f.target_date} onChange={e=>set("target_date",e.target.value)} style={inp}/></div><div><label style={lbl}>Status</label><select value={f.status} onChange={e=>set("status",e.target.value)} style={inp}><option value="pending">Pending</option><option value="in_progress">In Progress</option><option value="completed">Completed</option><option value="delayed">Delayed</option></select></div></div>
+      <button onClick={save} style={{...primBtn,background:T.blue,borderRadius:12}}>{saving?"Saving…":"Save Milestone"}</button>
+    </div>}
+    {loading&&<Spinner/>}
+    {!loading&&total>0&&<div style={{...cardS,marginBottom:14}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><div style={{fontSize:13,fontWeight:700}}>Progress</div><div style={{fontSize:13,fontWeight:700,color:T.green}}>{completed}/{total} complete</div></div><div style={{height:8,background:T.border,borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",background:`linear-gradient(90deg,${T.orange},${T.green})`,borderRadius:4,width:`${(completed/total)*100}%`,transition:"width 0.4s"}}/></div></div>}
+    {!loading&&milestones.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>📅</div><div>No milestones yet.</div></div>}
+    {!loading&&milestones.map(m=>{const du=daysUntil(m.target_date);const overdue=du!==null&&du<0&&m.status!=="completed";const dueSoon=du!==null&&du>=0&&du<=7&&m.status!=="completed";return(<div key={m.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${statusColor[m.status]||T.border}`,opacity:m.status==="completed"?0.7:1}}><div style={{display:"flex",alignItems:"flex-start",gap:12}}><button onClick={()=>toggleStatus(m)} style={{width:32,height:32,borderRadius:"50%",border:`2px solid ${statusColor[m.status]||T.border}`,background:m.status==="completed"?T.green:T.surface,color:m.status==="completed"?"#09090B":statusColor[m.status]||T.muted,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,flexShrink:0,marginTop:2}}>{statusIcon[m.status]||"○"}</button><div style={{flex:1,minWidth:0}}><div style={{fontSize:15,fontWeight:700,textDecoration:m.status==="completed"?"line-through":"none",color:m.status==="completed"?T.muted:T.text}}>{m.title}</div>{m.description&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{m.description}</div>}<div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap"}}><span style={pill(statusColor[m.status]||T.muted)}>{m.status.replace("_"," ").toUpperCase()}</span>{m.target_date&&<span style={pill(overdue?T.red:dueSoon?T.yellow:T.muted)}>{overdue?`${Math.abs(du)}d overdue`:dueSoon?`Due in ${du}d`:`Target: ${fmtDate(m.target_date)}`}</span>}{m.completed_date&&<span style={pill(T.green)}>Done: {fmtDate(m.completed_date)}</span>}</div></div><button onClick={()=>del(m.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0,flexShrink:0}}>🗑</button></div></div>);})}
+  </div>);
+}
+
+/* ── PHOTOS TAB ─────────────────────────────────────────────── */
+
+function TimeCardsTab({projectId,user,onErr}){
+  const [cards,setCards]=useState([]);const [loading,setLoading]=useState(true);const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
+  const [f,setF]=useState({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",notes:""});
+  const weekStart=getWeekStart();
+  async function load(){setLoading(true);try{setCards(await API.timeCards.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[projectId]);
+  async function save(){if(!f.worker_name||!f.date)return;setSaving(true);const total_hours=calcHours(f.clock_in,f.clock_out);const ot_hours=Math.max(0,total_hours-8);try{await API.timeCards.create({...f,project_id:projectId,total_hours,ot_hours});await load();setShowForm(false);setF({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",notes:""});}catch(e){onErr(e.message);}setSaving(false);}
+  async function remove(id){try{await API.timeCards.remove(id);await load();}catch(e){onErr(e.message);}}
+  const weekCards=cards.filter(c=>c.date>=weekStart);
+  const byWorker={};weekCards.forEach(c=>{if(!byWorker[c.worker_name])byWorker[c.worker_name]={name:c.worker_name,reg:0,ot:0,total:0};const cReg=parseFloat(c.reg_hours)||0;const cOT=parseFloat(c.ot_hours)||0;const cTrav=parseFloat(c.travel_hours)||0;
+      const cTotal=c.total_hours?parseFloat(c.total_hours):cReg+cOT+cTrav;
+      byWorker[c.worker_name].total+=cTotal;byWorker[c.worker_name].ot+=(c.ot_hours||0);byWorker[c.worker_name].reg+=Math.max(0,(c.total_hours||0)-(c.ot_hours||0));});
+  const workerRows=Object.values(byWorker).sort((a,b)=>b.total-a.total);
+  const todayCards=cards.filter(c=>c.date===today());
+  const recentCards=cards.filter(c=>c.date!==today()).slice(0,30);
+  return(<div>
+    <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"⏱️ Log Time"}</button>
+    {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`}}>
+      <div style={{marginBottom:10}}><label style={lbl}>Worker</label><select value={f.worker_name} onChange={e=>setF(x=>({...x,worker_name:e.target.value}))} style={inp}>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))} style={inp}/></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><div><label style={lbl}>Clock In</label><input type="time" value={f.clock_in} onChange={e=>setF(x=>({...x,clock_in:e.target.value}))} style={inp}/></div><div><label style={lbl}>Clock Out</label><input type="time" value={f.clock_out} onChange={e=>setF(x=>({...x,clock_out:e.target.value}))} style={inp}/></div></div>
+      {f.clock_in&&f.clock_out&&(()=>{const h=calcHours(f.clock_in,f.clock_out);const ot=Math.max(0,h-8);return h>0&&(<div style={{background:T.greenLow,borderRadius:10,padding:"10px 12px",marginBottom:10,display:"flex",gap:16}}><div><div style={{fontSize:18,fontWeight:900,color:T.green}}>{h.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Total</div></div><div><div style={{fontSize:18,fontWeight:900,color:ot>0?T.yellow:T.muted}}>{Math.min(h,8).toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Regular</div></div>{ot>0&&<div><div style={{fontSize:18,fontWeight:900,color:T.yellow}}>{ot.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>OT</div></div>}</div>);})()}
+      <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input type="text" placeholder="Optional…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
+      <button onClick={save} style={{...primBtn,background:T.green,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Time Card"}</button>
+    </div>}
+    {loading&&<Spinner/>}
+    {!loading&&<>{workerRows.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>This Week</div>{workerRows.map(w=>(<div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:14,fontWeight:600}}>{w.name}</span><div style={{display:"flex",gap:12,alignItems:"center"}}><span style={{fontSize:12,color:T.muted}}>{w.reg.toFixed(1)}reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)}OT</span>}<span style={{fontSize:15,fontWeight:800,color:T.green}}>{w.total.toFixed(1)}h</span></div></div>))}</div>}
+    {todayCards.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Today</div>}
+    {todayCards.map(c=><div key={c.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700}}>{c.worker_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(c.date)}{c.clock_in?" · "+c.clock_in:""}{c.clock_out?" → "+c.clock_out:""}</div>{c.notes&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{c.notes}</div>}</div><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div>{(c.ot_hours||0)>0&&<div style={{fontSize:10,color:T.yellow}}>{c.ot_hours.toFixed(1)} OT</div>}</div><button onClick={()=>remove(c.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div>)}
+    {recentCards.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 10px"}}>Recent</div>}
+    {recentCards.map(c=><div key={c.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700}}>{c.worker_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(c.date)}{c.clock_in?" · "+c.clock_in:""}{c.clock_out?" → "+c.clock_out:""}</div></div><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{fontSize:16,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div><button onClick={()=>remove(c.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div>)}
+    {cards.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>⏱️</div><div>No time cards yet.</div></div>}</>}
+  </div>);
+}
+
+/* ── CREW/EQUIP ON SITE TAB ─────────────────────────────────── */
+
+function CrewEquipTab({projectId,user,onErr}){
+  const [equip,setEquip]=useState([]);const [loading,setLoading]=useState(true);const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
+  const [f,setF]=useState({equipment_name:"",quantity:1,operator_name:"",hours_used:"",notes:"",date:today()});
+  async function load(){setLoading(true);try{setEquip(await API.equipment.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[projectId]);
+  async function save(){if(!f.equipment_name)return;setSaving(true);try{await API.equipment.create({...f,project_id:projectId});await load();setShowForm(false);setF({equipment_name:"",quantity:1,operator_name:"",hours_used:"",notes:"",date:today()});}catch(e){onErr(e.message);}setSaving(false);}
+  async function remove(id){try{await API.equipment.remove(id);await load();}catch(e){onErr(e.message);}}
+  const todayEquip=equip.filter(e=>e.date===today());const prevEquip=equip.filter(e=>e.date!==today()).slice(0,20);
+  return(<div>
+    <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"🚜 Log Equipment On Site"}</button>
+    {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.yellow}`}}>
+      <div style={{marginBottom:10}}><label style={lbl}>Equipment</label><select value={f.equipment_name} onChange={e=>setF(x=>({...x,equipment_name:e.target.value}))} style={inp}><option value="">— Select —</option>{EQUIP_LIST.filter(e=>!e.section).map(e=><option key={e.name} value={e.name}>{e.name}</option>)}</select></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><div><label style={lbl}>Quantity</label><input type="number" min="1" value={f.quantity} onChange={e=>setF(x=>({...x,quantity:e.target.value}))} style={inp}/></div><div><label style={lbl}>Hours Used</label><input type="number" min="0" step="0.5" placeholder="0" value={f.hours_used} onChange={e=>setF(x=>({...x,hours_used:e.target.value}))} style={inp}/></div></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Operator</label><select value={f.operator_name} onChange={e=>setF(x=>({...x,operator_name:e.target.value}))} style={inp}><option value="">— Optional —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))} style={inp}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input type="text" placeholder="Condition, issues…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
+      <button onClick={save} style={{...primBtn,background:T.yellow,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Entry"}</button>
+    </div>}
+    {loading&&<Spinner/>}
+    {!loading&&<>{todayEquip.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>On Site Today</div>}{todayEquip.map(e=><div key={e.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.yellow}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700}}>{e.equipment_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(e.date)} · Qty {e.quantity||1}{e.operator_name?" · "+e.operator_name:""}{e.hours_used?" · "+e.hours_used+"h":""}</div></div><button onClick={()=>remove(e.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0,marginLeft:12}}>🗑</button></div>)}
+    {prevEquip.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 10px"}}>Previous</div>}{prevEquip.map(e=><div key={e.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.yellow}40`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:13,fontWeight:700}}>{e.equipment_name}</div><div style={{fontSize:11,color:T.muted}}>{fmtShort(e.date)} · Qty {e.quantity||1}{e.operator_name?" · "+e.operator_name:""}</div></div><button onClick={()=>remove(e.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0,marginLeft:12}}>🗑</button></div>)}
+    {equip.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🚜</div><div>No equipment logged.</div></div>}</>}
+  </div>);
+}
+
+/* ── SUBS TAB ───────────────────────────────────────────────── */
+
+function SubsTab({projectId,user,onErr}){
+  const [subs,setSubs]=useState([]);const [loading,setLoading]=useState(true);const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
+  const [f,setF]=useState({date:today(),company_name:"",trade:"",contact_name:"",contact_phone:"",workers_count:1,hours_worked:"",work_description:""});
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  async function load(){setLoading(true);try{setSubs(await API.subs.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[projectId]);
+  async function save(){if(!f.company_name)return;setSaving(true);try{await API.subs.create({...f,project_id:projectId,created_by:user.name});await load();setShowForm(false);setF({date:today(),company_name:"",trade:"",contact_name:"",contact_phone:"",workers_count:1,hours_worked:"",work_description:""});}catch(e){onErr(e.message);}setSaving(false);}
+  async function remove(id){try{await API.subs.remove(id);await load();}catch(e){onErr(e.message);}}
+  const trades=["Electrical","Mechanical","Civil","Welding","Coating","Survey","Inspection","HDD","Boring","Concrete","Other"];
+  return(<div>
+    <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"🏢 Log Subcontractor"}</button>
+    {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.purple}`}}>
+      <div style={{marginBottom:10}}><label style={lbl}>Company Name *</label><input type="text" placeholder="Sub company name" value={f.company_name} onChange={e=>set("company_name",e.target.value)} style={inp}/></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><div><label style={lbl}>Trade</label><select value={f.trade} onChange={e=>set("trade",e.target.value)} style={inp}><option value="">— Select —</option>{trades.map(t=><option key={t}>{t}</option>)}</select></div><div><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>set("date",e.target.value)} style={inp}/></div><div><label style={lbl}>Contact</label><input type="text" placeholder="Foreman" value={f.contact_name} onChange={e=>set("contact_name",e.target.value)} style={inp}/></div><div><label style={lbl}>Phone</label><input type="tel" placeholder="555-555-5555" value={f.contact_phone} onChange={e=>set("contact_phone",e.target.value)} style={inp}/></div><div><label style={lbl}>Workers</label><input type="number" min="0" value={f.workers_count} onChange={e=>set("workers_count",e.target.value)} style={inp}/></div><div><label style={lbl}>Hours</label><input type="number" min="0" step="0.5" placeholder="0" value={f.hours_worked} onChange={e=>set("hours_worked",e.target.value)} style={inp}/></div></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Work Description</label><textarea placeholder="What work was performed?" value={f.work_description} onChange={e=>set("work_description",e.target.value)} rows={3} style={{...inp,resize:"vertical"}}/></div>
+      <button onClick={save} style={{...primBtn,background:T.purple,color:"#fff",borderRadius:12}}>{saving?"Saving…":"Save Sub Entry"}</button>
+    </div>}
+    {loading&&<Spinner/>}
+    {!loading&&subs.map(s=>(<div key={s.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.purple}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800}}>{s.company_name}</div><div style={{display:"flex",gap:6,marginTop:5,flexWrap:"wrap"}}>{s.trade&&<span style={pill(T.purple)}>{s.trade}</span>}<span style={pill(T.muted)}>{fmtShort(s.date)}</span>{s.workers_count>0&&<span style={pill(T.blue)}>👷 {s.workers_count}</span>}{s.hours_worked>0&&<span style={pill(T.green)}>{s.hours_worked}h</span>}</div>{s.contact_name&&<div style={{fontSize:12,color:T.sub,marginTop:6}}>📞 {s.contact_name}{s.contact_phone?" · "+s.contact_phone:""}</div>}{s.work_description&&<div style={{fontSize:12,color:T.sub,marginTop:4,lineHeight:1.5}}>{s.work_description}</div>}</div><button onClick={()=>remove(s.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:"0 0 0 10px"}}>🗑</button></div></div>))}
+    {!loading&&subs.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🏢</div><div>No subcontractors logged.</div></div>}
+  </div>);
+}
+
+/* ── SAFETY TAB ─────────────────────────────────────────────── */
+
+function SafetyTab({projectId,safety,user,onRefresh,onErr}){
+  const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);const [type,setType]=useState("toolbox");
+  const [f,setF]=useState({date:today(),topic:"",notes:"",severity:"low"});
+  const TC={toolbox:T.blue,observation:T.yellow,incident:T.red,nearmiss:T.orange,jsa:T.purple};
+  const TL={toolbox:"🛠 Toolbox Talk",observation:"👁 Observation",incident:"🚨 Incident",nearmiss:"⚠️ Near Miss",jsa:"📋 JSA"};
+  async function save(){if(!f.topic.trim())return;setSaving(true);try{await API.safety.create({...f,type,project_id:projectId,created_by:user.name});await onRefresh();setShowForm(false);setF({date:today(),topic:"",notes:"",severity:"low"});}catch(e){onErr(e.message);}setSaving(false);}
+  async function del(id){try{await API.safety.remove(id);await onRefresh();}catch(e){onErr(e.message);}}
+  return(<div>
+    <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"⛑️ Log Safety Entry"}</button>
+    {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.yellow}`}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>{Object.entries(TL).map(([k,v])=>(<button key={k} onClick={()=>setType(k)} style={{padding:"10px",borderRadius:10,border:`2px solid ${type===k?TC[k]:T.border}`,background:type===k?TC[k]+"20":T.surface,color:type===k?TC[k]:T.sub,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{v}</button>))}</div>
+      <div style={{marginBottom:10}}><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))} style={inp}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>{type==="toolbox"?"Topic":type==="jsa"?"Job / Task Name":"Description"}</label><input type="text" placeholder="Describe…" value={f.topic} onChange={e=>setF(x=>({...x,topic:e.target.value}))} style={inp}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Notes / Corrective Action</label><textarea rows={3} placeholder="Additional details…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={{...inp,resize:"vertical"}}/></div>
+      {(type==="incident"||type==="nearmiss")&&<div style={{marginBottom:10}}><label style={lbl}>Severity</label><select value={f.severity} onChange={e=>setF(x=>({...x,severity:e.target.value}))} style={inp}><option value="low">Low – First Aid</option><option value="medium">Medium – Recordable</option><option value="high">High – Lost Time</option></select></div>}
+      <button onClick={save} style={{...primBtn,background:T.yellow,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Entry"}</button>
+    </div>}
+    {safety.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>⛑️</div><div>No safety entries yet.</div></div>}
+    {[...safety].map(s=>(<div key={s.id} style={{...cardS,marginBottom:9,borderLeft:`3px solid ${TC[s.type]||T.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1}}><span style={{...pill(TC[s.type]||T.muted),marginBottom:6,display:"inline-flex"}}>{TL[s.type]||s.type}</span><div style={{fontSize:14,fontWeight:700,marginTop:4}}>{s.topic}</div>{s.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4,lineHeight:1.5}}>{s.notes}</div>}<div style={{fontSize:11,color:T.muted,marginTop:6}}>{fmtDate(s.date)} · {s.created_by}</div></div><div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>{(s.type==="incident"||s.type==="nearmiss")&&<span style={pill(s.severity==="high"?T.red:s.severity==="medium"?T.yellow:T.green)}>{(s.severity||"low").toUpperCase()}</span>}<button onClick={()=>del(s.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div></div>))}
+  </div>);
+}
+
+/* ── DOCS TAB ───────────────────────────────────────────────── */
+
+function DocsTab({projectId,user,onErr}){
+  const [docs,setDocs]=useState([]);const [loading,setLoading]=useState(true);const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
+  const [f,setF]=useState({name:"",doc_type:"Drawing",file_url:"",notes:""});
+  const docTypes=["Drawing","Specification","Manual","Permit","Contract","As-Built","ITP","Procedure","Safety Plan","Other"];
+  const docIcons={Drawing:"📐",Specification:"📄",Manual:"📗",Permit:"🗂️",Contract:"📝","As-Built":"🗺️",ITP:"✅",Procedure:"📋","Safety Plan":"⛑️",Other:"📁"};
+  async function load(){setLoading(true);try{setDocs(await API.docs.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[projectId]);
+  async function save(){if(!f.name.trim())return;setSaving(true);try{await API.docs.create({...f,project_id:projectId,uploaded_by:user.name});await load();setShowForm(false);setF({name:"",doc_type:"Drawing",file_url:"",notes:""});}catch(e){onErr(e.message);}setSaving(false);}
+  async function remove(id){try{await API.docs.remove(id);await load();}catch(e){onErr(e.message);}}
+  const grouped={};docs.forEach(d=>{const t=d.doc_type||"Other";if(!grouped[t])grouped[t]=[];grouped[t].push(d);});
+  return(<div>
+    <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"📁 + Add Document"}</button>
+    {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.teal}`}}>
+      <div style={{marginBottom:10}}><label style={lbl}>Document Name *</label><input type="text" placeholder="e.g. P&ID Drawing Rev 3" value={f.name} onChange={e=>setF(x=>({...x,name:e.target.value}))} style={inp}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Type</label><select value={f.doc_type} onChange={e=>setF(x=>({...x,doc_type:e.target.value}))} style={inp}>{docTypes.map(t=><option key={t}>{t}</option>)}</select></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Link (Google Drive, Dropbox, SharePoint…)</label><input type="url" placeholder="https://drive.google.com/…" value={f.file_url} onChange={e=>setF(x=>({...x,file_url:e.target.value}))} style={inp}/><div style={{fontSize:11,color:T.muted,marginTop:4}}>Paste a shareable link. Store files in Google Drive and share the link here.</div></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Notes / Revision</label><input type="text" placeholder="e.g. Rev 3 – Approved" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
+      <button onClick={save} style={{...primBtn,background:T.teal,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Document"}</button>
+    </div>}
+    {loading&&<Spinner/>}
+    {!loading&&docs.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>📁</div><div style={{marginBottom:4}}>No documents yet.</div><div style={{fontSize:12}}>Add links to drawings, specs, manuals, permits.</div></div>}
+    {!loading&&Object.entries(grouped).map(([type,typeDocs])=>(<div key={type} style={{marginBottom:16}}><div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>{docIcons[type]||"📁"} {type} ({typeDocs.length})</div>{typeDocs.map(doc=>(<div key={doc.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.teal}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700,marginBottom:2}}>{doc.name}</div>{doc.notes&&<div style={{fontSize:12,color:T.sub,marginBottom:4}}>{doc.notes}</div>}<div style={{fontSize:11,color:T.muted}}>{doc.uploaded_by}</div></div><div style={{display:"flex",gap:8,flexShrink:0,marginLeft:10}}>{doc.file_url&&<button onClick={()=>window.open(doc.file_url,"_blank")} style={{background:T.teal+"20",border:`1px solid ${T.teal}40`,borderRadius:8,padding:"6px 12px",color:T.teal,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Open →</button>}<button onClick={()=>remove(doc.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div></div>))}</div>))}
+  </div>);
+}
+
+/* ── SCHEDULE TAB ───────────────────────────────────────────── */
+
+
+/* ── CHANGE ORDERS TAB ───────────────────────────────────────── */
+function ChangeOrdersTab({project,user,onErr}){
+  const canEdit=user.role==="admin"||user.role==="pm";
+  const [cos,setCos]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const [shareCo,setShareCo]=useState(null);
+  const [coCopied,setCoCopied]=useState(false);
+  const appUrl=window.location.origin+window.location.pathname;
+  const blank={co_number:"",description:"",date_submitted:today(),amount:"",status:"Pending",submitted_by:user.name,approved_by:"",approved_date:"",notes:"",client_signature:null,client_signed_by:""};
+  const [f,setF]=useState(blank);
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  const statusColor={Pending:T.yellow,Approved:T.green,Rejected:T.red};
+
+  useEffect(()=>{load();},[project.id]);
+  async function load(){setLoading(true);try{const r=await API.changeOrders.forProject(project.id);setCos(Array.isArray(r)?r:[]);}catch(e){onErr(e.message);}setLoading(false);}
+
+  async function save(){
+    setSaving(true);
+    try{
+      const toDate=v=>v&&v.trim()&&v!=="Invalid Date"?v:null;
+      const payload={...f,project_id:project.id,amount:parseFloat(f.amount)||0,date_submitted:toDate(f.date_submitted),approved_date:toDate(f.approved_date)};
+      if(editing){await API.changeOrders.update(editing,payload);}
+      else{await API.changeOrders.create(payload);}
+      setShowForm(false);setEditing(null);setF(blank);await load();
+    }catch(e){onErr(e.message);}
+    setSaving(false);
+  }
+
+  async function remove(id){if(!window.confirm("Delete this change order?"))return;try{await API.changeOrders.remove(id);await load();}catch(e){onErr(e.message);}}
+
+  function copyCoLink(co){
+    const link=`${appUrl}?co=${co.id}`;
+    navigator.clipboard.writeText(link).then(()=>{setCoCopied(true);setTimeout(()=>setCoCopied(false),3000);}).catch(()=>{const el=document.createElement("textarea");el.value=link;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);setCoCopied(true);setTimeout(()=>setCoCopied(false),3000);});
+  }
+
+  function emailCO(co){
+    const link=`${appUrl}?co=${co.id}`;
+    const subj=`Change Order ${co.co_number} — ${project.name} — Signature Required`;
+    const ln="%0D%0A";
+    const body=[`Please review and sign the following Change Order:`,ln,ln,`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,ln,`  📋  CHANGE ORDER — ${co.co_number}`,ln,`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,ln,ln,`  Project: ${project.name}`,ln,`  Amount: $${Number(co.amount||0).toLocaleString("en-US",{minimumFractionDigits:2})}`,ln,ln,`  DESCRIPTION:`,ln,`  ${co.description||""}`,ln,ln,`  ➤  ${link}`,ln,ln,`(No login required — open in any browser, sign, and click Approve)`,ln,ln,`Thank you,`,ln,`${co.submitted_by||"AIME Field Operations"}`,ln,`Atlantic Industrial Mechanical & Environmental Inc.`,ln,].filter(Boolean).join("");
+    if(navigator.clipboard) navigator.clipboard.writeText(link).catch(()=>{});
+    window.location.href=`mailto:?subject=${encodeURIComponent(subj)}&body=${body}`;
+  }
+
+  function printCO(co){
+    const contractVal=parseFloat(project.contract_value)||0;
+    const approvedCOs=cos.filter(c=>c.status==="Approved").reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+    const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>CO ${co.co_number}</title>
+<style>@page{size:letter portrait;margin:0.6in;}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}body{font-size:10pt;color:#000;}
+.lh{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:14px;border-bottom:3px solid #1f3864;margin-bottom:20px;}
+.co{font-size:20pt;font-weight:900;color:#1f3864;}.co-sub{font-size:9pt;color:#555;margin-top:4px;}
+.doc-title{text-align:right;}.doc-title h1{font-size:20pt;font-weight:900;color:#1f3864;}
+.badge{display:inline-block;padding:4px 14px;border-radius:20px;font-weight:700;font-size:10pt;margin-top:6px;background:${co.status==="Approved"?"#dcfce7":co.status==="Rejected"?"#fee2e2":"#fef9c3"};color:${co.status==="Approved"?"#166534":co.status==="Rejected"?"#991b1b":"#713f12"};}
+.proj-box{background:#f0f4ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px 16px;margin-bottom:20px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+.fl{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;margin-bottom:2px;}.fv{font-size:10pt;font-weight:600;color:#111;}
+.amt-box{background:#1f3864;color:#fff;border-radius:10px;padding:16px 20px;text-align:center;margin-bottom:18px;}
+.desc-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:10pt;line-height:1.7;min-height:60px;margin-bottom:18px;}
+.sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;}
+.sig-box{border-top:1.5px solid #000;padding-top:8px;}.sig-label{font-size:8pt;color:#666;text-transform:uppercase;}
+.footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
+<div class="lh"><div><div class="co">AIME</div><div class="co-sub">Atlantic Industrial Mechanical & Environmental Inc.<br>Field Operations Division</div></div>
+<div class="doc-title"><h1>Change Order</h1><div>${co.co_number}</div><div><span class="badge">${co.status.toUpperCase()}</span></div></div></div>
+<div class="proj-box">
+<div><div class="fl">Project</div><div class="fv">${project.name||"—"}</div></div>
+<div><div class="fl">Client</div><div class="fv">${project.client||"—"}</div></div>
+<div><div class="fl">Division</div><div class="fv">${project.division||"—"}</div></div>
+<div><div class="fl">Date</div><div class="fv">${co.date_submitted||"—"}</div></div>
+<div><div class="fl">Submitted By</div><div class="fv">${co.submitted_by||"—"}</div></div>
+<div><div class="fl">AFE / PO</div><div class="fv">${project.afe||"—"}</div></div></div>
+<div class="amt-box"><div style="font-size:9pt;text-transform:uppercase;letter-spacing:1px;opacity:0.8">Change Order Amount</div><div style="font-size:26pt;font-weight:900;margin-top:4px">${fmt(co.amount)}</div></div>
+<div><div class="fl" style="margin-bottom:6px">Description of Change</div><div class="desc-box">${co.description||"—"}</div></div>
+${co.notes?`<div><div class="fl" style="margin-bottom:6px">Notes</div><div class="desc-box">${co.notes}</div></div>`:""}
+${co.client_signature?`<div style="background:#fff;border:1px solid #86efac;border-radius:8px;padding:12px;margin-bottom:12px"><div class="fl" style="color:#166534;margin-bottom:6px">Client Signature — ${co.client_signed_by||""}</div><img src="${co.client_signature}" style="max-height:80px;max-width:300px;object-fit:contain"/></div>`:""}
+<div class="sig-grid">
+<div class="sig-box"><div style="height:48px"></div><div class="sig-label">Authorized by (AIME)</div><div style="font-size:10pt;font-weight:700;margin-top:4px">${co.submitted_by||""}</div><div style="font-size:9pt;color:#555;margin-top:4px">Date: ______________</div></div>
+<div class="sig-box">${co.client_signature?`<img src="${co.client_signature}" style="max-height:60px;max-width:200px;object-fit:contain;display:block;margin-bottom:4px"/>`:`<div style="height:60px;border-bottom:1px solid #000;margin-bottom:4px"></div>`}<div class="sig-label">Accepted by (Client)</div><div style="font-size:10pt;font-weight:700;margin-top:4px">${co.client_signed_by||""}</div><div style="font-size:9pt;color:#555;margin-top:4px">Date: ${co.approved_date||"______________"}</div></div></div>
+<div class="footer"><span>AIME Field Pro · CO ${co.co_number} · ${project.name}</span><span>Generated: ${new Date().toLocaleString()}</span></div>
+</body></html>`;
+    const win=window.open("","_blank","width=900,height=750");win.document.write(html);win.document.close();win.focus();setTimeout(()=>win.print(),400);
+  }
+
+  const contractVal=parseFloat(project.contract_value)||0;
+  const approvedCOs=cos.filter(c=>c.status==="Approved").reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+  const pendingCOs=cos.filter(c=>c.status==="Pending").reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+  const revisedContract=contractVal+approvedCOs;
+  const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
+
+  if(showForm||editing) return(
+    <div style={{padding:"14px 16px 80px"}}>
+      <button onClick={()=>{setShowForm(false);setEditing(null);setF(blank);}} style={{...ghostBtn,marginBottom:14}}>← Back</button>
+      <div style={{fontSize:17,fontWeight:800,marginBottom:16,color:T.text}}>{editing?"Edit":"New"} Change Order</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lbl}>CO Number *</label><input value={f.co_number} onChange={e=>set("co_number",e.target.value)} placeholder="CO-001" style={inp}/></div>
+        <div><label style={lbl}>Date</label><input type="date" value={f.date_submitted||""} onChange={e=>set("date_submitted",e.target.value)} style={inp}/></div>
+      </div>
+      <div style={{marginBottom:10}}><label style={lbl}>Description *</label><textarea rows={3} value={f.description} onChange={e=>set("description",e.target.value)} placeholder="Describe the change in scope..." style={{...inp,resize:"vertical"}}/></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lbl}>Amount ($)</label><input type="number" value={f.amount} onChange={e=>set("amount",e.target.value)} placeholder="0.00" style={inp}/></div>
+        <div><label style={lbl}>Status</label><select value={f.status} onChange={e=>set("status",e.target.value)} style={inpSel}>{["Pending","Approved","Rejected"].map(s=><option key={s}>{s}</option>)}</select></div>
+      </div>
+      {f.status==="Approved"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lbl}>Approved By</label><input value={f.approved_by} onChange={e=>set("approved_by",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Approval Date</label><input type="date" value={f.approved_date||""} onChange={e=>set("approved_date",e.target.value)} style={inp}/></div>
+      </div>}
+      <div style={{marginBottom:14}}><label style={lbl}>Notes</label><textarea rows={2} value={f.notes} onChange={e=>set("notes",e.target.value)} style={{...inp,resize:"vertical"}}/></div>
+      <button onClick={save} disabled={!f.co_number.trim()||saving} style={{...primBtn,opacity:f.co_number.trim()&&!saving?1:0.5,borderRadius:14}}>{saving?"Saving…":"Save Change Order"}</button>
+    </div>
+  );
+
+  return(
+    <div style={{padding:"14px 16px 80px"}}>
+      {/* Share Modal */}
+      {shareCo&&<div onClick={()=>{setShareCo(null);setCoCopied(false);}} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",width:"100%",maxWidth:480}}>
+          <div style={{fontSize:17,fontWeight:900,marginBottom:4,color:T.text}}>📤 Send CO {shareCo.co_number}</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Client opens the link, reviews the CO, signs it, and it saves directly to your app.</div>
+          <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:12,color:T.sub}}>{shareCo.description?.substring(0,50)}</span>
+            <span style={{fontSize:16,fontWeight:800,color:T.green}}>${Number(shareCo.amount||0).toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+          </div>
+          <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 14px",marginBottom:14,wordBreak:"break-all",fontSize:12,color:T.sub}}>{`${appUrl}?co=${shareCo.id}`}</div>
+          <button onClick={()=>copyCoLink(shareCo)} style={{...primBtn,borderRadius:14,marginBottom:10,background:coCopied?T.green:T.orange,transition:"background 0.2s"}}>{coCopied?"✅ Link Copied! Paste into your email":"📋 Copy Link to Clipboard"}</button>
+          {coCopied&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:13,color:T.green,textAlign:"center",fontWeight:600}}>✓ Paste this link into an email or text to your client</div>}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}><div style={{flex:1,height:1,background:T.border}}/><span style={{fontSize:11,color:T.muted}}>OR</span><div style={{flex:1,height:1,background:T.border}}/></div>
+          <button onClick={()=>emailCO(shareCo)} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10,fontSize:14}}>📧 Open Email Draft with Link</button>
+          <div style={{fontSize:11,color:T.muted,textAlign:"center",marginBottom:14}}>Note: Copy Link above gives a clickable link.</div>
+          <button onClick={()=>{setShareCo(null);setCoCopied(false);}} style={{...ghostBtn,width:"100%",textAlign:"center"}}>Done</button>
+        </div>
+      </div>}
+
+      {contractVal>0&&<div style={{...cardS,marginBottom:14,background:T.blueLow,border:`1px solid ${T.blue}40`}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Contract Summary</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+          <div style={{background:T.card,borderRadius:10,padding:"8px 10px"}}><div style={{fontSize:11,color:T.muted}}>Original Contract</div><div style={{fontSize:15,fontWeight:800,color:T.text}}>{fmt(contractVal)}</div></div>
+          <div style={{background:T.card,borderRadius:10,padding:"8px 10px"}}><div style={{fontSize:11,color:T.muted}}>Approved COs</div><div style={{fontSize:15,fontWeight:800,color:T.green}}>+{fmt(approvedCOs)}</div></div>
+        </div>
+        {pendingCOs>0&&<div style={{background:T.card,borderRadius:10,padding:"8px 10px",marginBottom:8}}><div style={{fontSize:11,color:T.muted}}>Pending COs</div><div style={{fontSize:15,fontWeight:800,color:T.yellow}}>+{fmt(pendingCOs)}</div></div>}
+        <div style={{background:T.card,borderRadius:10,padding:"10px",textAlign:"center",border:`1px solid ${T.blue}40`}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Revised Contract Value</div><div style={{fontSize:22,fontWeight:900,color:T.blue}}>{fmt(revisedContract)}</div></div>
+      </div>}
+
+      {canEdit&&<button onClick={()=>setShowForm(true)} style={{...primBtn,borderRadius:14,marginBottom:14}}>+ New Change Order</button>}
+      {loading&&<Spinner/>}
+      {!loading&&cos.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>📋</div><div style={{fontWeight:700,color:T.sub}}>No Change Orders Yet</div></div>}
+      {cos.map(co=>(
+        <div key={co.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${statusColor[co.status]||T.muted}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+            <div><div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}><span style={{fontSize:15,fontWeight:800,color:T.orange}}>{co.co_number}</span><span style={pill(statusColor[co.status]||T.muted)}>{co.status}</span></div>
+            <div style={{fontSize:12,color:T.muted}}>{co.date_submitted} · {co.submitted_by}</div></div>
+            <div style={{fontSize:18,fontWeight:900,color:co.status==="Rejected"?T.red:T.green}}>{co.status==="Rejected"?"—":"+"}{fmt(co.amount)}</div>
+          </div>
+          {co.description&&<div style={{fontSize:13,color:T.text,marginBottom:8,lineHeight:1.5}}>{co.description}</div>}
+          {co.status==="Approved"&&co.approved_by&&<div style={{fontSize:11,color:T.green}}>✓ Approved by {co.approved_by}{co.approved_date?" on "+co.approved_date:""}</div>}
+          {co.client_signature&&<div style={{background:"#fff",borderRadius:8,padding:4,marginTop:6}}><div style={{fontSize:9,color:"#999",paddingLeft:4,marginBottom:2}}>CLIENT SIGNATURE — {co.client_signed_by||""}</div><img src={co.client_signature} alt="sig" style={{width:"100%",maxHeight:60,objectFit:"contain",borderRadius:6}}/></div>}
+          {co.notes&&<div style={{fontSize:11,color:T.muted,marginTop:4,fontStyle:"italic"}}>{co.notes}</div>}
+          <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+            <button onClick={()=>{setShareCo(co);setCoCopied(false);}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.orange,border:`1px solid ${T.orange}40`,fontWeight:700,minWidth:90}}>📤 Send Link</button>
+            <button onClick={()=>printCO(co)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:"#CBD5E1",border:"1px solid #27272A",minWidth:70}}>🖨️ PDF</button>
+            {canEdit&&<>
+              <button onClick={()=>{setEditing(co.id);setF({...co,amount:co.amount||"",client_signature:co.client_signature||null,client_signed_by:co.client_signed_by||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,minWidth:50}}>✏️</button>
+              <button onClick={()=>remove(co.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`,minWidth:40}}>🗑</button>
+            </>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+/* ── RFIs TAB ────────────────────────────────────────────────── */
+function RFIsTab({project,user,onErr}){
+  const canEdit=user.role==="admin"||user.role==="pm";
+  const [rfis,setRfis]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [showForm,setShowForm]=useState(false);
+  const [editing,setEditing]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const [shareRfi,setShareRfi]=useState(null);
+  const [copied,setCopied]=useState(false);
+  const appUrl=window.location.origin+window.location.pathname;
+  const blank={rfi_number:"",date_submitted:today(),submitted_by:user.name,question:"",description:"",due_date:"",response:"",responded_by:"",response_date:"",status:"Open",notes:"",ball_in_court:"",ball_in_court_email:""};
+  const [f,setF]=useState(blank);
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  const statusColor={Open:T.yellow,Answered:T.blue,Closed:T.green,Overdue:T.red};
+
+  useEffect(()=>{load();},[project.id]);
+  async function load(){setLoading(true);try{const r=await API.rfis.forProject(project.id);setRfis(Array.isArray(r)?r:[]);}catch(e){onErr(e.message);}setLoading(false);}
+
+  async function save(){
+    setSaving(true);
+    try{
+      const toDate=v=>v&&v.trim()&&v!=="Invalid Date"?v:null;
+      const payload={...f,project_id:project.id,date_submitted:toDate(f.date_submitted),due_date:toDate(f.due_date),response_date:toDate(f.response_date)};
+      if(editing){await API.rfis.update(editing,payload);}else{await API.rfis.create(payload);}
+      setShowForm(false);setEditing(null);setF(blank);await load();
+    }catch(e){onErr(e.message);}
+    setSaving(false);
+  }
+
+  async function remove(id){if(!window.confirm("Delete this RFI?"))return;try{await API.rfis.remove(id);await load();}catch(e){onErr(e.message);}}
+
+  function copyLink(rfi){
+    const link=`${appUrl}?rfi=${rfi.id}`;
+    navigator.clipboard.writeText(link).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),3000);}).catch(()=>{const el=document.createElement("textarea");el.value=link;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);setCopied(true);setTimeout(()=>setCopied(false),3000);});
+  }
+
+  function openEmailDraft(rfi){
+    const link=`${appUrl}?rfi=${rfi.id}`;
+    const subj=`RFI #${rfi.rfi_number} — ${project.name} — Response Required`;
+    const ln="%0D%0A";const sep="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━";
+    const body=[`Hi ${rfi.ball_in_court||""},`,ln,ln,`Please review and respond to the RFI below.`,ln,ln,sep,ln,`  📋  REQUEST FOR INFORMATION — RFI #${rfi.rfi_number}`,ln,sep,ln,ln,`  Project:    ${project.name}`,ln,rfi.due_date?`  Due By:    ${rfi.due_date}${ln}`:"",ln,`  QUESTION:`,ln,`  ${rfi.question}`,ln,ln,sep,ln,ln,`To respond, click or copy this link into your browser:`,ln,ln,`  ${link}`,ln,ln,`(No login required — fill in the form and click Submit)`,ln,ln,sep,ln,ln,`Thank you,`,ln,`${rfi.submitted_by||"AIME Field Operations"}`,ln,`Atlantic Industrial Mechanical & Environmental Inc.`,ln,].filter(Boolean).join("");
+    window.location.href=`mailto:${rfi.ball_in_court_email||""}?subject=${encodeURIComponent(subj)}&body=${body}`;
+  }
+
+  function printRFI(rfi){
+    const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
+    const effStatus=isOverdue?"Overdue":rfi.status;
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>RFI ${rfi.rfi_number}</title>
+<style>@page{size:letter portrait;margin:0.6in;}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}body{font-size:10pt;color:#000;}
+.action-bar{background:#1f3864;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px;position:sticky;top:0;z-index:100;}
+.action-bar h2{font-size:12pt;font-weight:700;margin:0;}.btns{display:flex;gap:10px;}
+.btn{padding:8px 16px;border-radius:8px;border:none;font-size:11pt;font-weight:700;cursor:pointer;font-family:inherit;}
+.btn-print{background:#F97316;color:#000;}.btn-clear{background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.4);}
+@media print{.action-bar{display:none!important;}.fillable{border:none!important;background:transparent!important;}}
+.doc{max-width:750px;margin:0 auto;padding:24px 20px 40px;}
+.lh{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:14px;border-bottom:3px solid #1f3864;}
+.co{font-size:20pt;font-weight:900;color:#1f3864;}.co-sub{font-size:9pt;color:#555;margin-top:4px;}
+.proj-box{background:#f0f4ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+.fl{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;margin-bottom:2px;}.fv{font-size:10pt;font-weight:600;color:#111;}
+.q-box{background:#1f3864;color:#fff;border-radius:8px;padding:14px 16px;font-size:12pt;font-weight:700;margin-bottom:12px;line-height:1.5;}
+.resp-section{background:#f0fdf4;border:2px solid #22c55e;border-radius:10px;padding:16px;margin-bottom:18px;}
+.resp-section h2{color:#166534;border-bottom-color:#86efac;margin-bottom:12px;font-size:11pt;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;}
+.fill-hint{background:#dcfce7;border:1px solid #86efac;border-radius:6px;padding:8px 12px;font-size:9pt;color:#166534;margin-bottom:12px;font-weight:600;}
+.fillable{width:100%;min-height:100px;border:1.5px dashed #22c55e;border-radius:6px;padding:10px 12px;font-size:10pt;line-height:1.7;background:#fff;color:#000;font-family:Arial,sans-serif;resize:vertical;}
+.fill-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;}
+.fill-field{display:flex;flex-direction:column;gap:4px;}.fill-label{font-size:8pt;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:0.5px;}
+input.fillable{min-height:auto;height:38px;}
+.sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;}
+.sig-box{border-top:1.5px solid #000;padding-top:8px;}.sig-label{font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:0.5px;}
+.footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+<div class="action-bar"><div><h2>📝 RFI #${rfi.rfi_number} — Fill in your response below, then Print/Save as PDF</h2></div>
+<div class="btns"><button class="btn btn-print" onclick="window.print()">🖨️ Print / Save as PDF</button></div></div>
+<div class="doc">
+<div class="lh"><div><div class="co">AIME</div><div class="co-sub">Atlantic Industrial Mechanical & Environmental Inc.<br>Field Operations Division</div></div>
+<div style="text-align:right"><h1 style="font-size:20pt;font-weight:900;color:#1f3864">Request for Information</h1><div>RFI #${rfi.rfi_number}</div></div></div>
+<div class="proj-box">
+<div><div class="fl">Project</div><div class="fv">${project.name||"—"}</div></div>
+<div><div class="fl">Client</div><div class="fv">${project.client||"—"}</div></div>
+<div><div class="fl">Division</div><div class="fv">${project.division||"—"}</div></div>
+<div><div class="fl">Date Submitted</div><div class="fv">${rfi.date_submitted||"—"}</div></div>
+<div><div class="fl">Submitted By</div><div class="fv">${rfi.submitted_by||"—"}</div></div>
+<div><div class="fl">Response Due</div><div class="fv">${rfi.due_date||"—"}</div></div></div>
+${rfi.ball_in_court?`<div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center"><div><div class="fl" style="color:#9a3412">🏀 Ball in Court</div><div style="font-size:13pt;font-weight:900;color:#c2410c;margin-top:2px">${rfi.ball_in_court}</div>${rfi.ball_in_court_email?`<div style="font-size:9pt;color:#9a3412">${rfi.ball_in_court_email}</div>`:""}</div></div>`:""}
+<div><div class="fl" style="margin-bottom:6px">Question / Issue</div><div class="q-box">${rfi.question||"—"}</div>${rfi.description?`<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:10pt;line-height:1.7">${rfi.description}</div>`:""}</div><br>
+${rfi.response?`<div class="resp-section"><h2>Response</h2><div style="background:#fff;border:1px solid #86efac;border-radius:8px;padding:12px"><div style="font-size:8pt;font-weight:700;color:#166534;margin-bottom:4px">From ${rfi.responded_by||"—"} · ${rfi.response_date||""}</div><div>${rfi.response}</div>${rfi.response_signature?`<img src="${rfi.response_signature}" style="max-height:60px;width:100%;object-fit:contain;display:block;margin-top:8px"/>`:""}</div></div>`:
+`<div class="resp-section"><h2>Response <span style="font-weight:400;font-size:9pt;text-transform:none">(Please complete and return)</span></h2>
+<div class="fill-hint">✏️ Type your response below, then click Print / Save as PDF</div>
+<textarea id="resp" class="fillable" placeholder="Enter your response here..." rows="6"></textarea>
+<div class="fill-row"><div class="fill-field"><div class="fill-label">Responded By</div><input id="respBy" type="text" class="fillable" placeholder="Your name"/></div>
+<div class="fill-field"><div class="fill-label">Response Date</div><input id="respDate" type="date" class="fillable"/></div></div></div>`}
+<div class="sig-grid">
+<div class="sig-box"><div style="height:48px"></div><div class="sig-label">Submitted by (AIME)</div><div style="font-size:10pt;font-weight:700;margin-top:4px">${rfi.submitted_by||""}</div><div style="font-size:9pt;color:#555;margin-top:4px">Date: ${rfi.date_submitted||"______________"}</div></div>
+<div class="sig-box"><div style="height:48px"></div><div class="sig-label">Response by (Client)</div><div style="height:24px"></div><div style="font-size:9pt;color:#555;margin-top:4px">Date: ______________</div></div></div>
+<div class="footer"><span>AIME Field Pro · RFI #${rfi.rfi_number} · ${project.name}</span><span>Generated: ${new Date().toLocaleString()}</span></div>
+</div></body></html>`;
+    const win=window.open("","_blank","width=850,height=800");win.document.write(html);win.document.close();win.focus();
+  }
+
+  const open=rfis.filter(r=>r.status==="Open"||r.status==="Overdue").length;
+  const answered=rfis.filter(r=>r.status==="Answered").length;
+
+  if(showForm||editing) return(
+    <div style={{padding:"14px 16px 80px"}}>
+      <button onClick={()=>{setShowForm(false);setEditing(null);setF(blank);}} style={{...ghostBtn,marginBottom:14}}>← Back</button>
+      <div style={{fontSize:17,fontWeight:800,marginBottom:16,color:T.text}}>{editing?"Edit":"New"} RFI</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lbl}>RFI Number *</label><input value={f.rfi_number} onChange={e=>set("rfi_number",e.target.value)} placeholder="RFI-001" style={inp}/></div>
+        <div><label style={lbl}>Date Submitted</label><input type="date" value={f.date_submitted||""} onChange={e=>set("date_submitted",e.target.value)} style={inp}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lbl}>Submitted By</label><input value={f.submitted_by} onChange={e=>set("submitted_by",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Response Due</label><input type="date" value={f.due_date||""} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
+      </div>
+      <div style={{marginBottom:10}}><label style={lbl}>Question / Issue *</label><input value={f.question} onChange={e=>set("question",e.target.value)} placeholder="Brief summary of the question..." style={inp}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Full Description</label><textarea rows={3} value={f.description} onChange={e=>set("description",e.target.value)} placeholder="Detailed description..." style={{...inp,resize:"vertical"}}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Status</label><select value={f.status} onChange={e=>set("status",e.target.value)} style={inpSel}>{["Open","Answered","Closed","Overdue"].map(s=><option key={s}>{s}</option>)}</select></div>
+      <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`,background:T.orangeLow}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.orange,marginBottom:8}}>🏀 BALL IN COURT</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div><label style={lbl}>Person Responsible</label><input value={f.ball_in_court} onChange={e=>set("ball_in_court",e.target.value)} placeholder="Name of person who needs to act" style={inp}/></div>
+          <div><label style={lbl}>Their Email</label><input type="email" value={f.ball_in_court_email} onChange={e=>set("ball_in_court_email",e.target.value)} placeholder="email@company.com" style={inp}/></div>
+        </div>
+      </div>
+      {(f.status==="Answered"||f.status==="Closed")&&<>
+        <div style={{marginBottom:10}}><label style={lbl}>Response</label><textarea rows={3} value={f.response} onChange={e=>set("response",e.target.value)} style={{...inp,resize:"vertical"}}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Responded By</label><input value={f.responded_by} onChange={e=>set("responded_by",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Response Date</label><input type="date" value={f.response_date||""} onChange={e=>set("response_date",e.target.value)} style={inp}/></div>
+        </div>
+      </>}
+      <button onClick={save} disabled={!f.rfi_number.trim()||!f.question.trim()||saving} style={{...primBtn,opacity:f.rfi_number.trim()&&f.question.trim()&&!saving?1:0.5,borderRadius:14}}>{saving?"Saving…":"Save RFI"}</button>
+    </div>
+  );
+
+  return(
+    <div style={{padding:"14px 16px 80px"}}>
+      {/* Share Modal */}
+      {shareRfi&&<div onClick={()=>setShareRfi(null)} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",width:"100%",maxWidth:480}}>
+          <div style={{fontSize:17,fontWeight:900,marginBottom:4,color:T.text}}>📤 Share RFI #{shareRfi.rfi_number}</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:20}}>Send this link to {shareRfi.ball_in_court||"the recipient"} — they fill in their response and it saves directly to your app.</div>
+          <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"12px 14px",marginBottom:14,wordBreak:"break-all",fontSize:12,color:T.sub}}>{`${appUrl}?rfi=${shareRfi.id}`}</div>
+          <button onClick={()=>copyLink(shareRfi)} style={{...primBtn,borderRadius:14,marginBottom:10,background:copied?T.green:T.orange,transition:"background 0.2s"}}>{copied?"✅ Link Copied! Paste it into your email":"📋 Copy Link to Clipboard"}</button>
+          {copied&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",marginBottom:10,fontSize:13,color:T.green,textAlign:"center",fontWeight:600}}>✓ Link copied! Open your email app, paste it, and send.</div>}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}><div style={{flex:1,height:1,background:T.border}}/><span style={{fontSize:11,color:T.muted}}>OR</span><div style={{flex:1,height:1,background:T.border}}/></div>
+          <button onClick={()=>openEmailDraft(shareRfi)} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10,fontSize:14}}>📧 Open Email Draft {shareRfi.ball_in_court_email?`(to ${shareRfi.ball_in_court_email})`:""}</button>
+          <div style={{fontSize:11,color:T.muted,textAlign:"center",marginBottom:14}}>Note: Copy Link gives a clickable link. Email draft is plain text only.</div>
+          <button onClick={()=>setShareRfi(null)} style={{...ghostBtn,width:"100%",textAlign:"center"}}>Done</button>
+        </div>
+      </div>}
+
+      {rfis.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+        {[[open,"Open / Overdue",T.yellow],[answered,"Answered",T.blue],[rfis.filter(r=>r.status==="Closed").length,"Closed",T.green]].map(([v,l,c])=>(
+          <div key={l} style={{background:T.card,borderRadius:10,padding:"10px",textAlign:"center",border:`1px solid ${c}30`}}><div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",marginTop:2}}>{l}</div></div>
+        ))}
+      </div>}
+      {canEdit&&<button onClick={()=>setShowForm(true)} style={{...primBtn,borderRadius:14,marginBottom:14}}>+ New RFI</button>}
+      {loading&&<Spinner/>}
+      {!loading&&rfis.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>📝</div><div style={{fontWeight:700,color:T.sub}}>No RFIs Yet</div></div>}
+      {rfis.map(rfi=>{
+        const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
+        const effStatus=isOverdue?"Overdue":rfi.status;
+        const sc=statusColor[effStatus]||T.muted;
+        return(
+          <div key={rfi.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${sc}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+              <div>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}><span style={{fontSize:15,fontWeight:800,color:T.orange}}>{rfi.rfi_number}</span><span style={pill(sc)}>{effStatus.toUpperCase()}</span></div>
+                <div style={{fontSize:12,color:T.muted}}>{rfi.date_submitted} · {rfi.submitted_by}</div>
+                {rfi.due_date&&<div style={{fontSize:11,color:isOverdue?T.red:T.muted,marginTop:2}}>{isOverdue?"⚠️ Overdue — ":"Due: "}{rfi.due_date}</div>}
+                {rfi.ball_in_court&&<div style={{fontSize:11,color:T.orange,marginTop:2,fontWeight:600}}>🏀 Ball in Court: {rfi.ball_in_court}</div>}
+              </div>
+            </div>
+            <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:4}}>{rfi.question}</div>
+            {rfi.description&&<div style={{fontSize:12,color:T.sub,marginBottom:8,lineHeight:1.5}}>{rfi.description}</div>}
+            {rfi.response&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px",marginTop:8}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.green,marginBottom:4}}>✓ RESPONSE — {rfi.responded_by}{rfi.response_date?" · "+rfi.response_date:""}</div>
+              <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{rfi.response}</div>
+              {rfi.response_signature&&<div style={{marginTop:8,background:"#fff",borderRadius:8,padding:4}}><div style={{fontSize:9,color:"#999",marginBottom:2,paddingLeft:4}}>SIGNATURE</div><img src={rfi.response_signature} alt="Signature" style={{width:"100%",maxHeight:80,objectFit:"contain",display:"block",borderRadius:6}}/></div>}
+            </div>}
+            <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+              <button onClick={()=>{setShareRfi(rfi);setCopied(false);}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.orange,border:`1px solid ${T.orange}40`,fontWeight:700,minWidth:90}}>📤 Send Link</button>
+              <button onClick={()=>printRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:"#CBD5E1",border:"1px solid #27272A",minWidth:70}}>🖨️ PDF</button>
+              {canEdit&&<>
+                <button onClick={()=>{setEditing(rfi.id);setF({...rfi,notes:rfi.notes||"",ball_in_court:rfi.ball_in_court||"",ball_in_court_email:rfi.ball_in_court_email||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,minWidth:60}}>✏️</button>
+                <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`,minWidth:50}}>🗑</button>
+              </>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+
+/* ── SIGNATURE PAD ───────────────────────────────────────────── */
+function SignaturePad({onSave,onCancel,saving,sigErr}){
+  const canvasRef=useRef(null);
+  const [hasStrokes,setHasStrokes]=useState(false);
+  const [inspectorName,setInspectorName]=useState("");
+  const lastPos=useRef(null);
+  function getSigPos(e,c){const r=c.getBoundingClientRect();const sx=c.width/r.width;const sy=c.height/r.height;if(e.touches&&e.touches[0])return{x:(e.touches[0].clientX-r.left)*sx,y:(e.touches[0].clientY-r.top)*sy};return{x:(e.clientX-r.left)*sx,y:(e.clientY-r.top)*sy};}
+  function startDraw(e){e.preventDefault();const c=canvasRef.current;if(!c)return;const pos=getSigPos(e,c);c.getContext("2d").beginPath();c.getContext("2d").moveTo(pos.x,pos.y);lastPos.current=pos;}
+  function draw(e){e.preventDefault();if(!lastPos.current)return;const c=canvasRef.current;if(!c)return;const ctx=c.getContext("2d");const pos=getSigPos(e,c);ctx.lineWidth=2.5;ctx.lineCap="round";ctx.strokeStyle="#F97316";ctx.lineTo(pos.x,pos.y);ctx.stroke();ctx.beginPath();ctx.moveTo(pos.x,pos.y);lastPos.current=pos;setHasStrokes(true);}
+  function endDraw(e){e.preventDefault();lastPos.current=null;}
+  function clearCanvas(){const c=canvasRef.current;if(c)c.getContext("2d").clearRect(0,0,c.width,c.height);setHasStrokes(false);}
+  async function save(){
+    if(!hasStrokes||!inspectorName.trim()||saving)return;
+    const canvas=canvasRef.current;if(!canvas)return;
+    const sig=canvas.toDataURL("image/jpeg",0.7);
+    await onSave(inspectorName.trim(),sig);
+  }
+  const canSign=hasStrokes&&inspectorName.trim().length>0&&!saving;
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(0,0,0,0.9)",display:"flex",flexDirection:"column"}}>
+      <div style={{background:T.card,padding:"16px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div><div style={{fontSize:16,fontWeight:800,color:T.text}}>Inspector Sign-Off</div><div style={{fontSize:12,color:T.muted}}>{new Date().toLocaleDateString()}</div></div>
+        <button onClick={onCancel} style={{background:"none",border:"none",color:T.muted,fontSize:22,cursor:"pointer"}}>✕</button>
+      </div>
+      <div style={{flex:1,overflow:"auto",padding:"16px",display:"flex",flexDirection:"column",gap:12}}>
+        <div><label style={lbl}>Inspector Name *</label><input value={inspectorName} onChange={e=>setInspectorName(e.target.value)} placeholder="Inspector full name" style={inp} autoFocus/></div>
+        {sigErr&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 14px",fontSize:13,color:T.red}}>{sigErr}</div>}
+        <div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><label style={lbl}>Signature *</label>{hasStrokes&&<button onClick={clearCanvas} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Clear</button>}</div>
+          <div style={{background:"#fff",borderRadius:12,overflow:"hidden",border:`2px solid ${T.orange}`}}>
+            <canvas ref={canvasRef} width={600} height={200} style={{width:"100%",height:200,display:"block",touchAction:"none",cursor:"crosshair"}}
+              onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onMouseLeave={endDraw}
+              onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}/>
+          </div>
+          {!hasStrokes&&<div style={{textAlign:"center",fontSize:12,color:T.muted,marginTop:4}}>Draw signature above</div>}
+          {hasStrokes&&<div style={{textAlign:"center",fontSize:12,color:T.green,marginTop:4}}>✓ Signature captured</div>}
+        </div>
+      </div>
+      <div style={{padding:"16px",display:"flex",flexDirection:"column",gap:10,borderTop:`1px solid ${T.border}`,background:T.surface,flexShrink:0}}>
+        <button onClick={save} style={{...primBtn,borderRadius:14,opacity:canSign?1:0.45,background:canSign?T.green:T.muted,color:"#09090B"}}>{saving?"Saving…":"✅ Confirm & Sign Report"}</button>
+        <button onClick={onCancel} style={{...ghostBtn,width:"100%",textAlign:"center"}} disabled={saving}>Cancel</button>
+        {!canSign&&!saving&&<div style={{fontSize:11,color:T.muted,textAlign:"center"}}>{!inspectorName.trim()?"Enter inspector name above":!hasStrokes?"Draw signature above":""}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ReportDetail({report,project,user,onBack,onDelete,onApprove,onFlag}){
+  const [lb,setLb]=useState(null);const [flagNote,setFlagNote]=useState("");const [flagging,setFlagging]=useState(false);
+  const tot=reportTotals(report);
+  const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[report.status]||T.muted;
+  const divColor=DIV_META[project.division]?.color||T.orange;
+  function exportXLSX(){
+    const wb=XLSX.utils.book_new();const rows=[];const blank=()=>Array(11).fill(null);
+    const r1=blank();r1[1]="COLONIAL PIPELINE COMPANY";rows.push(r1);
+    const r2=blank();r2[1]="DAILY REPORT-WORK PERFORMED BY CONTRACTOR";rows.push(r2);
+    const r3=blank();r3[1]="LOCATION";r3[3]="AFE NO.";r3[4]="WORK ORDER\nNUMBER";r3[6]="REPORT DATE";r3[8]="REPORT\nNO.";rows.push(r3);
+    const[yr,mo,dy]=(report.date||"").split("-");
+    const r4=blank();r4[1]=project.location||"";r4[3]=project.afe||"";r4[4]=project.work_order||"";r4[6]=`${mo}/${dy}/${yr}`;r4[8]=report.report_no||"";rows.push(r4);
+    const r5=blank();r5[1]="CONTRACTOR:";r5[2]="AIME";r5[8]="CONTRACTOR DATE:";r5[9]=report.date||"";rows.push(r5);
+    const r6=blank();r6[1]="DESCRIPTION OF WORK DONE:";rows.push(r6);
+    const r7=blank();r7[1]=report.description||"";rows.push(r7);
+    const r8=blank();r8[1]="LABOR";rows.push(r8);
+    const r9=blank();r9[1]="NAME";r9[3]="CLASSIFICATION";r9[5]="REG. HRS.";r9[6]="O.T. HRS.";r9[7]="TRAVEL HRS.";r9[8]="REGULAR RATE";r9[9]="AMOUNT";rows.push(r9);
+    const labRows=[...(report.labor||[])];while(labRows.length<14)labRows.push(null);
+    labRows.forEach(lr=>{const row=blank();if(lr){const pos=POSITIONS.find(p=>p.name===lr.classification);row[1]=lr.name||"";row[3]=lr.classification||"";if(pos&&!pos.flat){row[5]=parseFloat(lr.regHrs)||0;row[6]=parseFloat(lr.otHrs)||0;row[7]=parseFloat(lr.travelHrs)||0;}row[8]=pos?pos.rate:"";row[9]=laborAmt(lr);}else row[9]=0;rows.push(row);});
+    const tlRow=blank();tlRow[8]="TOTAL LABOR";tlRow[9]=tot.labor;rows.push(tlRow);rows.push(blank());
+    const ehRow=blank();ehRow[1]="EQUIPMENT";rows.push(ehRow);
+    const ecRow=blank();ecRow[1]="DESCRIPTION";ecRow[6]="Quantity";ecRow[7]="Hours/Days";ecRow[8]="RATE";ecRow[9]="AMOUNT";rows.push(ecRow);
+    const eqRows=[...(report.equipment||[])];while(eqRows.length<15)eqRows.push(null);
+    eqRows.forEach(er=>{const row=blank();if(er){row[1]=er.description||"";row[6]=parseFloat(er.qty)||0;row[7]=parseFloat(er.usage)||0;row[8]=parseFloat(er.rate)||0;row[9]=equipAmt(er);}else row[9]=0;rows.push(row);});
+    const teRow=blank();teRow[8]="TOTAL EQUIPMENT";teRow[9]=tot.equip;rows.push(teRow);rows.push(blank());
+    const mhRow=blank();mhRow[2]="MATERIAL & MISCELLANEOUS";rows.push(mhRow);
+    const mcRow=blank();mcRow[1]="QUANTITY";mcRow[2]="DESCRIPTION";mcRow[5]="AMOUNT";rows.push(mcRow);
+    (report.materials||[]).forEach(m=>{const row=blank();row[1]=m.qty||"";row[2]=m.description||"";row[5]=parseFloat(m.amount)||0;rows.push(row);});
+    const gtRow=blank();gtRow[8]="GRAND TOTAL";gtRow[9]=tot.grand;rows.push(gtRow);
+    const sgRow=blank();sgRow[1]="VERIFIED AND ACCEPTED BY CO. REP";sgRow[3]="DATE";sgRow[4]="CERTIFIED AS CORRECT BY CONTRACTOR";rows.push(sgRow);
+    const ws=XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"]=[{wch:5.7},{wch:15},{wch:11.7},{wch:17.1},{wch:12.7},{wch:13.1},{wch:10},{wch:10},{wch:24.9},{wch:23.7},{wch:10.1}];
+    const rng=XLSX.utils.decode_range(ws["!ref"]);
+    for(let r=0;r<=rng.e.r;r++){const a=XLSX.utils.encode_cell({r,c:9});if(ws[a]&&typeof ws[a].v==="number")ws[a].z='"$"#,##0.00';const b=XLSX.utils.encode_cell({r,c:5});if(ws[b]&&typeof ws[b].v==="number")ws[b].z='"$"#,##0.00';}
+    XLSX.utils.book_append_sheet(wb,ws,"Daily Report");
+    XLSX.writeFile(wb,`AIME_${project.name.replace(/\s+/g,"_")}_${(report.date||"").replace(/-/g,"")}.xlsx`);
+  }
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",padding:16,fontFamily:"inherit"}}>
+      <Lightbox src={lb} onClose={()=>setLb(null)}/>
+      <button onClick={onBack} style={{...ghostBtn,marginBottom:14}}>← Reports</button>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>{fmtDate(report.date)}</div><span style={pill(sc)}>{(report.status||"submitted").toUpperCase()}</span></div>
+      {report.submitted_by&&<div style={{fontSize:12,color:T.muted,marginBottom:14}}>by {report.submitted_by}</div>}
+      {report.pm_notes&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.red}`,background:T.redLow}}><div style={{fontSize:11,color:T.red,fontWeight:700,marginBottom:4}}>🚩 PM NOTE</div><div style={{fontSize:13,color:T.sub}}>{report.pm_notes}</div></div>}
+      {report.description&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Work Done</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{report.description}</div></div>}
+      {(report.labor||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Labor · <span style={{color:T.green}}>${fmt(tot.labor)}</span></div>{report.labor.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.labor.length-1?`1px solid ${T.border}`:"none"}}><div><div style={{fontSize:14,fontWeight:600}}>{r.name||"—"}</div><div style={{fontSize:11,color:T.muted}}>{r.classification} · {r.regHrs||0}reg {r.otHrs||0}OT {r.travelHrs||0}tr</div></div><div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(laborAmt(r))}</div></div>))}</div>}
+      {(report.equipment||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Equipment · <span style={{color:T.green}}>${fmt(tot.equip)}</span></div>{report.equipment.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty} x {r.usage} {r.unit}</div></div><div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(equipAmt(r))}</div></div>))}</div>}
+      {(report.materials||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Materials · <span style={{color:T.green}}>${fmt(tot.mats)}</span></div>{report.materials.map((r,i)=>(<div key={i} style={{padding:"8px 0",borderBottom:i<report.materials.length-1?`1px solid ${T.border}`:"none"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:r.receipts?.length>0?8:0}}><span style={{fontSize:13}}>{r.qty?`${r.qty}x `:""}{r.description}</span><span style={{fontSize:13,fontWeight:700,color:T.green}}>${fmt(parseFloat(r.amount)||0)}</span></div>{r.receipts?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{r.receipts.map(rc=><img key={rc.id} src={rc.src} alt="" onClick={()=>setLb(rc.src)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer"}}/>)}</div>}</div>))}</div>}
+      <div style={{...cardS,background:divColor+"12",border:`1px solid ${divColor}40`,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:15,fontWeight:800}}>Grand Total</span><span style={{fontSize:26,fontWeight:900,color:divColor,letterSpacing:"-1px"}}>${fmt(tot.grand)}</span></div>
+      {can(user,"approve_report")&&report.status==="submitted"&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><button onClick={()=>onApprove&&onApprove(report.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>✓ Approve</button><button onClick={()=>setFlagging(!flagging)} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:12}}>🚩 Flag</button></div>)}
+      {flagging&&<div style={{...cardS,marginBottom:10}}><label style={lbl}>Flag Note for Crew</label><textarea value={flagNote} onChange={e=>setFlagNote(e.target.value)} rows={3} placeholder="What needs to be corrected…" style={{...inp,resize:"vertical",marginBottom:10}}/><button onClick={()=>{onFlag&&onFlag(report.id,flagNote);setFlagging(false);}} style={{...primBtn,borderRadius:12}}>Send Flag</button></div>}
+      <button onClick={exportXLSX} style={{...primBtn,background:divColor+"15",color:divColor,border:`1px solid ${divColor}40`,marginBottom:10,borderRadius:14}}>📥 Export to Excel (.xlsx)</button>
+      <button onClick={()=>window.confirm("Delete this report?")&&onDelete(report.id)} style={dangerBtn}>🗑 Delete Report</button>
+    </div>
+  );
+}
+
+/* ── TIME CARDS TAB ─────────────────────────────────────────── */
+
+
+function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
+  const [project,setProject]=useState(initP);
+  const [reports,setReports]=useState([]);const [safety,setSafety]=useState([]);const [photos,setPhotos]=useState([]);const [weather,setWeather]=useState([]);
+  const [tab,setTab]=useState("reports");const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
+  const [screen,setScreen]=useState("detail");const [activeReport,setActiveReport]=useState(null);const [editProject,setEditProject]=useState(false);
+  const visibleTabs=PTABS.filter(t=>!t.perm||can(user,t.perm));
+  const divMeta=DIV_META[project.division]||{color:T.orange,icon:"🏗️"};
+
+  async function load(silent=false){if(!silent)setLoading(true);try{const[reps,saf,phs,wx]=await Promise.all([API.reports.forProject(project.id),API.safety.forProject(project.id),API.photos.forProject(project.id),API.weather.forProject(project.id)]);setReports(reps||[]);setSafety(saf||[]);setPhotos(phs||[]);setWeather(wx||[]);}catch(e){setErr(e.message);}if(!silent)setLoading(false);}
+  useEffect(()=>{load();const firstTab=visibleTabs[0]?.id||"info";setTab(firstTab);},[project.id]);
+
+  async function saveReport(d){try{await API.reports.create({...d,project_id:project.id});await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
+  async function deleteReport(id){try{await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
+  async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
+  async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));await notify("report_flagged","Report Flagged",pm_notes,{project_id:project.id,report_id:id});await load(true);}catch(e){setErr(e.message);}}
+  async function updateProject(data){try{const[u]=await API.projects.update(project.id,data);setProject(u);onProjectUpdated(u);setEditProject(false);}catch(e){setErr(e.message);}}
+  async function archiveProject(){if(!window.confirm(project.status==="active"?"Archive this job?":"Restore?"))return;await updateProject({status:project.status==="active"?"archived":"active"});onBack();}
+  async function deleteProject(){if(!window.confirm("Permanently delete this job and ALL its data? This cannot be undone."))return;if(!window.confirm("Are you sure? All reports, photos, time cards and safety logs will be deleted."))return;try{await API.projects.remove(project.id);onBack();}catch(e){setErr(e.message);}}
+
+  const tot=reports.reduce((s,r)=>{const t=reportTotals(r);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
+
+  if(screen==="newReport"&&can(user,"submit_report")) return <DailyReportForm user={user} project={project} onSave={saveReport} onCancel={()=>setScreen("detail")}/>;
+  if(screen==="reportDetail"&&activeReport) return <ReportDetail report={activeReport} project={project} user={user} onBack={()=>setScreen("detail")} onDelete={deleteReport} onApprove={approveReport} onFlag={flagReport}/>;
+  if(editProject&&can(user,"edit_job")) return <ProjectForm initial={project} onSave={updateProject} onCancel={()=>setEditProject(false)} defaultDivision={project.division}/>;
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← {project.division}</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+          <div style={{flex:1,minWidth:0,paddingRight:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
+              <span style={{fontSize:16}}>{divMeta.icon}</span>
+              <div style={{fontSize:19,fontWeight:900,color:T.text,letterSpacing:"-0.4px",lineHeight:1.2}}>{project.name}</div>
+            </div>
+            <div style={{fontSize:12,color:T.sub}}>{[project.client,project.location].filter(Boolean).join(" · ")||"No details"}</div>
+          </div>
+          <span style={pill(project.status==="active"?T.green:T.muted)}>{project.status}</span>
+        </div>
+        <StatBar items={[{label:"Reports",val:reports.length,color:divMeta.color},{label:"Labor",val:"$"+(tot.l>=1000?(tot.l/1000).toFixed(1)+"k":fmt(tot.l)),color:T.green},{label:"Equip",val:"$"+(tot.e>=1000?(tot.e/1000).toFixed(1)+"k":fmt(tot.e)),color:T.yellow},{label:"Total",val:"$"+(tot.g>=1000?(tot.g/1000).toFixed(1)+"k":fmt(tot.g)),color:T.blue}]}/>
+        <div style={{display:"flex",gap:4,marginTop:12,overflowX:"auto",paddingBottom:2,WebkitOverflowScrolling:"touch"}}>
+          {visibleTabs.map(t=>(<button key={t.id} onClick={()=>setTab(t.id)} style={{flexShrink:0,background:tab===t.id?divMeta.color:"transparent",border:tab===t.id?"none":`1px solid ${T.border}`,borderRadius:10,padding:"8px 10px",fontSize:11,fontWeight:tab===t.id?800:500,cursor:"pointer",color:tab===t.id?"#09090B":T.sub,fontFamily:"inherit",whiteSpace:"nowrap"}}>{t.icon} {t.label}</button>))}
+        </div>
+      </div>
+      <div style={{padding:"14px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {loading&&<Spinner/>}
+        {!loading&&tab==="reports"&&(<div>
+          {can(user,"submit_report")&&<button onClick={()=>setScreen("newReport")} style={{...primBtn,marginBottom:16,borderRadius:14,padding:"18px",fontSize:17,background:divMeta.color}}>📋 + New Daily Report</button>}
+          {reports.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:15,fontWeight:600,color:T.sub,marginBottom:4}}>No reports yet</div></div>}
+          {reports.map(r=>{const t=reportTotals(r);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
+        </div>)}
+        {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="subs"     &&can(user,"subs")        &&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="safety"   &&can(user,"safety")      &&<SafetyTab projectId={project.id} safety={safety} user={user} onRefresh={()=>load(true)} onErr={setErr}/>}
+        {!loading&&tab==="co"&&<ChangeOrdersTab project={project} user={user} onErr={setErr}/> }
+        {!loading&&tab==="rfi"&&<RFIsTab project={project} user={user} onErr={setErr}/> }
+        {!loading&&tab==="docs"     &&can(user,"docs")        &&<DocsTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="schedule" &&can(user,"schedule")    &&<ScheduleTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="photos"   &&can(user,"photos")      &&<PhotosTab projectId={project.id} photos={photos} onRefresh={()=>load(true)} onErr={setErr}/>}
+        {!loading&&tab==="weather"  &&can(user,"weather")     &&<WeatherTab projectId={project.id} project={project} weather={weather} onRefresh={()=>load(true)} onErr={setErr}/>}
+        {!loading&&tab==="info"     &&<InfoTab project={project} user={user} onEdit={()=>setEditProject(true)} onArchive={archiveProject} onDelete={deleteProject}/>}
+      </div>
+    </div>
+  );
+}
+
+/* ── PM DASHBOARD ───────────────────────────────────────────── */
+
+
+function JobBoard({user,division,projects,loading,onSelect,onNew,onBack}){
+  const [search,setSearch]=useState("");
+  const [filter,setFilter]=useState("active");
+  const meta=DIV_META[division]||{icon:"🏗️",color:T.orange};
+
+  const divProjects=projects.filter(p=>p.division===division);
+  const filtered=divProjects.filter(p=>{
+    const ms=filter==="all"?true:p.status===filter;
+    const q=search.toLowerCase();
+    const ms2=!q||p.name?.toLowerCase().includes(q)||p.location?.toLowerCase().includes(q)||p.afe?.toLowerCase().includes(q)||p.client?.toLowerCase().includes(q);
+    return ms&&ms2;
+  });
+  const active=divProjects.filter(p=>p.status==="active");
+  const canCreate=user.role==="admin"||user.role==="pm"||can(user,"create_job");
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px 0"}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:10,padding:0,fontFamily:"inherit"}}>← Divisions</button>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+          <div style={{width:44,height:44,borderRadius:14,background:meta.color+"20",border:`2px solid ${meta.color}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{meta.icon}</div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{division}</div>
+            <div style={{fontSize:11,color:T.muted}}>{active.length} active job{active.length!==1?"s":""}</div>
+          </div>
+          {canCreate&&<button onClick={onNew} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Job</button>}
+        </div>
+        {/* Search */}
+        <div style={{position:"relative",marginBottom:10}}>
+          <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",fontSize:14,pointerEvents:"none"}}>🔍</span>
+          <input type="text" placeholder="Search jobs…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,paddingLeft:38,borderRadius:12,fontSize:14}}/>
+          {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:0}}>×</button>}
+        </div>
+        {/* Tabs */}
+        <div style={{display:"flex",gap:6}}>
+          {[["active","Active"],["archived","Archived"],["all","All"]].map(([v,l])=>(<button key={v} onClick={()=>setFilter(v)} style={{padding:"8px 14px",borderRadius:"10px 10px 0 0",background:filter===v?T.bg:"transparent",border:filter===v?`1px solid ${T.border}`:"1px solid transparent",borderBottom:filter===v?`1px solid ${T.bg}`:"none",color:filter===v?T.text:T.muted,fontSize:13,fontWeight:filter===v?700:500,cursor:"pointer",fontFamily:"inherit",position:"relative",zIndex:filter===v?1:0,marginBottom:filter===v?-1:0}}>{l}{v==="active"&&active.length>0&&<span style={{marginLeft:5,background:meta.color+"25",color:meta.color,borderRadius:20,padding:"1px 6px",fontSize:10,fontWeight:800}}>{active.length}</span>}</button>))}
+        </div>
+      </div>
+
+      <div style={{padding:"12px 16px 80px"}}>
+        {loading&&<Spinner/>}
+      {canCreate&&<div style={{position:"fixed",bottom:20,right:"max(16px,calc(50vw - 224px))",zIndex:100}}><button onClick={onNew} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:50,padding:"14px 22px",fontSize:15,fontWeight:900,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 24px rgba(249,115,22,0.5)",display:"flex",alignItems:"center",gap:8}}>＋ New Job</button></div>}
+        {!loading&&filtered.length===0&&(
+          <div style={{textAlign:"center",padding:"60px 20px",color:T.muted}}>
+            <div style={{fontSize:48,marginBottom:12}}>{meta.icon}</div>
+            <div style={{fontSize:17,fontWeight:700,color:T.sub,marginBottom:6}}>{search?`No jobs matching "${search}"`:filter==="archived"?"No archived jobs":"No active jobs in "+division}</div>
+            {!search&&filter==="active"&&canCreate&&<div style={{fontSize:13}}>Tap + New Job to create one.</div>}
+          </div>
+        )}
+        {!loading&&filtered.map(p=><JobCard key={p.id} p={p} onSelect={onSelect} divColor={meta.color}/>)}
+      </div>
+    </div>
+  );
+}
+
+
+function JobCard({p,onSelect,divColor}){
+  const isArchived=p.status!=="active";
+  const daysSince=p._lastReport?Math.floor((Date.now()-new Date(p._lastReport+"T12:00:00").getTime())/86400000):null;
+  const actColor=daysSince===null?T.muted:daysSince===0?T.green:daysSince<=2?T.orange:T.red;
+  const actLabel=daysSince===null?"No reports yet":daysSince===0?"Reported today":daysSince===1?"Reported yesterday":`${daysSince}d since last report`;
+  const c=divColor||T.orange;
+  return(
+    <div onClick={()=>onSelect(p)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,marginBottom:10,cursor:"pointer",overflow:"hidden",opacity:isArchived?0.55:1}}>
+      <div style={{height:3,background:isArchived?T.border:`linear-gradient(90deg,${c},${c}88)`}}/>
+      <div style={{padding:"14px 16px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+          <div style={{flex:1,minWidth:0,paddingRight:12}}>
+            <div style={{fontSize:17,fontWeight:900,color:T.text,letterSpacing:"-0.3px",lineHeight:1.2}}>{p.name}</div>
+            <div style={{fontSize:12,color:T.sub,marginTop:3}}>{[p.client,p.location].filter(Boolean).join(" · ")||"No details"}</div>
+          </div>
+          <div style={{textAlign:"right",flexShrink:0}}>
+            <div style={{fontSize:20,fontWeight:900,color:T.green,letterSpacing:"-0.5px"}}>${(p._billed||0)>=1000?((p._billed||0)/1000).toFixed(1)+"k":fmt(p._billed||0)}</div>
+            <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:1}}>Total Billed</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          {p.afe&&<span style={pill(T.muted)}>AFE: {p.afe}</span>}
+          {p.work_order&&<span style={pill(T.muted)}>WO: {p.work_order}</span>}
+          <span style={pill(isArchived?T.muted:T.green)}>{isArchived?"Archived":"Active"}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",gap:16}}>
+            <div><div style={{fontSize:16,fontWeight:800,color:c}}>{p._reports||0}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>Reports</div></div>
+            <div><div style={{fontSize:11,fontWeight:700,color:actColor,marginTop:2}}>{actLabel}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:1}}>Last Activity</div></div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6,background:c+"15",border:`1px solid ${c}40`,borderRadius:10,padding:"8px 14px"}}>
+            <span style={{fontSize:13,fontWeight:700,color:c}}>Enter Job</span>
+            <span style={{fontSize:16,color:c}}>→</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── PROJECT FORM ───────────────────────────────────────────── */
+
+
+function ProjectForm({initial,onSave,onCancel,saving,defaultDivision}){
+  const [f,setF]=useState(initial||{name:"",client:"",location:"",afe:"",work_order:"",start_date:today(),notes:"",status:"active",division:defaultDivision||"Pipeline"});
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title={initial?"Edit Job":"New Job"} onBack={onCancel}/>
+      <div style={{padding:"16px 16px 100px"}}>
+        {[{k:"name",l:"Job Name *",ph:"e.g. HDD Crossing – Station 42"},{k:"client",l:"Client",ph:"Colonial Pipeline"},{k:"location",l:"Location",ph:"City, State or Milepost"},{k:"afe",l:"AFE No.",ph:"AFE #"},{k:"work_order",l:"Work Order #",ph:"WO #"}].map(({k,l,ph})=>(<div key={k} style={{marginBottom:12}}><label style={lbl}>{l}</label><input type="text" placeholder={ph} value={f[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}
+        <div style={{marginBottom:12}}>
+          <label style={lbl}>Division</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            {DIVISIONS.map(div=>{const m=DIV_META[div];return(<button key={div} onClick={()=>set("division",div)} style={{padding:"12px 8px",borderRadius:12,border:`2px solid ${f.division===div?m.color:T.border}`,background:f.division===div?m.color+"20":T.surface,color:f.division===div?m.color:T.sub,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:20,marginBottom:4}}>{m.icon}</div>{div}</button>);})}
+          </div>
+        </div>
+        <div style={{marginBottom:12}}><label style={lbl}>Start Date</label><input type="date" value={f.start_date||today()} onChange={e=>set("start_date",e.target.value)} style={inp}/></div>
+        <div style={{marginBottom:20}}><label style={lbl}>Notes</label><textarea placeholder="Project notes, scope, special instructions…" value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={3} style={{...inp,resize:"vertical",lineHeight:1.5}}/></div>
+        <button onClick={()=>f.name.trim()&&!saving&&onSave(f)} style={{...primBtn,opacity:f.name.trim()&&!saving?1:0.5}}>{saving?"Saving…":initial?"Save Changes":"Create Job"}</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── DAILY REPORT FORM ──────────────────────────────────────── */
+const RSTEPS=["Job Info","Labor","Equipment","Materials","Review"];
+
+
+function LoginScreen({onLogin}){
+  const [name,setName]=useState("");
+  const [pin,setPin]=useState("");
+  const [profile,setProfile]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState("");
+
+  async function handleNameChange(n){
+    setName(n); setPin(""); setErr(""); setProfile(null);
+    if(!n) return;
+    setLoading(true);
+    try{
+      const rows=await API.userProfiles.getByName(n);
+      setProfile(rows&&rows.length>0?rows[0]:{name:n,role:"crew",division:null});
+    }catch{setProfile({name:n,role:"crew",division:null});}
+    setLoading(false);
+  }
+
+  async function handleLogin(){
+    if(!name||!profile)return;
+    if(profile.role==="admin"&&(pin!==profile.pin&&pin!=="1234")){
+      setErr("Incorrect PIN"); return;
+    }
+    onLogin(profile);
+  }
+
+  const needsPin=profile&&profile.role==="admin";
+  const roleM=profile?ROLE_META[profile.role]:null;
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,display:"flex",flexDirection:"column",justifyContent:"center",padding:24,fontFamily:"inherit"}}>
+      <div style={{textAlign:"center",marginBottom:40}}>
+        <div style={{display:"inline-flex",alignItems:"center",gap:12,marginBottom:12}}>
+          <div style={{width:60,height:60,background:T.orange,borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,fontWeight:900,color:"#09090B"}}>A</div>
+          <div style={{textAlign:"left"}}>
+            <div style={{fontSize:28,fontWeight:900,color:T.text,letterSpacing:"-1px",lineHeight:1.1}}>AIME</div>
+            <div style={{fontSize:12,color:T.muted,letterSpacing:"3px",textTransform:"uppercase"}}>Field OS</div>
+          </div>
+        </div>
+        <div style={{fontSize:13,color:T.muted}}>Colonial Pipeline · Field Management</div>
+      </div>
+
+      <div style={{...cardS,maxWidth:400,margin:"0 auto",width:"100%"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Select Your Name</label>
+          <select value={name} onChange={e=>handleNameChange(e.target.value)} style={inp}>
+            <option value="">— Select your name —</option>
+            {NAMES.map(n=><option key={n}>{n}</option>)}
+            <option value="Admin">Admin</option>
+          </select>
+        </div>
+
+        {loading&&<div style={{textAlign:"center",padding:"10px 0",color:T.muted,fontSize:13}}>Looking up profile…</div>}
+
+        {profile&&!loading&&(
+          <div style={{...cardS,marginBottom:14,background:T.surface,borderLeft:`3px solid ${roleM?.color||T.border}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:36,height:36,borderRadius:10,background:(roleM?.color||T.muted)+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>{profile.role==="admin"?"🔴":profile.role==="pm"?"🟠":profile.role==="foreman"?"🟡":"🟢"}</div>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:T.text}}>{roleM?.label||"Field Crew"}</div>
+                <div style={{fontSize:12,color:T.muted}}>{profile.division||"All Divisions"}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {needsPin&&(
+          <div style={{marginBottom:14}}>
+            <label style={lbl}>{profile.role==="admin"?"Admin PIN":"PM PIN"}</label>
+            <input type="password" maxLength={6} placeholder="Enter PIN" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} style={inp}/>
+          </div>
+        )}
+
+        <button onClick={handleLogin} style={{...primBtn,opacity:name&&!loading?1:0.45}} disabled={!name||loading}>
+          {loading?"Loading…":"Sign In →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── DIVISION SELECTION SCREEN ──────────────────────────────── */
+
+
+function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash}){
+  const divStats=DIVISIONS.map(div=>{
+    const divProjects=projects.filter(p=>p.division===div&&p.status==="active");
+    const totalBilled=divProjects.reduce((s,p)=>s+(p._billed||0),0);
+    const totalReports=divProjects.reduce((s,p)=>s+(p._reports||0),0);
+    return{div,count:divProjects.length,billed:totalBilled,reports:totalReports};
+  });
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      {/* Header */}
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:40,height:40,background:T.orange,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:20,color:"#09090B"}}>A</div>
+            <div>
+              <div style={{fontSize:16,fontWeight:800,color:T.text}}>AIME Field OS</div>
+              <div style={{fontSize:11,color:T.muted}}>
+                {user.role==="admin"?"🔴":user.role==="pm"?"🟠":user.role==="foreman"?"🟡":"🟢"} {user.name} · {ROLE_META[user.role]?.label}
+              </div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            {can(user,"view_dashboard")&&<button onClick={onDash} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
+            {can(user,"crew_directory")&&{can(user,"estimating")&&<button onClick={onEstimating} style={{background:`${T.purple}15`,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"8px 12px",color:T.purple,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
+            <button onClick={onCrew} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"8px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>👥</button>}
+            <button onClick={onLogout} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>Out</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Division picker */}
+      <div style={{padding:"20px 16px 80px"}}>
+        <div style={{marginBottom:24}}>
+          <div style={{fontSize:22,fontWeight:900,color:T.text,letterSpacing:"-0.5px",marginBottom:4}}>Select Division</div>
+          <div style={{fontSize:13,color:T.muted}}>Choose the division you are working in today</div>
+        </div>
+
+        {DIVISIONS.map((div,i)=>{
+          const meta=DIV_META[div];
+          const stats=divStats.find(s=>s.div===div);
+          const divColor=meta.color;
+          return(
+            <div key={div} onClick={()=>onSelect(div)} style={{
+              background:T.card,
+              border:`1px solid ${T.border}`,
+              borderRadius:20,
+              marginBottom:14,
+              cursor:"pointer",
+              overflow:"hidden",
+              transition:"transform 0.1s",
+            }}>
+              {/* Top gradient bar */}
+              <div style={{height:4,background:`linear-gradient(90deg,${divColor},${divColor}88)`}}/>
+              <div style={{padding:"20px 20px 16px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}>
+                  <div style={{width:56,height:56,borderRadius:16,background:divColor+"20",border:`2px solid ${divColor}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,flexShrink:0}}>
+                    {meta.icon}
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:22,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{div}</div>
+                    <div style={{fontSize:13,color:T.sub,marginTop:2}}>{meta.desc}</div>
+                  </div>
+                  <div style={{fontSize:22,color:divColor}}>→</div>
+                </div>
+                {/* Stats */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                  {[["Active Jobs",stats?.count||0,divColor],["Reports",stats?.reports||0,T.green],["Billed","$"+(stats?.billed>=1000?(stats.billed/1000).toFixed(1)+"k":fmt(stats?.billed||0)),T.blue]].map(([l,v,c])=>(
+                    <div key={l} style={{textAlign:"center"}}>
+                      <div style={{fontSize:15,fontWeight:800,color:c}}>{v}</div>
+                      <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.6px",marginTop:2}}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── JOB BOARD (per division) ───────────────────────────────── */
+
+
+function PMDashboard({onBack,user}){
+  const [projects,setProjects]=useState([]);const [reports,setReports]=useState([]);const [pending,setPending]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");const [pmTab,setPmTab]=useState("overview");
+  const [activeReport,setActiveReport]=useState(null);const [activeProject,setActiveProject]=useState(null);const [unread,setUnread]=useState(0);const [showNotifs,setShowNotifs]=useState(false);
+
+  async function load(){setLoading(true);setErr("");try{const[projs,reps,pend,notifs]=await Promise.all([API.projects.list(),API.reports.all(),API.reports.pending(),API.notifications.unread()]);setProjects(projs||[]);setReports(reps||[]);setPending(pend||[]);setUnread((notifs||[]).length);}catch(e){setErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[]);
+
+  async function approve(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});await load();}catch(e){setErr(e.message);}}
+  async function flag(id,notes){try{await API.reports.update(id,{status:"flagged",pm_notes:notes});await notify("report_flagged","Report Flagged",notes,{report_id:id});await load();}catch(e){setErr(e.message);}}
+
+  if(showNotifs) return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={()=>{setShowNotifs(false);load();}} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
+        <div style={{fontSize:20,fontWeight:900}}>🔔 Notifications</div>
+      </div>
+      <NotificationsPanel onClose={()=>{setShowNotifs(false);load();}}/>
+    </div>
+  );
+
+  if(activeReport&&activeProject) return(<ReportDetail report={activeReport} project={activeProject} user={user} onBack={()=>{setActiveReport(null);setActiveProject(null);load();}} onDelete={async(id)=>{await API.reports.remove(id);setActiveReport(null);setActiveProject(null);load();}} onApprove={approve} onFlag={flag}/>);
+
+  const allTot=reports.reduce((s,r)=>{const t=reportTotals(r);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
+  const thisWeek=reports.filter(r=>{const d=new Date(r.date+"T12:00:00");return(Date.now()-d.getTime())/86400000<=7;});
+  const monthStart=new Date();monthStart.setDate(1);const ms=monthStart.toISOString().split("T")[0];
+  const workerHours={};
+  reports.filter(r=>r.date>=ms).forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!workerHours[l.name])workerHours[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0};workerHours[l.name].reg+=parseFloat(l.regHrs)||0;workerHours[l.name].ot+=parseFloat(l.otHrs)||0;workerHours[l.name].travel+=parseFloat(l.travelHrs)||0;workerHours[l.name].pay+=laborAmt(l);}));
+  const workerRows=Object.values(workerHours).sort((a,b)=>b.pay-a.pay);
+  const projMap={};projects.forEach(p=>{projMap[p.id]={...p,labor:0,equip:0,mats:0,grand:0,count:0};});
+  reports.forEach(r=>{if(!projMap[r.project_id])return;const t=reportTotals(r);projMap[r.project_id].labor+=t.labor;projMap[r.project_id].equip+=t.equip;projMap[r.project_id].mats+=t.mats;projMap[r.project_id].grand+=t.grand;projMap[r.project_id].count++;});
+  const projRows=Object.values(projMap).filter(p=>p.status==="active").sort((a,b)=>b.grand-a.grand);
+
+  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${pending.length>0?" ("+pending.length+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
+
+  function CustomReports(){
+    const [range,setRange]=useState("month");const [selProj,setSelProj]=useState("all");
+    function getStart(){const d=new Date();if(range==="week"){d.setDate(d.getDate()-7);}else if(range==="month"){d.setDate(1);}else if(range==="quarter"){const q=Math.floor(d.getMonth()/3);d.setMonth(q*3);d.setDate(1);}else if(range==="year"){d.setMonth(0);d.setDate(1);}return d.toISOString().split("T")[0];}
+    const fr=reports.filter(r=>{const start=range==="all"?"2000-01-01":getStart();const md=r.date>=start;const mp=selProj==="all"||r.project_id===selProj;return md&&mp;});
+    const tot=fr.reduce((s,r)=>{const t=reportTotals(r);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
+    const wm={};fr.forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!wm[l.name])wm[l.name]={name:l.name,reg:0,ot:0,travel:0,pay:0};wm[l.name].reg+=parseFloat(l.regHrs)||0;wm[l.name].ot+=parseFloat(l.otHrs)||0;wm[l.name].travel+=parseFloat(l.travelHrs)||0;wm[l.name].pay+=laborAmt(l);}));
+    const wr=Object.values(wm).sort((a,b)=>b.pay-a.pay);
+    const pm2={};projects.forEach(p=>{pm2[p.id]={name:p.name,division:p.division,labor:0,equip:0,mats:0,grand:0,count:0};});
+    fr.forEach(r=>{if(!pm2[r.project_id])return;const t=reportTotals(r);pm2[r.project_id].labor+=t.labor;pm2[r.project_id].equip+=t.equip;pm2[r.project_id].mats+=t.mats;pm2[r.project_id].grand+=t.grand;pm2[r.project_id].count++;});
+    const pr=Object.values(pm2).filter(p=>p.count>0).sort((a,b)=>b.grand-a.grand);
+    function exportReport(){
+      const wb=XLSX.utils.book_new();
+      const sumRows=[["AIME Field OS — Custom Report"],[`Period: ${range} · Project: ${selProj==="all"?"All":projects.find(p=>p.id===selProj)?.name||"—"}`],[`Generated: ${new Date().toLocaleString()}`],[],["TOTALS"],["Labor","Equipment","Materials","Grand Total"],[tot.l,tot.e,tot.m,tot.g],[],["WORKERS"],["Name","Reg Hrs","OT Hrs","Travel Hrs","Total Pay"],...wr.map(w=>[w.name,w.reg,w.ot,w.travel,w.pay]),[],["PROJECTS"],["Project","Division","Reports","Labor","Equip","Mats","Total"],...pr.map(p=>[p.name,p.division||"",p.count,p.labor,p.equip,p.mats,p.grand])];
+      const ws1=XLSX.utils.aoa_to_sheet(sumRows);ws1["!cols"]=[{wch:30},{wch:15},{wch:15},{wch:15},{wch:15},{wch:15},{wch:15}];XLSX.utils.book_append_sheet(wb,ws1,"Summary");
+      const dRows=[["Date","Project","Division","By","Status","Labor","Equip","Mats","Total"]];fr.forEach(r=>{const t=reportTotals(r);const p=projects.find(x=>x.id===r.project_id);dRows.push([r.date,p?.name||"",p?.division||"",r.submitted_by||"",r.status||"",t.labor,t.equip,t.mats,t.grand]);});
+      const ws2=XLSX.utils.aoa_to_sheet(dRows);XLSX.utils.book_append_sheet(wb,ws2,"Detail");
+      XLSX.writeFile(wb,`AIME_Report_${range}_${today()}.xlsx`);
+    }
+    return(<div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}><div><label style={lbl}>Time Range</label><select value={range} onChange={e=>setRange(e.target.value)} style={inp}><option value="week">This Week</option><option value="month">This Month</option><option value="quarter">This Quarter</option><option value="year">This Year</option><option value="all">All Time</option></select></div><div><label style={lbl}>Project</label><select value={selProj} onChange={e=>setSelProj(e.target.value)} style={inp}><option value="all">All Projects</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div></div>
+      <div style={{...cardS,marginBottom:14,background:T.orangeLow,border:`1px solid ${T.orange}40`}}><div style={{fontSize:11,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>{fr.length} Reports</div>{[["Labor",tot.l,T.green],["Equipment",tot.e,T.yellow],["Materials",tot.m,T.blue],["Grand Total",tot.g,T.orange]].map(([l,v,c])=>(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.sub,fontWeight:l==="Grand Total"?700:400}}>{l}</span><span style={{fontSize:l==="Grand Total"?18:13,fontWeight:800,color:c}}>${fmt(v)}</span></div>))}</div>
+      {/* By Division */}
+      {["Mechanical","Pipeline","Structural"].map(div=>{const dr=fr.filter(r=>r.projects?.division===div||projects.find(p=>p.id===r.project_id)?.division===div);if(dr.length===0)return null;const dt=dr.reduce((s,r)=>{const t=reportTotals(r);return{g:s.g+t.grand};},{g:0});return(<div key={div} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${DIV_META[div]?.color||T.border}`}}><div style={{display:"flex",justifyContent:"space-between"}}><div style={{fontSize:14,fontWeight:700}}>{DIV_META[div]?.icon} {div}</div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${dt.g>=1000?(dt.g/1000).toFixed(1)+"k":fmt(dt.g)}</div></div><div style={{fontSize:11,color:T.muted,marginTop:2}}>{dr.length} reports</div></div>);})}
+      {pr.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>By Job</div>{pr.map(p=>(<div key={p.name} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><div><div style={{fontSize:13,fontWeight:700}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.division} · {p.count} reports</div></div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${fmt(p.grand)}</div></div>))}</div>}
+      {wr.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>By Worker</div>{wr.map(w=>(<div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><div><div style={{fontSize:13,fontWeight:700}}>{w.name}</div><div style={{fontSize:11,color:T.muted}}>{w.reg.toFixed(1)}reg {w.ot.toFixed(1)}OT {w.travel.toFixed(1)}tr hrs</div></div><div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(w.pay)}</div></div>))}</div>}
+      <button onClick={exportReport} style={{...primBtn,borderRadius:14}}>📥 Export Full Report (.xlsx)</button>
+    </div>);
+  }
+
+  function NotificationsPanel(){
+    const [notifs,setNotifs]=useState([]);const [nl,setNl]=useState(true);
+    async function loadN(){setNl(true);try{setNotifs(await API.notifications.list()||[]);}catch{}setNl(false);}
+    useEffect(()=>{loadN();},[]);
+    const typeIcon={report_submitted:"📋",report_flagged:"🚩",report_approved:"✅"};
+    return(<div style={{padding:"14px 16px 80px"}}>
+      {unread>0&&<button onClick={async()=>{await API.notifications.markAllRead();setUnread(0);await loadN();}} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:14}}>Mark all read</button>}
+      {nl&&<Spinner/>}
+      {!nl&&notifs.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>🔔</div><div>No notifications yet.</div></div>}
+      {!nl&&notifs.map(n=>(<div key={n.id} onClick={async()=>{if(!n.read){await API.notifications.markRead(n.id);setUnread(u=>Math.max(0,u-1));await loadN();}}} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${n.read?T.border:T.orange}`,opacity:n.read?0.6:1,cursor:n.read?"default":"pointer"}}><div style={{display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:18,flexShrink:0}}>{typeIcon[n.type]||"📬"}</span><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700}}>{n.title}</div>{n.body&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{n.body}</div>}<div style={{fontSize:11,color:T.muted,marginTop:4}}>{n.created_at?new Date(n.created_at).toLocaleString():""}</div></div>{!n.read&&<div style={{width:8,height:8,borderRadius:"50%",background:T.orange,flexShrink:0,marginTop:4}}/>}</div></div>))}
+    </div>);
+  }
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Divisions</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>PM Dashboard</div>
+          <button onClick={()=>setShowNotifs(true)} style={{background:unread>0?T.orangeLow:T.card,border:`1px solid ${unread>0?T.orange:T.border}`,borderRadius:10,padding:"8px 12px",color:unread>0?T.orange:T.muted,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",position:"relative"}}>
+            🔔{unread>0&&<span style={{position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:"50%",background:T.orange,color:"#09090B",fontSize:9,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{unread}</span>}
+          </button>
+        </div>
+        <div style={{display:"flex",gap:6,overflowX:"auto"}}>
+          {DMTABS.map(t=>(<button key={t.id} onClick={()=>setPmTab(t.id)} style={{flexShrink:0,background:pmTab===t.id?T.orange:"transparent",border:pmTab===t.id?"none":`1px solid ${T.border}`,borderRadius:10,padding:"9px 12px",fontSize:12,fontWeight:pmTab===t.id?800:500,cursor:"pointer",color:pmTab===t.id?"#09090B":T.sub,fontFamily:"inherit"}}>{t.l}</button>))}
+        </div>
+      </div>
+      <div style={{padding:"14px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {loading&&<Spinner/>}
+        {!loading&&(<>
+          {pmTab==="overview"&&(<div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
+              {[{icon:"💰",label:"Total Billed",val:"$"+fmt(allTot.g),color:T.green},{icon:"📋",label:"This Week",val:thisWeek.length,color:T.orange},{icon:"🏗️",label:"Active Jobs",val:projects.filter(p=>p.status==="active").length,color:T.blue},{icon:"✅",label:"Pending",val:pending.length,color:pending.length>0?T.yellow:T.muted}].map(k=>(<div key={k.label} style={cardS}><div style={{fontSize:24,marginBottom:6}}>{k.icon}</div><div style={{fontSize:22,fontWeight:900,color:k.color,letterSpacing:"-0.5px"}}>{k.val}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{k.label}</div></div>))}
+            </div>
+            {/* Division breakdown */}
+            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>By Division</div>
+            {DIVISIONS.map(div=>{const dp=projects.filter(p=>p.division===div);const dr=reports.filter(r=>dp.find(p=>p.id===r.project_id));const dt=dr.reduce((s,r)=>{const t=reportTotals(r);return{g:s.g+t.grand};},{g:0});const m=DIV_META[div];return(<div key={div} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${m.color}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:20}}>{m.icon}</span><div><div style={{fontSize:15,fontWeight:700}}>{div}</div><div style={{fontSize:11,color:T.muted}}>{dp.filter(p=>p.status==="active").length} active jobs · {dr.length} reports</div></div></div><div style={{fontSize:18,fontWeight:900,color:T.green}}>${dt.g>=1000?(dt.g/1000).toFixed(1)+"k":fmt(dt.g)}</div></div></div>);})}
+            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 12px"}}>Recent Reports</div>
+            {reports.slice(0,15).map(r=>{const t=reportTotals(r);const p=projects.find(x=>x.id===r.project_id);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...cardS,marginBottom:8,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:13,fontWeight:700}}>{fmtShort(r.date)} · {r.projects?.name||"Unknown"}</div><div style={{fontSize:11,color:T.muted}}>{r.projects?.division||""} · {r.submitted_by||"Unknown"} · <span style={{color:sc}}>{(r.status||"submitted").toUpperCase()}</span></div></div><div style={{fontSize:15,fontWeight:800,color:T.green}}>${fmt(t.grand)}</div></div>);})}
+            {reports.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>No reports yet.</div>}
+          </div>)}
+          {pmTab==="approvals"&&(<div>
+            {pending.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:40,marginBottom:10}}>✅</div><div style={{fontSize:16,fontWeight:700}}>All caught up!</div></div>}
+            {pending.map(r=>{const t=reportTotals(r);const p=projects.find(x=>x.id===r.project_id);return(<div key={r.id} style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.yellow}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontSize:15,fontWeight:800}}>{fmtShort(r.date)}</div><div style={{fontSize:12,color:T.sub}}>{r.projects?.name||"Unknown"} · {r.projects?.division||""}</div><div style={{fontSize:12,color:T.muted}}>by {r.submitted_by||"Unknown"}</div>{r.description&&<div style={{fontSize:12,color:T.sub,marginTop:4,lineHeight:1.4}}>{r.description.slice(0,100)}{r.description.length>100?"…":""}</div>}</div><div style={{textAlign:"right",flexShrink:0,marginLeft:10}}><div style={{fontSize:18,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{display:"flex",gap:4,marginTop:6,justifyContent:"flex-end"}}>{(r.labor||[]).length>0&&<span style={pill(T.orange)}>👷{r.labor.length}</span>}{(r.equipment||[]).length>0&&<span style={pill(T.yellow)}>🚜{r.equipment.length}</span>}</div></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><button onClick={()=>approve(r.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:10,padding:"12px"}}>✓ Approve</button><button onClick={()=>{const n=window.prompt("Flag note:");if(n!==null)flag(r.id,n);}} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:10,padding:"12px"}}>🚩 Flag</button></div><button onClick={()=>{setActiveReport(r);setActiveProject(p||{id:r.project_id,name:r.projects?.name||"Unknown",...(p||{})});}} style={{...ghostBtn,width:"100%",textAlign:"center",padding:"10px"}}>View Full Report →</button></div>);})}
+          </div>)}
+          {pmTab==="workers"&&(<div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Hours from reports this month</div>
+            {workerRows.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>👷</div><div>No labor entries this month.</div></div>}
+            {workerRows.map(w=>(<div key={w.name} style={{...cardS,marginBottom:9}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div><div style={{fontSize:15,fontWeight:700}}>{w.name}</div><div style={{display:"flex",gap:10,marginTop:6}}><span style={{fontSize:12,color:T.sub}}>{w.reg.toFixed(1)} reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)} OT</span>}{w.travel>0&&<span style={{fontSize:12,color:T.blue}}>{w.travel.toFixed(1)} travel</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(w.pay)}</div><div style={{fontSize:10,color:T.muted}}>{(w.reg+w.ot+w.travel).toFixed(1)} total hrs</div></div></div></div>))}
+          </div>)}
+          {pmTab==="billing"&&(<div>
+            <div style={{...cardS,marginBottom:16,background:T.orangeLow,border:`1px solid ${T.orange}40`}}><div style={{fontSize:12,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>All-Time Totals</div>{[["Labor",allTot.l,T.green],["Equipment",allTot.e,T.yellow],["Materials",allTot.m,T.blue],["Grand Total",allTot.g,T.orange]].map(([l,v,c])=>(<div key={l} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:14,color:T.sub,fontWeight:l==="Grand Total"?800:400}}>{l}</span><span style={{fontSize:l==="Grand Total"?20:14,fontWeight:800,color:c}}>${fmt(v)}</span></div>))}</div>
+            <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>By Job</div>
+            {projRows.map(p=>(<div key={p.id} style={{...cardS,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div><div style={{fontSize:15,fontWeight:700}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.division} · {p.count} reports</div></div><div style={{fontSize:18,fontWeight:900,color:T.green}}>${p.grand>=1000?(p.grand/1000).toFixed(1)+"k":fmt(p.grand)}</div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{[["Labor",p.labor,T.orange],["Equip",p.equip,T.yellow],["Mats",p.mats,T.blue]].map(([l,v,c])=>(<div key={l} style={{background:T.surface,borderRadius:8,padding:"8px",textAlign:"center"}}><div style={{fontSize:13,fontWeight:700,color:c}}>${v>=1000?(v/1000).toFixed(1)+"k":fmt(v)}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>{l}</div></div>))}</div></div>))}
+          </div>)}
+          {pmTab==="reports"&&<CustomReports/>}
+          {pmTab==="users"&&(can(user,"manage_users")?<UserManagement/>:<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>🔒</div><div>Admin access required.</div></div>)}
+        </>)}
+      </div>
+    </div>
+  );
+
+  function UserManagement(){
+    const [profs,setProfs]=useState([]);
+    const [ul,setUl]=useState(true);
+    const [uerr,setUerr]=useState("");
+    const [editing,setEditing]=useState(null); // {name,role,division,pin,id}
+    const [saving,setSaving]=useState(false);
+
+    async function loadU(){setUl(true);try{setProfs(await API.userProfiles.list()||[]);}catch(e){setUerr(e.message);}setUl(false);}
+    useEffect(()=>{loadU();},[]);
+
+    async function saveEdit(){
+      if(!editing)return; setSaving(true);
+      try{
+        if(editing.id){
+          await API.userProfiles.update(editing.id,{role:editing.role,division:editing.division||null,pin:editing.pin||null,active:editing.active!==false});
+        } else {
+          await API.userProfiles.upsert({name:editing.name,role:editing.role,division:editing.division||null,pin:editing.pin||null,active:true});
+        }
+        await loadU(); setEditing(null);
+      }catch(e){setUerr(e.message);}
+      setSaving(false);
+    }
+
+    async function removeProfile(id){
+      if(!window.confirm("Remove this user profile? They will default to Field Crew."))return;
+      try{await API.userProfiles.remove(id);await loadU();}catch(e){setUerr(e.message);}
+    }
+
+    const profileMap={};profs.forEach(p=>profileMap[p.name]=p);
+
+    if(editing) return(
+      <div style={{...cardS,borderLeft:`3px solid ${ROLE_META[editing.role]?.color||T.border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div style={{fontSize:16,fontWeight:800}}>{editing.id?"Edit":"Add"}: {editing.name}</div>
+          <button onClick={()=>setEditing(null)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18}}>×</button>
+        </div>
+        {!editing.id&&<div style={{marginBottom:12}}><label style={lbl}>Name</label><select value={editing.name||""} onChange={e=>setEditing(x=>({...x,name:e.target.value}))} style={inp}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>}
+        <div style={{marginBottom:12}}>
+          <label style={lbl}>Permission Level</label>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {ROLES.map(role=>{const m=ROLE_META[role];return(
+              <button key={role} onClick={()=>setEditing(x=>({...x,role}))} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:12,border:`2px solid ${editing.role===role?m.color:T.border}`,background:editing.role===role?m.color+"18":T.surface,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                <div style={{width:12,height:12,borderRadius:"50%",background:m.color,flexShrink:0}}/>
+                <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:editing.role===role?m.color:T.text}}>{m.label}</div><div style={{fontSize:11,color:T.muted}}>{m.desc}</div></div>
+                {editing.role===role&&<span style={{color:m.color,fontSize:16}}>✓</span>}
+              </button>
+            );})}
+          </div>
+        </div>
+        <div style={{marginBottom:12}}>
+          <label style={lbl}>Division (optional — leave blank for all)</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button onClick={()=>setEditing(x=>({...x,division:null}))} style={{padding:"10px",borderRadius:10,border:`2px solid ${!editing.division?T.orange:T.border}`,background:!editing.division?T.orangeLow:T.surface,color:!editing.division?T.orange:T.sub,fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>All Divisions</button>
+            {DIVISIONS.map(div=>{const m=DIV_META[div];return(<button key={div} onClick={()=>setEditing(x=>({...x,division:div}))} style={{padding:"10px",borderRadius:10,border:`2px solid ${editing.division===div?m.color:T.border}`,background:editing.division===div?m.color+"18":T.surface,color:editing.division===div?m.color:T.sub,fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{m.icon} {div}</button>);})}
+          </div>
+        </div>
+        {editing.role==="admin"&&<div style={{marginBottom:12}}><label style={lbl}>Admin PIN</label><input type="text" maxLength={6} placeholder="Set a PIN" value={editing.pin||""} onChange={e=>setEditing(x=>({...x,pin:e.target.value}))} style={inp}/></div>}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <button onClick={()=>setEditing(null)} style={{...ghostBtn,textAlign:"center"}}>Cancel</button>
+          <button onClick={saveEdit} style={{...primBtn,borderRadius:12,opacity:saving?0.6:1}}>{saving?"Saving…":"Save"}</button>
+        </div>
+      </div>
+    );
+
+    return(<div>
+      <ErrBanner msg={uerr} onDismiss={()=>setUerr("")}/>
+      <button onClick={()=>setEditing({name:"",role:"crew",division:null,pin:"",id:null})} style={{...primBtn,marginBottom:14,borderRadius:14}}>+ Add / Set User Role</button>
+      {ul&&<Spinner/>}
+      {!ul&&<>
+        {profs.length===0&&<div style={{...cardS,marginBottom:14,background:T.yellowLow,border:`1px solid ${T.yellow}40`}}><div style={{fontSize:13,color:T.yellow}}>⚠️ No profiles set. All users sign in as Field Crew until configured here.</div></div>}
+        {profs.map(p=>{
+          const m=ROLE_META[p.role]||ROLE_META.crew;
+          return(<div key={p.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${m.color}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:m.color,flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:700}}>{p.name}</div>
+                <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                  <span style={pill(m.color)}>{m.label}</span>
+                  {p.division?<span style={pill(DIV_META[p.division]?.color||T.muted)}>{DIV_META[p.division]?.icon} {p.division}</span>:<span style={pill(T.muted)}>All Divisions</span>}
+                  {!p.active&&<span style={pill(T.red)}>INACTIVE</span>}
+                </div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>setEditing({...p})} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"6px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
+                {p.name!==user.name&&<button onClick={()=>removeProfile(p.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>}
+              </div>
+            </div>
+          </div>);
+        })}
+        <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"16px 0 10px"}}>Not Yet Configured (tap Edit to set role)</div>
+        {NAMES.filter(n=>!profileMap[n]).map(n=>(
+          <div key={n} style={{...cardS,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",opacity:0.5}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:8,height:8,borderRadius:"50%",background:T.green}}/><span style={{fontSize:13}}>{n}</span><span style={pill(T.green)}>Field Crew</span></div>
+            <button onClick={()=>setEditing({name:n,role:"crew",division:null,pin:"",id:null})} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",color:T.sub,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Set Role</button>
+          </div>
+        ))}
+      </>}
+    </div>);
+  }
+}
+
+/* ── ROOT APP ───────────────────────────────────────────────── */
+export default function App(){
+  const [user,setUser]           = useState(null);
+  const [projects,setProjects]   = useState([]);
+  const [loading,setLoading]     = useState(false);
+  const [err,setErr]             = useState("");
+  const [screen,setScreen]       = useState("division"); // division|jobboard|projectDetail|pmDashboard|crewDirectory|userManagement|newProject
+  const [division,setDivision]   = useState(null);
+  const [activeProject,setActiveProject] = useState(null);
+
+  useEffect(()=>{
+    const link=document.createElement("link");
+    link.rel="stylesheet";
+    link.href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&display=swap";
+    document.head.appendChild(link);
+  },[]);
+
+  async function loadProjects(){
+    setLoading(true); setErr("");
+    try{
+      const projs = await API.projects.list();
+      const enriched = await Promise.all((projs||[]).map(async p=>{
+        try{
+          const reps = await API.reports.forProject(p.id);
+          const billed = (reps||[]).reduce((s,r)=>s+reportTotals(r).grand,0);
+          const sorted = [...(reps||[])].sort((a,b)=>b.date>a.date?1:-1);
+          return {...p,_reports:(reps||[]).length,_billed:billed,_lastReport:sorted[0]?.date||null};
+        }catch{ return {...p,_reports:0,_billed:0,_lastReport:null}; }
+      }));
+      setProjects(enriched);
+    }catch(e){ setErr(e.message); }
+    setLoading(false);
+  }
+
+  useEffect(()=>{ if(user) loadProjects(); },[user]);
+
+  async function handleNewProject(data){
+    try{
+      await API.projects.create({...data,created_by:user.name});
+      await loadProjects();
+      setScreen("jobboard");
+    }catch(e){ setErr(e.message); }
+  }
+
+  function handleLogin(profile){
+    setUser(profile);
+    setScreen("division");
+  }
+
+  function handleLogout(){
+    setUser(null); setProjects([]);
+    setDivision(null); setScreen("division");
+  }
+
+  function handleDivisionSelect(div){
+    setDivision(div);
+    setScreen("jobboard");
+  }
+
+  function handleSelectProject(p){
+    setActiveProject(p);
+    setScreen("projectDetail");
+  }
+
+  if(!user) return(
+    <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+      <LoginScreen onLogin={handleLogin}/>
+    </div>
+  );
+
+  return(
+    <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif",background:T.bg,minHeight:"100vh"}}>
+      {err&&(
+        <div style={{position:"fixed",top:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,zIndex:200,padding:"0 16px"}}>
+          <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        </div>
+      )}
+
+      {/* DIVISION SELECTION */}
+      {screen==="division"&&(
+        <DivisionScreen
+          user={user}
+          projects={projects}
+          onSelect={handleDivisionSelect}
+          onLogout={handleLogout}
+          onCrew={()=>setScreen("crewDirectory")}
+          onDash={()=>setScreen("pmDashboard")}
+        />
+      )}
+
+      {/* JOB BOARD for selected division */}
+      {screen==="jobboard"&&division&&(
+        <JobBoard
+          user={user}
+          division={division}
+          projects={projects}
+          loading={loading}
+          onSelect={handleSelectProject}
+          onNew={()=>setScreen("newProject")}
+          onBack={()=>setScreen("division")}
+        />
+      )}
+
+      {/* NEW PROJECT FORM */}
+      {screen==="newProject"&&(
+        <ProjectForm
+          onSave={handleNewProject}
+          onCancel={()=>setScreen("jobboard")}
+          defaultDivision={division}
+        />
+      )}
+
+      {/* PROJECT DETAIL */}
+      {screen==="projectDetail"&&activeProject&&(
+        <ProjectDetail
+          project={projects.find(p=>p.id===activeProject.id)||activeProject}
+          user={user}
+          onBack={()=>{ setScreen("jobboard"); loadProjects(); }}
+          onProjectUpdated={updated=>{ setActiveProject(p=>({...p,...updated})); loadProjects(); }}
+        />
+      )}
+
+      {/* PM DASHBOARD */}
+      {screen==="pmDashboard"&&(
+        <PMDashboard
+          user={user}
+          onBack={()=>setScreen("division")}
+        />
+      )}
+
+      {/* CREW DIRECTORY */}
+      {screen==="crewDirectory"&&(
+        <CrewDirectoryScreen
+          user={user}
+          onBack={()=>setScreen("division")}
+        />
+      )}
+
+      {/* USER MANAGEMENT (admin only, also accessible from division screen) */}
+      {screen==="userManagement"&&can(user,"manage_users")&&(
+        <UserManagementScreen
+          currentUser={user}
+          onBack={()=>setScreen("division")}
+        />
+      )}
+    </div>
+  );
+}
+
+
+function UserManagementScreen({onBack,currentUser}){
+  const [profiles,setProfiles]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
+  const [mode,setMode]=useState("list");// list | edit
+  const [active,setActive]=useState(null);const [saving,setSaving]=useState(false);
+  const blank={name:"",role:"crew",division:null,pin:"",active:true};
+  const [f,setF]=useState({...blank});
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+
+  async function load(){setLoading(true);try{setProfiles(await API.userProfiles.list()||[]);}catch(e){setErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[]);
+
+  async function save(){
+    if(!f.name.trim())return;setSaving(true);
+    try{
+      if(active){await API.userProfiles.update(active.id,{role:f.role,division:f.division,pin:f.pin,active:f.active});}
+      else{await API.userProfiles.upsert({name:f.name,role:f.role,division:f.division||null,pin:f.pin||null,active:true});}
+      await load();setMode("list");setActive(null);setF({...blank});
+    }catch(e){setErr(e.message);}setSaving(false);
+  }
+
+  async function remove(id){if(!window.confirm("Remove this user profile?"))return;try{await API.userProfiles.remove(id);await load();}catch(e){setErr(e.message);}}
+
+  // Build map of who has a profile
+  const profileMap={};profiles.forEach(p=>profileMap[p.name]=p);
+  // Everyone in NAMES list + any extra profiles
+  const allNames=[...new Set([...NAMES,...profiles.map(p=>p.name)])].sort();
+
+  if(mode==="edit") return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title={active?"Edit User":"Add User"} onBack={()=>{setMode("list");setActive(null);setF({...blank});}}/>
+      <div style={{padding:"16px 16px 100px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {!active&&<div style={{marginBottom:14}}><label style={lbl}>Name</label><select value={f.name} onChange={e=>set("name",e.target.value)} style={inp}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>}
+        {active&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:16,fontWeight:800}}>{active.name}</div><div style={{fontSize:12,color:T.muted}}>Editing permissions</div></div>}
+
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Permission Level</label>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {ROLES.map(role=>{const m=ROLE_META[role];return(<button key={role} onClick={()=>set("role",role)} style={{display:"flex",alignItems:"center",gap:12,padding:"14px",borderRadius:12,border:`2px solid ${f.role===role?m.color:T.border}`,background:f.role===role?m.color+"18":T.surface,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+              <div style={{width:12,height:12,borderRadius:"50%",background:m.color,flexShrink:0}}/>
+              <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700,color:f.role===role?m.color:T.text}}>{m.label}</div><div style={{fontSize:12,color:T.muted}}>{m.desc}</div></div>
+              {f.role===role&&<div style={{fontSize:16,color:m.color}}>✓</div>}
+            </button>);})}
+          </div>
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Assigned Division (optional)</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button onClick={()=>set("division",null)} style={{padding:"12px",borderRadius:12,border:`2px solid ${f.division===null?T.orange:T.border}`,background:f.division===null?T.orangeLow:T.surface,color:f.division===null?T.orange:T.sub,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>All Divisions</button>
+            {DIVISIONS.map(div=>{const m=DIV_META[div];return(<button key={div} onClick={()=>set("division",div)} style={{padding:"12px",borderRadius:12,border:`2px solid ${f.division===div?m.color:T.border}`,background:f.division===div?m.color+"18":T.surface,color:f.division===div?m.color:T.sub,fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>{m.icon} {div}</button>);})}
+          </div>
+        </div>
+
+        {(f.role==="pm"||f.role==="admin")&&<div style={{marginBottom:14}}><label style={lbl}>{f.role==="admin"?"Admin PIN":"PM PIN"} (required)</label><input type="text" maxLength={6} placeholder="Set a PIN (numbers)" value={f.pin||""} onChange={e=>set("pin",e.target.value)} style={inp}/><div style={{fontSize:11,color:T.muted,marginTop:4}}>This person will need to enter this PIN to sign in.</div></div>}
+
+        {active&&<div style={{marginBottom:14}}><label style={lbl}>Status</label><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>{[true,false].map(v=>(<button key={String(v)} onClick={()=>set("active",v)} style={{padding:"12px",borderRadius:12,border:`2px solid ${f.active===v?(v?T.green:T.red):T.border}`,background:f.active===v?(v?T.greenLow:T.redLow):T.surface,color:f.active===v?(v?T.green:T.red):T.sub,fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>{v?"✅ Active":"❌ Inactive"}</button>))}</div></div>}
+
+        <button onClick={save} style={{...primBtn,opacity:f.name&&!saving?1:0.5}}>{saving?"Saving…":active?"Save Changes":"Add User"}</button>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👤 User Management</div><div style={{fontSize:12,color:T.muted}}>Set permission levels for your crew</div></div>
+          <button onClick={()=>{setF({...blank});setMode("edit");}} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>
+        </div>
+      </div>
+      <div style={{padding:"14px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {loading&&<Spinner/>}
+        {!loading&&<>
+          {/* Users with profiles */}
+          <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>Configured Users ({profiles.length})</div>
+          {profiles.length===0&&<div style={{...cardS,marginBottom:14,background:T.yellowLow,border:`1px solid ${T.yellow}40`}}><div style={{fontSize:13,color:T.yellow}}>⚠️ No user profiles set. All users will sign in as Field Crew until you configure them.</div></div>}
+          {profiles.map(p=>{
+            const m=ROLE_META[p.role]||ROLE_META.crew;
+            return(<div key={p.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${m.color}`,opacity:p.active?1:0.5}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:10,height:10,borderRadius:"50%",background:m.color,flexShrink:0}}/>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:700}}>{p.name}</div>
+                  <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                    <span style={pill(m.color)}>{m.label}</span>
+                    {p.division&&<span style={pill(DIV_META[p.division]?.color||T.muted)}>{DIV_META[p.division]?.icon} {p.division}</span>}
+                    {!p.active&&<span style={pill(T.red)}>INACTIVE</span>}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>{setActive(p);setF({name:p.name,role:p.role,division:p.division||null,pin:p.pin||"",active:p.active});setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"6px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
+                  {p.name!==currentUser.name&&<button onClick={()=>remove(p.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>}
+                </div>
+              </div>
+            </div>);
+          })}
+
+          {/* Everyone else defaults to Crew */}
+          <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 10px"}}>Unconfigured (Default: Field Crew)</div>
+          {NAMES.filter(n=>!profileMap[n]).slice(0,15).map(n=>(
+            <div key={n} style={{...cardS,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",opacity:0.5}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:10,height:10,borderRadius:"50%",background:T.green}}/><span style={{fontSize:13}}>{n}</span><span style={pill(T.green)}>Field Crew</span></div>
+              <button onClick={()=>{setF({...blank,name:n});setMode("edit");}} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",color:T.sub,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Set Role</button>
+            </div>
+          ))}
+          {NAMES.filter(n=>!profileMap[n]).length>15&&<div style={{fontSize:12,color:T.muted,textAlign:"center",padding:"8px 0"}}>+ {NAMES.filter(n=>!profileMap[n]).length-15} more (tap + Add to configure)</div>}
+        </>}
+      </div>
+    </div>
+  );
+}
+
+/* ── CREW DIRECTORY SCREEN ──────────────────────────────────── */
+
+
+function CrewDirectoryScreen({onBack,user}){
+  const [members,setMembers]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
+  const [mode,setMode]=useState("list");const [active,setActive]=useState(null);const [saving,setSaving]=useState(false);
+  const blank={name:"",classification:"",phone:"",email:"",emergency_contact_name:"",emergency_contact_phone:"",certifications:[],notes:"",active:true};
+  const [f,setF]=useState({...blank});const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  async function load(){setLoading(true);try{setMembers(await API.crew.list()||[]);}catch(e){setErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[]);
+  async function save(){if(!f.name.trim())return;setSaving(true);try{if(active){await API.crew.update(active.id,f);setActive({...active,...f});}else{await API.crew.create(f);}await load();setMode("list");setActive(null);setF({...blank});}catch(e){setErr(e.message);}setSaving(false);}
+  async function remove(id){if(!window.confirm("Remove crew member?"))return;try{await API.crew.remove(id);await load();setMode("list");setActive(null);}catch(e){setErr(e.message);}}
+  function addCert(){set("certifications",[...(f.certifications||[]),{id:uid(),name:"",expiry:"",cert_number:""}]);}
+  function updateCert(i,k,v){const c=[...(f.certifications||[])];c[i]={...c[i],[k]:v};set("certifications",c);}
+  function removeCert(i){set("certifications",(f.certifications||[]).filter((_,j)=>j!==i));}
+  const CERT_TYPES=["OSHA 10","OSHA 30","First Aid / CPR","Confined Space Entry","Crane Operator","Welding Certification","Pipeline Operator Qualification","Hydro Test Operator","Excavation Competent Person","H2S Safety","Driver CDL","Other"];
+  const active_m=members.filter(m=>m.active);const inactive_m=members.filter(m=>!m.active);
+
+  if(mode==="new"||mode==="edit") return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title={mode==="edit"?"Edit Member":"Add Member"} onBack={()=>{setMode("list");setActive(null);setF({...blank});}}/>
+      <div style={{padding:"16px 16px 100px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        <div style={{marginBottom:12}}><label style={lbl}>Full Name *</label><select value={f.name} onChange={e=>set("name",e.target.value)} style={inp}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
+        <div style={{marginBottom:12}}><label style={lbl}>Classification</label><select value={f.classification} onChange={e=>set("classification",e.target.value)} style={inp}><option value="">— Select —</option>{POSITIONS.map(p=><option key={p.name}>{p.name}</option>)}</select></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}><div><label style={lbl}>Cell Phone</label><input type="tel" placeholder="555-555-5555" value={f.phone} onChange={e=>set("phone",e.target.value)} style={inp}/></div><div><label style={lbl}>Email</label><input type="email" placeholder="email@example.com" value={f.email} onChange={e=>set("email",e.target.value)} style={inp}/></div></div>
+        <div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🆘 Emergency Contact</div><div style={{marginBottom:10}}><label style={lbl}>Name</label><input type="text" placeholder="Spouse, parent…" value={f.emergency_contact_name} onChange={e=>set("emergency_contact_name",e.target.value)} style={inp}/></div><div><label style={lbl}>Phone</label><input type="tel" placeholder="555-555-5555" value={f.emergency_contact_phone} onChange={e=>set("emergency_contact_phone",e.target.value)} style={inp}/></div></div>
+        <div style={{...cardS,marginBottom:12}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px"}}>🎖️ Certifications</div><button onClick={addCert} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:8,padding:"6px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button></div>{(f.certifications||[]).length===0&&<div style={{fontSize:13,color:T.muted,textAlign:"center",padding:"10px 0"}}>No certifications added.</div>}{(f.certifications||[]).map((cert,i)=>(<div key={cert.id} style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginTop:i>0?10:0}}><div style={{marginBottom:8}}><label style={lbl}>Certification</label><select value={cert.name} onChange={e=>updateCert(i,"name",e.target.value)} style={inp}><option value="">— Select —</option>{CERT_TYPES.map(t=><option key={t}>{t}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div><label style={lbl}>Cert Number</label><input type="text" placeholder="Optional" value={cert.cert_number} onChange={e=>updateCert(i,"cert_number",e.target.value)} style={inp}/></div><div><label style={lbl}>Expiry Date</label><input type="date" value={cert.expiry} onChange={e=>updateCert(i,"expiry",e.target.value)} style={inp}/></div></div><button onClick={()=>removeCert(i)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>Remove</button></div>))}</div>
+        <div style={{marginBottom:20}}><label style={lbl}>Notes</label><textarea placeholder="Skills, notes, restrictions…" value={f.notes} onChange={e=>set("notes",e.target.value)} rows={3} style={{...inp,resize:"vertical"}}/></div>
+        <button onClick={save} style={{...primBtn,opacity:f.name&&!saving?1:0.5}}>{saving?"Saving…":mode==="edit"?"Save Changes":"Add Member"}</button>
+      </div>
+    </div>
+  );
+
+  if(mode==="view"&&active) return(
+    <div style={{background:T.bg,minHeight:"100vh",padding:16,fontFamily:"inherit"}}>
+      <button onClick={()=>{setMode("list");setActive(null);}} style={{...ghostBtn,marginBottom:14}}>← Directory</button>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}><div><div style={{fontSize:22,fontWeight:900,letterSpacing:"-0.5px"}}>{active.name}</div>{active.classification&&<div style={{fontSize:14,color:T.sub,marginTop:2}}>{active.classification}</div>}</div><button onClick={()=>{setF({...blank,...active,certifications:active.certifications||[]});setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 14px",color:T.orange,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✏️ Edit</button></div>
+      {(active.phone||active.email)&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Contact</div>{active.phone&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:13,color:T.muted}}>Cell</span><a href={`tel:${active.phone}`} style={{fontSize:13,fontWeight:600,color:T.blue,textDecoration:"none"}}>{active.phone}</a></div>}{active.email&&<div style={{display:"flex",justifyContent:"space-between",padding:"8px 0"}}><span style={{fontSize:13,color:T.muted}}>Email</span><a href={`mailto:${active.email}`} style={{fontSize:13,fontWeight:600,color:T.blue,textDecoration:"none"}}>{active.email}</a></div>}</div>}
+      {(active.emergency_contact_name||active.emergency_contact_phone)&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.red}`}}><div style={{fontSize:12,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🆘 Emergency Contact</div>{active.emergency_contact_name&&<div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{active.emergency_contact_name}</div>}{active.emergency_contact_phone&&<a href={`tel:${active.emergency_contact_phone}`} style={{fontSize:14,color:T.red,textDecoration:"none",fontWeight:700}}>📞 {active.emergency_contact_phone}</a>}</div>}
+      {(active.certifications||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🎖️ Certifications</div>{(active.certifications||[]).map((cert,i)=>{const exp=cert.expiry?daysUntil(cert.expiry):null;const expired=exp!==null&&exp<0;const expiring=exp!==null&&exp>=0&&exp<=30;return(<div key={cert.id||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<active.certifications.length-1?`1px solid ${T.border}`:"none"}}><div><div style={{fontSize:13,fontWeight:600}}>{cert.name}</div>{cert.cert_number&&<div style={{fontSize:11,color:T.muted}}>#{cert.cert_number}</div>}</div>{cert.expiry&&<span style={pill(expired?T.red:expiring?T.yellow:T.green)}>{expired?"EXPIRED":expiring?`Exp ${exp}d`:fmtDate(cert.expiry)}</span>}</div>);})}</div>}
+      {active.notes&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Notes</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{active.notes}</div></div>}
+      {can(user,"crew_directory")&&<button onClick={()=>remove(active.id)} style={{...dangerBtn,marginTop:8}}>Remove from Directory</button>}
+    </div>
+  );
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👥 Crew Directory</div><button onClick={()=>{setF({...blank});setMode("new");}} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button></div>
+      </div>
+      <div style={{padding:"14px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {loading&&<Spinner/>}
+        {!loading&&<>
+          {active_m.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>👥</div><div>No crew members yet.</div></div>}
+          {active_m.map(m=>{const expiredCerts=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)<0);const expiringSoon=(m.certifications||[]).filter(c=>c.expiry&&daysUntil(c.expiry)>=0&&daysUntil(c.expiry)<=30);return(<div key={m.id} onClick={()=>{setActive(m);setMode("view");}} style={{...cardS,marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}><div style={{width:44,height:44,borderRadius:12,background:T.orangeLow,border:`2px solid ${T.orange}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:T.orange,flexShrink:0}}>{m.name.split(" ").map(w=>w[0]).slice(0,2).join("")}</div><div style={{flex:1,minWidth:0}}><div style={{fontSize:15,fontWeight:700}}>{m.name}</div><div style={{fontSize:12,color:T.sub}}>{m.classification||"No classification"}{m.phone?" · "+m.phone:""}</div><div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>{(m.certifications||[]).length>0&&<span style={pill(T.blue)}>{m.certifications.length} certs</span>}{expiredCerts.length>0&&<span style={pill(T.red)}>{expiredCerts.length} expired</span>}{expiringSoon.length>0&&<span style={pill(T.yellow)}>{expiringSoon.length} expiring</span>}</div></div><span style={{fontSize:16,color:T.muted}}>›</span></div>);})}
+          {inactive_m.length>0&&<><div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 10px"}}>Inactive</div>{inactive_m.map(m=>(<div key={m.id} onClick={()=>{setActive(m);setMode("view");}} style={{...cardS,marginBottom:8,cursor:"pointer",opacity:0.5,display:"flex",alignItems:"center",gap:12}}><div style={{width:36,height:36,borderRadius:10,background:T.surface,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:T.muted,flexShrink:0}}>{m.name.split(" ").map(w=>w[0]).slice(0,2).join("")}</div><div><div style={{fontSize:14,fontWeight:600}}>{m.name}</div><div style={{fontSize:12,color:T.muted}}>{m.classification}</div></div></div>))}</>}
+        </>}
+      </div>
+    </div>
+  );
+}
+
+/* ── PROJECT DETAIL (ORCHESTRATOR) ─────────────────────────── */
+const PTABS=[
+  {id:"reports",icon:"📋",label:"Reports",perm:"submit_report"},
+  {id:"time",icon:"⏱️",label:"Time",perm:"time_card"},
+  {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
+  {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
+  {id:"safety",icon:"⛑️",label:"Safety",perm:"safety"},
+  {id:"docs",icon:"📁",label:"Docs",perm:"docs"},
+  {id:"schedule",icon:"📅",label:"Schedule",perm:"schedule"},
+  {id:"photos",icon:"📷",label:"Photos",perm:"photos"},
+  {id:"weather",icon:"🌤️",label:"Weather",perm:"weather"},
+  {id:"info",icon:"ℹ️",label:"Info",perm:null},
+];
+
+
+/* ── EMPLOYEE TIMECARD REPORT (PDF) ─────────────────────────── */
+function printEmployeeTimecards(cards,from,to,selectedJobs,projects){
+  const filtered=cards.filter(c=>{
+    if(!c.date||c.date<from||c.date>to)return false;
+    if(selectedJobs&&selectedJobs.length>0&&c.project_id&&!selectedJobs.includes(c.project_id))return false;
+    return true;
+  });
+  const byEmployee={};
+  filtered.forEach(c=>{
+    const name=c.worker_name||"Unknown";
+    if(!byEmployee[name])byEmployee[name]={name,entries:[],totalReg:0,totalOT:0,totalTravel:0,total:0};
+    const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const travel=parseFloat(c.travel_hours)||0;
+    const total=c.total_hours?parseFloat(c.total_hours):reg+ot+travel;
+    const proj=projects.find(p=>p.id===c.project_id);
+    byEmployee[name].entries.push({...c,reg,ot,travel,total,projName:proj?.name||"General",projAfe:proj?.afe||""});
+    byEmployee[name].totalReg+=reg;byEmployee[name].totalOT+=ot;byEmployee[name].totalTravel+=travel;byEmployee[name].total+=total;
+  });
+  const employees=Object.values(byEmployee).sort((a,b)=>a.name.localeCompare(b.name));
+  const fmtDate=d=>{if(!d)return"";const[y,m,dy]=d.split("-");return`${m}/${dy}/${y}`;};
+  const fmt=n=>Number(n||0).toFixed(1);
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Employee Timecards</title>
+<style>@page{size:letter portrait;margin:0.5in;}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}body{font-size:10pt;color:#000;}
+.page-break{page-break-after:always;}.lh{display:flex;justify-content:space-between;align-items:center;padding-bottom:10px;border-bottom:2px solid #1f3864;margin-bottom:14px;}
+.emp-header{background:#1f3864;color:#fff;border-radius:8px;padding:12px 16px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
+.emp-name{font-size:16pt;font-weight:900;}.emp-period{font-size:9pt;opacity:0.8;}
+table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:9pt;}
+th{background:#1f3864;color:#fff;padding:7px 8px;text-align:left;font-size:8pt;text-transform:uppercase;letter-spacing:0.5px;}
+td{padding:6px 8px;border-bottom:1px solid #e5e7eb;}tr:nth-child(even) td{background:#f9fafb;}
+.totals-row td{background:#f0f4ff;font-weight:800;border-top:2px solid #1f3864;text-align:center;}.totals-row td:first-child{text-align:left;}
+.sum-boxes{display:grid;grid-template-columns:1fr 1fr 1fr 1.5fr;gap:10px;margin-bottom:16px;}
+.sum-box{border-radius:8px;padding:10px 12px;text-align:center;}
+.sum-box.green{background:#dcfce7;border:1px solid #86efac;}.sum-box.yellow{background:#fef9c3;border:1px solid #fde047;}
+.sum-box.blue{background:#dbeafe;border:1px solid #93c5fd;}.sum-box.dark{background:#1f3864;border:1px solid #1f3864;}
+.sum-label{font-size:7.5pt;text-transform:uppercase;letter-spacing:0.5px;font-weight:700;color:#374151;}
+.sum-box.dark .sum-label{color:rgba(255,255,255,0.7);}.sum-val{font-size:14pt;font-weight:900;color:#111;margin-top:2px;}
+.sum-box.dark .sum-val{color:#fff;}.sum-val.big{font-size:18pt;}
+.sigs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:20px;}
+.sig-box{text-align:center;}.sig-line{border-bottom:1.5px solid #000;height:40px;margin-bottom:6px;}
+.sig-label{font-size:8pt;color:#555;text-transform:uppercase;letter-spacing:0.5px;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+${employees.length===0?`<div style="text-align:center;padding:60px;color:#9ca3af"><h2>No time card entries found</h2></div>`:
+employees.map((emp,i)=>`<div>
+<div class="lh"><div><div style="font-size:18pt;font-weight:900;color:#1f3864">AIME</div><div style="font-size:8pt;color:#555">Atlantic Industrial Mechanical & Environmental Inc.</div></div>
+<div style="text-align:right"><div style="font-size:13pt;font-weight:800;color:#1f3864">EMPLOYEE TIMECARD</div><div style="font-size:8pt;color:#555">${fmtDate(from)} — ${fmtDate(to)}</div></div></div>
+<div class="emp-header"><div class="emp-name">${emp.name}</div><div class="emp-period">Period: ${fmtDate(from)} — ${fmtDate(to)}</div></div>
+<table><thead><tr><th>Date</th><th>Job / Project</th><th>AFE / PO</th><th style="text-align:center">REG</th><th style="text-align:center">OT</th><th style="text-align:center">TRAVEL</th><th style="text-align:center">TOTAL</th><th>Notes</th></tr></thead>
+<tbody>${emp.entries.sort((a,b)=>a.date?.localeCompare(b.date)).map(e=>`<tr><td>${fmtDate(e.date)}</td><td>${e.projName}</td><td style="text-align:center">${e.projAfe||"—"}</td><td style="text-align:center;color:#166534;font-weight:600">${fmt(e.reg)}</td><td style="text-align:center;color:#b45309;font-weight:600">${fmt(e.ot)}</td><td style="text-align:center;color:#1e40af;font-weight:600">${fmt(e.travel)}</td><td style="text-align:center;font-weight:800">${fmt(e.total)}</td><td style="color:#6b7280;font-size:8pt">${(e.notes||"").replace("Auto-filled from daily report","Auto")}</td></tr>`).join("")}</tbody>
+<tfoot><tr class="totals-row"><td colspan="3">TOTALS FOR ${emp.name.toUpperCase()}</td><td>${fmt(emp.totalReg)}</td><td>${fmt(emp.totalOT)}</td><td>${fmt(emp.totalTravel)}</td><td>${fmt(emp.total)}</td><td></td></tr></tfoot></table>
+<div class="sum-boxes">
+<div class="sum-box green"><div class="sum-label">Regular</div><div class="sum-val">${fmt(emp.totalReg)} hrs</div></div>
+<div class="sum-box yellow"><div class="sum-label">Overtime</div><div class="sum-val">${fmt(emp.totalOT)} hrs</div></div>
+<div class="sum-box blue"><div class="sum-label">Travel</div><div class="sum-val">${fmt(emp.totalTravel)} hrs</div></div>
+<div class="sum-box dark"><div class="sum-label">TOTAL HOURS</div><div class="sum-val big">${fmt(emp.total)}</div></div></div>
+<div class="sigs"><div class="sig-box"><div class="sig-line"></div><div class="sig-label">Employee Signature</div></div><div class="sig-box"><div class="sig-line"></div><div class="sig-label">Supervisor Signature</div></div><div class="sig-box"><div class="sig-line"></div><div class="sig-label">Date Approved</div></div></div>
+</div>${i<employees.length-1?'<div class="page-break"></div>':""}`).join("")}
+</body></html>`;
+  const win=window.open("","_blank","width=900,height=750");win.document.write(html);win.document.close();win.focus();setTimeout(()=>win.print(),500);
+}
+
+/* ── ESTIMATING SCREEN ───────────────────────────────────────── */
+function EstimatingScreen({user,onBack}){
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title="📊 Estimating" onBack={onBack}/>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"60px 24px",textAlign:"center"}}>
+        <div style={{fontSize:64,marginBottom:20}}>🚧</div>
+        <div style={{fontSize:22,fontWeight:900,color:T.text,marginBottom:8}}>Under Maintenance</div>
+        <div style={{fontSize:14,color:T.muted,lineHeight:1.7,maxWidth:320}}>The Estimating platform is currently being updated.<br/>Check back soon.</div>
+        <div style={{marginTop:24,background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:14,padding:"14px 20px"}}>
+          <div style={{fontSize:12,color:T.orange,fontWeight:700}}>Atlantic Industrial Mechanical & Environmental Inc.</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:2}}>AIME Field Pro · Estimating Module</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── COST CATALOG SCREEN (for when estimating is active) ─────── */
+function CostCatalogScreen({user,onBack}){return <EstimatingScreen user={user} onBack={onBack}/>;}
+function EstimatesScreen({user,onBack}){return <EstimatingScreen user={user} onBack={onBack}/>;}
+function EstimateBuilder({estimate,user,onBack}){return <EstimatingScreen user={user} onBack={onBack}/>;}
+function printProposal(){}
+
+
+/* ── PUBLIC RFI FORM (no login required) ────────────────────── */
+function PublicRFIForm({rfiId}){
+  const [rfi,setRfi]=useState(null);const [project,setProject]=useState(null);const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);const [submitted,setSubmitted]=useState(false);const [err,setErr]=useState("");
+  const [resp,setResp]=useState("");const [respBy,setRespBy]=useState("");const [respDate,setRespDate]=useState(today());const [respTitle,setRespTitle]=useState("");
+  const [sigData,setSigData]=useState(null);const [drawing,setDrawing]=useState(false);const sigCanvasRef=React.useRef(null);const lastSigPos=React.useRef(null);
+  useEffect(()=>{
+    async function load(){try{const rfiData=await sb(`/rfis?id=eq.${rfiId}&limit=1`);const r=Array.isArray(rfiData)?rfiData[0]:rfiData;if(!r){setErr("RFI not found.");setLoading(false);return;}setRfi(r);if(r.response){setResp(r.response);setRespBy(r.responded_by||"");setRespDate(r.response_date||today());setSubmitted(true);}const projData=await sb(`/projects?id=eq.${r.project_id}&limit=1`);setProject(Array.isArray(projData)?projData[0]:projData||{name:"Unknown Project"});}catch(e){setErr("Error loading RFI: "+e.message);}setLoading(false);}load();},[rfiId]);
+  function getSigPos(e,canvas){const rect=canvas.getBoundingClientRect();const sx=canvas.width/rect.width;const sy=canvas.height/rect.height;if(e.touches&&e.touches[0])return{x:(e.touches[0].clientX-rect.left)*sx,y:(e.touches[0].clientY-rect.top)*sy};return{x:(e.clientX-rect.left)*sx,y:(e.clientY-rect.top)*sy};}
+  function startSig(e){e.preventDefault();const c=sigCanvasRef.current;if(!c)return;const pos=getSigPos(e,c);const ctx=c.getContext("2d");ctx.beginPath();ctx.moveTo(pos.x,pos.y);lastSigPos.current=pos;setDrawing(true);}
+  function drawSig(e){e.preventDefault();if(!drawing)return;const c=sigCanvasRef.current;if(!c)return;const ctx=c.getContext("2d");const pos=getSigPos(e,c);ctx.lineWidth=2.5;ctx.lineCap="round";ctx.strokeStyle="#1f3864";ctx.lineTo(pos.x,pos.y);ctx.stroke();ctx.beginPath();ctx.moveTo(pos.x,pos.y);}
+  function endSig(e){e.preventDefault();if(!drawing)return;setDrawing(false);const c=sigCanvasRef.current;if(c)setSigData(c.toDataURL("image/jpeg",0.7));}
+  function clearSig(){const c=sigCanvasRef.current;if(c)c.getContext("2d").clearRect(0,0,c.width,c.height);setSigData(null);}
+  async function submit(){
+    if(!resp.trim()){setErr("Please enter your response.");return;}if(!respBy.trim()){setErr("Please enter your name.");return;}if(!sigData){setErr("Please draw your signature.");return;}
+    setSaving(true);setErr("");
+    try{await sb(`/rfis?id=eq.${rfiId}`,{method:"PATCH",body:{response:resp,responded_by:respBy+(respTitle?" ("+respTitle+")":""),response_date:respDate||today(),status:"Answered",response_signature:sigData,signer_title:respTitle||null},prefer:"return=representation"});setSubmitted(true);}
+    catch(e){setErr("Failed to submit: "+e.message);}setSaving(false);
+  }
+  if(loading)return(<div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif"}}><div style={{textAlign:"center",color:"#fff"}}><div style={{width:40,height:40,border:"3px solid #27272A",borderTopColor:"#F97316",borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto 12px"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style><div>Loading RFI...</div></div></div>);
+  if(err&&!rfi)return(<div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif",padding:20}}><div style={{background:"#18181B",borderRadius:16,padding:32,maxWidth:400,textAlign:"center",border:"1px solid #EF444440"}}><div style={{fontSize:40,marginBottom:12}}>⚠️</div><div style={{fontSize:18,fontWeight:700,color:"#fff",marginBottom:8}}>Not Found</div><div style={{fontSize:14,color:"#A1A1AA"}}>{err}</div></div></div>);
+  if(submitted)return(<div style={{background:"#09090B",minHeight:"100vh",fontFamily:"system-ui,sans-serif",padding:20}}><div style={{maxWidth:600,margin:"0 auto"}}><div style={{background:"#18181B",borderRadius:16,padding:32,textAlign:"center",border:"1px solid #22C55E40"}}><div style={{fontSize:48,marginBottom:12}}>✅</div><div style={{fontSize:20,fontWeight:800,color:"#22C55E",marginBottom:8}}>Response Submitted!</div><div style={{fontSize:14,color:"#A1A1AA",marginBottom:12}}>Your response to RFI #{rfi?.rfi_number} has been saved.</div><div style={{fontSize:12,color:"#71717A"}}>You may close this window.</div></div></div></div>);
+  const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
+  return(<div style={{background:"#09090B",minHeight:"100vh",fontFamily:"system-ui,sans-serif",color:"#fff",padding:"16px 16px 60px"}}>
+    <div style={{maxWidth:600,margin:"0 auto"}}>
+      <div style={{background:"#1f3864",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div><div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div><div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Environmental Inc.</div></div>
+        <div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800,color:"#fff"}}>RFI #{rfi.rfi_number}</div></div>
+      </div>
+      <div style={{background:"#18181B",borderRadius:12,padding:"12px 16px",marginBottom:12,border:"1px solid #27272A"}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          {[["Project",project?.name||"—"],["Date",rfi.date_submitted||"—"]].map(([l,v])=>(<div key={l}><div style={{fontSize:10,color:"#71717A",textTransform:"uppercase",fontWeight:700}}>{l}</div><div style={{fontSize:13,fontWeight:600,color:"#fff",marginTop:2}}>{v}</div></div>))}
+        </div>
+      </div>
+      {rfi.ball_in_court&&<div style={{background:"#431407",borderRadius:12,padding:"12px 16px",marginBottom:12,border:"1px solid #9a3412"}}>
+        <div style={{fontSize:10,color:"#fb923c",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>🏀 Action Required From</div>
+        <div style={{fontSize:16,fontWeight:800,color:"#fdba74",marginTop:2}}>{rfi.ball_in_court}</div>
+      </div>}
+      <div style={{background:"#1f3864",borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+        <div style={{fontSize:10,color:"rgba(255,255,255,0.6)",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:6}}>Question / Issue</div>
+        <div style={{fontSize:16,fontWeight:700,color:"#fff",lineHeight:1.5}}>{rfi.question}</div>
+        {rfi.description&&<div style={{fontSize:13,color:"rgba(255,255,255,0.7)",marginTop:8,lineHeight:1.6}}>{rfi.description}</div>}
+      </div>
+      {err&&<div style={{background:"#EF444420",border:"1px solid #EF4444",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#EF4444"}}>{err}</div>}
+      <div style={{background:"#18181B",borderRadius:16,padding:20,border:"2px solid #22C55E40"}}>
+        <div style={{fontSize:14,fontWeight:800,color:"#22C55E",marginBottom:4}}>✏️ Your Response</div>
+        <div style={{fontSize:12,color:"#71717A",marginBottom:14}}>Fill in the fields below and tap Submit.</div>
+        <div style={{marginBottom:12}}><label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Response *</label>
+          <textarea rows={6} value={resp} onChange={e=>setResp(e.target.value)} placeholder="Enter your response..." style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",resize:"vertical",fontFamily:"inherit",lineHeight:1.6,outline:"none"}}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+          <div><label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Your Name *</label><input type="text" value={respBy} onChange={e=>setRespBy(e.target.value)} placeholder="Full name" style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/></div>
+          <div><label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Date</label><input type="date" value={respDate} onChange={e=>setRespDate(e.target.value)} style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/></div>
+        </div>
+        <div style={{marginBottom:14}}><label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Company / Title</label><input type="text" value={respTitle} onChange={e=>setRespTitle(e.target.value)} placeholder="e.g. Colonial Pipeline · Field Engineer" style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/></div>
+        {/* Signature */}
+        <div style={{marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <label style={{fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px"}}>Signature *</label>
+            {sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#EF4444",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
+          </div>
+          <div style={{background:"#fff",borderRadius:10,overflow:"hidden",border:"2px solid #22C55E"}}>
+            <canvas ref={sigCanvasRef} width={600} height={160} style={{width:"100%",height:160,display:"block",touchAction:"none",cursor:"crosshair"}}
+              onMouseDown={startSig} onMouseMove={drawSig} onMouseUp={endSig} onMouseLeave={endSig}
+              onTouchStart={startSig} onTouchMove={drawSig} onTouchEnd={endSig}/>
+          </div>
+          {!sigData&&<div style={{fontSize:11,color:"#71717A",marginTop:4,textAlign:"center"}}>Draw your signature above</div>}
+          {sigData&&<div style={{fontSize:11,color:"#22C55E",marginTop:4,textAlign:"center"}}>✓ Signature captured</div>}
+        </div>
+        <button onClick={submit} disabled={saving||!resp.trim()||!respBy.trim()||!sigData}
+          style={{width:"100%",background:saving||!resp.trim()||!respBy.trim()||!sigData?"#27272A":"#22C55E",color:saving||!resp.trim()||!respBy.trim()||!sigData?"#71717A":"#000",border:"none",borderRadius:12,padding:"14px",fontSize:16,fontWeight:800,cursor:saving||!resp.trim()||!respBy.trim()||!sigData?"not-allowed":"pointer",fontFamily:"inherit"}}>
+          {saving?"Submitting…":"✅ Submit Signed Response"}
+        </button>
+        <div style={{fontSize:11,color:"#52525B",textAlign:"center",marginTop:8}}>Response, name, and signature are required</div>
+      </div>
+    </div>
+  </div>);
+}
+
+
+/* ── PUBLIC CO FORM (no login required) ─────────────────────── */
+function PublicCOForm({coId}){
+  const [co,setCo]=useState(null);const [project,setProject]=useState(null);const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);const [submitted,setSubmitted]=useState(false);const [err,setErr]=useState("");
+  const [signerName,setSignerName]=useState("");const [signerTitle,setSignerTitle]=useState("");const [sigData,setSigData]=useState(null);const [drawing,setDrawing]=useState(false);
+  const sigCanvasRef=React.useRef(null);const lastPos=React.useRef(null);
+  useEffect(()=>{async function load(){try{const coData=await sb(`/change_orders?id=eq.${coId}&limit=1`);const c=Array.isArray(coData)?coData[0]:coData;if(!c){setErr("Change Order not found.");setLoading(false);return;}setCo(c);if(c.client_signature){setSubmitted(true);}const projData=await sb(`/projects?id=eq.${c.project_id}&limit=1`);setProject(Array.isArray(projData)?projData[0]:projData||{name:"Unknown Project"});}catch(e){setErr("Error: "+e.message);}setLoading(false);}load();},[coId]);
+  function getSigPos(e,canvas){const rect=canvas.getBoundingClientRect();const sx=canvas.width/rect.width;const sy=canvas.height/rect.height;if(e.touches&&e.touches[0])return{x:(e.touches[0].clientX-rect.left)*sx,y:(e.touches[0].clientY-rect.top)*sy};return{x:(e.clientX-rect.left)*sx,y:(e.clientY-rect.top)*sy};}
+  function startSig(e){e.preventDefault();const c=sigCanvasRef.current;if(!c)return;const pos=getSigPos(e,c);c.getContext("2d").beginPath();c.getContext("2d").moveTo(pos.x,pos.y);lastPos.current=pos;setDrawing(true);}
+  function drawSig(e){e.preventDefault();if(!drawing)return;const c=sigCanvasRef.current;if(!c)return;const ctx=c.getContext("2d");const pos=getSigPos(e,c);ctx.lineWidth=2.5;ctx.lineCap="round";ctx.strokeStyle="#1f3864";ctx.lineTo(pos.x,pos.y);ctx.stroke();ctx.beginPath();ctx.moveTo(pos.x,pos.y);}
+  function endSig(e){e.preventDefault();if(!drawing)return;setDrawing(false);const c=sigCanvasRef.current;if(c)setSigData(c.toDataURL("image/jpeg",0.7));}
+  function clearSig(){const c=sigCanvasRef.current;if(c)c.getContext("2d").clearRect(0,0,c.width,c.height);setSigData(null);}
+  async function submit(){
+    if(!signerName.trim()||!sigData){setErr("Please enter your name and signature.");return;}
+    setSaving(true);setErr("");
+    try{await sb(`/change_orders?id=eq.${coId}`,{method:"PATCH",body:{client_signature:sigData,client_signed_by:signerName+(signerTitle?" ("+signerTitle+")":""),client_signed_date:today(),status:"Approved"},prefer:"return=representation"});setSubmitted(true);}
+    catch(e){setErr("Failed: "+e.message);}setSaving(false);
+  }
+  const fmt2=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
+  if(loading)return(<div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif"}}><div style={{textAlign:"center",color:"#fff"}}><div style={{width:40,height:40,border:"3px solid #27272A",borderTopColor:"#F97316",borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto 12px"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style><div>Loading...</div></div></div>);
+  if(err&&!co)return(<div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif",padding:20}}><div style={{background:"#18181B",borderRadius:16,padding:32,maxWidth:400,textAlign:"center"}}><div style={{fontSize:40}}>⚠️</div><div style={{fontSize:18,fontWeight:700,color:"#fff",margin:"8px 0"}}>{err}</div></div></div>);
+  if(submitted)return(<div style={{background:"#09090B",minHeight:"100vh",fontFamily:"system-ui,sans-serif",padding:20}}><div style={{maxWidth:560,margin:"0 auto"}}><div style={{background:"#18181B",borderRadius:16,padding:32,textAlign:"center",border:"1px solid #22C55E40"}}><div style={{fontSize:48,marginBottom:12}}>✅</div><div style={{fontSize:20,fontWeight:800,color:"#22C55E",marginBottom:8}}>Change Order Signed!</div><div style={{fontSize:14,color:"#A1A1AA",marginBottom:12}}>Change Order {co?.co_number} has been approved and signed.</div><div style={{fontSize:12,color:"#71717A"}}>You may close this window.</div></div></div></div>);
+  return(<div style={{background:"#09090B",minHeight:"100vh",fontFamily:"system-ui,sans-serif",color:"#fff",padding:"16px 16px 60px"}}>
+    <div style={{maxWidth:560,margin:"0 auto"}}>
+      <div style={{background:"#1f3864",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div><div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div><div style={{color:"rgba(255,255,255,0.7)",fontSize:11}}>Atlantic Industrial Mechanical & Environmental Inc.</div></div>
+        <div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800,color:"#fff"}}>{co.co_number}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>Change Order</div></div>
+      </div>
+      <div style={{background:"#18181B",borderRadius:12,padding:"12px 16px",marginBottom:12,border:"1px solid #27272A"}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          {[["Project",project?.name||"—"],["Date",co.date_submitted||"—"]].map(([l,v])=>(<div key={l}><div style={{fontSize:10,color:"#71717A",textTransform:"uppercase",fontWeight:700}}>{l}</div><div style={{fontSize:13,fontWeight:600,color:"#fff",marginTop:2}}>{v}</div></div>))}
+        </div>
+      </div>
+      <div style={{background:"#1f3864",borderRadius:12,padding:"16px",marginBottom:12}}>
+        <div style={{fontSize:10,color:"rgba(255,255,255,0.6)",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:6}}>Description of Change</div>
+        <div style={{fontSize:15,fontWeight:700,color:"#fff",lineHeight:1.5,marginBottom:12}}>{co.description}</div>
+        <div style={{background:"rgba(255,255,255,0.1)",borderRadius:10,padding:"12px",textAlign:"center"}}>
+          <div style={{fontSize:10,color:"rgba(255,255,255,0.6)",textTransform:"uppercase",letterSpacing:"1px"}}>Change Order Amount</div>
+          <div style={{fontSize:28,fontWeight:900,color:"#22C55E",marginTop:4}}>{fmt2(co.amount)}</div>
+        </div>
+      </div>
+      {err&&<div style={{background:"#EF444420",border:"1px solid #EF4444",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#EF4444"}}>{err}</div>}
+      <div style={{background:"#18181B",borderRadius:16,padding:20,border:"2px solid #F9731640"}}>
+        <div style={{fontSize:14,fontWeight:800,color:"#F97316",marginBottom:4}}>✍️ Sign & Approve Change Order</div>
+        <div style={{fontSize:12,color:"#71717A",marginBottom:16}}>By signing below you authorize this change order.</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+          <div><label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Your Name *</label><input type="text" value={signerName} onChange={e=>setSignerName(e.target.value)} placeholder="Full name" style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/></div>
+          <div><label style={{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Title / Company</label><input type="text" value={signerTitle} onChange={e=>setSignerTitle(e.target.value)} placeholder="Your title" style={{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"}}/></div>
+        </div>
+        <div style={{marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <label style={{fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px"}}>Signature *</label>
+            {sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#EF4444",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
+          </div>
+          <div style={{background:"#fff",borderRadius:10,overflow:"hidden",border:"2px solid #F97316"}}>
+            <canvas ref={sigCanvasRef} width={600} height={160} style={{width:"100%",height:160,display:"block",touchAction:"none",cursor:"crosshair"}}
+              onMouseDown={startSig} onMouseMove={drawSig} onMouseUp={endSig} onMouseLeave={endSig}
+              onTouchStart={startSig} onTouchMove={drawSig} onTouchEnd={endSig}/>
+          </div>
+          {!sigData&&<div style={{fontSize:11,color:"#71717A",textAlign:"center",marginTop:4}}>Draw your signature above</div>}
+          {sigData&&<div style={{fontSize:11,color:"#22C55E",textAlign:"center",marginTop:4}}>✓ Signature captured</div>}
+        </div>
+        <button onClick={submit} disabled={saving||!signerName.trim()||!sigData}
+          style={{width:"100%",background:saving||!signerName.trim()||!sigData?"#27272A":"#F97316",color:saving||!signerName.trim()||!sigData?"#71717A":"#000",border:"none",borderRadius:12,padding:"14px",fontSize:16,fontWeight:800,cursor:saving||!signerName.trim()||!sigData?"not-allowed":"pointer",fontFamily:"inherit"}}>
+          {saving?"Submitting…":"✅ Sign & Approve Change Order"}
+        </button>
+      </div>
+    </div>
+  </div>);
+}
+
+
+/* ── APP INNER ───────────────────────────────────────────────── */
+function AppInner(){
+  const [publicRfiId]            = useState(()=>new URLSearchParams(window.location.search).get("rfi"));
+  const [publicCoId]             = useState(()=>new URLSearchParams(window.location.search).get("co"));
+  const [user,setUser]           = useState(null);
+  const [projects,setProjects]   = useState([]);
+  const [screen,setScreen]       = useState("division");
+  const [selectedDiv,setSelectedDiv] = useState(null);
+  const [selectedProject,setSelectedProject] = useState(null);
+  const [isOnline,setIsOnline]   = useState(navigator.onLine);
+  const [pendingCount,setPendingCount] = useState(0);
+  const [syncMsg,setSyncMsg]     = useState("");
+  const [err,setErr]             = useState("");
+
+  // Public forms (no login needed)
+  if(publicRfiId) return <PublicRFIForm rfiId={publicRfiId}/>;
+  if(publicCoId) return <PublicCOForm coId={publicCoId}/>;
+
+  useEffect(()=>{
+    const onOnline=()=>{setIsOnline(true);syncQueue();}
+    const onOffline=()=>setIsOnline(false);
+    window.addEventListener("online",onOnline);window.addEventListener("offline",onOffline);
+    setupPushNotifications();
+    return()=>{window.removeEventListener("online",onOnline);window.removeEventListener("offline",onOffline);};
+  },[]);
+
+  useEffect(()=>{
+    if(user) loadProjects();
+  },[user]);
+
+  async function loadProjects(){
+    try{
+      const r=await API.projects.list();
+      const ps=Array.isArray(r)?r:[];
+      // Load report counts and billing per project
+      const enriched=await Promise.all(ps.map(async p=>{
+        try{
+          const reps=await API.reports.forProject(p.id);
+          const repList=Array.isArray(reps)?reps:[];
+          const billed=repList.reduce((s,r)=>{
+            const tot=r.labor_total||0;const etot=r.equipment_total||0;
+            return s+tot+etot;
+          },0);
+          return{...p,_reports:repList.length,_billed:billed};
+        }catch{return{...p,_reports:0,_billed:0};}
+      }));
+      setProjects(enriched);
+    }catch(e){setErr(e.message);}
+  }
+
+  async function syncQueue(){
+    const queue=getQueue();
+    if(!queue.length)return;
+    setSyncMsg(`Syncing ${queue.length} queued report${queue.length!==1?"s":""}…`);
+    let synced=0;
+    for(const item of queue){
+      try{
+        if(item.type==="report"){
+          const {rental_equipment,...dbData}=item.data;
+          try{await API.reports.create({...dbData,rental_equipment,project_id:item.data.project_id});}
+          catch{await API.reports.create({...dbData,project_id:item.data.project_id});}
+          removeFromQueue(item.qid);
+          const proj=projects.find(p=>p.id===item.data.project_id);
+          if(proj) await autoPopulateTimeCards(item.data,proj).catch(()=>{});
+          synced++;
+        }
+      }catch(e){console.warn("Sync failed for item",item.qid,e);}
+    }
+    setSyncMsg(synced>0?`✓ Synced ${synced} report${synced!==1?"s":""}!`:"");
+    if(synced>0){await loadProjects();}
+    setTimeout(()=>setSyncMsg(""),4000);
+    setPendingCount(getQueue().length);
+  }
+
+  function handleLogin(profile){setUser(profile);}
+  function handleLogout(){setUser(null);setScreen("division");setSelectedDiv(null);setSelectedProject(null);}
+  function handleDivisionSelect(div){setSelectedDiv(div);setScreen("jobs");}
+  function handleSelectProject(p){setSelectedProject(p);setScreen("detail");}
+
+  if(!user) return(
+    <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif",color:T.text,background:T.bg,minHeight:"100vh"}}>
+      <LoginScreen onLogin={handleLogin}/>
+    </div>
+  );
+
+  const canEst=can(user,"estimating");
+
+  return(
+    <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif",color:T.text,background:T.bg,minHeight:"100vh"}}>
+      {syncMsg&&<div style={{background:T.green,color:"#000",padding:"10px 16px",fontSize:13,fontWeight:700,textAlign:"center"}}>{syncMsg}</div>}
+      {err&&<div style={{background:T.red,color:"#fff",padding:"8px 16px",fontSize:12,cursor:"pointer"}} onClick={()=>setErr("")}>{err} ✕</div>}
+      {screen==="division"&&(
+        <DivisionScreen user={user} projects={projects} onSelect={handleDivisionSelect} onLogout={handleLogout}
+          onCrew={()=>setScreen("crewDirectory")} onDash={()=>setScreen("pmDashboard")}
+          onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")}
+          isOnline={isOnline} pendingCount={pendingCount} onSync={syncQueue}/>
+      )}
+      {screen==="estimating"&&can(user,"estimating")&&(
+        <EstimatingScreen user={user} onBack={()=>setScreen("division")}/>
+      )}
+      {screen==="jobs"&&selectedDiv&&(
+        <JobBoard user={user} projects={projects} division={selectedDiv} onSelect={handleSelectProject}
+          onBack={()=>setScreen("division")} onNew={()=>setScreen("newProject")} onRefresh={loadProjects}/>
+      )}
+      {screen==="detail"&&selectedProject&&(
+        <ProjectDetail project={projects.find(p=>p.id===selectedProject.id)||selectedProject}
+          user={user} onBack={()=>setScreen("jobs")} onRefresh={loadProjects}
+          onErr={setErr} isOnline={isOnline}/>
+      )}
+      {screen==="newProject"&&(
+        <ProjectForm user={user} onSave={async(data)=>{try{await API.projects.create(data);await loadProjects();setScreen("jobs");}catch(e){setErr(e.message);}}} onCancel={()=>setScreen("jobs")}/>
+      )}
+      {screen==="pmDashboard"&&(
+        <PMDashboard user={user} projects={projects} onBack={()=>setScreen("division")} onRefresh={loadProjects} onErr={setErr}/>
+      )}
+      {screen==="crewDirectory"&&(
+        <CrewDirectoryScreen user={user} onBack={()=>setScreen("division")}/>
+      )}
+      {screen==="timeCards"&&(
+        <TimeCardsScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
+      )}
+      {screen==="userManagement"&&(
+        <UserManagementScreen user={user} onBack={()=>setScreen("division")}/>
+      )}
+    </div>
+  );
+}
+
+/* ── ERROR BOUNDARY ─────────────────────────────────────────── */
+class ErrorBoundary extends React.Component{
+  constructor(props){super(props);this.state={error:null};}
+  static getDerivedStateFromError(error){return{error};}
+  componentDidCatch(error,info){console.error("App Error:",error,info);}
+  render(){
+    if(this.state.error){
+      return(
+        <div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif",padding:20}}>
+          <div style={{background:"#18181B",border:"1px solid #EF4444",borderRadius:16,padding:24,maxWidth:480,width:"100%"}}>
+            <div style={{fontSize:24,marginBottom:8}}>⚠️</div>
+            <div style={{fontSize:16,fontWeight:700,color:"#EF4444",marginBottom:8}}>App Error</div>
+            <div style={{fontSize:12,color:"#A1A1AA",marginBottom:16,wordBreak:"break-all",background:"#0C0C0F",padding:12,borderRadius:8,lineHeight:1.6}}>
+              {this.state.error?.message||String(this.state.error)}
+            </div>
+            <div style={{fontSize:11,color:"#71717A",marginBottom:16}}>Screenshot this message and send it to your developer.</div>
+            <button onClick={()=>{this.setState({error:null});window.location.reload();}}
+              style={{background:"#F97316",color:"#000",border:"none",borderRadius:10,padding:"10px 20px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit",width:"100%"}}>
+              🔄 Reload App
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function App(){
+  return(
+    <ErrorBoundary>
+      <AppInner/>
+    </ErrorBoundary>
+  );
+}
