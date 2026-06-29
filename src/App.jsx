@@ -2946,6 +2946,26 @@ function PublicCOForm({coId}){
 }
 
 
+/* ── PUSH NOTIFICATIONS SETUP ───────────────────────────────── */
+async function setupPushNotifications(){
+  // Only runs in native Capacitor app, no-op on web
+  const isNative=typeof window!=="undefined"&&window.Capacitor?.isNativePlatform?.();
+  if(!isNative) return;
+  try{
+    const cap=window.Capacitor?.Plugins;
+    if(!cap) return;
+    const{PushNotifications}=cap;
+    if(!PushNotifications) return;
+    const perm=await PushNotifications.requestPermissions();
+    if(perm.receive==="granted"){
+      await PushNotifications.register();
+    }
+  }catch(e){
+    // Silent fail on web
+  }
+}
+
+
 /* ── APP INNER ───────────────────────────────────────────────── */
 function AppInner(){
   const [publicRfiId]            = useState(()=>new URLSearchParams(window.location.search).get("rfi"));
