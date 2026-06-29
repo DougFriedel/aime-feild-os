@@ -6895,36 +6895,19 @@ ${generalNotes?`<div class="gen-notes">
 
 
 function EstimatingScreen({user,onBack}){
-  const [view,setView]=useState("home"); // home | catalog | estimates
-  if(view==="catalog") return <CostCatalogScreen user={user} onBack={()=>setView("home")}/>;
-  if(view==="estimates") return <EstimatesScreen user={user} onBack={()=>setView("home")}/>;
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <TopBar title="📊 Estimating" onBack={onBack}/>
-      <div style={{padding:"16px 16px 80px"}}>
-        <div style={{...cardS,marginBottom:20,background:`${T.purple}15`,border:`1px solid ${T.purple}40`,padding:"20px 16px"}}>
-          <div style={{fontSize:20,fontWeight:900,color:T.purple,marginBottom:4}}>AIME Estimating</div>
-          <div style={{fontSize:13,color:T.sub}}>Atlantic Industrial Mechanical & Environmental Inc.</div>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"60px 24px",textAlign:"center"}}>
+        <div style={{fontSize:64,marginBottom:20}}>🚧</div>
+        <div style={{fontSize:22,fontWeight:900,color:T.text,marginBottom:8}}>Under Maintenance</div>
+        <div style={{fontSize:14,color:T.muted,lineHeight:1.7,maxWidth:320}}>
+          The Estimating platform is currently being updated.<br/>Check back soon.
         </div>
-        {[
-          {icon:"📋",title:"Estimates",desc:"Build and manage project estimates",color:T.blue,view:"estimates"},
-          {icon:"📚",title:"Cost Catalog",desc:"Edit unit costs, labor hours and materials",color:T.green,view:"catalog"},
-          {icon:"📄",title:"Proposals",desc:"Generate professional bid proposals",color:T.orange,view:"estimates",soon:true},
-          {icon:"🏆",title:"Bid Management",desc:"Track win/loss and bid history",color:T.purple,view:"estimates",soon:true},
-        ].map(m=>(
-          <button key={m.title} onClick={()=>!m.soon&&setView(m.view)}
-            style={{...ghostBtn,width:"100%",display:"flex",alignItems:"center",gap:14,padding:"16px",marginBottom:10,borderLeft:`4px solid ${m.color}`,opacity:m.soon?0.5:1,cursor:m.soon?"default":"pointer",textAlign:"left"}}>
-            <span style={{fontSize:30}}>{m.icon}</span>
-            <div style={{flex:1}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
-                <span style={{fontSize:15,fontWeight:800,color:m.soon?T.muted:T.text}}>{m.title}</span>
-                {m.soon&&<span style={{fontSize:9,background:T.border,color:T.muted,padding:"2px 6px",borderRadius:6,fontWeight:700,textTransform:"uppercase"}}>Soon</span>}
-              </div>
-              <div style={{fontSize:12,color:T.muted}}>{m.desc}</div>
-            </div>
-            {!m.soon&&<span style={{color:T.muted,fontSize:20}}>›</span>}
-          </button>
-        ))}
+        <div style={{marginTop:24,background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:14,padding:"14px 20px"}}>
+          <div style={{fontSize:12,color:T.orange,fontWeight:700}}>Atlantic Industrial Mechanical & Environmental Inc.</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:2}}>AIME Field Pro · Estimating Module</div>
+        </div>
       </div>
     </div>
   );
