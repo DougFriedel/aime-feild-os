@@ -17,7 +17,7 @@ class ErrorBoundary extends React.Component {
       return (
         <div
           style={{
-            background: "#EDEBE6",
+            background: "#0A0A0C",
             minHeight: "100vh",
             display: "flex",
             alignItems: "center",
@@ -28,7 +28,7 @@ class ErrorBoundary extends React.Component {
         >
           <div
             style={{
-              background: "#FFFFFF",
+              background: "#18181C",
               border: "1px solid #EF4444",
               borderRadius: 16,
               padding: 24,
@@ -41,10 +41,10 @@ class ErrorBoundary extends React.Component {
             <div
               style={{
                 fontSize: 12,
-                color: "#6B7280",
+                color: "#93939C",
                 marginBottom: 16,
                 wordBreak: "break-all",
-                background: "#FFFFFF",
+                background: "#101014",
                 padding: 12,
                 borderRadius: 8,
                 lineHeight: 1.6,
@@ -52,7 +52,7 @@ class ErrorBoundary extends React.Component {
             >
               {this.state.error?.message || String(this.state.error)}
             </div>
-            <div style={{ fontSize: 11, color: "#6B7280", marginBottom: 16 }}>
+            <div style={{ fontSize: 11, color: "#8A8A93", marginBottom: 16 }}>
               Screenshot this message and send it to your developer.
             </div>
             <button
@@ -61,7 +61,7 @@ class ErrorBoundary extends React.Component {
                 window.location.reload();
               }}
               style={{
-                background: "#F97316",
+                background: "#F25C05",
                 color: "#fff",
                 border: "none",
                 borderRadius: 10,
@@ -123,7 +123,7 @@ function clearDraft(key) {
   } catch {}
 }
 
-// Excel template now lives at public/daily-report-template.xlsx (fetched at export time)
+// Excel template lives at public/daily-report-template.xlsx (fetched at export time)
 
 /* ── SUPABASE ───────────────────────────────────────────────── */
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL || "https://uicmfyudiullulbbwzmh.supabase.co";
@@ -297,31 +297,31 @@ const API = {
 
 /* ── THEME ──────────────────────────────────────────────────── */
 const T = {
-  bg: "#EDEBE6",
-  surface: "#FFFFFF",
-  card: "#FFFFFF",
-  border: "#D8D4CC",
+  bg: "#0A0A0C",
+  surface: "#131316",
+  card: "#18181C",
+  border: "#2A2A30",
   orange: "#F25C05",
-  orangeLow: "#F25C0514",
-  orangeMid: "#F25C0530",
-  green: "#2E7D46",
-  greenLow: "#2E7D4614",
-  red: "#C0392B",
-  redLow: "#C0392B14",
-  yellow: "#B45309",
-  yellowLow: "#B4530914",
-  blue: "#1D4ED8",
-  blueLow: "#1D4ED814",
-  purple: "#7C3AED",
-  teal: "#0F766E",
-  text: "#16181D",
-  sub: "#4B5563",
-  muted: "#6B7280",
+  orangeLow: "#F25C0518",
+  orangeMid: "#F25C0535",
+  green: "#3FBF6F",
+  greenLow: "#3FBF6F18",
+  red: "#E5484D",
+  redLow: "#E5484D18",
+  yellow: "#FFD166",
+  yellowLow: "#FFD16618",
+  blue: "#5B8DEF",
+  blueLow: "#5B8DEF18",
+  purple: "#B07CFF",
+  teal: "#2DD4BF",
+  text: "#F5F5F3",
+  sub: "#C7C7CD",
+  muted: "#93939C",
 };
 const inp = {
   width: "100%",
   boxSizing: "border-box",
-  background: "#FFFFFF",
+  background: "#101014",
   border: `1px solid ${T.border}`,
   borderRadius: 12,
   color: T.text,
@@ -337,7 +337,7 @@ const lbl = {
   display: "block",
   fontSize: 11,
   fontWeight: 700,
-  color: "#6B7280",
+  color: "#C7C7CD",
   letterSpacing: "1px",
   textTransform: "uppercase",
   marginBottom: 6,
@@ -626,7 +626,7 @@ const WMO = {
 };
 const DIVISIONS = ["Mechanical", "Pipeline", "Structural"];
 const DIV_META = {
-  Mechanical: { icon: "⚙️", color: "#F97316", desc: "Mechanical projects and equipment" },
+  Mechanical: { icon: "⚙️", color: "#F25C05", desc: "Mechanical projects and equipment" },
   Pipeline: { icon: "🔧", color: "#3B82F6", desc: "Pipeline construction and maintenance" },
   Structural: { icon: "🏗️", color: "#22C55E", desc: "Structural steel and civil work" },
 };
@@ -804,7 +804,7 @@ function Spinner() {
           animation: "spin 0.7s linear infinite",
         }}
       />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} select,select option{background:#1a1a1a !important;color:#F97316 !important;} select:focus{outline:none;} select *{color:#F97316 !important;background:#1a1a1a !important;}`}</style>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} select,select option{background:#1a1a1a !important;color:#F25C05 !important;} select:focus{outline:none;} select *{color:#F25C05 !important;background:#1a1a1a !important;}`}</style>
     </div>
   );
 }
@@ -868,7 +868,7 @@ function Lightbox({ src, onClose }) {
           position: "absolute",
           top: 16,
           right: 16,
-          background: "#6B7280",
+          background: "#C7C7CD",
           border: "none",
           color: "#fff",
           borderRadius: "50%",
@@ -1462,15 +1462,15 @@ function LoginScreen({ onLogin }) {
         <div style={{ marginBottom: 14 }}>
           <label style={lbl}>Select Your Name</label>
           <select value={name} onChange={(e) => handleNameChange(e.target.value)} style={{ ...inp, color: T.orange }}>
-            <option value="" style={{ background: "#6B7280", color: T.orange }}>
+            <option value="" style={{ background: "#C7C7CD", color: T.orange }}>
               — Select your name —
             </option>
             {NAMES.map((n) => (
-              <option key={n} style={{ background: "#6B7280", color: T.orange }}>
+              <option key={n} style={{ background: "#C7C7CD", color: T.orange }}>
                 {n}
               </option>
             ))}
-            <option value="Admin" style={{ background: "#6B7280", color: T.orange }}>
+            <option value="Admin" style={{ background: "#C7C7CD", color: T.orange }}>
               Admin
             </option>
           </select>
@@ -2426,7 +2426,7 @@ function VisitorAddRow({ onAdd }) {
       </button>
     );
   return (
-    <div style={{ background: "#FFFFFF", borderRadius: 10, padding: 12, marginTop: 8 }}>
+    <div style={{ background: "#101014", borderRadius: 10, padding: 12, marginTop: 8 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
         <div>
           <label style={lbl}>Name *</label>
@@ -2523,7 +2523,7 @@ function DelayAddRow({ onAdd }) {
       </button>
     );
   return (
-    <div style={{ background: "#FFFFFF", borderRadius: 10, padding: 12, marginTop: 8, border: `1px solid ${T.red}30` }}>
+    <div style={{ background: "#101014", borderRadius: 10, padding: 12, marginTop: 8, border: `1px solid ${T.red}30` }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
         <div>
           <label style={lbl}>Cause *</label>
@@ -2844,7 +2844,7 @@ function DailyReportForm({ user, project, onSave, onCancel, isOnline }) {
                     height: 26,
                     borderRadius: "50%",
                     background: i + 1 < step ? T.green : i + 1 === step ? divMeta.color : T.border,
-                    color: i + 1 <= step ? "#16181D" : T.muted,
+                    color: i + 1 <= step ? "#0A0A0C" : T.muted,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -3599,7 +3599,7 @@ function SignaturePad({ onSave, onCancel, reportName }) {
     ctx.lineWidth = 3;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.strokeStyle = "#F97316";
+    ctx.strokeStyle = "#F25C05";
     ctx.lineTo(pos.x, pos.y);
     ctx.stroke();
     ctx.beginPath();
@@ -3742,7 +3742,7 @@ function SignaturePad({ onSave, onCancel, reportName }) {
                   pointerEvents: "none",
                 }}
               >
-                <div style={{ textAlign: "center", color: "#6B7280" }}>
+                <div style={{ textAlign: "center", color: "#C7C7CD" }}>
                   <div style={{ fontSize: 36, marginBottom: 6 }}>✍️</div>
                   <div style={{ fontSize: 14, fontWeight: 600, color: T.text }}>Sign here</div>
                   <div style={{ fontSize: 11, marginTop: 2 }}>Use finger or stylus</div>
@@ -6122,7 +6122,7 @@ function ScheduleTab({ projectId, user, onErr }) {
                     borderRadius: "50%",
                     border: `2px solid ${statusColor[m.status] || T.border}`,
                     background: m.status === "completed" ? T.green : T.surface,
-                    color: m.status === "completed" ? "#16181D" : statusColor[m.status] || T.muted,
+                    color: m.status === "completed" ? "#0A0A0C" : statusColor[m.status] || T.muted,
                     cursor: "pointer",
                     display: "flex",
                     alignItems: "center",
@@ -6362,7 +6362,7 @@ function PhotosTab({ projectId, photos, onRefresh, onErr }) {
                   height: 24,
                   borderRadius: "50%",
                   background: c,
-                  border: annotColor === c ? "3px solid #F97316" : "2px solid #555",
+                  border: annotColor === c ? "3px solid #F25C05" : "2px solid #555",
                   cursor: "pointer",
                 }}
               />
@@ -7962,7 +7962,7 @@ function CrewDirectoryScreen({ onBack, user }) {
 
 /* ── PROJECT DETAIL (ORCHESTRATOR) ─────────────────────────── */
 
-function UserManagementScreen({ onBack, currentUser }) {
+function UserManagementScreen({ onBack, user: currentUser }) {
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -8942,7 +8942,7 @@ function ProjectDetail({ project: initP, user, onBack, onProjectUpdated }) {
                 fontSize: 11,
                 fontWeight: tab === t.id ? 800 : 500,
                 cursor: "pointer",
-                color: tab === t.id ? "#16181D" : T.sub,
+                color: tab === t.id ? "#0A0A0C" : T.sub,
                 fontFamily: "inherit",
                 whiteSpace: "nowrap",
               }}
@@ -9826,7 +9826,7 @@ function RFIsTab({ project, user, onErr }) {
 .action-bar{background:#1f3864;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px;position:sticky;top:0;z-index:100;}
 .action-bar h2{font-size:12pt;font-weight:700;margin:0;}.btns{display:flex;gap:10px;}
 .btn{padding:8px 16px;border-radius:8px;border:none;font-size:11pt;font-weight:700;cursor:pointer;font-family:inherit;}
-.btn-print{background:#F97316;color:#000;}.btn-clear{background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.4);}
+.btn-print{background:#F25C05;color:#000;}.btn-clear{background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.4);}
 @media print{.action-bar{display:none!important;}.fillable{border:none!important;background:transparent!important;}}
 .doc{max-width:750px;margin:0 auto;padding:24px 20px 40px;}
 .lh{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:14px;border-bottom:3px solid #1f3864;}
@@ -10402,14 +10402,14 @@ function PublicRFIForm({ rfiId }) {
     setSaving(false);
   }
   const s = {
-    bg: "#16181D",
-    card: "#FFFFFF",
+    bg: "#0A0A0C",
+    card: "#18181C",
     inp: {
       width: "100%",
-      background: "#FFFFFF",
+      background: "#101014",
       border: "1px solid #27272A",
       borderRadius: 10,
-      color: "#16181D",
+      color: "#fff",
       fontSize: 14,
       padding: "12px 14px",
       fontFamily: "inherit",
@@ -10419,7 +10419,7 @@ function PublicRFIForm({ rfiId }) {
       display: "block",
       fontSize: 11,
       fontWeight: 700,
-      color: "#6B7280",
+      color: "#93939C",
       textTransform: "uppercase",
       letterSpacing: "1px",
       marginBottom: 6,
@@ -10436,7 +10436,7 @@ function PublicRFIForm({ rfiId }) {
           justifyContent: "center",
         }}
       >
-        <div style={{ color: "#16181D" }}>Loading...</div>
+        <div style={{ color: "#fff" }}>Loading...</div>
       </div>
     );
   if (err && !rfi)
@@ -10453,7 +10453,7 @@ function PublicRFIForm({ rfiId }) {
       >
         <div style={{ background: s.card, borderRadius: 16, padding: 32, maxWidth: 400, textAlign: "center" }}>
           <div style={{ fontSize: 40 }}>⚠️</div>
-          <div style={{ color: "#16181D", fontWeight: 700, margin: "8px 0" }}>{err}</div>
+          <div style={{ color: "#fff", fontWeight: 700, margin: "8px 0" }}>{err}</div>
         </div>
       </div>
     );
@@ -10473,7 +10473,7 @@ function PublicRFIForm({ rfiId }) {
         >
           <div style={{ fontSize: 48 }}>✅</div>
           <div style={{ fontSize: 20, fontWeight: 800, color: "#22C55E", margin: "8px 0" }}>Response Submitted!</div>
-          <div style={{ color: "#6B7280" }}>RFI #{rfi?.rfi_number} response has been saved.</div>
+          <div style={{ color: "#93939C" }}>RFI #{rfi?.rfi_number} response has been saved.</div>
         </div>
       </div>
     );
@@ -10483,7 +10483,7 @@ function PublicRFIForm({ rfiId }) {
         background: s.bg,
         minHeight: "100vh",
         fontFamily: "system-ui",
-        color: "#16181D",
+        color: "#fff",
         padding: "16px 16px 60px",
       }}
     >
@@ -10500,7 +10500,7 @@ function PublicRFIForm({ rfiId }) {
           }}
         >
           <div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: "#F97316" }}>AIME</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: "#F25C05" }}>AIME</div>
             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>
               Atlantic Industrial Mechanical & Environmental Inc.
             </div>
@@ -10592,7 +10592,7 @@ function PublicRFIForm({ rfiId }) {
               />
             </div>
             {!sigData && (
-              <div style={{ textAlign: "center", fontSize: 11, color: "#6B7280", marginTop: 4 }}>
+              <div style={{ textAlign: "center", fontSize: 11, color: "#8A8A93", marginTop: 4 }}>
                 Draw your signature above
               </div>
             )}
@@ -10607,8 +10607,8 @@ function PublicRFIForm({ rfiId }) {
             disabled={saving || !resp.trim() || !respBy.trim() || !sigData}
             style={{
               width: "100%",
-              background: saving || !resp.trim() || !respBy.trim() || !sigData ? "#D8D4CC" : "#22C55E",
-              color: saving || !resp.trim() || !respBy.trim() || !sigData ? "#6B7280" : "#000",
+              background: saving || !resp.trim() || !respBy.trim() || !sigData ? "#2A2A30" : "#22C55E",
+              color: saving || !resp.trim() || !respBy.trim() || !sigData ? "#8A8A93" : "#000",
               border: "none",
               borderRadius: 12,
               padding: 14,
@@ -10726,14 +10726,14 @@ function PublicCOForm({ coId }) {
     setSaving(false);
   }
   const s = {
-    bg: "#16181D",
-    card: "#FFFFFF",
+    bg: "#0A0A0C",
+    card: "#18181C",
     inp: {
       width: "100%",
-      background: "#FFFFFF",
+      background: "#101014",
       border: "1px solid #27272A",
       borderRadius: 10,
-      color: "#16181D",
+      color: "#fff",
       fontSize: 14,
       padding: "12px 14px",
       fontFamily: "inherit",
@@ -10743,7 +10743,7 @@ function PublicCOForm({ coId }) {
       display: "block",
       fontSize: 11,
       fontWeight: 700,
-      color: "#6B7280",
+      color: "#93939C",
       textTransform: "uppercase",
       letterSpacing: "1px",
       marginBottom: 6,
@@ -10761,7 +10761,7 @@ function PublicCOForm({ coId }) {
           justifyContent: "center",
         }}
       >
-        <div style={{ color: "#16181D" }}>Loading...</div>
+        <div style={{ color: "#fff" }}>Loading...</div>
       </div>
     );
   if (err && !co)
@@ -10778,7 +10778,7 @@ function PublicCOForm({ coId }) {
       >
         <div style={{ background: s.card, borderRadius: 16, padding: 32, maxWidth: 400, textAlign: "center" }}>
           <div style={{ fontSize: 40 }}>⚠️</div>
-          <div style={{ color: "#16181D", fontWeight: 700, margin: "8px 0" }}>{err}</div>
+          <div style={{ color: "#fff", fontWeight: 700, margin: "8px 0" }}>{err}</div>
         </div>
       </div>
     );
@@ -10798,7 +10798,7 @@ function PublicCOForm({ coId }) {
         >
           <div style={{ fontSize: 48 }}>✅</div>
           <div style={{ fontSize: 20, fontWeight: 800, color: "#22C55E", margin: "8px 0" }}>Change Order Signed!</div>
-          <div style={{ color: "#6B7280" }}>CO {co?.co_number} has been approved.</div>
+          <div style={{ color: "#93939C" }}>CO {co?.co_number} has been approved.</div>
         </div>
       </div>
     );
@@ -10808,7 +10808,7 @@ function PublicCOForm({ coId }) {
         background: s.bg,
         minHeight: "100vh",
         fontFamily: "system-ui",
-        color: "#16181D",
+        color: "#fff",
         padding: "16px 16px 60px",
       }}
     >
@@ -10825,7 +10825,7 @@ function PublicCOForm({ coId }) {
           }}
         >
           <div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: "#F97316" }}>AIME</div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: "#F25C05" }}>AIME</div>
             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>
               Atlantic Industrial Mechanical & Environmental Inc.
             </div>
@@ -10864,8 +10864,8 @@ function PublicCOForm({ coId }) {
             {err}
           </div>
         )}
-        <div style={{ background: s.card, borderRadius: 16, padding: 20, border: "2px solid #F9731640" }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: "#F97316", marginBottom: 14 }}>
+        <div style={{ background: s.card, borderRadius: 16, padding: 20, border: "2px solid #F25C0540" }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#F25C05", marginBottom: 14 }}>
             ✍️ Sign & Approve Change Order
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
@@ -10900,7 +10900,7 @@ function PublicCOForm({ coId }) {
                 </button>
               )}
             </div>
-            <div style={{ background: "#fff", borderRadius: 10, overflow: "hidden", border: "2px solid #F97316" }}>
+            <div style={{ background: "#fff", borderRadius: 10, overflow: "hidden", border: "2px solid #F25C05" }}>
               <canvas
                 ref={sigRef}
                 width={600}
@@ -10916,7 +10916,7 @@ function PublicCOForm({ coId }) {
               />
             </div>
             {!sigData && (
-              <div style={{ textAlign: "center", fontSize: 11, color: "#6B7280", marginTop: 4 }}>
+              <div style={{ textAlign: "center", fontSize: 11, color: "#8A8A93", marginTop: 4 }}>
                 Draw your signature above
               </div>
             )}
@@ -10931,8 +10931,8 @@ function PublicCOForm({ coId }) {
             disabled={saving || !signerName.trim() || !sigData}
             style={{
               width: "100%",
-              background: saving || !signerName.trim() || !sigData ? "#D8D4CC" : "#F97316",
-              color: saving || !signerName.trim() || !sigData ? "#6B7280" : "#000",
+              background: saving || !signerName.trim() || !sigData ? "#2A2A30" : "#F25C05",
+              color: saving || !signerName.trim() || !sigData ? "#8A8A93" : "#000",
               border: "none",
               borderRadius: 12,
               padding: 14,
@@ -11002,7 +11002,7 @@ function GateScreen({ onUnlock }) {
       />
       <div
         style={{
-          background: "#fff",
+          background: T.card,
           border: `1px solid ${T.border}`,
           borderRadius: 16,
           padding: 24,
@@ -11011,7 +11011,9 @@ function GateScreen({ onUnlock }) {
           margin: "14px 0",
         }}
       >
-        <img src="/aime-report-logo.png" alt="AIME" style={{ width: "100%", height: "auto", marginBottom: 14 }} />
+        <div style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
+          <img src="/aime-report-logo.png" alt="AIME" style={{ width: "100%", height: "auto", display: "block" }} />
+        </div>
         <div style={{ textAlign: "center", marginBottom: 16 }}>
           <span
             style={{
@@ -11021,8 +11023,8 @@ function GateScreen({ onUnlock }) {
               fontWeight: 700,
               letterSpacing: 2,
               textTransform: "uppercase",
-              color: "#B45309",
-              border: "2px solid #B45309",
+              color: T.yellow,
+              border: `2px solid ${T.yellow}`,
               borderRadius: 4,
               transform: "rotate(-1.5deg)",
             }}
@@ -11056,7 +11058,7 @@ function GateScreen({ onUnlock }) {
           style={{
             width: "100%",
             boxSizing: "border-box",
-            background: "#fff",
+            background: "#101014",
             border: `1px solid ${bad ? T.red : T.border}`,
             borderRadius: 12,
             color: T.text,
@@ -11346,7 +11348,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Archivo:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap');
-body{font-family:'Archivo','Helvetica Neue',system-ui,sans-serif;background:#EDEBE6;}
+body{font-family:'Archivo','Helvetica Neue',system-ui,sans-serif;background:#0A0A0C;}
 button,input,select,textarea{font-family:inherit;}
 h1,h2,h3{font-family:'Barlow Condensed','Arial Narrow',sans-serif;}`}</style>
       {unlocked ? <AppInner /> : <GateScreen onUnlock={() => setUnlocked(true)} />}
