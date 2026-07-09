@@ -2711,16 +2711,7 @@ function UserManagementScreen({onBack,currentUser}){
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      {/* ── Cert expiry alert banner ── */}
-      {certAlerts.length>0&&<div style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"10px 16px"}}>
-        <div style={{fontSize:12,fontWeight:800,color:T.red,marginBottom:6}}>⚠️ {certAlerts.filter(a=>a.daysLeft<=0).length>0?"EXPIRED":"EXPIRING SOON"} — {certAlerts.length} Cert{certAlerts.length!==1?"s":""}</div>
-        {certAlerts.slice(0,3).map((a,i)=>(
-          <div key={i} style={{fontSize:11,color:a.color,marginBottom:2}}>
-            {a.daysLeft<=0?"🔴 EXPIRED":a.daysLeft<=30?"🔴":a.daysLeft<=60?"🟡":"🟠"} {a.worker} · {a.cert} · {a.daysLeft<=0?"Expired: "+a.expiry:"Expires: "+a.expiry+" ("+a.daysLeft+"d)"}
-          </div>
-        ))}
-        {certAlerts.length>3&&<div style={{fontSize:10,color:T.muted,marginTop:2}}>+{certAlerts.length-3} more — view Crew Directory for full list</div>}
-      </div>}
+      
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2996,16 +2987,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      {/* ── Cert expiry alert banner ── */}
-      {certAlerts.length>0&&<div style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"10px 16px"}}>
-        <div style={{fontSize:12,fontWeight:800,color:T.red,marginBottom:6}}>⚠️ {certAlerts.filter(a=>a.daysLeft<=0).length>0?"EXPIRED":"EXPIRING SOON"} — {certAlerts.length} Cert{certAlerts.length!==1?"s":""}</div>
-        {certAlerts.slice(0,3).map((a,i)=>(
-          <div key={i} style={{fontSize:11,color:a.color,marginBottom:2}}>
-            {a.daysLeft<=0?"🔴 EXPIRED":a.daysLeft<=30?"🔴":a.daysLeft<=60?"🟡":"🟠"} {a.worker} · {a.cert} · {a.daysLeft<=0?"Expired: "+a.expiry:"Expires: "+a.expiry+" ("+a.daysLeft+"d)"}
-          </div>
-        ))}
-        {certAlerts.length>3&&<div style={{fontSize:10,color:T.muted,marginTop:2}}>+{certAlerts.length-3} more — view Crew Directory for full list</div>}
-      </div>}
+      
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← {project.division}</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
