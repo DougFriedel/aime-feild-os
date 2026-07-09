@@ -2797,6 +2797,108 @@ function NotificationsPanel(){
 
 
 /* ── TIME CARDS SCREEN ───────────────────────────────────────── */
+/* ── EMPLOYEE TIMECARD PDF ──────────────────────────────────── */
+function printEmployeeTimecards(cards,from,to,selectedJobs,projects,preOpenedWin=null){
+  const filtered=cards.filter(c=>{
+    if(!c.date||c.date<from||c.date>to)return false;
+    if(selectedJobs&&selectedJobs.length>0&&!selectedJobs.includes(c.project_id))return false;
+    return true;
+  });
+  const byEmployee={};
+  filtered.forEach(c=>{
+    const name=c.worker_name||"Unknown";
+    if(!byEmployee[name])byEmployee[name]={name,entries:[],reg:0,ot:0,travel:0,total:0};
+    const reg=parseFloat(c.reg_hours)||0;
+    const ot=parseFloat(c.ot_hours)||0;
+    const travel=parseFloat(c.travel_hours)||0;
+    const total=c.total_hours?parseFloat(c.total_hours):reg+ot+travel;
+    const proj=projects.find(p=>p.id===c.project_id);
+    byEmployee[name].entries.push({...c,reg,ot,travel,total,projName:proj?.name||"General",projAfe:proj?.afe||""});
+    byEmployee[name].reg+=reg;byEmployee[name].ot+=ot;byEmployee[name].travel+=travel;byEmployee[name].total+=total;
+  });
+  const employees=Object.values(byEmployee).sort((a,b)=>a.name.localeCompare(b.name));
+  const fmtD=d=>{if(!d)return"";const[y,m,dy]=d.split("-");return`${m}/${dy}/${y}`;};
+  const fmtN=n=>Number(n||0).toFixed(1);
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Employee Timecards ${fmtD(from)}–${fmtD(to)}</title>
+<style>
+@page{size:letter portrait;margin:0.5in;}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+body{font-size:10pt;color:#000;}
+.page-break{page-break-after:always;}
+.header{display:flex;justify-content:space-between;align-items:center;padding-bottom:10px;border-bottom:2px solid #1f3864;margin-bottom:14px;}
+.co{font-size:18pt;font-weight:900;color:#1f3864;}
+.emp-header{background:#1f3864;color:#fff;border-radius:8px;padding:12px 16px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
+.emp-name{font-size:16pt;font-weight:900;}
+.period{font-size:9pt;opacity:0.8;}
+table{width:100%;border-collapse:collapse;margin-bottom:14px;}
+th{background:#1f3864;color:#fff;padding:6px 8px;text-align:left;font-size:8pt;text-transform:uppercase;letter-spacing:0.5px;}
+td{padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:9pt;}
+tr:nth-child(even) td{background:#f9fafb;}
+.totals-row td{background:#EEF2FF;font-weight:800;border-top:2px solid #1f3864;}
+.summary{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:16px;}
+.sum-box{border-radius:8px;padding:10px;text-align:center;}
+.sum-box.reg{background:#dcfce7;border:1px solid #86efac;}
+.sum-box.ot{background:#fef9c3;border:1px solid #fde047;}
+.sum-box.travel{background:#dbeafe;border:1px solid #93c5fd;}
+.sum-box.total{background:#1f3864;border:1px solid #1f3864;}
+.sum-label{font-size:7pt;text-transform:uppercase;font-weight:700;color:#374151;}
+.sum-box.total .sum-label{color:rgba(255,255,255,0.7);}
+.sum-val{font-size:16pt;font-weight:900;color:#111;margin-top:2px;}
+.sum-box.total .sum-val{color:#fff;font-size:20pt;}
+.sigs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:20px;}
+.sig-box{border-top:1.5px solid #000;padding-top:8px;text-align:center;}
+.sig-label{font-size:8pt;color:#555;text-transform:uppercase;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+${employees.length===0
+  ? `<div style="text-align:center;padding:60px;color:#666"><h2>No entries found for ${fmtD(from)} – ${fmtD(to)}</h2></div>`
+  : employees.map((emp,idx)=>`
+<div>
+  <div class="header">
+    <div><div class="co">AIME</div><div style="font-size:8pt;color:#555">Atlantic Industrial Mechanical &amp; Environmental Inc.</div></div>
+    <div style="text-align:right"><div style="font-size:14pt;font-weight:800;color:#1f3864">EMPLOYEE TIMECARD</div><div style="font-size:8pt;color:#555">${fmtD(from)} — ${fmtD(to)}</div></div>
+  </div>
+  <div class="emp-header">
+    <div class="emp-name">${emp.name}</div>
+    <div class="period">Report Period: ${fmtD(from)} — ${fmtD(to)}</div>
+  </div>
+  <table>
+    <thead><tr><th>Date</th><th>Project</th><th>AFE/PO</th><th style="text-align:center">REG</th><th style="text-align:center">OT</th><th style="text-align:center">TRAVEL</th><th style="text-align:center">TOTAL</th><th>Notes</th></tr></thead>
+    <tbody>
+      ${emp.entries.sort((a,b)=>(a.date||"").localeCompare(b.date||"")).map(e=>`
+      <tr><td>${fmtD(e.date)}</td><td>${e.projName}</td><td style="text-align:center">${e.projAfe||"—"}</td>
+      <td style="text-align:center;color:#166534;font-weight:600">${fmtN(e.reg)}</td>
+      <td style="text-align:center;color:#b45309;font-weight:600">${fmtN(e.ot)}</td>
+      <td style="text-align:center;color:#1e40af;font-weight:600">${fmtN(e.travel)}</td>
+      <td style="text-align:center;font-weight:800">${fmtN(e.total)}</td>
+      <td style="font-size:8pt;color:#6b7280">${(e.notes||"").replace("Auto-filled from daily report","Auto")}</td></tr>`).join("")}
+    </tbody>
+    <tfoot><tr class="totals-row"><td colspan="3"><strong>TOTALS — ${emp.name.toUpperCase()}</strong></td>
+    <td style="text-align:center">${fmtN(emp.reg)}</td><td style="text-align:center">${fmtN(emp.ot)}</td>
+    <td style="text-align:center">${fmtN(emp.travel)}</td><td style="text-align:center"><strong>${fmtN(emp.total)}</strong></td><td></td></tr></tfoot>
+  </table>
+  <div class="summary">
+    <div class="sum-box reg"><div class="sum-label">Regular</div><div class="sum-val">${fmtN(emp.reg)}h</div></div>
+    <div class="sum-box ot"><div class="sum-label">Overtime</div><div class="sum-val">${fmtN(emp.ot)}h</div></div>
+    <div class="sum-box travel"><div class="sum-label">Travel</div><div class="sum-val">${fmtN(emp.travel)}h</div></div>
+    <div class="sum-box total"><div class="sum-label">TOTAL HOURS</div><div class="sum-val">${fmtN(emp.total)}</div></div>
+  </div>
+  <div class="sigs">
+    <div class="sig-box"><div style="height:50px"></div><div class="sig-label">Employee Signature</div></div>
+    <div class="sig-box"><div style="height:50px"></div><div class="sig-label">Supervisor Signature</div></div>
+    <div class="sig-box"><div style="height:50px"></div><div class="sig-label">Date Approved</div></div>
+  </div>
+</div>${idx<employees.length-1?'<div class="page-break"></div>':""}`).join("")}
+</body></html>`;
+  const win=preOpenedWin||window.open("","_blank","width=950,height=800");
+  if(!win){alert("Popup blocked — please allow popups for this site and try again.");return;}
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(()=>win.print(),600);
+}
+
+
 function TimeCardsScreen({user,projects,onBack}){
   const [cards,setCards]=useState([]);const [loading,setLoading]=useState(true);
   const [err,setErr]=useState('');
@@ -2811,8 +2913,19 @@ function TimeCardsScreen({user,projects,onBack}){
   async function remove(id){try{await API.timeCards.remove(id);setCards(c=>c.filter(x=>x.id!==id));}catch(e){setErr(e.message);}}
 
   function handlePrint(){
+    // Open window FIRST (must be synchronous in click handler to avoid popup blocker)
+    const win=window.open("","_blank","width=900,height=750");
+    if(!win){
+      alert("Popup blocked! Please allow popups for this site in your browser settings, then try again.");
+      return;
+    }
     setPrinting(true);
-    printEmployeeTimecards(cards,fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects);
+    try{
+      printEmployeeTimecards(cards,fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects,win);
+    }catch(e){
+      win.close();
+      alert("Error generating report: "+e.message);
+    }
     setTimeout(()=>setPrinting(false),1000);
   }
 
