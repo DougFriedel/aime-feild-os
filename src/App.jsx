@@ -379,7 +379,7 @@ function LoginScreen({onLogin}){
   return(
     <div style={{minHeight:"100vh",backgroundImage:`url(${LOGIN_BG})`,backgroundSize:"cover",backgroundPosition:"center",backgroundRepeat:"no-repeat",display:"flex",flexDirection:"column",justifyContent:"center",padding:24,fontFamily:"inherit",position:"relative"}}>
       {/* Dark overlay for readability */}
-      <div style={{position:"absolute",inset:0,background:"rgba(5,5,10,0.72)",backdropFilter:"blur(1px)",pointerEvents:"none"}}/>
+      <div style={{position:"absolute",inset:0,background:"rgba(5,5,10,0.55)",backdropFilter:"blur(1px)",pointerEvents:"none"}}/>
       <div style={{position:"relative",zIndex:1,textAlign:"center",marginBottom:40}}>
         <div style={{display:"inline-flex",alignItems:"center",gap:12,marginBottom:12}}>
           <div style={{textAlign:"center"}}>
@@ -390,10 +390,10 @@ function LoginScreen({onLogin}){
 
       </div>
 
-      <div style={{...cardS,maxWidth:400,margin:"0 auto",width:"100%"}}>
+      <div style={{...cardS,maxWidth:420,margin:"0 auto",width:"100%",background:"rgba(8,10,18,0.88)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",borderRadius:20,border:"1px solid rgba(96,165,250,0.25)",padding:"28px 24px",boxShadow:"0 8px 32px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.05)"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
         <div style={{marginBottom:14}}>
-          <label style={lbl}>Select Your Name</label>
+          <label style={{...lbl,color:"#C8D4F0"}}>Select Your Name</label>
           <select value={name} onChange={e=>handleNameChange(e.target.value)} style={{...inp,color:T.orange,background:T.card}}>
             <option value="" style={{background:T.card,color:T.muted}}>— Select your name —</option>
             {NAMES.map(n=><option key={n} style={{background:T.card,color:T.text}}>{n}</option>)}
@@ -433,7 +433,7 @@ function LoginScreen({onLogin}){
           </div>
         )}
 
-        <button onClick={handleLogin} style={{...primBtn,opacity:name&&!loading&&(pinIsSet?pin.length>0:false)?1:0.45}} disabled={!name||loading||!pinIsSet||pin.length===0}>
+        <button onClick={handleLogin} style={{...primBtn,opacity:name&&!loading&&(pinIsSet?pin.length>0:false)?1:0.3,boxShadow:name&&!loading&&(pinIsSet?pin.length>0:false)?"0 4px 20px rgba(96,165,250,0.4)":"none"}} disabled={!name||loading||!pinIsSet||pin.length===0}>
           {loading?"Loading…":"Sign In →"}
         </button>
       </div>
