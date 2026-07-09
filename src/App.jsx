@@ -856,11 +856,16 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
   // Weather auto-fill
   const [weatherFilling,setWeatherFilling]=useState(false);
   async function autoFillWeather(){
-    const location=project.location||project.client||project.name;
-    if(!location){alert("No location set on this project. Set a Location in the job info first.");return;}
+    const WMO={0:"Clear Sky",1:"Mainly Clear",2:"Partly Cloudy",3:"Overcast",45:"Foggy",48:"Icy Fog",51:"Light Drizzle",53:"Drizzle",55:"Heavy Drizzle",61:"Light Rain",63:"Rain",65:"Heavy Rain",71:"Light Snow",73:"Snow",75:"Heavy Snow",80:"Rain Showers",81:"Heavy Showers",82:"Violent Showers",95:"Thunderstorm",99:"Thunderstorm w/Hail"};
+    // Use project.location if set, otherwise prompt for city/zip
+    let location=project.location?.trim();
+    if(!location){
+      location=window.prompt("Enter city or zip code for weather lookup:\n(e.g. \"Houston, TX\" or \"77002\")\n\nTip: Add a Location to this job to skip this step next time.","");
+      if(!location||!location.trim())return;
+      location=location.trim();
+    }
     setWeatherFilling(true);
     try{
-      const WMO={0:"Clear Sky",1:"Mainly Clear",2:"Partly Cloudy",3:"Overcast",45:"Foggy",48:"Icy Fog",51:"Light Drizzle",53:"Drizzle",55:"Heavy Drizzle",61:"Light Rain",63:"Rain",65:"Heavy Rain",71:"Light Snow",73:"Snow",75:"Heavy Snow",80:"Rain Showers",81:"Heavy Showers",82:"Violent Showers",95:"Thunderstorm",99:"Thunderstorm w/Hail"};
       const w=await fetchWeather(location);
       const cur=w.current||{};
       const temp=Math.round(cur.temperature_2m||0);
@@ -869,7 +874,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
       const code=cur.weathercode||0;
       const condition=WMO[code]||`Code ${code}`;
       setR("site_conditions",`${condition} · ${temp}°F · Wind: ${wind}mph${precip>0?` · Precip: ${precip}in`:""}${w.locationName?` · ${w.locationName}`:""}`);
-    }catch(e){alert("Could not fetch weather: "+e.message);}
+    }catch(e){alert("Could not fetch weather: "+e.message+"\n\nTry a city name like \"Houston, TX\" or a zip code.");}
     setWeatherFilling(false);
   }
   const tot=reportTotals(rpt,project.division);
@@ -2786,6 +2791,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   const [reports,setReports]=useState([]);const [safety,setSafety]=useState([]);const [photos,setPhotos]=useState([]);const [weather,setWeather]=useState([]);
   const [tab,setTab]=useState("reports");const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
   const [screen,setScreen]=useState("detail");const [activeReport,setActiveReport]=useState(null);const [editProject,setEditProject]=useState(false);
+  const [projSaving,setProjSaving]=useState(false);
   const visibleTabs=PTABS.filter(t=>!t.perm||can(user,t.perm));
   const divMeta=DIV_META[project.division]||{color:T.orange,icon:"🏗️"};
 
@@ -2796,7 +2802,17 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   async function deleteReport(id){try{await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
   async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));await notify("report_flagged","Report Flagged",pm_notes,{project_id:project.id,report_id:id});await load(true);}catch(e){setErr(e.message);}}
-  async function updateProject(data){try{const[u]=await API.projects.update(project.id,data);setProject(u||{...project,...data});onProjectUpdated&&onProjectUpdated(u||{...project,...data});setEditProject(false);}catch(e){setErr(e.message);}}
+  async function updateProject(data){
+    setProjSaving(true);setErr("");
+    try{
+      const res=await API.projects.update(project.id,data);
+      const u=Array.isArray(res)?res[0]:res;
+      setProject(u||{...project,...data});
+      onProjectUpdated&&onProjectUpdated(u||{...project,...data});
+      setEditProject(false);
+    }catch(e){setErr(e.message||"Save failed — check console");}
+    setProjSaving(false);
+  }
   async function archiveProject(){if(!window.confirm(project.status==="active"?"Archive this job?":"Restore?"))return;await updateProject({status:project.status==="active"?"archived":"active"});onBack();}
   async function deleteProject(){if(!window.confirm("Permanently delete this job and ALL its data? This cannot be undone."))return;if(!window.confirm("Are you sure? All reports, photos, time cards and safety logs will be deleted."))return;try{await API.projects.remove(project.id);onBack();}catch(e){setErr(e.message);}}
 
@@ -2804,7 +2820,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
 
   if(screen==="newReport"&&can(user,"submit_report")) return <DailyReportForm user={user} project={project} onSave={saveReport} onCancel={()=>setScreen("detail")}/>;
   if(screen==="reportDetail"&&activeReport) return <ReportDetail report={activeReport} project={project} user={user} onBack={()=>setScreen("detail")} onDelete={deleteReport} onApprove={approveReport} onFlag={flagReport}/>;
-  if(editProject&&can(user,"edit_job")) return <ProjectForm initial={project} onSave={updateProject} onCancel={()=>setEditProject(false)} defaultDivision={project.division}/>;
+  if(editProject&&can(user,"edit_job")) return <ProjectForm initial={project} onSave={updateProject} onCancel={()=>{setEditProject(false);setErr("");}} defaultDivision={project.division} saving={projSaving} externalErr={err} onClearErr={()=>setErr("")}/>;
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
