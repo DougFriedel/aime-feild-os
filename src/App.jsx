@@ -8,10 +8,10 @@ class ErrorBoundary extends React.Component {
   render(){
     if(this.state.error){
       return(
-        <div style={{background:"#09090B",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif",padding:20}}>
-          <div style={{background:"#18181B",border:"1px solid #EF4444",borderRadius:16,padding:24,maxWidth:480,width:"100%"}}>
+        <div style={{background:"#0D0D0F",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif",padding:20}}>
+          <div style={{background:"#1A1A20",border:"1px solid #EF4444",borderRadius:16,padding:24,maxWidth:480,width:"100%"}}>
             <div style={{fontSize:24,marginBottom:8}}>⚠️</div>
-            <div style={{fontSize:16,fontWeight:700,color:"#EF4444",marginBottom:8}}>App Error</div>
+            <div style={{fontSize:16,fontWeight:700,color:"#FC8181",marginBottom:8}}>App Error</div>
             <div style={{fontSize:12,color:"#A1A1AA",marginBottom:16,wordBreak:"break-all",background:"#0C0C0F",padding:12,borderRadius:8,lineHeight:1.6}}>
               {this.state.error?.message||String(this.state.error)}
             </div>
@@ -19,7 +19,7 @@ class ErrorBoundary extends React.Component {
               Screenshot this message and send it to your developer.
             </div>
             <button onClick={()=>{this.setState({error:null});window.location.reload();}}
-              style={{background:"#F97316",color:"#000",border:"none",borderRadius:10,padding:"10px 20px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit",width:"100%"}}>
+              style={{background:"#60A5FA",color:"#000",border:"none",borderRadius:10,padding:"10px 20px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit",width:"100%"}}>
               🔄 Reload App
             </button>
           </div>
@@ -152,13 +152,13 @@ const API={
 };
 
 /* ── THEME ──────────────────────────────────────────────────── */
-const T={bg:"#09090B",surface:"#111113",card:"#18181B",border:"#27272A",orange:"#F97316",orangeLow:"#F9731614",orangeMid:"#F9731630",green:"#22C55E",greenLow:"#22C55E14",red:"#EF4444",redLow:"#EF444414",yellow:"#EAB308",yellowLow:"#EAB30814",blue:"#3B82F6",blueLow:"#3B82F614",purple:"#A855F7",teal:"#14B8A6",text:"#FFFFFF",sub:"#E4E4E7",muted:"#D4D4D8"};
+const T={bg:"#0D0D0F",surface:"#141418",card:"#1A1A20",border:"#26262E",orange:"#60A5FA",orangeLow:"#60A5FA14",orangeMid:"#60A5FA30",green:"#34D399",greenLow:"#34D39914",red:"#FC8181",redLow:"#FC818114",yellow:"#FBBF24",yellowLow:"#FBBF2414",blue:"#60A5FA",blueLow:"#60A5FA14",purple:"#A78BFA",purpleLow:"#A78BFA14",teal:"#2DD4BF",text:"#F0F4FF",sub:"#C8D4F0",muted:"#7080A0"};
 const inp={width:"100%",boxSizing:"border-box",background:"#0C0C0F",border:`1px solid ${T.border}`,borderRadius:12,color:T.text,fontSize:15,padding:"13px 14px",outline:"none",fontFamily:"inherit",appearance:"none",WebkitAppearance:"none"};
 const inpSel={...inp,color:T.orange};
 const lbl={display:"block",fontSize:11,fontWeight:700,color:"#D4D4D8",letterSpacing:"1px",textTransform:"uppercase",marginBottom:6};
 const cardS={background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:"16px"};
 const pill=(c)=>({display:"inline-flex",alignItems:"center",background:c+"20",color:c,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:700});
-const primBtn={width:"100%",background:T.orange,color:"#09090B",border:"none",borderRadius:14,padding:"16px",fontSize:16,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:8};
+const primBtn={width:"100%",background:T.orange,color:"#FFFFFF",border:"none",borderRadius:14,padding:"16px",fontSize:16,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:8};
 const ghostBtn={background:"transparent",border:`1px solid ${T.border}`,borderRadius:12,padding:"12px 16px",color:T.sub,fontSize:14,cursor:"pointer",fontFamily:"inherit",fontWeight:600};
 const dangerBtn={background:T.redLow,border:`1px solid ${T.red}30`,borderRadius:12,padding:"12px 16px",color:T.red,fontSize:14,cursor:"pointer",fontFamily:"inherit",fontWeight:600,width:"100%",textAlign:"center"};
 
@@ -250,7 +250,7 @@ function getAllPositions(){
 
 const WMO={0:["Clear Sky","☀️"],1:["Mainly Clear","🌤️"],2:["Partly Cloudy","⛅"],3:["Overcast","☁️"],45:["Foggy","🌫️"],48:["Icy Fog","🌫️"],51:["Light Drizzle","🌦️"],53:["Drizzle","🌦️"],55:["Heavy Drizzle","🌦️"],61:["Light Rain","🌧️"],63:["Rain","🌧️"],65:["Heavy Rain","🌧️"],71:["Light Snow","🌨️"],73:["Snow","🌨️"],75:["Heavy Snow","❄️"],80:["Light Showers","🌦️"],81:["Showers","🌦️"],82:["Violent Showers","⛈️"],95:["Thunderstorm","⛈️"],96:["Thunderstorm + Hail","⛈️"],99:["Severe Thunderstorm","⛈️"]};
 const DIVISIONS=["Mechanical","Pipeline","Structural"];
-const DIV_META={Mechanical:{icon:"⚙️",color:"#F97316",desc:"Mechanical projects and equipment"},Pipeline:{icon:"🔧",color:"#3B82F6",desc:"Pipeline construction and maintenance"},Structural:{icon:"🏗️",color:"#22C55E",desc:"Structural steel and civil work"}};
+const DIV_META={Mechanical:{icon:"⚙️",color:"#60A5FA",desc:"Mechanical projects and equipment"},Pipeline:{icon:"🔧",color:"#3B82F6",desc:"Pipeline construction and maintenance"},Structural:{icon:"🏗️",color:"#34D399",desc:"Structural steel and civil work"}};
 const ROLES=["crew","foreman","pm","admin"];
 const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Submit daily reports and time cards"},foreman:{label:"Foreman",color:T.yellow,desc:"Reports, time, safety, equipment, docs, schedule"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, manage jobs, PM dashboard"},estimator:{label:"Estimator",color:T.purple,desc:"Estimating platform access only"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
 
@@ -290,7 +290,7 @@ async function fetchWeather(location){const gR=await fetch(`https://geocoding-ap
 async function notify(type,title,body,extra={}){try{await API.notifications.create({type,title,body,...extra});}catch{}}
 
 /* ── SHARED UI ──────────────────────────────────────────────── */
-function Spinner(){return(<div style={{display:"flex",justifyContent:"center",padding:"48px 0"}}><div style={{width:32,height:32,border:`3px solid ${T.border}`,borderTopColor:T.orange,borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}} select,select option{background:#1a1a1a !important;color:#F97316 !important;} select:focus{outline:none;} select *{color:#F97316 !important;background:#1a1a1a !important;}`}</style></div>);}
+function Spinner(){return(<div style={{display:"flex",justifyContent:"center",padding:"48px 0"}}><div style={{width:32,height:32,border:`3px solid ${T.border}`,borderTopColor:T.orange,borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}} select,select option{background:#1a1a1a !important;color:#60A5FA !important;} select:focus{outline:none;} select *{color:#60A5FA !important;background:#1a1a1a !important;}`}</style></div>);}
 function ErrBanner({msg,onDismiss}){if(!msg)return null;return(<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:13,color:T.red}}>⚠️ {msg}</span><button onClick={onDismiss} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:18,padding:"0 0 0 10px"}}>×</button></div>);}
 function Lightbox({src,onClose}){if(!src)return null;return(<div onClick={onClose} style={{position:"fixed",inset:0,zIndex:999,background:"rgba(0,0,0,0.95)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><img src={src} alt="" style={{maxWidth:"100%",maxHeight:"90vh",borderRadius:12}} onClick={e=>e.stopPropagation()}/><button onClick={onClose} style={{position:"absolute",top:16,right:16,background:"#D4D4D8",border:"none",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:18,cursor:"pointer"}}>×</button></div>);}
 function DashedAdd({label,onClick,color}){const c=color||T.muted;return(<button onClick={onClick} style={{width:"100%",border:`2px dashed ${c}50`,background:c+"08",color:c,borderRadius:14,padding:"14px",fontSize:15,cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>{label}</button>);}
@@ -451,7 +451,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px"}}>
         {/* Offline / pending banner */}
         {!isOnline&&<div style={{background:"#7c2d12",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:16}}>📡</span><div><div style={{fontSize:13,fontWeight:700,color:"#fed7aa"}}>No Connection</div><div style={{fontSize:11,color:"#fdba74"}}>{pendingCount>0?`${pendingCount} report${pendingCount!==1?'s':''} will sync when back online`:"Reports will save locally until reconnected"}</div></div></div>}
-        {isOnline&&pendingCount>0&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:16}}>⏳</span><div style={{fontSize:13,fontWeight:700,color:T.green}}>{pendingCount} pending — tap to sync</div></div><button onClick={onSync} style={{background:T.green,color:"#09090B",border:"none",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Sync Now</button></div>}
+        {isOnline&&pendingCount>0&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:16}}>⏳</span><div style={{fontSize:13,fontWeight:700,color:T.green}}>{pendingCount} pending — tap to sync</div></div><button onClick={onSync} style={{background:T.green,color:"#0D0D0F",border:"none",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Sync Now</button></div>}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{display:"flex",flexDirection:"column",gap:2}}>
@@ -550,7 +550,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack}){
             <div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{division}</div>
             <div style={{fontSize:11,color:T.muted}}>{active.length} active job{active.length!==1?"s":""}</div>
           </div>
-          {canCreate&&<button onClick={onNew} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Job</button>}
+          {canCreate&&<button onClick={onNew} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Job</button>}
         </div>
         {/* Search */}
         <div style={{position:"relative",marginBottom:10}}>
@@ -566,7 +566,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack}){
 
       <div style={{padding:"12px 16px 80px"}}>
         {loading&&<Spinner/>}
-      {canCreate&&<div style={{position:"fixed",bottom:20,right:"max(16px,calc(50vw - 224px))",zIndex:100}}><button onClick={onNew} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:50,padding:"14px 22px",fontSize:15,fontWeight:900,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 24px rgba(249,115,22,0.5)",display:"flex",alignItems:"center",gap:8}}>＋ New Job</button></div>}
+      {canCreate&&<div style={{position:"fixed",bottom:20,right:"max(16px,calc(50vw - 224px))",zIndex:100}}><button onClick={onNew} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:50,padding:"14px 22px",fontSize:15,fontWeight:900,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 24px rgba(249,115,22,0.5)",display:"flex",alignItems:"center",gap:8}}>＋ New Job</button></div>}
         {!loading&&filtered.length===0&&(
           <div style={{textAlign:"center",padding:"60px 20px",color:T.muted}}>
             <div style={{fontSize:48,marginBottom:12}}>{meta.icon}</div>
@@ -947,7 +947,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
           <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:16,fontWeight:800}}>New Daily Report</div>{draftSaved&&<span style={{fontSize:10,color:T.green,fontWeight:600}}>✓ Draft saved</span>}</div>
           <button onClick={onCancel} style={{background:"none",border:"none",color:T.sub,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Cancel</button>
         </div>
-        <div style={{display:"flex",alignItems:"center"}}>{RSTEPS.map((s,i)=>(<div key={i} style={{display:"flex",alignItems:"center",flex:i<RSTEPS.length-1?1:undefined}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><div style={{width:26,height:26,borderRadius:"50%",background:i+1<step?T.green:i+1===step?divMeta.color:T.border,color:i+1<=step?"#09090B":T.muted,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{i+1<step?"✓":i+1}</div><div style={{fontSize:8,color:i+1===step?divMeta.color:T.muted,fontWeight:i+1===step?700:400,whiteSpace:"nowrap"}}>{s}</div></div>{i<RSTEPS.length-1&&<div style={{flex:1,height:2,background:i+1<step?T.green:T.border,margin:"0 3px",marginBottom:14}}/>}</div>))}</div>
+        <div style={{display:"flex",alignItems:"center"}}>{RSTEPS.map((s,i)=>(<div key={i} style={{display:"flex",alignItems:"center",flex:i<RSTEPS.length-1?1:undefined}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><div style={{width:26,height:26,borderRadius:"50%",background:i+1<step?T.green:i+1===step?divMeta.color:T.border,color:i+1<=step?"#0D0D0F":T.muted,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{i+1<step?"✓":i+1}</div><div style={{fontSize:8,color:i+1===step?divMeta.color:T.muted,fontWeight:i+1===step?700:400,whiteSpace:"nowrap"}}>{s}</div></div>{i<RSTEPS.length-1&&<div style={{flex:1,height:2,background:i+1<step?T.green:T.border,margin:"0 3px",marginBottom:14}}/>}</div>))}</div>
       </div>
       <div style={{padding:"14px 16px 100px"}}>
         {step===1&&(<div>
@@ -1351,7 +1351,7 @@ function SignaturePad({onSave,onCancel,reportName}){
     ctx.lineWidth=3;
     ctx.lineCap="round";
     ctx.lineJoin="round";
-    ctx.strokeStyle="#F97316";
+    ctx.strokeStyle="#60A5FA";
     ctx.lineTo(pos.x,pos.y);
     ctx.stroke();
     ctx.beginPath();
@@ -1458,7 +1458,7 @@ function SignaturePad({onSave,onCancel,reportName}){
             borderRadius:14,
             opacity:canSign?1:0.45,
             background:canSign?T.green:T.muted,
-            color:"#09090B",
+            color:"#0D0D0F",
           }}
         >
           {saving?"Saving…":"✅ Confirm & Sign Report"}
@@ -1781,7 +1781,7 @@ function TimeCardsTab({projectId,user,onErr}){
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><div><label style={lbl}>Clock In</label><input type="time" value={f.clock_in} onChange={e=>setF(x=>({...x,clock_in:e.target.value}))} style={inp}/></div><div><label style={lbl}>Clock Out</label><input type="time" value={f.clock_out} onChange={e=>setF(x=>({...x,clock_out:e.target.value}))} style={inp}/></div></div>
       {f.clock_in&&f.clock_out&&(()=>{const h=calcHours(f.clock_in,f.clock_out);const ot=Math.max(0,h-8);return h>0&&(<div style={{background:T.greenLow,borderRadius:10,padding:"10px 12px",marginBottom:10,display:"flex",gap:16}}><div><div style={{fontSize:18,fontWeight:900,color:T.green}}>{h.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Total</div></div><div><div style={{fontSize:18,fontWeight:900,color:ot>0?T.yellow:T.muted}}>{Math.min(h,8).toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Regular</div></div>{ot>0&&<div><div style={{fontSize:18,fontWeight:900,color:T.yellow}}>{ot.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>OT</div></div>}</div>);})()}
       <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input type="text" placeholder="Optional…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
-      <button onClick={save} style={{...primBtn,background:T.green,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Time Card"}</button>
+      <button onClick={save} style={{...primBtn,background:T.green,color:"#0D0D0F",borderRadius:12}}>{saving?"Saving…":"Save Time Card"}</button>
     </div>}
     {loading&&<Spinner/>}
     {!loading&&<>{workerRows.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>This Week</div>{workerRows.map(w=>(<div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:14,fontWeight:600,color:T.text}}>{w.name}</span><div style={{display:"flex",gap:12,alignItems:"center"}}><span style={{fontSize:12,color:T.muted}}>{w.reg.toFixed(1)}reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)}OT</span>}<span style={{fontSize:15,fontWeight:800,color:T.green}}>{w.total.toFixed(1)}h</span></div></div>))}</div>}
@@ -1813,7 +1813,7 @@ function CrewEquipTab({projectId,user,onErr}){
       <div style={{marginBottom:10}}><label style={lbl}>Operator</label><select value={f.operator_name} onChange={e=>setF(x=>({...x,operator_name:e.target.value}))} style={inpSel}><option value="">— Optional —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
       <div style={{marginBottom:10}}><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))} style={inp}/></div>
       <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input type="text" placeholder="Condition, issues…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
-      <button onClick={save} style={{...primBtn,background:T.yellow,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Entry"}</button>
+      <button onClick={save} style={{...primBtn,background:T.yellow,color:"#0D0D0F",borderRadius:12}}>{saving?"Saving…":"Save Entry"}</button>
     </div>}
     {loading&&<Spinner/>}
     {!loading&&<>{todayEquip.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>On Site Today</div>}{todayEquip.map(e=><div key={e.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.yellow}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700,color:T.text}}>{e.equipment_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(e.date)} · Qty {e.quantity||1}{e.operator_name?" · "+e.operator_name:""}{e.hours_used?" · "+e.hours_used+"h":""}</div></div><button onClick={()=>remove(e.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0,marginLeft:12}}>🗑</button></div>)}
@@ -1868,7 +1868,7 @@ function SafetyTab({projectId,safety,user,onRefresh,onErr}){
       <div style={{marginBottom:10}}><label style={lbl}>{type==="toolbox"?"Topic":type==="jsa"?"Job / Task Name":"Description"}</label><input type="text" placeholder="Describe…" value={f.topic} onChange={e=>setF(x=>({...x,topic:e.target.value}))} style={inp}/></div>
       <div style={{marginBottom:10}}><label style={lbl}>Notes / Corrective Action</label><textarea rows={3} placeholder="Additional details…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={{...inp,resize:"vertical"}}/></div>
       {(type==="incident"||type==="nearmiss")&&<div style={{marginBottom:10}}><label style={lbl}>Severity</label><select value={f.severity} onChange={e=>setF(x=>({...x,severity:e.target.value}))} style={inpSel}><option value="low">Low – First Aid</option><option value="medium">Medium – Recordable</option><option value="high">High – Lost Time</option></select></div>}
-      <button onClick={save} style={{...primBtn,background:T.yellow,color:"#09090B",borderRadius:12}}>{saving?"Saving…":"Save Entry"}</button>
+      <button onClick={save} style={{...primBtn,background:T.yellow,color:"#0D0D0F",borderRadius:12}}>{saving?"Saving…":"Save Entry"}</button>
     </div>}
     {safety.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>⛑️</div><div>No safety entries yet.</div></div>}
     {[...safety].map(s=>(<div key={s.id} style={{...cardS,marginBottom:9,borderLeft:`3px solid ${TC[s.type]||T.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1}}><span style={{...pill(TC[s.type]||T.muted),marginBottom:6,display:"inline-flex"}}>{TL[s.type]||s.type}</span><div style={{fontSize:14,fontWeight:700,marginTop:4}}>{s.topic}</div>{s.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4,lineHeight:1.5}}>{s.notes}</div>}<div style={{fontSize:11,color:T.muted,marginTop:6}}>{fmtDate(s.date)} · {s.created_by}</div></div><div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>{(s.type==="incident"||s.type==="nearmiss")&&<span style={pill(s.severity==="high"?T.red:s.severity==="medium"?T.yellow:T.green)}>{(s.severity||"low").toUpperCase()}</span>}<button onClick={()=>del(s.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div></div>))}
@@ -2112,7 +2112,7 @@ function ScheduleTab({projectId,user,onErr}){
     {loading&&<Spinner/>}
     {!loading&&total>0&&<div style={{...cardS,marginBottom:14}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><div style={{fontSize:13,fontWeight:700}}>Progress</div><div style={{fontSize:13,fontWeight:700,color:T.green}}>{completed}/{total} complete</div></div><div style={{height:8,background:T.border,borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",background:`linear-gradient(90deg,${T.orange},${T.green})`,borderRadius:4,width:`${(completed/total)*100}%`,transition:"width 0.4s"}}/></div></div>}
     {!loading&&milestones.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>📅</div><div>No milestones yet.</div></div>}
-    {!loading&&milestones.map(m=>{const du=daysUntil(m.target_date);const overdue=du!==null&&du<0&&m.status!=="completed";const dueSoon=du!==null&&du>=0&&du<=7&&m.status!=="completed";return(<div key={m.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${statusColor[m.status]||T.border}`,opacity:m.status==="completed"?0.7:1}}><div style={{display:"flex",alignItems:"flex-start",gap:12}}><button onClick={()=>toggleStatus(m)} style={{width:32,height:32,borderRadius:"50%",border:`2px solid ${statusColor[m.status]||T.border}`,background:m.status==="completed"?T.green:T.surface,color:m.status==="completed"?"#09090B":statusColor[m.status]||T.muted,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,flexShrink:0,marginTop:2}}>{statusIcon[m.status]||"○"}</button><div style={{flex:1,minWidth:0}}><div style={{fontSize:15,fontWeight:700,textDecoration:m.status==="completed"?"line-through":"none",color:m.status==="completed"?T.muted:T.text}}>{m.title}</div>{m.description&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{m.description}</div>}<div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap"}}><span style={pill(statusColor[m.status]||T.muted)}>{m.status.replace("_"," ").toUpperCase()}</span>{m.target_date&&<span style={pill(overdue?T.red:dueSoon?T.yellow:T.muted)}>{overdue?`${Math.abs(du)}d overdue`:dueSoon?`Due in ${du}d`:`Target: ${fmtDate(m.target_date)}`}</span>}{m.completed_date&&<span style={pill(T.green)}>Done: {fmtDate(m.completed_date)}</span>}</div></div><button onClick={()=>del(m.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0,flexShrink:0}}>🗑</button></div></div>);})}
+    {!loading&&milestones.map(m=>{const du=daysUntil(m.target_date);const overdue=du!==null&&du<0&&m.status!=="completed";const dueSoon=du!==null&&du>=0&&du<=7&&m.status!=="completed";return(<div key={m.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${statusColor[m.status]||T.border}`,opacity:m.status==="completed"?0.7:1}}><div style={{display:"flex",alignItems:"flex-start",gap:12}}><button onClick={()=>toggleStatus(m)} style={{width:32,height:32,borderRadius:"50%",border:`2px solid ${statusColor[m.status]||T.border}`,background:m.status==="completed"?T.green:T.surface,color:m.status==="completed"?"#0D0D0F":statusColor[m.status]||T.muted,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:800,flexShrink:0,marginTop:2}}>{statusIcon[m.status]||"○"}</button><div style={{flex:1,minWidth:0}}><div style={{fontSize:15,fontWeight:700,textDecoration:m.status==="completed"?"line-through":"none",color:m.status==="completed"?T.muted:T.text}}>{m.title}</div>{m.description&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{m.description}</div>}<div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap"}}><span style={pill(statusColor[m.status]||T.muted)}>{m.status.replace("_"," ").toUpperCase()}</span>{m.target_date&&<span style={pill(overdue?T.red:dueSoon?T.yellow:T.muted)}>{overdue?`${Math.abs(du)}d overdue`:dueSoon?`Due in ${du}d`:`Target: ${fmtDate(m.target_date)}`}</span>}{m.completed_date&&<span style={pill(T.green)}>Done: {fmtDate(m.completed_date)}</span>}</div></div><button onClick={()=>del(m.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0,flexShrink:0}}>🗑</button></div></div>);})}
   </div>);
 }
 
@@ -2232,7 +2232,7 @@ function PhotosTab({projectId,photos,onRefresh,onErr}){
         <div style={{display:"flex",gap:8}}>
           {["#FF0000","#FFFF00","#00FF00","#FFFFFF","#000000"].map(c=>(
             <button key={c} onClick={()=>setAnnotColor(c)}
-              style={{width:24,height:24,borderRadius:"50%",background:c,border:annotColor===c?"3px solid #F97316":"2px solid #555",cursor:"pointer"}}/>
+              style={{width:24,height:24,borderRadius:"50%",background:c,border:annotColor===c?"3px solid #60A5FA":"2px solid #555",cursor:"pointer"}}/>
           ))}
         </div>
       </div>
@@ -2557,7 +2557,7 @@ function CrewDirectoryScreen({onBack,user}){
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👥 Crew Directory</div><button onClick={()=>{setF({...blank});setMode("new");}} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👥 Crew Directory</div><button onClick={()=>{setF({...blank});setMode("new");}} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button></div>
       </div>
       <div style={{padding:"14px 16px 80px"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
@@ -2644,7 +2644,7 @@ function UserManagementScreen({onBack,currentUser}){
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👤 User Management</div><div style={{fontSize:12,color:T.muted}}>Set permission levels for your crew</div></div>
-          <button onClick={()=>{setF({...blank});setMode("edit");}} style={{background:T.orange,color:"#09090B",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>
+          <button onClick={()=>{setF({...blank});setMode("edit");}} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>
         </div>
       </div>
       <div style={{padding:"14px 16px 80px"}}>
@@ -2841,7 +2841,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
         </div>
         <StatBar items={[{label:"Reports",val:reports.length,color:divMeta.color},{label:"Labor",val:"$"+(tot.l>=1000?(tot.l/1000).toFixed(1)+"k":fmt(tot.l)),color:T.green},{label:"Equip",val:"$"+(tot.e>=1000?(tot.e/1000).toFixed(1)+"k":fmt(tot.e)),color:T.yellow},{label:"Total",val:"$"+(tot.g>=1000?(tot.g/1000).toFixed(1)+"k":fmt(tot.g)),color:T.blue}]}/>
         <div style={{display:"flex",gap:4,marginTop:12,overflowX:"auto",paddingBottom:2,WebkitOverflowScrolling:"touch"}}>
-          {visibleTabs.map(t=>(<button key={t.id} onClick={()=>setTab(t.id)} style={{flexShrink:0,background:tab===t.id?divMeta.color:"transparent",border:tab===t.id?"none":`1px solid ${T.border}`,borderRadius:10,padding:"8px 10px",fontSize:11,fontWeight:tab===t.id?800:500,cursor:"pointer",color:tab===t.id?"#09090B":T.sub,fontFamily:"inherit",whiteSpace:"nowrap"}}>{t.icon} {t.label}</button>))}
+          {visibleTabs.map(t=>(<button key={t.id} onClick={()=>setTab(t.id)} style={{flexShrink:0,background:tab===t.id?divMeta.color:"transparent",border:tab===t.id?"none":`1px solid ${T.border}`,borderRadius:10,padding:"8px 10px",fontSize:11,fontWeight:tab===t.id?800:500,cursor:"pointer",color:tab===t.id?"#0D0D0F":T.sub,fontFamily:"inherit",whiteSpace:"nowrap"}}>{t.icon} {t.label}</button>))}
         </div>
       </div>
       <div style={{padding:"14px 16px 80px"}}>
@@ -3098,7 +3098,7 @@ function RFIsTab({project,user,onErr}){
 .action-bar{background:#1f3864;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px;position:sticky;top:0;z-index:100;}
 .action-bar h2{font-size:12pt;font-weight:700;margin:0;}.btns{display:flex;gap:10px;}
 .btn{padding:8px 16px;border-radius:8px;border:none;font-size:11pt;font-weight:700;cursor:pointer;font-family:inherit;}
-.btn-print{background:#F97316;color:#000;}.btn-clear{background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.4);}
+.btn-print{background:#60A5FA;color:#000;}.btn-clear{background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.4);}
 @media print{.action-bar{display:none!important;}.fillable{border:none!important;background:transparent!important;}}
 .doc{max-width:750px;margin:0 auto;padding:24px 20px 40px;}
 .lh{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:14px;border-bottom:3px solid #1f3864;}
@@ -3279,15 +3279,15 @@ function PublicRFIForm({rfiId}){
     try{await sb(`/rfis?id=eq.${rfiId}`,{method:"PATCH",body:{response:resp,responded_by:respBy+(respTitle?" ("+respTitle+")":""),response_date:respDate||today(),status:"Answered",response_signature:sigData},prefer:"return=representation"});setSubmitted(true);}
     catch(e){setErr("Failed: "+e.message);}setSaving(false);
   }
-  const s={bg:"#09090B",card:"#18181B",inp:{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
+  const s={bg:"#0D0D0F",card:"#1A1A20",inp:{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
   if(loading)return <div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#fff"}}>Loading...</div></div>;
   if(err&&!rfi)return <div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}><div style={{background:s.card,borderRadius:16,padding:32,maxWidth:400,textAlign:"center"}}><div style={{fontSize:40}}>⚠️</div><div style={{color:"#fff",fontWeight:700,margin:"8px 0"}}>{err}</div></div></div>;
-  if(submitted)return <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",padding:20}}><div style={{maxWidth:600,margin:"0 auto",background:s.card,borderRadius:16,padding:32,textAlign:"center",border:"1px solid #22C55E40"}}><div style={{fontSize:48}}>✅</div><div style={{fontSize:20,fontWeight:800,color:"#22C55E",margin:"8px 0"}}>Response Submitted!</div><div style={{color:"#A1A1AA"}}>RFI #{rfi?.rfi_number} response has been saved.</div></div></div>;
+  if(submitted)return <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",padding:20}}><div style={{maxWidth:600,margin:"0 auto",background:s.card,borderRadius:16,padding:32,textAlign:"center",border:"1px solid #22C55E40"}}><div style={{fontSize:48}}>✅</div><div style={{fontSize:20,fontWeight:800,color:"#34D399",margin:"8px 0"}}>Response Submitted!</div><div style={{color:"#A1A1AA"}}>RFI #{rfi?.rfi_number} response has been saved.</div></div></div>;
   return(
     <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",color:"#fff",padding:"16px 16px 60px"}}>
       <div style={{maxWidth:600,margin:"0 auto"}}>
         <div style={{background:"#1f3864",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div><div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div><div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>Atlantic Industrial Mechanical & Environmental Inc.</div></div>
+          <div><div style={{fontSize:20,fontWeight:900,color:"#60A5FA"}}>AIME</div><div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>Atlantic Industrial Mechanical & Environmental Inc.</div></div>
           <div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800}}>RFI #{rfi.rfi_number}</div></div>
         </div>
         <div style={{background:"#1f3864",borderRadius:12,padding:16,marginBottom:12}}>
@@ -3295,9 +3295,9 @@ function PublicRFIForm({rfiId}){
           <div style={{fontSize:16,fontWeight:700,lineHeight:1.5}}>{rfi.question}</div>
           {rfi.description&&<div style={{fontSize:13,color:"rgba(255,255,255,0.7)",marginTop:8}}>{rfi.description}</div>}
         </div>
-        {err&&<div style={{background:"#EF444420",border:"1px solid #EF4444",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#EF4444"}}>{err}</div>}
+        {err&&<div style={{background:"#EF444420",border:"1px solid #EF4444",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#FC8181"}}>{err}</div>}
         <div style={{background:s.card,borderRadius:16,padding:20,border:"2px solid #22C55E40"}}>
-          <div style={{fontSize:14,fontWeight:800,color:"#22C55E",marginBottom:14}}>✏️ Your Response</div>
+          <div style={{fontSize:14,fontWeight:800,color:"#34D399",marginBottom:14}}>✏️ Your Response</div>
           <div style={{marginBottom:12}}><label style={s.lbl}>Response *</label><textarea rows={6} value={resp} onChange={e=>setResp(e.target.value)} placeholder="Enter your response..." style={{...s.inp,resize:"vertical",lineHeight:1.6}}/></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
             <div><label style={s.lbl}>Your Name *</label><input value={respBy} onChange={e=>setRespBy(e.target.value)} placeholder="Full name" style={s.inp}/></div>
@@ -3305,17 +3305,17 @@ function PublicRFIForm({rfiId}){
           </div>
           <div style={{marginBottom:14}}><label style={s.lbl}>Company / Title</label><input value={respTitle} onChange={e=>setRespTitle(e.target.value)} placeholder="e.g. Colonial Pipeline · Engineer" style={s.inp}/></div>
           <div style={{marginBottom:16}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><label style={s.lbl}>Signature *</label>{sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#EF4444",fontSize:12,cursor:"pointer"}}>Clear</button>}</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><label style={s.lbl}>Signature *</label>{sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#FC8181",fontSize:12,cursor:"pointer"}}>Clear</button>}</div>
             <div style={{background:"#fff",borderRadius:10,overflow:"hidden",border:"2px solid #22C55E"}}>
               <canvas ref={sigRef} width={600} height={160} style={{width:"100%",height:160,display:"block",touchAction:"none",cursor:"crosshair"}}
                 onMouseDown={startSig} onMouseMove={drawSig} onMouseUp={endSig} onMouseLeave={endSig}
                 onTouchStart={startSig} onTouchMove={drawSig} onTouchEnd={endSig}/>
             </div>
             {!sigData&&<div style={{textAlign:"center",fontSize:11,color:"#71717A",marginTop:4}}>Draw your signature above</div>}
-            {sigData&&<div style={{textAlign:"center",fontSize:11,color:"#22C55E",marginTop:4}}>✓ Signature captured</div>}
+            {sigData&&<div style={{textAlign:"center",fontSize:11,color:"#34D399",marginTop:4}}>✓ Signature captured</div>}
           </div>
           <button onClick={submit} disabled={saving||!resp.trim()||!respBy.trim()||!sigData}
-            style={{width:"100%",background:saving||!resp.trim()||!respBy.trim()||!sigData?"#27272A":"#22C55E",color:saving||!resp.trim()||!respBy.trim()||!sigData?"#71717A":"#000",border:"none",borderRadius:12,padding:14,fontSize:16,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+            style={{width:"100%",background:saving||!resp.trim()||!respBy.trim()||!sigData?"#26262E":"#34D399",color:saving||!resp.trim()||!respBy.trim()||!sigData?"#71717A":"#000",border:"none",borderRadius:12,padding:14,fontSize:16,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
             {saving?"Submitting…":"✅ Submit Signed Response"}
           </button>
         </div>
@@ -3350,16 +3350,16 @@ function PublicCOForm({coId}){
     try{await sb(`/change_orders?id=eq.${coId}`,{method:"PATCH",body:{client_signature:sigData,client_signed_by:signerName+(signerTitle?" ("+signerTitle+")":""),client_signed_date:today(),status:"Approved"},prefer:"return=representation"});setSubmitted(true);}
     catch(e){setErr("Failed: "+e.message);}setSaving(false);
   }
-  const s={bg:"#09090B",card:"#18181B",inp:{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
+  const s={bg:"#0D0D0F",card:"#1A1A20",inp:{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
   const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
   if(loading)return <div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#fff"}}>Loading...</div></div>;
   if(err&&!co)return <div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}><div style={{background:s.card,borderRadius:16,padding:32,maxWidth:400,textAlign:"center"}}><div style={{fontSize:40}}>⚠️</div><div style={{color:"#fff",fontWeight:700,margin:"8px 0"}}>{err}</div></div></div>;
-  if(submitted)return <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",padding:20}}><div style={{maxWidth:560,margin:"0 auto",background:s.card,borderRadius:16,padding:32,textAlign:"center",border:"1px solid #22C55E40"}}><div style={{fontSize:48}}>✅</div><div style={{fontSize:20,fontWeight:800,color:"#22C55E",margin:"8px 0"}}>Change Order Signed!</div><div style={{color:"#A1A1AA"}}>CO {co?.co_number} has been approved.</div></div></div>;
+  if(submitted)return <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",padding:20}}><div style={{maxWidth:560,margin:"0 auto",background:s.card,borderRadius:16,padding:32,textAlign:"center",border:"1px solid #22C55E40"}}><div style={{fontSize:48}}>✅</div><div style={{fontSize:20,fontWeight:800,color:"#34D399",margin:"8px 0"}}>Change Order Signed!</div><div style={{color:"#A1A1AA"}}>CO {co?.co_number} has been approved.</div></div></div>;
   return(
     <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",color:"#fff",padding:"16px 16px 60px"}}>
       <div style={{maxWidth:560,margin:"0 auto"}}>
         <div style={{background:"#1f3864",borderRadius:16,padding:"16px 20px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div><div style={{fontSize:20,fontWeight:900,color:"#F97316"}}>AIME</div><div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>Atlantic Industrial Mechanical & Environmental Inc.</div></div>
+          <div><div style={{fontSize:20,fontWeight:900,color:"#60A5FA"}}>AIME</div><div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>Atlantic Industrial Mechanical & Environmental Inc.</div></div>
           <div><div style={{fontSize:18,fontWeight:800}}>{co.co_number}</div><div style={{fontSize:11,color:"rgba(255,255,255,0.6)"}}>Change Order</div></div>
         </div>
         <div style={{background:"#1f3864",borderRadius:12,padding:16,marginBottom:12}}>
@@ -3367,28 +3367,28 @@ function PublicCOForm({coId}){
           <div style={{fontSize:15,fontWeight:700,lineHeight:1.5,marginBottom:12}}>{co.description}</div>
           <div style={{background:"rgba(255,255,255,0.1)",borderRadius:10,padding:12,textAlign:"center"}}>
             <div style={{fontSize:10,color:"rgba(255,255,255,0.6)",textTransform:"uppercase",letterSpacing:"1px"}}>Change Order Amount</div>
-            <div style={{fontSize:28,fontWeight:900,color:"#22C55E",marginTop:4}}>{fmt(co.amount)}</div>
+            <div style={{fontSize:28,fontWeight:900,color:"#34D399",marginTop:4}}>{fmt(co.amount)}</div>
           </div>
         </div>
-        {err&&<div style={{background:"#EF444420",border:"1px solid #EF4444",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#EF4444"}}>{err}</div>}
-        <div style={{background:s.card,borderRadius:16,padding:20,border:"2px solid #F9731640"}}>
-          <div style={{fontSize:14,fontWeight:800,color:"#F97316",marginBottom:14}}>✍️ Sign & Approve Change Order</div>
+        {err&&<div style={{background:"#EF444420",border:"1px solid #EF4444",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#FC8181"}}>{err}</div>}
+        <div style={{background:s.card,borderRadius:16,padding:20,border:"2px solid #60A5FA40"}}>
+          <div style={{fontSize:14,fontWeight:800,color:"#60A5FA",marginBottom:14}}>✍️ Sign & Approve Change Order</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
             <div><label style={s.lbl}>Your Name *</label><input value={signerName} onChange={e=>setSignerName(e.target.value)} placeholder="Full name" style={s.inp}/></div>
             <div><label style={s.lbl}>Title / Company</label><input value={signerTitle} onChange={e=>setSignerTitle(e.target.value)} placeholder="Your title" style={s.inp}/></div>
           </div>
           <div style={{marginBottom:16}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><label style={s.lbl}>Signature *</label>{sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#EF4444",fontSize:12,cursor:"pointer"}}>Clear</button>}</div>
-            <div style={{background:"#fff",borderRadius:10,overflow:"hidden",border:"2px solid #F97316"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><label style={s.lbl}>Signature *</label>{sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#FC8181",fontSize:12,cursor:"pointer"}}>Clear</button>}</div>
+            <div style={{background:"#fff",borderRadius:10,overflow:"hidden",border:"2px solid #60A5FA"}}>
               <canvas ref={sigRef} width={600} height={160} style={{width:"100%",height:160,display:"block",touchAction:"none",cursor:"crosshair"}}
                 onMouseDown={startSig} onMouseMove={drawSig} onMouseUp={endSig} onMouseLeave={endSig}
                 onTouchStart={startSig} onTouchMove={drawSig} onTouchEnd={endSig}/>
             </div>
             {!sigData&&<div style={{textAlign:"center",fontSize:11,color:"#71717A",marginTop:4}}>Draw your signature above</div>}
-            {sigData&&<div style={{textAlign:"center",fontSize:11,color:"#22C55E",marginTop:4}}>✓ Signature captured</div>}
+            {sigData&&<div style={{textAlign:"center",fontSize:11,color:"#34D399",marginTop:4}}>✓ Signature captured</div>}
           </div>
           <button onClick={submit} disabled={saving||!signerName.trim()||!sigData}
-            style={{width:"100%",background:saving||!signerName.trim()||!sigData?"#27272A":"#F97316",color:saving||!signerName.trim()||!sigData?"#71717A":"#000",border:"none",borderRadius:12,padding:14,fontSize:16,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+            style={{width:"100%",background:saving||!signerName.trim()||!sigData?"#26262E":"#60A5FA",color:saving||!signerName.trim()||!sigData?"#71717A":"#000",border:"none",borderRadius:12,padding:14,fontSize:16,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
             {saving?"Submitting…":"✅ Sign & Approve Change Order"}
           </button>
         </div>
