@@ -857,11 +857,18 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
   const [weatherFilling,setWeatherFilling]=useState(false);
   async function autoFillWeather(){
     const location=project.location||project.client||project.name;
-    if(!location){alert("No location set on this project.");return;}
+    if(!location){alert("No location set on this project. Set a Location in the job info first.");return;}
     setWeatherFilling(true);
     try{
+      const WMO={0:"Clear Sky",1:"Mainly Clear",2:"Partly Cloudy",3:"Overcast",45:"Foggy",48:"Icy Fog",51:"Light Drizzle",53:"Drizzle",55:"Heavy Drizzle",61:"Light Rain",63:"Rain",65:"Heavy Rain",71:"Light Snow",73:"Snow",75:"Heavy Snow",80:"Rain Showers",81:"Heavy Showers",82:"Violent Showers",95:"Thunderstorm",99:"Thunderstorm w/Hail"};
       const w=await fetchWeather(location);
-      setR("site_conditions",`${w.conditionText||""} · ${w.tempF||""}°F · Wind: ${w.windMph||"0"}mph · Humidity: ${w.humidity||""}%`);
+      const cur=w.current||{};
+      const temp=Math.round(cur.temperature_2m||0);
+      const wind=Math.round(cur.windspeed_10m||0);
+      const precip=cur.precipitation||0;
+      const code=cur.weathercode||0;
+      const condition=WMO[code]||`Code ${code}`;
+      setR("site_conditions",`${condition} · ${temp}°F · Wind: ${wind}mph${precip>0?` · Precip: ${precip}in`:""}${w.locationName?` · ${w.locationName}`:""}`);
     }catch(e){alert("Could not fetch weather: "+e.message);}
     setWeatherFilling(false);
   }
@@ -2789,7 +2796,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   async function deleteReport(id){try{await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
   async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));await notify("report_flagged","Report Flagged",pm_notes,{project_id:project.id,report_id:id});await load(true);}catch(e){setErr(e.message);}}
-  async function updateProject(data){try{const[u]=await API.projects.update(project.id,data);setProject(u);onProjectUpdated(u);setEditProject(false);}catch(e){setErr(e.message);}}
+  async function updateProject(data){try{const[u]=await API.projects.update(project.id,data);setProject(u||{...project,...data});onProjectUpdated&&onProjectUpdated(u||{...project,...data});setEditProject(false);}catch(e){setErr(e.message);}}
   async function archiveProject(){if(!window.confirm(project.status==="active"?"Archive this job?":"Restore?"))return;await updateProject({status:project.status==="active"?"archived":"active"});onBack();}
   async function deleteProject(){if(!window.confirm("Permanently delete this job and ALL its data? This cannot be undone."))return;if(!window.confirm("Are you sure? All reports, photos, time cards and safety logs will be deleted."))return;try{await API.projects.remove(project.id);onBack();}catch(e){setErr(e.message);}}
 
@@ -3500,6 +3507,7 @@ function AppInner(){
       {user&&screen==="detail"&&selectedProject&&(
         <ProjectDetail project={projects.find(p=>p.id===selectedProject.id)||selectedProject}
           user={user} onBack={()=>setScreen("jobs")} onRefresh={loadProjects}
+          onProjectUpdated={async(updated)=>{await loadProjects();setSelectedProject(updated);}}
           onErr={setErr} isOnline={isOnline}/>
       )}
       {user&&screen==="newProject"&&(
