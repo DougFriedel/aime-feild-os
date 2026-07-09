@@ -2553,8 +2553,37 @@ function CrewDirectoryScreen({onBack,user}){
     </div>
   );
 
+  // ── Cert expiry alerts ──────────────────────────────────
+  const today_d=new Date();
+  const d30=new Date(today_d);d30.setDate(d30.getDate()+30);
+  const d60=new Date(today_d);d60.setDate(d60.getDate()+60);
+  const d90=new Date(today_d);d90.setDate(d90.getDate()+90);
+  const certAlerts=[];
+  members.forEach(m=>{
+    (m.certifications||[]).forEach(c=>{
+      if(!c.expiry)return;
+      const exp=new Date(c.expiry+"T12:00:00");
+      const daysLeft=Math.ceil((exp-today_d)/(1000*60*60*24));
+      if(daysLeft<=90){
+        certAlerts.push({worker:m.name,cert:c.name,expiry:c.expiry,daysLeft,color:daysLeft<=0?T.red:daysLeft<=30?T.red:daysLeft<=60?T.yellow:T.orange});
+      }
+    });
+  });
+  certAlerts.sort((a,b)=>a.daysLeft-b.daysLeft);
+
+
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      {/* ── Cert expiry alert banner ── */}
+      {certAlerts.length>0&&<div style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"10px 16px"}}>
+        <div style={{fontSize:12,fontWeight:800,color:T.red,marginBottom:6}}>⚠️ {certAlerts.filter(a=>a.daysLeft<=0).length>0?"EXPIRED":"EXPIRING SOON"} — {certAlerts.length} Cert{certAlerts.length!==1?"s":""}</div>
+        {certAlerts.slice(0,3).map((a,i)=>(
+          <div key={i} style={{fontSize:11,color:a.color,marginBottom:2}}>
+            {a.daysLeft<=0?"🔴 EXPIRED":a.daysLeft<=30?"🔴":a.daysLeft<=60?"🟡":"🟠"} {a.worker} · {a.cert} · {a.daysLeft<=0?"Expired: "+a.expiry:"Expires: "+a.expiry+" ("+a.daysLeft+"d)"}
+          </div>
+        ))}
+        {certAlerts.length>3&&<div style={{fontSize:10,color:T.muted,marginTop:2}}>+{certAlerts.length-3} more — view Crew Directory for full list</div>}
+      </div>}
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👥 Crew Directory</div><button onClick={()=>{setF({...blank});setMode("new");}} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button></div>
@@ -2640,6 +2669,16 @@ function UserManagementScreen({onBack,currentUser}){
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      {/* ── Cert expiry alert banner ── */}
+      {certAlerts.length>0&&<div style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"10px 16px"}}>
+        <div style={{fontSize:12,fontWeight:800,color:T.red,marginBottom:6}}>⚠️ {certAlerts.filter(a=>a.daysLeft<=0).length>0?"EXPIRED":"EXPIRING SOON"} — {certAlerts.length} Cert{certAlerts.length!==1?"s":""}</div>
+        {certAlerts.slice(0,3).map((a,i)=>(
+          <div key={i} style={{fontSize:11,color:a.color,marginBottom:2}}>
+            {a.daysLeft<=0?"🔴 EXPIRED":a.daysLeft<=30?"🔴":a.daysLeft<=60?"🟡":"🟠"} {a.worker} · {a.cert} · {a.daysLeft<=0?"Expired: "+a.expiry:"Expires: "+a.expiry+" ("+a.daysLeft+"d)"}
+          </div>
+        ))}
+        {certAlerts.length>3&&<div style={{fontSize:10,color:T.muted,marginTop:2}}>+{certAlerts.length-3} more — view Crew Directory for full list</div>}
+      </div>}
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2710,61 +2749,149 @@ function NotificationsPanel(){
 function TimeCardsScreen({user,projects,onBack}){
   const [cards,setCards]=useState([]);const [loading,setLoading]=useState(true);
   const [err,setErr]=useState('');
+  const [fromDate,setFromDate]=useState(()=>{const d=new Date();d.setDate(d.getDate()-14);return d.toISOString().slice(0,10);});
+  const [toDate,setToDate]=useState(today());
+  const [selectedJobs,setSelectedJobs]=useState([]);
+  const [showJobFilter,setShowJobFilter]=useState(false);
+  const [printing,setPrinting]=useState(false);
+
   useEffect(()=>{(async()=>{setLoading(true);try{const r=await API.timeCards.all();setCards(Array.isArray(r)?r:[]);}catch(e){setErr(e.message);}setLoading(false);})();},[]);
+
   async function remove(id){try{await API.timeCards.remove(id);setCards(c=>c.filter(x=>x.id!==id));}catch(e){setErr(e.message);}}
-  const byWorker={};const wkStart=getWeekStart();const weekCards=cards.filter(c=>c.date>=wkStart);
-  weekCards.forEach(c=>{const n=c.worker_name||'?';if(!byWorker[n])byWorker[n]={name:n,total:0,ot:0};const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;byWorker[n].total+=tot;byWorker[n].ot+=ot;});
+
+  function handlePrint(){
+    setPrinting(true);
+    printEmployeeTimecards(cards,fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects);
+    setTimeout(()=>setPrinting(false),1000);
+  }
+
+  // Filter cards by date range for display
+  const filtered=cards.filter(c=>c.date&&c.date>=fromDate&&c.date<=toDate&&(selectedJobs.length===0||selectedJobs.includes(c.project_id)));
+  const byWorker={};
+  filtered.forEach(c=>{
+    const n=c.worker_name||'?';
+    if(!byWorker[n])byWorker[n]={name:n,total:0,ot:0,reg:0,travel:0};
+    const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
+    const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
+    byWorker[n].total+=tot;byWorker[n].ot+=ot;byWorker[n].reg+=reg;byWorker[n].travel+=trav;
+  });
   const workerRows=Object.values(byWorker).sort((a,b)=>b.total-a.total);
-  const todayCards=cards.filter(c=>c.date===today());
-  const recentCards=cards.filter(c=>c.date!==today()).slice(0,30);
   const fmt=n=>Number(n||0).toFixed(1);
+  const totalHrs=workerRows.reduce((s,w)=>s+w.total,0);
+  const totalOT=workerRows.reduce((s,w)=>s+w.ot,0);
+
   return(
     <div style={{background:T.bg,minHeight:'100vh',fontFamily:'inherit'}}>
       <TopBar title="⏱️ Time Cards" onBack={onBack}/>
-      <div style={{padding:'12px 16px 80px'}}>
+      <div style={{padding:'12px 16px 100px'}}>
         <ErrBanner msg={err} onDismiss={()=>setErr('')}/>
-        <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:'10px 14px',marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
-          <strong>⚡ Auto-filled from daily reports</strong> — hours are added automatically when a foreman submits a daily report.
+
+        {/* Date Range Selector */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:'uppercase',letterSpacing:'1px',marginBottom:10}}>📅 Date Range</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+            <div><label style={lbl}>From</label><input type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>To</label><input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} style={inp}/></div>
+          </div>
+          {/* Quick ranges */}
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            {[['This Week',0,6],['Last 2 Weeks',0,13],['This Month',0,29],['Last Month',30,59]].map(([label,from,to])=>(
+              <button key={label} onClick={()=>{
+                const d=new Date();
+                const t=new Date();t.setDate(t.getDate()-from);
+                const f=new Date();f.setDate(f.getDate()-to);
+                setToDate(t.toISOString().slice(0,10));
+                setFromDate(f.toISOString().slice(0,10));
+              }} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:'4px 10px',color:T.muted,fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
-        {workerRows.length>0&&<div style={{...cardS,marginBottom:14}}>
-          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:'uppercase',letterSpacing:'1px',marginBottom:10}}>THIS WEEK</div>
-          {workerRows.map(w=><div key={w.name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-            <span style={{fontSize:13,color:T.text}}>{w.name}</span>
-            <div style={{display:'flex',gap:10,fontSize:12}}>
-              {w.ot>0&&<span style={{color:T.yellow}}>{fmt(w.ot)}OT</span>}
-              <span style={{color:T.green,fontWeight:800}}>{fmt(w.total)}h</span>
-            </div>
-          </div>)}
+
+        {/* Job filter */}
+        <div style={{...cardS,marginBottom:12}}>
+          <button onClick={()=>setShowJobFilter(s=>!s)} style={{background:'none',border:'none',color:T.text,fontWeight:700,fontSize:13,cursor:'pointer',fontFamily:'inherit',width:'100%',textAlign:'left',display:'flex',justifyContent:'space-between'}}>
+            <span>🏗️ Jobs {selectedJobs.length>0?`(${selectedJobs.length} selected)`:'(All)'}</span>
+            <span style={{color:T.muted}}>{showJobFilter?'▲':'▼'}</span>
+          </button>
+          {showJobFilter&&<div style={{marginTop:10,display:'flex',flexDirection:'column',gap:6}}>
+            {projects.filter(p=>p.status==='active').map(p=>(
+              <label key={p.id} style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:13,color:T.sub}}>
+                <input type="checkbox" checked={selectedJobs.includes(p.id)}
+                  onChange={e=>setSelectedJobs(s=>e.target.checked?[...s,p.id]:s.filter(x=>x!==p.id))}
+                  style={{width:16,height:16,accentColor:T.orange}}/>
+                {p.name}
+                {p.division&&<span style={{fontSize:10,color:T.muted}}>· {p.division}</span>}
+              </label>
+            ))}
+            {selectedJobs.length>0&&<button onClick={()=>setSelectedJobs([])} style={{...ghostBtn,fontSize:12,textAlign:'center'}}>Clear filter</button>}
+          </div>}
+        </div>
+
+        {/* Summary totals */}
+        {filtered.length>0&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:12}}>
+          {[[totalHrs.toFixed(1),'Total Hrs',T.orange],[totalOT.toFixed(1),'OT Hrs',T.yellow],[workerRows.length,'Workers',T.blue]].map(([v,l,c])=>(
+            <div key={l} style={{...cardS,textAlign:'center',padding:'10px 6px'}}><div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:'uppercase',marginTop:2}}>{l}</div></div>
+          ))}
         </div>}
+
+        {/* Print button */}
+        <button onClick={handlePrint} disabled={printing||filtered.length===0}
+          style={{...primBtn,borderRadius:14,marginBottom:16,background:filtered.length===0?T.surface:T.green,color:filtered.length===0?T.muted:'#000',opacity:filtered.length===0?0.5:1}}>
+          {printing?'Opening PDF…':`🖨️ Print Timecard Report (${filtered.length} entries · ${workerRows.length} workers)`}
+        </button>
+
+        <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:'10px 14px',marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
+          <strong>⚡ Auto-filled from daily reports</strong> — hours added automatically when a report is submitted.
+        </div>
+
         {loading&&<Spinner/>}
-        {!loading&&todayCards.length===0&&recentCards.length===0&&<div style={{textAlign:'center',padding:'40px 0',color:T.muted}}><div style={{fontSize:32}}>⏱️</div><div style={{marginTop:8}}>No time cards yet</div></div>}
-        {todayCards.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:'uppercase',letterSpacing:'1px',marginBottom:8}}>TODAY</div>}
-        {[...todayCards,...recentCards].map(c=>{
-          const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
-          const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
-          const proj=projects.find(p=>p.id===c.project_id);
-          return(<div key={c.id} style={{...cardS,marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-            <div style={{flex:1}}>
-              <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{c.worker_name}</div>
-              <div style={{fontSize:11,color:T.muted}}>{c.date}{proj?` · ${proj.name}`:''}</div>
-              {c.notes&&<div style={{fontSize:11,color:T.muted,fontStyle:'italic',marginTop:2}}>{c.notes}</div>}
+        {!loading&&filtered.length===0&&<div style={{textAlign:'center',padding:'40px 0',color:T.muted}}><div style={{fontSize:32}}>⏱️</div><div style={{marginTop:8}}>No time cards in this date range</div></div>}
+
+        {/* Worker summary cards */}
+        {workerRows.map(w=>(
+          <div key={w.name} style={{...cardS,marginBottom:8}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+              <div style={{fontSize:14,fontWeight:800,color:T.orange}}>{w.name}</div>
+              <div style={{fontSize:16,fontWeight:900,color:T.green}}>{fmt(w.total)}h</div>
             </div>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <div style={{textAlign:'right'}}>
-                <div style={{fontSize:16,fontWeight:800,color:T.green}}>{fmt(tot)}h</div>
-                {ot>0&&<div style={{fontSize:10,color:T.yellow}}>{fmt(ot)} OT</div>}
-                {trav>0&&<div style={{fontSize:10,color:T.blue}}>{fmt(trav)} travel</div>}
+            <div style={{display:'flex',gap:12,fontSize:11,color:T.muted}}>
+              <span>Reg: <strong style={{color:T.sub}}>{fmt(w.reg)}h</strong></span>
+              {w.ot>0&&<span>OT: <strong style={{color:T.yellow}}>{fmt(w.ot)}h</strong></span>}
+              {w.travel>0&&<span>Travel: <strong style={{color:T.blue}}>{fmt(w.travel)}h</strong></span>}
+            </div>
+          </div>
+        ))}
+
+        {/* Individual entries */}
+        {filtered.length>0&&<>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:'uppercase',letterSpacing:'1px',margin:'14px 0 8px'}}>All Entries</div>
+          {filtered.sort((a,b)=>b.date?.localeCompare(a.date)).map(c=>{
+            const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
+            const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
+            const proj=projects.find(p=>p.id===c.project_id);
+            return(<div key={c.id} style={{...cardS,marginBottom:6,display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{c.worker_name}</div>
+                <div style={{fontSize:11,color:T.muted}}>{c.date}{proj?` · ${proj.name}`:''}</div>
+                {c.notes&&<div style={{fontSize:10,color:T.muted,fontStyle:'italic',marginTop:1}}>{c.notes}</div>}
               </div>
-              <button onClick={()=>remove(c.id)} style={{background:'none',border:'none',color:T.red,cursor:'pointer',fontSize:14}}>🗑</button>
-            </div>
-          </div>);
-        })}
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontSize:15,fontWeight:800,color:T.green}}>{fmt(tot)}h</div>
+                  {ot>0&&<div style={{fontSize:9,color:T.yellow}}>{fmt(ot)} OT</div>}
+                </div>
+                {(user.role==='admin'||user.role==='pm')&&<button onClick={()=>remove(c.id)} style={{background:'none',border:'none',color:T.red,cursor:'pointer',fontSize:14}}>🗑</button>}
+              </div>
+            </div>);
+          })}
+        </>}
       </div>
     </div>
   );
 }
 
-/* ── ESTIMATING SCREEN (Maintenance) ────────────────────────── */
 function EstimatingScreen({user,onBack}){
   return(
     <div style={{background:T.bg,minHeight:'100vh',fontFamily:'inherit'}}>
@@ -2827,6 +2954,16 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      {/* ── Cert expiry alert banner ── */}
+      {certAlerts.length>0&&<div style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"10px 16px"}}>
+        <div style={{fontSize:12,fontWeight:800,color:T.red,marginBottom:6}}>⚠️ {certAlerts.filter(a=>a.daysLeft<=0).length>0?"EXPIRED":"EXPIRING SOON"} — {certAlerts.length} Cert{certAlerts.length!==1?"s":""}</div>
+        {certAlerts.slice(0,3).map((a,i)=>(
+          <div key={i} style={{fontSize:11,color:a.color,marginBottom:2}}>
+            {a.daysLeft<=0?"🔴 EXPIRED":a.daysLeft<=30?"🔴":a.daysLeft<=60?"🟡":"🟠"} {a.worker} · {a.cert} · {a.daysLeft<=0?"Expired: "+a.expiry:"Expires: "+a.expiry+" ("+a.daysLeft+"d)"}
+          </div>
+        ))}
+        {certAlerts.length>3&&<div style={{fontSize:10,color:T.muted,marginTop:2}}>+{certAlerts.length-3} more — view Crew Directory for full list</div>}
+      </div>}
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← {project.division}</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
@@ -3418,10 +3555,129 @@ async function setupPushNotifications(){
 }
 
 
+/* ── PUBLIC INSPECTOR SIGN-OFF FORM ─────────────────────── */
+function PublicInspectorForm({reportId}){
+  const [report,setReport]=useState(null);const [project,setProject]=useState(null);
+  const [loading,setLoading]=useState(true);const [saving,setSaving]=useState(false);
+  const [submitted,setSubmitted]=useState(false);const [err,setErr]=useState("");
+  const [inspName,setInspName]=useState("");const [inspTitle,setInspTitle]=useState("");
+  const [inspCo,setInspCo]=useState("");const [sigData,setSigData]=useState(null);
+  const [drawing,setDrawing]=useState(false);
+  const sigRef=React.useRef(null);
+
+  useEffect(()=>{(async()=>{try{
+    const d=await sb(`/daily_reports?id=eq.${reportId}&limit=1`);
+    const r=Array.isArray(d)?d[0]:d;
+    if(!r){setErr("Report not found.");setLoading(false);return;}
+    setReport(r);
+    if(r.inspector_signature){setSubmitted(true);}
+    const pd=await sb(`/projects?id=eq.${r.project_id}&limit=1`);
+    setProject(Array.isArray(pd)?pd[0]:pd||{name:"Unknown"});
+  }catch(e){setErr(e.message);}setLoading(false);})();},[reportId]);
+
+  function getPos(e,c){const r=c.getBoundingClientRect();const sx=c.width/r.width;const sy=c.height/r.height;if(e.touches)return{x:(e.touches[0].clientX-r.left)*sx,y:(e.touches[0].clientY-r.top)*sy};return{x:(e.clientX-r.left)*sx,y:(e.clientY-r.top)*sy};}
+  function startSig(e){e.preventDefault();const c=sigRef.current;if(!c)return;const p=getPos(e,c);c.getContext("2d").beginPath();c.getContext("2d").moveTo(p.x,p.y);setDrawing(true);}
+  function drawSig(e){e.preventDefault();if(!drawing)return;const c=sigRef.current;if(!c)return;const ctx=c.getContext("2d");const p=getPos(e,c);ctx.lineWidth=2.5;ctx.lineCap="round";ctx.strokeStyle="#1f3864";ctx.lineTo(p.x,p.y);ctx.stroke();ctx.beginPath();ctx.moveTo(p.x,p.y);}
+  function endSig(e){e.preventDefault();setDrawing(false);const c=sigRef.current;if(c)setSigData(c.toDataURL("image/jpeg",0.7));}
+  function clearSig(){const c=sigRef.current;if(c)c.getContext("2d").clearRect(0,0,c.width,c.height);setSigData(null);}
+
+  async function submit(){
+    if(!inspName.trim()||!sigData){setErr("Please enter your name and sign.");return;}
+    setSaving(true);setErr("");
+    try{
+      const fullName=inspName.trim()+(inspTitle?` · ${inspTitle}`:"")+(inspCo?` · ${inspCo}`:"");
+      await sb(`/daily_reports?id=eq.${reportId}`,{method:"PATCH",body:{
+        inspector_name:fullName,
+        inspector_signature:sigData,
+        inspector_signed_at:new Date().toISOString(),
+      },prefer:"return=representation"});
+      setSubmitted(true);
+    }catch(e){setErr("Failed: "+e.message);}setSaving(false);
+  }
+
+  const s={bg:"#0D0D0F",card:"#1A1A20",border:"#26262E",inp:{width:"100%",background:"#141418",border:"1px solid #26262E",borderRadius:10,color:"#F0F4FF",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#7080A0",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
+
+  if(loading)return<div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui"}}><div style={{color:"#F0F4FF"}}>Loading report...</div></div>;
+  if(err&&!report)return<div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui",padding:20}}><div style={{background:s.card,borderRadius:16,padding:32,maxWidth:400,textAlign:"center"}}><div style={{fontSize:40}}>⚠️</div><div style={{color:"#F0F4FF",fontWeight:700,margin:"8px 0"}}>{err}</div></div></div>;
+  if(submitted)return(
+    <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",padding:20}}>
+      <div style={{maxWidth:560,margin:"0 auto",background:s.card,borderRadius:16,padding:32,textAlign:"center",border:"1px solid #34D39940"}}>
+        <div style={{fontSize:48,marginBottom:12}}>✅</div>
+        <div style={{fontSize:20,fontWeight:800,color:"#34D399",marginBottom:8}}>Report Signed!</div>
+        <div style={{color:"#7080A0",marginBottom:16}}>Daily Report for {report?.date} has been signed and saved.</div>
+        {report?.inspector_signature&&<div style={{background:"#fff",borderRadius:10,padding:8,marginTop:8}}><img src={report.inspector_signature} alt="sig" style={{maxHeight:80,width:"100%",objectFit:"contain"}}/></div>}
+        <div style={{fontSize:12,color:"#555",marginTop:12}}>You may close this window.</div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",color:"#F0F4FF",padding:"16px 16px 60px"}}>
+      <div style={{maxWidth:560,margin:"0 auto"}}>
+        {/* Header */}
+        <div style={{background:"#141418",borderRadius:16,padding:"16px 20px",marginBottom:16,border:"1px solid #26262E"}}>
+          <div style={{fontSize:20,fontWeight:900,color:"#60A5FA",marginBottom:2}}>AIME</div>
+          <div style={{fontSize:11,color:"#7080A0"}}>Atlantic Industrial Mechanical & Environmental Inc.</div>
+        </div>
+
+        {/* Report summary */}
+        <div style={{background:s.card,borderRadius:12,padding:"14px 16px",marginBottom:14,border:"1px solid #26262E"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#7080A0",textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Daily Report — Inspector Sign-Off</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            {[["Project",project?.name||"—"],["Date",report?.date||"—"],["Submitted By",report?.submitted_by||"—"],["Workers On Site",(report?.labor||[]).length||report?.manpower_count||"—"]].map(([l,v])=>(
+              <div key={l}><div style={{fontSize:10,color:"#7080A0",fontWeight:700,textTransform:"uppercase"}}>{l}</div><div style={{fontSize:13,fontWeight:600,color:"#F0F4FF",marginTop:2}}>{v}</div></div>
+            ))}
+          </div>
+          {report?.site_conditions&&<div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #26262E"}}>
+            <div style={{fontSize:10,color:"#7080A0",fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Site Conditions</div>
+            <div style={{fontSize:13,color:"#C8D4F0"}}>{report.site_conditions}</div>
+          </div>}
+          {report?.description&&<div style={{marginTop:8}}>
+            <div style={{fontSize:10,color:"#7080A0",fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Work Description</div>
+            <div style={{fontSize:12,color:"#C8D4F0",lineHeight:1.5}}>{report.description}</div>
+          </div>}
+        </div>
+
+        {err&&<div style={{background:"#FC818120",border:"1px solid #FC8181",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#FC8181"}}>{err}</div>}
+
+        {/* Sign form */}
+        <div style={{background:s.card,borderRadius:16,padding:20,border:"1px solid #26262E"}}>
+          <div style={{fontSize:14,fontWeight:800,color:"#60A5FA",marginBottom:14}}>✍️ Inspector Sign-Off</div>
+
+          <div style={{marginBottom:10}}><label style={s.lbl}>Inspector Name *</label><input value={inspName} onChange={e=>setInspName(e.target.value)} placeholder="Full name" style={s.inp}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+            <div><label style={s.lbl}>Title / Role</label><input value={inspTitle} onChange={e=>setInspTitle(e.target.value)} placeholder="e.g. Safety Inspector" style={s.inp}/></div>
+            <div><label style={s.lbl}>Company</label><input value={inspCo} onChange={e=>setInspCo(e.target.value)} placeholder="e.g. Colonial Pipeline" style={s.inp}/></div>
+          </div>
+
+          <div style={{marginBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><label style={s.lbl}>Signature *</label>{sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#FC8181",fontSize:12,cursor:"pointer"}}>Clear</button>}</div>
+            <div style={{background:"#fff",borderRadius:10,overflow:"hidden",border:"2px solid #60A5FA"}}>
+              <canvas ref={sigRef} width={600} height={160} style={{width:"100%",height:160,display:"block",touchAction:"none",cursor:"crosshair"}}
+                onMouseDown={startSig} onMouseMove={drawSig} onMouseUp={endSig} onMouseLeave={endSig}
+                onTouchStart={startSig} onTouchMove={drawSig} onTouchEnd={endSig}/>
+            </div>
+            {!sigData&&<div style={{textAlign:"center",fontSize:11,color:"#7080A0",marginTop:4}}>Draw your signature above</div>}
+            {sigData&&<div style={{textAlign:"center",fontSize:11,color:"#34D399",marginTop:4}}>✓ Signature captured</div>}
+          </div>
+
+          <button onClick={submit} disabled={saving||!inspName.trim()||!sigData}
+            style={{width:"100%",background:saving||!inspName.trim()||!sigData?"#26262E":"#34D399",color:saving||!inspName.trim()||!sigData?"#7080A0":"#000",border:"none",borderRadius:12,padding:14,fontSize:16,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+            {saving?"Saving…":"✅ Sign Daily Report"}
+          </button>
+          <div style={{fontSize:11,color:"#555",textAlign:"center",marginTop:8}}>By signing you confirm the work described above was performed.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 /* ── APP INNER ───────────────────────────────────────────────── */
 function AppInner(){
   const [publicRfiId]            = useState(()=>new URLSearchParams(window.location.search).get("rfi"));
   const [publicCoId]             = useState(()=>new URLSearchParams(window.location.search).get("co"));
+  const [publicInspId]           = useState(()=>new URLSearchParams(window.location.search).get("inspect"));
   const [user,setUser]           = useState(null);
   const [projects,setProjects]   = useState([]);
   const [screen,setScreen]       = useState("division");
@@ -3435,6 +3691,7 @@ function AppInner(){
   // Public forms (no login needed)
   if(publicRfiId) return <PublicRFIForm rfiId={publicRfiId}/>;
   if(publicCoId) return <PublicCOForm coId={publicCoId}/>;
+  if(publicInspId) return <PublicInspectorForm reportId={publicInspId}/>;
 
   useEffect(()=>{
     const onOnline=()=>{setIsOnline(true);syncQueue();}
@@ -3557,3 +3814,45 @@ export default function App(){
     </ErrorBoundary>
   );
 }
+  // Inspector share modal
+  if(showInspectorShare){
+    const link=`${window.location.origin}${window.location.pathname}?inspect=${report.id}`;
+    return(
+      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+        <TopBar title="📤 Send Inspector Link" onBack={()=>setShowInspectorShare(false)}/>
+        <div style={{padding:"20px 16px"}}>
+          <div style={{...cardS,marginBottom:14,background:T.blueLow,border:`1px solid ${T.blue}40`}}>
+            <div style={{fontSize:14,fontWeight:800,color:T.blue,marginBottom:4}}>How it works</div>
+            <div style={{fontSize:12,color:T.sub,lineHeight:1.7}}>
+              1. Copy the link below and send it to the inspector<br/>
+              2. They open it on their phone — no app or login needed<br/>
+              3. They enter their name and draw their signature<br/>
+              4. It saves directly to this report automatically
+            </div>
+          </div>
+          <div style={{...cardS,marginBottom:12,padding:"12px 14px"}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:6}}>SIGNING LINK</div>
+            <div style={{fontSize:12,color:T.sub,wordBreak:"break-all",lineHeight:1.6,background:T.surface,borderRadius:8,padding:"10px 12px"}}>{link}</div>
+          </div>
+          <button onClick={()=>{
+            navigator.clipboard.writeText(link).then(()=>{setInspLinkCopied(true);setTimeout(()=>setInspLinkCopied(false),3000);}).catch(()=>{const el=document.createElement("textarea");el.value=link;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);setInspLinkCopied(true);setTimeout(()=>setInspLinkCopied(false),3000);});
+          }} style={{...primBtn,borderRadius:14,marginBottom:10,background:inspLinkCopied?T.green:T.orange,transition:"background 0.3s"}}>
+            {inspLinkCopied?"✅ Copied! Send it to the inspector":"📋 Copy Link to Clipboard"}
+          </button>
+          {inspLinkCopied&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",fontSize:13,color:T.green,textAlign:"center",marginBottom:10}}>
+            ✓ Paste this into a text message or email to the inspector
+          </div>}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <div style={{flex:1,height:1,background:T.border}}/><span style={{fontSize:11,color:T.muted}}>OR</span><div style={{flex:1,height:1,background:T.border}}/>
+          </div>
+          <button onClick={()=>{
+            const subj=`Daily Report Sign-Off — ${project.name} — ${report.date}`;
+            const body=`Please sign the daily report for ${report.date} on ${project.name}.%0D%0A%0D%0AClick the link below — no login required:%0D%0A%0D%0A${encodeURIComponent(link)}%0D%0A%0D%0AThank you`;
+            window.location.href=`mailto:?subject=${encodeURIComponent(subj)}&body=${body}`;
+          }} style={{...ghostBtn,width:"100%",textAlign:"center",fontSize:14}}>
+            📧 Open Email Draft
+          </button>
+        </div>
+      </div>
+    );
+  }
