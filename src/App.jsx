@@ -1477,6 +1477,8 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   const [report,setReport]=useState(initReport);
   const [lb,setLb]=useState(null);const [flagNote,setFlagNote]=useState("");const [flagging,setFlagging]=useState(false);
   const [showSigPad,setShowSigPad]=useState(false);const [sigSaving,setSigSaving]=useState(false);
+  const [showInspectorShare,setShowInspectorShare]=useState(false);
+  const [inspLinkCopied,setInspLinkCopied]=useState(false);
   const [editing,setEditing]=useState(false);const [editErr,setEditErr]=useState("");const [editSaving,setEditSaving]=useState(false);
   const [editData,setEditData]=useState(null);
 
@@ -1701,6 +1703,46 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
           <div style={{marginBottom:20}}><label style={lbl}>Description of Work Done</label><textarea rows={4} value={editData.description||""} onChange={e=>setEditData(d=>({...d,description:e.target.value}))} style={{...inp,resize:"vertical",lineHeight:1.5}}/></div>
           <div style={{fontSize:13,color:T.muted,marginBottom:12}}>To edit labor, equipment, or materials in detail — delete this report and create a new one.</div>
           <button onClick={()=>saveEdit(editData)} style={{...primBtn,opacity:editSaving?0.6:1,borderRadius:14}}>{editSaving?"Saving…":"Save Changes"}</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Inspector share modal
+  if(showInspectorShare){
+    const link=`${window.location.origin}${window.location.pathname}?inspect=${report.id}`;
+    return(
+      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+        <TopBar title="📤 Send Inspector Link" onBack={()=>setShowInspectorShare(false)}/>
+        <div style={{padding:"20px 16px"}}>
+          <div style={{...cardS,marginBottom:14,background:T.blueLow,border:`1px solid ${T.blue}40`}}>
+            <div style={{fontSize:14,fontWeight:800,color:T.blue,marginBottom:4}}>How it works</div>
+            <div style={{fontSize:12,color:T.sub,lineHeight:1.7}}>
+              1. Copy the link below and text or email it to the inspector<br/>
+              2. They open it on their phone — no login needed<br/>
+              3. They enter their name and draw their signature<br/>
+              4. Saves directly to this report automatically
+            </div>
+          </div>
+          <div style={{...cardS,marginBottom:12,padding:"12px 14px"}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:6}}>SIGNING LINK</div>
+            <div style={{fontSize:12,color:T.sub,wordBreak:"break-all",lineHeight:1.6,background:T.surface,borderRadius:8,padding:"10px 12px"}}>{link}</div>
+          </div>
+          <button onClick={()=>{navigator.clipboard.writeText(link).then(()=>{setInspLinkCopied(true);setTimeout(()=>setInspLinkCopied(false),3000);}).catch(()=>{const el=document.createElement("textarea");el.value=link;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);setInspLinkCopied(true);setTimeout(()=>setInspLinkCopied(false),3000);});}}
+            style={{...primBtn,borderRadius:14,marginBottom:10,background:inspLinkCopied?T.green:T.orange,transition:"background 0.3s"}}>
+            {inspLinkCopied?"✅ Copied! Paste into a text or email":"📋 Copy Link to Clipboard"}
+          </button>
+          {inspLinkCopied&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",fontSize:13,color:T.green,textAlign:"center",marginBottom:10}}>✓ Link copied — paste it into a text or email to the inspector</div>}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <div style={{flex:1,height:1,background:T.border}}/><span style={{fontSize:11,color:T.muted}}>OR</span><div style={{flex:1,height:1,background:T.border}}/>
+          </div>
+          <button onClick={()=>{
+            const subj=`Daily Report Sign-Off — ${project.name} — ${report.date}`;
+            const body=`Please sign off on the daily report for ${report.date} on ${project.name}.%0D%0A%0D%0AOpen this link — no login required:%0D%0A%0D%0A${link}%0D%0A%0D%0AThank you`;
+            window.location.href=`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body).replace(/%250D%250A/g,'%0D%0A')}`;
+          }} style={{...ghostBtn,width:"100%",textAlign:"center",fontSize:14}}>
+            📧 Open Email Draft
+          </button>
         </div>
       </div>
     );
@@ -3814,45 +3856,3 @@ export default function App(){
     </ErrorBoundary>
   );
 }
-  // Inspector share modal
-  if(showInspectorShare){
-    const link=`${window.location.origin}${window.location.pathname}?inspect=${report.id}`;
-    return(
-      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-        <TopBar title="📤 Send Inspector Link" onBack={()=>setShowInspectorShare(false)}/>
-        <div style={{padding:"20px 16px"}}>
-          <div style={{...cardS,marginBottom:14,background:T.blueLow,border:`1px solid ${T.blue}40`}}>
-            <div style={{fontSize:14,fontWeight:800,color:T.blue,marginBottom:4}}>How it works</div>
-            <div style={{fontSize:12,color:T.sub,lineHeight:1.7}}>
-              1. Copy the link below and send it to the inspector<br/>
-              2. They open it on their phone — no app or login needed<br/>
-              3. They enter their name and draw their signature<br/>
-              4. It saves directly to this report automatically
-            </div>
-          </div>
-          <div style={{...cardS,marginBottom:12,padding:"12px 14px"}}>
-            <div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:6}}>SIGNING LINK</div>
-            <div style={{fontSize:12,color:T.sub,wordBreak:"break-all",lineHeight:1.6,background:T.surface,borderRadius:8,padding:"10px 12px"}}>{link}</div>
-          </div>
-          <button onClick={()=>{
-            navigator.clipboard.writeText(link).then(()=>{setInspLinkCopied(true);setTimeout(()=>setInspLinkCopied(false),3000);}).catch(()=>{const el=document.createElement("textarea");el.value=link;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);setInspLinkCopied(true);setTimeout(()=>setInspLinkCopied(false),3000);});
-          }} style={{...primBtn,borderRadius:14,marginBottom:10,background:inspLinkCopied?T.green:T.orange,transition:"background 0.3s"}}>
-            {inspLinkCopied?"✅ Copied! Send it to the inspector":"📋 Copy Link to Clipboard"}
-          </button>
-          {inspLinkCopied&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",fontSize:13,color:T.green,textAlign:"center",marginBottom:10}}>
-            ✓ Paste this into a text message or email to the inspector
-          </div>}
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-            <div style={{flex:1,height:1,background:T.border}}/><span style={{fontSize:11,color:T.muted}}>OR</span><div style={{flex:1,height:1,background:T.border}}/>
-          </div>
-          <button onClick={()=>{
-            const subj=`Daily Report Sign-Off — ${project.name} — ${report.date}`;
-            const body=`Please sign the daily report for ${report.date} on ${project.name}.%0D%0A%0D%0AClick the link below — no login required:%0D%0A%0D%0A${encodeURIComponent(link)}%0D%0A%0D%0AThank you`;
-            window.location.href=`mailto:?subject=${encodeURIComponent(subj)}&body=${body}`;
-          }} style={{...ghostBtn,width:"100%",textAlign:"center",fontSize:14}}>
-            📧 Open Email Draft
-          </button>
-        </div>
-      </div>
-    );
-  }
