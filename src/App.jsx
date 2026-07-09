@@ -154,7 +154,7 @@ const API={
 /* ── THEME ──────────────────────────────────────────────────── */
 const T={bg:"#0D0D0F",surface:"#141418",card:"#1A1A20",border:"#26262E",orange:"#60A5FA",orangeLow:"#60A5FA14",orangeMid:"#60A5FA30",green:"#34D399",greenLow:"#34D39914",red:"#FC8181",redLow:"#FC818114",yellow:"#FBBF24",yellowLow:"#FBBF2414",blue:"#60A5FA",blueLow:"#60A5FA14",purple:"#A78BFA",purpleLow:"#A78BFA14",teal:"#2DD4BF",text:"#F0F4FF",sub:"#C8D4F0",muted:"#7080A0"};
 const inp={width:"100%",boxSizing:"border-box",background:"#0C0C0F",border:`1px solid ${T.border}`,borderRadius:12,color:T.text,fontSize:15,padding:"13px 14px",outline:"none",fontFamily:"inherit",appearance:"none",WebkitAppearance:"none"};
-const inpSel={...inp,color:T.orange};
+const inpSel={...inp,color:T.orange,background:T.card,colorScheme:"dark"};
 const lbl={display:"block",fontSize:11,fontWeight:700,color:"#D4D4D8",letterSpacing:"1px",textTransform:"uppercase",marginBottom:6};
 const cardS={background:T.card,border:`1px solid ${T.border}`,borderRadius:16,padding:"16px"};
 const pill=(c)=>({display:"inline-flex",alignItems:"center",background:c+"20",color:c,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:700});
@@ -290,7 +290,7 @@ async function fetchWeather(location){const gR=await fetch(`https://geocoding-ap
 async function notify(type,title,body,extra={}){try{await API.notifications.create({type,title,body,...extra});}catch{}}
 
 /* ── SHARED UI ──────────────────────────────────────────────── */
-function Spinner(){return(<div style={{display:"flex",justifyContent:"center",padding:"48px 0"}}><div style={{width:32,height:32,border:`3px solid ${T.border}`,borderTopColor:T.orange,borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}} select,select option{background:#1a1a1a !important;color:#60A5FA !important;} select:focus{outline:none;} select *{color:#60A5FA !important;background:#1a1a1a !important;}`}</style></div>);}
+function Spinner(){return(<div style={{display:"flex",justifyContent:"center",padding:"48px 0"}}><div style={{width:32,height:32,border:`3px solid ${T.border}`,borderTopColor:T.orange,borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}} select{color-scheme:dark;} select{background:#1A1A20 !important;color:#F0F4FF !important;border-color:#26262E !important;} select option{background:#1A1A20 !important;color:#F0F4FF !important;} select option:hover{background:#26262E !important;} select:focus{outline:none !important;} select *{background:#1A1A20 !important;color:#F0F4FF !important;}`}</style></div>);}
 function ErrBanner({msg,onDismiss}){if(!msg)return null;return(<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:13,color:T.red}}>⚠️ {msg}</span><button onClick={onDismiss} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:18,padding:"0 0 0 10px"}}>×</button></div>);}
 function Lightbox({src,onClose}){if(!src)return null;return(<div onClick={onClose} style={{position:"fixed",inset:0,zIndex:999,background:"rgba(0,0,0,0.95)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><img src={src} alt="" style={{maxWidth:"100%",maxHeight:"90vh",borderRadius:12}} onClick={e=>e.stopPropagation()}/><button onClick={onClose} style={{position:"absolute",top:16,right:16,background:"#D4D4D8",border:"none",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:18,cursor:"pointer"}}>×</button></div>);}
 function DashedAdd({label,onClick,color}){const c=color||T.muted;return(<button onClick={onClick} style={{width:"100%",border:`2px dashed ${c}50`,background:c+"08",color:c,borderRadius:14,padding:"14px",fontSize:15,cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>{label}</button>);}
@@ -389,10 +389,10 @@ function LoginScreen({onLogin}){
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
         <div style={{marginBottom:14}}>
           <label style={lbl}>Select Your Name</label>
-          <select value={name} onChange={e=>handleNameChange(e.target.value)} style={{...inp,color:T.orange}}>
-            <option value="" style={{background:"#D4D4D8",color:T.orange}}>— Select your name —</option>
-            {NAMES.map(n=><option key={n} style={{background:"#D4D4D8",color:T.orange}}>{n}</option>)}
-            <option value="Admin" style={{background:"#D4D4D8",color:T.orange}}>Admin</option>
+          <select value={name} onChange={e=>handleNameChange(e.target.value)} style={{...inp,color:T.orange,background:T.card}}>
+            <option value="" style={{background:T.card,color:T.muted}}>— Select your name —</option>
+            {NAMES.map(n=><option key={n} style={{background:T.card,color:T.text}}>{n}</option>)}
+            <option value="Admin" style={{background:T.card,color:T.orange}}>Admin</option>
           </select>
         </div>
 
