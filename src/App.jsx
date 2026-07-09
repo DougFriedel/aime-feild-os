@@ -2946,7 +2946,7 @@ function EmailSummaryModal({user,projects,onClose}){return(<div style={{position
 
 
 
-function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
+function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true,onErr:onErrProp,onRefresh}){
   const [project,setProject]=useState(initP);
   const [reports,setReports]=useState([]);const [safety,setSafety]=useState([]);const [photos,setPhotos]=useState([]);const [weather,setWeather]=useState([]);
   const [tab,setTab]=useState("reports");const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
