@@ -2805,12 +2805,15 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated}){
   async function updateProject(data){
     setProjSaving(true);setErr("");
     try{
-      const res=await API.projects.update(project.id,data);
+      // Strip computed/client-only fields before sending to DB
+      const{_billed,_reports,_lastReport,...dbData}=data;
+      const res=await API.projects.update(project.id,dbData);
       const u=Array.isArray(res)?res[0]:res;
-      setProject(u||{...project,...data});
-      onProjectUpdated&&onProjectUpdated(u||{...project,...data});
+      const merged=u||{...project,...dbData};
+      setProject(merged);
+      onProjectUpdated&&onProjectUpdated(merged);
       setEditProject(false);
-    }catch(e){setErr(e.message||"Save failed — check console");}
+    }catch(e){setErr(e.message||"Save failed");}
     setProjSaving(false);
   }
   async function archiveProject(){if(!window.confirm(project.status==="active"?"Archive this job?":"Restore?"))return;await updateProject({status:project.status==="active"?"archived":"active"});onBack();}
@@ -3527,7 +3530,7 @@ function AppInner(){
           onErr={setErr} isOnline={isOnline}/>
       )}
       {user&&screen==="newProject"&&(
-        <ProjectForm user={user} onSave={async(data)=>{try{await API.projects.create(data);await loadProjects();setScreen("jobs");}catch(e){setErr(e.message);}}} onCancel={()=>setScreen("jobs")}/>
+        <ProjectForm user={user} onSave={async(data)=>{try{const{_billed,_reports,_lastReport,...dbData}=data;await API.projects.create(dbData);await loadProjects();setScreen("jobs");}catch(e){setErr(e.message);}}} onCancel={()=>setScreen("jobs")}/>
       )}
       {user&&screen==="pmDashboard"&&(
         <PMDashboard user={user} projects={projects} onBack={()=>setScreen("division")} onRefresh={loadProjects} onErr={setErr}/>
