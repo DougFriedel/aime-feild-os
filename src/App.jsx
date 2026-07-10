@@ -509,7 +509,11 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
                     <div style={{fontSize:22,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{div}</div>
                     <div style={{fontSize:13,color:T.sub,marginTop:2}}>{meta.desc}</div>
                   </div>
-                  <div style={{fontSize:22,color:divColor}}>→</div>
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
+                    <div style={{fontSize:22,color:divColor}}>→</div>
+                    {stats?.count>0&&<div style={{background:divColor+"20",border:`1px solid ${divColor}40`,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:800,color:divColor}}>{stats.count} job{stats.count!==1?"s":""}</div>}
+                    {stats?.count===0&&<div style={{background:T.border,borderRadius:20,padding:"2px 10px",fontSize:10,color:T.muted}}>No jobs</div>}
+                  </div>
                 </div>
                 {/* Stats */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
@@ -530,7 +534,65 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
 }
 
 /* ── JOB BOARD (per division) ───────────────────────────────── */
-function JobBoard({user,division,projects,loading,onSelect,onNew,onBack}){
+/* ── PULL TO REFRESH ─────────────────────────────────────────── */
+function PullToRefresh({onRefresh,children}){
+  const [pulling,setPulling]=React.useState(false);
+  const [pullY,setPullY]=React.useState(0);
+  const [refreshing,setRefreshing]=React.useState(false);
+  const startY=React.useRef(null);
+  const containerRef=React.useRef(null);
+  const THRESHOLD=70;
+
+  function onTouchStart(e){
+    const container=containerRef.current;
+    if(!container)return;
+    if(container.scrollTop>0)return; // only trigger at top
+    startY.current=e.touches[0].clientY;
+  }
+  function onTouchMove(e){
+    if(startY.current===null)return;
+    const dy=e.touches[0].clientY-startY.current;
+    if(dy<=0){startY.current=null;return;}
+    setPulling(true);
+    setPullY(Math.min(dy*0.4,THRESHOLD+20));
+  }
+  async function onTouchEnd(){
+    if(!pulling){startY.current=null;return;}
+    if(pullY>=THRESHOLD){
+      setRefreshing(true);
+      setPullY(THRESHOLD);
+      try{await onRefresh();}catch(e){}
+      setRefreshing(false);
+    }
+    setPulling(false);
+    setPullY(0);
+    startY.current=null;
+  }
+
+  return(
+    <div ref={containerRef} style={{overflowY:"auto",height:"100%",WebkitOverflowScrolling:"touch",position:"relative"}}
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+      {/* Pull indicator */}
+      <div style={{
+        height:pullY>0?pullY:0,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",
+        transition:pulling?"none":"height 0.3s ease",color:T.orange,fontSize:13,fontWeight:700,gap:6
+      }}>
+        {pullY>0&&<>
+          <div style={{
+            width:20,height:20,border:`2px solid ${T.orange}`,borderTopColor:"transparent",borderRadius:"50%",
+            animation:refreshing?"spin 0.7s linear infinite":undefined,
+            transform:refreshing?"none":`rotate(${Math.min(pullY/THRESHOLD,1)*360}deg)`,transition:"transform 0.1s"
+          }}/>
+          {pullY>=THRESHOLD?"Release to refresh":"Pull to refresh"}
+        </>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+
+function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefresh}){
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("active");
   const meta=DIV_META[division]||{icon:"🏗️",color:T.orange};
@@ -569,6 +631,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack}){
         </div>
       </div>
 
+      <PullToRefresh onRefresh={async()=>onRefresh&&await onRefresh()}>
       <div style={{padding:"12px 16px 80px"}}>
         {loading&&<Spinner/>}
       {canCreate&&<div style={{position:"fixed",bottom:20,right:"max(16px,calc(50vw - 224px))",zIndex:100}}><button onClick={onNew} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:50,padding:"14px 22px",fontSize:15,fontWeight:900,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 24px rgba(249,115,22,0.5)",display:"flex",alignItems:"center",gap:8}}>＋ New Job</button></div>}
@@ -581,6 +644,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack}){
         )}
         {!loading&&filtered.map(p=><JobCard key={p.id} p={p} onSelect={onSelect} divColor={meta.color}/>)}
       </div>
+      </PullToRefresh>
     </div>
   );
 }
@@ -2684,9 +2748,10 @@ function PhotosTab({projectId,photos,onRefresh,onErr}){
         ))}
       </div>}
 
-      {filtered.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>
-        <div style={{fontSize:32,marginBottom:8}}>📷</div>
-        <div>{filterCat==="All"?"No photos yet — add some above":`No ${filterCat} photos yet`}</div>
+      {filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>📷</div>
+        <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>{filterCat==="All"?"No Photos Yet":`No ${filterCat} Photos`}</div>
+        <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>>{filterCat==="All"?"Tap 📷 Add Site Photos above. GPS location and category are captured automatically.":"Try a different category filter or add new photos above."}</div>
       </div>}
 
       {/* Photos grouped by date */}
@@ -3476,7 +3541,14 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
         {loading&&<Spinner/>}
         {!loading&&tab==="reports"&&(<div>
           {can(user,"submit_report")&&<button onClick={()=>setScreen("newReport")} style={{...primBtn,marginBottom:16,borderRadius:14,padding:"18px",fontSize:17,background:divMeta.color}}>📋 + New Daily Report</button>}
-          {reports.length===0&&<div style={{textAlign:"center",padding:"32px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:15,fontWeight:600,color:T.sub,marginBottom:4}}>No reports yet</div></div>}
+          {reports.length===0&&<div style={{textAlign:"center",padding:"32px 16px",color:T.muted}}>
+              <div style={{fontSize:44,marginBottom:12}}>📋</div>
+              <div style={{fontSize:16,fontWeight:700,color:T.sub,marginBottom:6}}>No Daily Reports Yet</div>
+              <div style={{fontSize:13,color:T.muted,lineHeight:1.6,marginBottom:16}}>Tap <strong style={{color:T.orange}}>+ New Report</strong> below to submit the first daily report for this job.</div>
+              <div style={{background:T.orangeLow,border:`1px solid ${T.orange}30`,borderRadius:12,padding:"10px 14px",fontSize:12,color:T.orange,textAlign:"left"}}>
+                💡 Reports track labor, equipment, materials and site conditions — and automatically generate time cards for payroll.
+              </div>
+            </div>}
           {reports.map(r=>{const t=reportTotals(r);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
         </div>)}
         {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} user={user} onErr={setErr}/>}
@@ -3644,7 +3716,11 @@ ${co.client_signature?`<div style="background:#fff;border:1px solid #86efac;bord
 
       {canEdit&&<button onClick={()=>setShowForm(true)} style={{...primBtn,borderRadius:14,marginBottom:14}}>+ New Change Order</button>}
       {loading&&<Spinner/>}
-      {!loading&&cos.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>📋</div><div style={{fontWeight:700,color:T.sub}}>No Change Orders Yet</div></div>}
+      {!loading&&cos.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+          <div style={{fontSize:44,marginBottom:12}}>📋</div>
+          <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No Change Orders</div>
+          <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{canEdit?"Tap "+ New Change Order" above to document scope changes that need client approval.":"No change orders have been submitted for this job yet."}</div>
+        </div>}
       {cos.map(co=>(
         <div key={co.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${statusColor[co.status]||T.muted}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
@@ -3833,7 +3909,11 @@ ${rfi.response?`<div class="resp-section"><h2>Response</h2><div style="backgroun
       </div>}
       {canEdit&&<button onClick={()=>setShowForm(true)} style={{...primBtn,borderRadius:14,marginBottom:14}}>+ New RFI</button>}
       {loading&&<Spinner/>}
-      {!loading&&rfis.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>📝</div><div style={{fontWeight:700,color:T.sub}}>No RFIs Yet</div></div>}
+      {!loading&&rfis.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+          <div style={{fontSize:44,marginBottom:12}}>📝</div>
+          <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No RFIs</div>
+          <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{canEdit?"Tap "+ New RFI" above to submit a question to Colonial Pipeline or the engineer.":"No requests for information have been submitted yet."}</div>
+        </div>}
       {rfis.map(rfi=>{
         const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
         const effStatus=isOverdue?"Overdue":rfi.status;
