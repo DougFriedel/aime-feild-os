@@ -589,36 +589,60 @@ function JobCard({p,onSelect,divColor}){
   const isArchived=p.status!=="active";
   const daysSince=p._lastReport?Math.floor((Date.now()-new Date(p._lastReport+"T12:00:00").getTime())/86400000):null;
   const actColor=daysSince===null?T.muted:daysSince===0?T.green:daysSince<=2?T.orange:T.red;
-  const actLabel=daysSince===null?"No reports yet":daysSince===0?"Reported today":daysSince===1?"Reported yesterday":`${daysSince}d since last report`;
+  const actLabel=daysSince===null?"No reports yet":daysSince===0?"Today":daysSince===1?"Yesterday":`${daysSince}d ago`;
   const c=divColor||T.orange;
+  const billedAmt=p._billed||0;
+  const billedFmt=billedAmt>=1000?(billedAmt/1000).toFixed(1)+"k":fmt(billedAmt);
   return(
     <div onClick={()=>onSelect(p)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,marginBottom:10,cursor:"pointer",overflow:"hidden",opacity:isArchived?0.55:1}}>
       <div style={{height:3,background:isArchived?T.border:`linear-gradient(90deg,${c},${c}88)`}}/>
       <div style={{padding:"14px 16px"}}>
+
+        {/* Job name + billed */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
           <div style={{flex:1,minWidth:0,paddingRight:12}}>
             <div style={{fontSize:17,fontWeight:900,color:T.text,letterSpacing:"-0.3px",lineHeight:1.2}}>{p.name}</div>
             <div style={{fontSize:12,color:T.sub,marginTop:3}}>{[p.client,p.location].filter(Boolean).join(" · ")||"No details"}</div>
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
-            <div style={{fontSize:20,fontWeight:900,color:T.green,letterSpacing:"-0.5px"}}>${(p._billed||0)>=1000?((p._billed||0)/1000).toFixed(1)+"k":fmt(p._billed||0)}</div>
-            <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:1}}>Total Billed</div>
+            <div style={{fontSize:20,fontWeight:900,color:T.green,letterSpacing:"-0.5px"}}>${billedFmt}</div>
+            <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:1}}>Billed</div>
           </div>
         </div>
+
+        {/* Pills */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
           {p.afe&&<span style={pill(T.muted)}>AFE: {p.afe}</span>}
           {p.work_order&&<span style={pill(T.muted)}>PO: {p.work_order}</span>}
           <span style={pill(p.job_type==="Contract"?T.blue:T.orange)}>{p.job_type||"T&M"}</span>
           <span style={pill(isArchived?T.muted:T.green)}>{isArchived?"Archived":"Active"}</span>
         </div>
+
+        {/* Stats row */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:10}}>
+          {[
+            [p._reports||0,"📋","Reports",c],
+            [p._photos||0,"📷","Photos",T.blue],
+            [p._openRfis||0,"📝","Open RFIs",p._openRfis>0?T.yellow:T.muted],
+            [p._pendingCOs||0,"📋","Pending COs",p._pendingCOs>0?T.orange:T.muted],
+          ].map(([val,icon,label,color])=>(
+            <div key={label} style={{background:T.surface,borderRadius:8,padding:"6px 4px",textAlign:"center",border:val>0&&(label==="Open RFIs"||label==="Pending COs")?`1px solid ${color}40`:`1px solid ${T.border}`}}>
+              <div style={{fontSize:14,fontWeight:900,color:val>0?color:T.muted}}>{val}</div>
+              <div style={{fontSize:8,color:T.muted,textTransform:"uppercase",letterSpacing:"0.3px",marginTop:1}}>{label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Last activity + Enter button */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-          <div style={{display:"flex",gap:16}}>
-            <div><div style={{fontSize:16,fontWeight:800,color:c}}>{p._reports||0}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>Reports</div></div>
-            <div><div style={{fontSize:11,fontWeight:700,color:actColor,marginTop:2}}>{actLabel}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:1}}>Last Activity</div></div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <div style={{width:6,height:6,borderRadius:"50%",background:actColor,flexShrink:0}}/>
+            <span style={{fontSize:11,fontWeight:600,color:actColor}}>{actLabel}</span>
+            {p._pendingCOTotal>0&&<span style={{fontSize:10,color:T.orange,fontWeight:700,marginLeft:4}}>+${(p._pendingCOTotal/1000).toFixed(1)}k pending</span>}
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:6,background:c+"15",border:`1px solid ${c}40`,borderRadius:10,padding:"8px 14px"}}>
-            <span style={{fontSize:13,fontWeight:700,color:c}}>Enter Job</span>
-            <span style={{fontSize:16,color:c}}>→</span>
+          <div style={{display:"flex",alignItems:"center",gap:6,background:c+"15",border:`1px solid ${c}40`,borderRadius:10,padding:"7px 12px"}}>
+            <span style={{fontSize:12,fontWeight:700,color:c}}>Enter Job</span>
+            <span style={{fontSize:14,color:c}}>→</span>
           </div>
         </div>
       </div>
@@ -883,6 +907,23 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
     setWeatherFilling(false);
   }
   const tot=reportTotals(rpt,project.division);
+
+  // Auto-increment report number on mount
+  useEffect(()=>{
+    if(!rpt.report_no){
+      (async()=>{
+        try{
+          const existing=await API.reports.forProject(project.id);
+          const nums=(existing||[]).map(r=>{
+            const n=parseInt((r.report_no||"0").replace(/\D/g,""));
+            return isNaN(n)?0:n;
+          });
+          const nextNum=(nums.length>0?Math.max(...nums):0)+1;
+          setR("report_no",String(nextNum).padStart(3,"0"));
+        }catch(e){}
+      })();
+    }
+  },[]);
 
   // Auto-save draft every time form changes
   useEffect(()=>{
@@ -3867,14 +3908,27 @@ function AppInner(){
       // Load report counts and billing per project
       const enriched=await Promise.all(ps.map(async p=>{
         try{
-          const reps=await API.reports.forProject(p.id);
+          const [reps,rfis,cos,photos]=await Promise.all([
+            API.reports.forProject(p.id).catch(()=>[]),
+            API.rfis.forProject(p.id).catch(()=>[]),
+            API.changeOrders.forProject(p.id).catch(()=>[]),
+            API.photos.forProject(p.id).catch(()=>[]),
+          ]);
           const repList=Array.isArray(reps)?reps:[];
+          const rfiList=Array.isArray(rfis)?rfis:[];
+          const coList=Array.isArray(cos)?cos:[];
+          const photoList=Array.isArray(photos)?photos:[];
           const billed=repList.reduce((s,r)=>{
-            const tot=r.labor_total||0;const etot=r.equipment_total||0;
-            return s+tot+etot;
+            return s+(r.labor_total||0)+(r.equipment_total||0);
           },0);
-          return{...p,_reports:repList.length,_billed:billed};
-        }catch{return{...p,_reports:0,_billed:0};}
+          const lastRep=repList.length>0?repList.sort((a,b)=>b.date?.localeCompare(a.date))[0].date:null;
+          const openRfis=rfiList.filter(r=>r.status==="Open"||r.status==="Overdue").length;
+          const pendingCOs=coList.filter(c=>c.status==="Pending");
+          const pendingCOTotal=pendingCOs.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+          return{...p,_reports:repList.length,_billed:billed,_lastReport:lastRep,
+            _openRfis:openRfis,_pendingCOs:pendingCOs.length,_pendingCOTotal:pendingCOTotal,
+            _photos:photoList.length};
+        }catch{return{...p,_reports:0,_billed:0,_openRfis:0,_pendingCOs:0,_pendingCOTotal:0,_photos:0};}
       }));
       setProjects(enriched);
     }catch(e){setErr(e.message);}
