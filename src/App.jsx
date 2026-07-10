@@ -3719,7 +3719,7 @@ ${co.client_signature?`<div style="background:#fff;border:1px solid #86efac;bord
       {!loading&&cos.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
           <div style={{fontSize:44,marginBottom:12}}>📋</div>
           <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No Change Orders</div>
-          <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{canEdit?"Tap "+ New Change Order" above to document scope changes that need client approval.":"No change orders have been submitted for this job yet."}</div>
+          <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{canEdit?`Tap "+ New Change Order" above to document scope changes that need client approval.`:"No change orders have been submitted for this job yet."}</div>
         </div>}
       {cos.map(co=>(
         <div key={co.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${statusColor[co.status]||T.muted}`}}>
@@ -3912,7 +3912,7 @@ ${rfi.response?`<div class="resp-section"><h2>Response</h2><div style="backgroun
       {!loading&&rfis.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
           <div style={{fontSize:44,marginBottom:12}}>📝</div>
           <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No RFIs</div>
-          <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{canEdit?"Tap "+ New RFI" above to submit a question to Colonial Pipeline or the engineer.":"No requests for information have been submitted yet."}</div>
+          <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{canEdit?`Tap "+ New RFI" above to submit a question to Colonial Pipeline or the engineer.`:"No requests for information have been submitted yet."}</div>
         </div>}
       {rfis.map(rfi=>{
         const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
