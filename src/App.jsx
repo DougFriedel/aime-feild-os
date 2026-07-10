@@ -1354,6 +1354,149 @@ function printReport(report, project){
   setTimeout(()=>{ win.print(); }, 400);
 }
 
+/* ── PRINT REPORT WITH OPTIONS ──────────────────────────────── */
+function printReportWithOptions(report, project, sections, photos, photoLayout){
+  const positions = getPositions(project.division);
+  const tot = reportTotals(report, project.division);
+  const [yr,mo,dy] = (report.date||'').split('-');
+  const dateStr = `${mo}/${dy}/${yr}`;
+  const fmt2 = n => (parseFloat(n)||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2});
+  const fmtH = n => `${(parseFloat(n)||0).toFixed(1)}h`;
+  const visitors = report.visitor_log||[];
+  const delays = report.delays||[];
+
+  // Photo pages
+  let photoHTML = '';
+  if(photos&&photos.length>0){
+    if(photoLayout==='full'){
+      photoHTML = photos.map(ph=>`
+        <div style="page-break-before:always;padding:20px;">
+          <div style="font-size:9pt;color:#555;margin-bottom:8px;font-weight:700">${ph.category||'Photo'} ${ph.date?'· '+ph.date:''} ${ph.caption?'· '+ph.caption:''}</div>
+          <img src="${ph.src}" style="width:100%;max-height:650px;object-fit:contain;display:block;border-radius:6px;border:1px solid #e5e7eb"/>
+          ${ph.lat?`<div style="font-size:8pt;color:#6b7280;margin-top:6px">📍 GPS: ${ph.lat.toFixed(5)}, ${ph.lng.toFixed(5)}</div>`:''}
+        </div>`).join('');
+    }else{
+      // 2x2 grid pages
+      const pages = [];
+      for(let i=0;i<photos.length;i+=4) pages.push(photos.slice(i,i+4));
+      photoHTML = pages.map((pg,pi)=>`
+        <div style="${pi>0?'page-break-before:always;':''}padding:20px;">
+          <div style="font-size:10pt;font-weight:800;color:#1f3864;margin-bottom:10px;">📷 Site Photos</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            ${pg.map(ph=>`<div>
+              <img src="${ph.src}" style="width:100%;height:200px;object-fit:cover;border-radius:6px;display:block;border:1px solid #e5e7eb"/>
+              <div style="font-size:8pt;color:#555;margin-top:4px;">${ph.category||''} ${ph.caption?'· '+ph.caption:''}</div>
+            </div>`).join('')}
+          </div>
+        </div>`).join('');
+    }
+  }
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Daily Report — ${project.name} — ${dateStr}</title>
+<style>
+@page{size:letter portrait;margin:0.5in;}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+body{font-size:10pt;color:#000;}
+.header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:12px;border-bottom:3px solid #1f3864;margin-bottom:16px;}
+.co{font-size:20pt;font-weight:900;color:#1f3864;}
+.co-sub{font-size:9pt;color:#555;margin-top:3px;}
+.doc-title{text-align:right;}
+.doc-title h1{font-size:18pt;font-weight:900;color:#1f3864;}
+.proj-box{background:#f0f4ff;border:1px solid #c7d2fe;border-radius:6px;padding:10px 14px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+.fl{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;margin-bottom:2px;}
+.fv{font-size:10pt;font-weight:600;color:#111;}
+.section{margin-bottom:14px;}
+.section h2{font-size:9pt;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#1f3864;border-bottom:1.5px solid #1f3864;padding-bottom:5px;margin-bottom:8px;}
+.desc-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:10pt;line-height:1.7;min-height:48px;}
+table{width:100%;border-collapse:collapse;margin-bottom:6px;font-size:9pt;}
+th{background:#1f3864;color:#fff;padding:5px 8px;text-align:left;font-size:8pt;}
+td{padding:5px 8px;border-bottom:1px solid #e5e7eb;}
+tr:nth-child(even) td{background:#f9fafb;}
+.total-row td{background:#EEF2FF;font-weight:700;border-top:1.5px solid #1f3864;}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:8pt;font-weight:700;}
+.badge-red{background:#fee2e2;color:#991b1b;}
+.badge-yellow{background:#fef9c3;color:#713f12;}
+.badge-blue{background:#dbeafe;color:#1e40af;}
+.visitor-row{padding:7px;border-bottom:1px solid #e5e7eb;display:flex;gap:10px;}
+.delay-row{padding:7px;border-bottom:1px solid #e5e7eb;border-left:3px solid #ef4444;padding-left:10px;}
+.sig-section{margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+.sig-box{border-top:1.5px solid #000;padding-top:8px;}
+.sig-label{font-size:8pt;color:#555;text-transform:uppercase;}
+.footer{margin-top:16px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+
+<div class="header">
+  <div><div class="co">AIME</div><div class="co-sub">Atlantic Industrial Mechanical & Environmental Inc.<br/>${project.division||''} Division</div></div>
+  <div class="doc-title"><h1>Daily Field Report</h1><div style="font-size:11pt;font-weight:700;color:#555">Report #${report.report_no||'—'}</div></div>
+</div>
+
+<div class="proj-box">
+  <div><div class="fl">Project</div><div class="fv">${project.name||'—'}</div></div>
+  <div><div class="fl">Client</div><div class="fv">${project.client||'—'}</div></div>
+  <div><div class="fl">Date</div><div class="fv">${dateStr}</div></div>
+  <div><div class="fl">AFE / PO</div><div class="fv">${project.afe||'—'}${project.work_order?' / '+project.work_order:''}</div></div>
+  <div><div class="fl">Submitted By</div><div class="fv">${report.submitted_by||'—'}</div></div>
+  <div><div class="fl">Status</div><div class="fv"><span class="badge ${report.status==='approved'?'badge-blue':report.status==='flagged'?'badge-red':'badge-yellow'}">${(report.status||'submitted').toUpperCase()}</span></div></div>
+</div>
+
+${sections.weather&&report.site_conditions?`<div class="section"><h2>🌤️ Site Conditions / Weather</h2><div class="desc-box">${report.site_conditions}</div></div>`:''}
+
+${sections.description&&report.description?`<div class="section"><h2>📝 Description of Work</h2><div class="desc-box">${report.description.replace(/\n/g,'<br/>')}</div></div>`:''}
+
+${sections.labor&&(report.labor||[]).length>0?`<div class="section"><h2>👷 Labor — ${(report.labor||[]).length} Workers · ${fmtH(tot.labor_hrs||0)} Total Hrs${tot.labor>0?' · '+fmt2(tot.labor):''}</h2>
+<table><thead><tr><th>Name</th><th>Classification</th><th style="text-align:center">Reg Hrs</th><th style="text-align:center">OT Hrs</th><th style="text-align:center">Travel</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${(report.labor||[]).map(l=>`<tr><td>${l.name||'—'}</td><td>${l.classification||'—'}</td><td style="text-align:center">${l.regHrs||0}</td><td style="text-align:center">${l.otHrs||0}</td><td style="text-align:center">${l.travelHrs||0}</td><td style="text-align:right">${fmt2(laborAmt(l))}</td></tr>`).join('')}
+</tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL LABOR</strong></td><td style="text-align:right"><strong>${fmt2(tot.labor||0)}</strong></td></tr></tfoot></table></div>`:''}
+
+${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>🚜 Equipment — ${(report.equipment||[]).length} Items${tot.equip>0?' · '+fmt2(tot.equip):''}</h2>
+<table><thead><tr><th>Equipment</th><th>Unit</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${(report.equipment||[]).map(e=>`<tr><td>${e.name||'—'}</td><td>${e.unit||'—'}</td><td style="text-align:center">${e.qty||0}</td><td style="text-align:right">${fmt2((parseFloat(e.qty)||0)*(parseFloat(e.rate)||0))}</td></tr>`).join('')}
+</tbody></table></div>`:''}
+
+${sections.rental&&(report.rental_equipment||[]).length>0?`<div class="section"><h2>🔧 Rental Equipment</h2>
+<table><thead><tr><th>Description</th><th>Company</th><th style="text-align:center">Hours</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${(report.rental_equipment||[]).map(r=>`<tr><td>${r.description||'—'}</td><td>${r.vendor||'—'}</td><td style="text-align:center">${r.hours||'—'}</td><td style="text-align:right">${r.amount?fmt2(r.amount):'—'}</td></tr>`).join('')}
+</tbody></table></div>`:''}
+
+${sections.materials&&(report.materials||[]).length>0?`<div class="section"><h2>📦 Materials & Misc.</h2>
+<table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${(report.materials||[]).map(m=>`<tr><td>${m.description||'—'}</td><td style="text-align:center">${m.qty||'—'}</td><td style="text-align:right">${m.amount?fmt2(m.amount):'—'}</td></tr>`).join('')}
+</tbody></table></div>`:''}
+
+${sections.visitors&&visitors.length>0?`<div class="section"><h2>🏗️ Visitor Log — ${visitors.length} Visitor${visitors.length!==1?'s':''}</h2>
+${visitors.map(v=>`<div class="visitor-row"><div style="flex:1"><strong>${v.name||'—'}</strong>${v.company?' · '+v.company:''}</div><div style="font-size:8pt;color:#555">${v.type||''}</div>${v.notes?`<div style="font-size:8pt;color:#6b7280;font-style:italic">${v.notes}</div>`:''}</div>`).join('')}</div>`:''}
+
+${sections.delays&&delays.length>0?`<div class="section"><h2>⚠️ Delays & Issues — ${delays.length} Item${delays.length!==1?'s':''}</h2>
+${delays.map(d=>`<div class="delay-row"><div style="display:flex;gap:10px;align-items:center;margin-bottom:3px"><strong>${d.cause||'—'}</strong>${d.hours>0?`<span style="font-size:8pt;color:#ef4444">${d.hours}h delay</span>`:''}</div><div>${d.description||''}</div>${d.impact?`<div style="font-size:8pt;color:#555">Impact: ${d.impact}</div>`:''}</div>`).join('')}</div>`:''}
+
+${sections.signature&&report.inspector_signature?`<div class="section"><h2>✍️ Inspector Sign-Off</h2>
+<div style="background:#fff;border:1px solid #86efac;border-radius:6px;padding:10px;display:flex;align-items:center;gap:16px">
+<img src="${report.inspector_signature}" style="max-height:70px;max-width:240px;object-fit:contain"/>
+<div><div style="font-weight:700">${report.inspector_name||'Inspector'}</div><div style="font-size:9pt;color:#555">${report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleString():''}</div></div>
+</div></div>`:''}
+
+<div class="sig-section">
+  <div class="sig-box"><div style="height:50px"></div><div class="sig-label">Foreman / Submitted By</div><div style="font-weight:700;margin-top:4px">${report.submitted_by||''}</div></div>
+  <div class="sig-box"><div style="height:50px"></div><div class="sig-label">PM / Reviewed By</div><div style="margin-top:4px">Date: ______________</div></div>
+</div>
+
+<div class="footer"><span>AIME Field Pro · ${project.name} · Report #${report.report_no||'—'} · ${dateStr}</span><span>Generated: ${new Date().toLocaleString()}</span></div>
+
+${photoHTML}
+
+</body></html>`;
+
+  const win = window.open('','_blank','width=950,height=800');
+  if(!win){alert('Popup blocked — please allow popups and try again.');return;}
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(()=>win.print(),500);
+}
+
+
 /* ── SIGNATURE PAD ──────────────────────────────────────────── */
 function SignaturePad({onSave,onCancel,reportName}){
   const canvasRef=useRef(null);
@@ -1525,6 +1668,15 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   const [showSigPad,setShowSigPad]=useState(false);const [sigSaving,setSigSaving]=useState(false);
   const [showInspectorShare,setShowInspectorShare]=useState(false);
   const [inspLinkCopied,setInspLinkCopied]=useState(false);
+  const [showPrintModal,setShowPrintModal]=useState(false);
+  const [reportPhotos,setReportPhotos]=useState([]);
+  const [selectedPhotos,setSelectedPhotos]=useState([]);
+  const [photosLoading,setPhotosLoading]=useState(false);
+  const [printSections,setPrintSections]=useState({
+    weather:true,description:true,labor:true,equipment:true,
+    rental:true,materials:true,visitors:true,delays:true,signature:true
+  });
+  const [photoLayout,setPhotoLayout]=useState("grid"); // grid | full
   const [editing,setEditing]=useState(false);const [editErr,setEditErr]=useState("");const [editSaving,setEditSaving]=useState(false);
   const [editData,setEditData]=useState(null);
 
@@ -1540,6 +1692,21 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   const tot=reportTotals(report,project.division);
   const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[report.status]||T.muted;
   const divColor=DIV_META[project.division]?.color||T.orange;
+
+  async function loadPhotosForPrint(){
+    setPhotosLoading(true);
+    try{
+      const p=await API.photos.forProject(project.id);
+      const list=Array.isArray(p)?p:[];
+      // Filter to photos taken on this report's date
+      const onDate=list.filter(ph=>ph.date===report.date);
+      const others=list.filter(ph=>ph.date!==report.date);
+      setReportPhotos([...onDate,...others]);
+      // Pre-select photos from this report's date
+      setSelectedPhotos(onDate.map(ph=>ph.id));
+    }catch(e){}
+    setPhotosLoading(false);
+  }
 
   async function saveSignature(inspectorName,sigData){
     setSigSaving(true);
@@ -1754,6 +1921,133 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     );
   }
 
+
+  // ── Print / Export Modal ──────────────────────────────────────
+  if(showPrintModal){
+    const SECTIONS=[
+      {key:"description",label:"📝 Work Description"},
+      {key:"weather",label:"🌤️ Site Conditions / Weather"},
+      {key:"labor",label:"👷 Labor"},
+      {key:"equipment",label:"🚜 Equipment"},
+      {key:"rental",label:"🔧 Rental Equipment"},
+      {key:"materials",label:"📦 Materials"},
+      {key:"visitors",label:"🏗️ Visitor Log"},
+      {key:"delays",label:"⚠️ Delays & Issues"},
+      {key:"signature",label:"✍️ Inspector Signature"},
+    ];
+    const toggleSection=(k)=>setPrintSections(s=>({...s,[k]:!s[k]}));
+    const togglePhoto=(id)=>setSelectedPhotos(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+    const selAll=()=>setSelectedPhotos(reportPhotos.map(p=>p.id));
+    const selNone=()=>setSelectedPhotos([]);
+    const selDateOnly=()=>setSelectedPhotos(reportPhotos.filter(p=>p.date===report.date).map(p=>p.id));
+
+    const catColor={Progress:T.blue,Safety:T.red,Equipment:T.yellow,"Issue/Deficiency":T.red,Before:T.purple,After:T.green,Inspection:T.orange,Other:T.muted};
+
+    function generate(){
+      const photos=reportPhotos.filter(p=>selectedPhotos.includes(p.id));
+      printReportWithOptions(report,project,printSections,photos,photoLayout);
+      setShowPrintModal(false);
+    }
+
+    return(
+      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+        <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <button onClick={()=>setShowPrintModal(false)} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+          <div style={{fontSize:15,fontWeight:800,color:T.text}}>🖨️ Print / Export PDF</div>
+          <button onClick={generate} style={{background:T.blue,color:"#fff",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            Generate PDF
+          </button>
+        </div>
+
+        <div style={{padding:"14px 16px 100px"}}>
+          {/* Report summary */}
+          <div style={{...cardS,marginBottom:14,background:T.blueLow,border:`1px solid ${T.blue}30`}}>
+            <div style={{fontSize:13,fontWeight:800,color:T.text}}>{project.name}</div>
+            <div style={{fontSize:11,color:T.muted}}>{report.date} · Report #{report.report_no} · {report.submitted_by}</div>
+          </div>
+
+          {/* Section toggles */}
+          <div style={{...cardS,marginBottom:14}}>
+            <div style={{fontSize:12,fontWeight:800,color:T.text,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>Report Sections</div>
+            <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginBottom:10}}>
+              <button onClick={()=>setPrintSections(Object.fromEntries(Object.keys(printSections).map(k=>[k,true])))}
+                style={{...ghostBtn,fontSize:11,padding:"4px 10px"}}>All On</button>
+              <button onClick={()=>setPrintSections(Object.fromEntries(Object.keys(printSections).map(k=>[k,false])))}
+                style={{...ghostBtn,fontSize:11,padding:"4px 10px"}}>All Off</button>
+            </div>
+            {SECTIONS.map(s=>(
+              <div key={s.key} onClick={()=>toggleSection(s.key)}
+                style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:`1px solid ${T.border}`,cursor:"pointer"}}>
+                <span style={{fontSize:13,color:printSections[s.key]?T.text:T.muted}}>{s.label}</span>
+                <div style={{width:44,height:24,borderRadius:12,background:printSections[s.key]?T.green:T.border,position:"relative",transition:"background 0.2s",flexShrink:0}}>
+                  <div style={{position:"absolute",top:2,left:printSections[s.key]?20:2,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Photo selection */}
+          <div style={{...cardS,marginBottom:14}}>
+            <div style={{fontSize:12,fontWeight:800,color:T.text,textTransform:"uppercase",letterSpacing:"1px",marginBottom:4}}>
+              📷 Photos ({selectedPhotos.length}/{reportPhotos.length} selected)
+            </div>
+            <div style={{fontSize:11,color:T.muted,marginBottom:12}}>Tap photos to include/exclude from PDF</div>
+
+            {photosLoading&&<div style={{textAlign:"center",padding:"20px 0",color:T.muted}}>Loading photos...</div>}
+
+            {!photosLoading&&reportPhotos.length===0&&(
+              <div style={{textAlign:"center",padding:"20px 0",color:T.muted,fontSize:12}}>No photos on this job yet</div>
+            )}
+
+            {!photosLoading&&reportPhotos.length>0&&<>
+              <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+                <button onClick={selAll} style={{...ghostBtn,fontSize:11,padding:"4px 10px",color:T.green,border:`1px solid ${T.green}40`}}>✓ Select All ({reportPhotos.length})</button>
+                <button onClick={selDateOnly} style={{...ghostBtn,fontSize:11,padding:"4px 10px",color:T.blue,border:`1px solid ${T.blue}40`}}>📅 This Date ({reportPhotos.filter(p=>p.date===report.date).length})</button>
+                <button onClick={selNone} style={{...ghostBtn,fontSize:11,padding:"4px 10px",color:T.red,border:`1px solid ${T.red}40`}}>✕ None</button>
+              </div>
+
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:12}}>
+                {reportPhotos.map(ph=>{
+                  const sel=selectedPhotos.includes(ph.id);
+                  return(
+                    <div key={ph.id} onClick={()=>togglePhoto(ph.id)}
+                      style={{position:"relative",borderRadius:8,overflow:"hidden",aspectRatio:"4/3",cursor:"pointer",border:`2px solid ${sel?T.green:T.border}`,transition:"border-color 0.15s"}}>
+                      <img src={ph.src} alt={ph.caption} style={{width:"100%",height:"100%",objectFit:"cover",display:"block",opacity:sel?1:0.4,transition:"opacity 0.15s"}}/>
+                      {sel&&<div style={{position:"absolute",top:4,right:4,background:T.green,borderRadius:"50%",width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#000",fontWeight:800}}>✓</div>}
+                      {ph.category&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.7)",padding:"3px 5px",fontSize:8,color:catColor[ph.category]||T.muted,fontWeight:700}}>{ph.category}{ph.date===report.date?" · Today":ph.date?" · "+ph.date:""}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Photo layout option */}
+              {selectedPhotos.length>0&&<div>
+                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Photo Layout in PDF</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  {[["grid","2×2 Grid (compact)"],["full","Full Page (large)"]].map(([val,label])=>(
+                    <button key={val} onClick={()=>setPhotoLayout(val)}
+                      style={{...ghostBtn,padding:"10px",textAlign:"center",fontSize:12,fontWeight:700,
+                        background:photoLayout===val?T.blueLow:T.surface,
+                        color:photoLayout===val?T.blue:T.muted,
+                        border:`1px solid ${photoLayout===val?T.blue:T.border}`}}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>}
+            </>}
+          </div>
+
+          {/* Generate button */}
+          <button onClick={generate}
+            style={{...primBtn,borderRadius:14,background:T.blue,color:"#fff"}}>
+            🖨️ Generate PDF ({Object.values(printSections).filter(Boolean).length} sections{selectedPhotos.length>0?`, ${selectedPhotos.length} photos`:""})
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Inspector share modal
   if(showInspectorShare){
     const link=`${window.location.origin}${window.location.pathname}?inspect=${report.id}`;
@@ -1844,7 +2138,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       )}
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-        <button onClick={()=>printReport(report,project)} style={{...primBtn,background:"#1f3864",color:"#fff",borderRadius:14}}>🖨️ Print / Save PDF</button>
+        <button onClick={async()=>{setShowPrintModal(true);await loadPhotosForPrint();}} style={{...primBtn,background:"#1f3864",color:"#fff",borderRadius:14}}>🖨️ Print / Save PDF</button>
         <button onClick={exportXLSX} style={{...primBtn,background:divColor+"15",color:divColor,border:`1px solid ${divColor}40`,borderRadius:14}}>📥 Excel (.xlsx)</button>
       </div>
       {can(user,"approve_report")&&!editing&&(
