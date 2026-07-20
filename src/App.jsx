@@ -5441,7 +5441,9 @@ function ManufacturingDashboard({jobs,user,onSelectJob}){
           </div>
         );
       })}
-    </div>
+    </div>   {/* end jobs list */}
+    </div>   {/* end per-job section */}
+    </div>   {/* end padding wrapper */}
   );
 }
 
