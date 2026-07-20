@@ -104,6 +104,15 @@ const API={
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
+  mfg:{
+    jobs:{list:()=>sb('/mfg_jobs?order=created_at.desc'),create:(d)=>sb('/mfg_jobs',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_jobs?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_jobs?id=eq.${id}`,{method:'DELETE'})},
+    parts:{forJob:(jid)=>sb(`/mfg_parts?job_id=eq.${jid}&order=part_number.asc`),create:(d)=>sb('/mfg_parts',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_parts?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_parts?id=eq.${id}`,{method:'DELETE'})},
+    bom:{forPart:(pid)=>sb(`/mfg_bom?part_id=eq.${pid}`),create:(d)=>sb('/mfg_bom',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_bom?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_bom?id=eq.${id}`,{method:'DELETE'})},
+    receipts:{forPart:(pid)=>sb(`/mfg_receipts?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_receipts',{method:'POST',body:d,prefer:'return=representation'})},
+    travelers:{forPart:(pid)=>sb(`/mfg_travelers?part_id=eq.${pid}&limit=1`),upsert:(d)=>sb('/mfg_travelers',{method:'POST',body:d,prefer:'return=representation',resolution:'merge-duplicates'})},
+    labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
+    ncr:{forJob:(jid)=>sb(`/mfg_ncr?job_id=eq.${jid}&order=created_at.desc`),forPart:(pid)=>sb(`/mfg_ncr?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_ncr',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_ncr?id=eq.${id}`,{method:'PATCH',body:d})},
+  },
   docFolders:{forProject:(pid)=>sb(`/document_folders?project_id=eq.${pid}&order=name.asc`),create:(d)=>sb("/document_folders",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/document_folders?id=eq.${id}`,{method:"PATCH",body:d}),remove:(id)=>sb(`/document_folders?id=eq.${id}`,{method:"DELETE"})},
   docs:     {forProject:(pid)=>sb(`/documents?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/documents?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
   milestones:{forProject:(pid)=>sb(`/milestones?project_id=eq.${pid}&order=sort_order.asc,target_date.asc`),create:(d)=>sb("/milestones",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/milestones?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/milestones?id=eq.${id}`,{method:"DELETE"})},
@@ -253,8 +262,8 @@ function getAllPositions(){
 }
 
 const WMO={0:["Clear Sky","☀️"],1:["Mainly Clear","🌤️"],2:["Partly Cloudy","⛅"],3:["Overcast","☁️"],45:["Foggy","🌫️"],48:["Icy Fog","🌫️"],51:["Light Drizzle","🌦️"],53:["Drizzle","🌦️"],55:["Heavy Drizzle","🌦️"],61:["Light Rain","🌧️"],63:["Rain","🌧️"],65:["Heavy Rain","🌧️"],71:["Light Snow","🌨️"],73:["Snow","🌨️"],75:["Heavy Snow","❄️"],80:["Light Showers","🌦️"],81:["Showers","🌦️"],82:["Violent Showers","⛈️"],95:["Thunderstorm","⛈️"],96:["Thunderstorm + Hail","⛈️"],99:["Severe Thunderstorm","⛈️"]};
-const DIVISIONS=["Mechanical","Pipeline","Structural"];
-const DIV_META={Mechanical:{icon:"⚙️",color:"#60A5FA",desc:"Mechanical projects and equipment"},Pipeline:{icon:"🔧",color:"#3B82F6",desc:"Pipeline construction and maintenance"},Structural:{icon:"🏗️",color:"#34D399",desc:"Structural steel and civil work"}};
+const DIVISIONS=["Mechanical","Pipeline","Structural","Manufacturing"];
+const DIV_META={Mechanical:{icon:"⚙️",color:"#60A5FA",desc:"Mechanical projects and equipment"},Pipeline:{icon:"🔧",color:"#3B82F6",desc:"Pipeline construction and maintenance"},Structural:{icon:"🏗️",color:"#34D399",desc:"Structural steel and civil work"},Manufacturing:{icon:"🏭",color:"#8B5CF6",desc:"Shop fabrication & production"}};
 const ROLES=["crew","foreman","pm","admin"];
 const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Submit daily reports and time cards"},foreman:{label:"Foreman",color:T.yellow,desc:"Reports, time, safety, equipment, docs, schedule"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, manage jobs, PM dashboard"},estimator:{label:"Estimator",color:T.purple,desc:"Estimating platform access only"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
 
@@ -4432,6 +4441,1011 @@ function PublicInspectorForm({reportId}){
 }
 
 
+/* ══════════════════════════════════════════════════════════════
+   MANUFACTURING MODULE
+   ══════════════════════════════════════════════════════════════ */
+
+const MFG_STAGES=[
+  {id:"mat_received",  label:"Material Received",   icon:"📦", color:"#60A5FA", desc:"Log GFM material receipt"},
+  {id:"mat_inspection",label:"Material Inspection", icon:"🔍", color:"#FBBF24", desc:"Inspect received materials"},
+  {id:"tacked",        label:"Tacked in Jig",       icon:"🔩", color:"#F97316", desc:"All parts tacked together"},
+  {id:"welded",        label:"Fully Welded",         icon:"🔥", color:"#EF4444", desc:"Complete weld-out"},
+  {id:"welder_qc",     label:"Welder QC",            icon:"🟡", color:"#FCD34D", desc:"Welder self-inspection — Yellow Ribbon"},
+  {id:"manager_qc",    label:"Manager QC",           icon:"⚪", color:"#F0F4FF", desc:"Manager sign-off — White Ribbon"},
+  {id:"shipped",       label:"Palletized & Shipped", icon:"📦", color:"#34D399", desc:"Banded and ready to go"},
+];
+
+/* ── MANUFACTURING JOB BOARD ─────────────────────────────────── */
+function ManufacturingJobBoard({user,onBack,onSelectJob}){
+  const [jobs,setJobs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [showNew,setShowNew]=useState(false);
+  const [f,setF]=useState({job_number:"",customer:"",description:"",po_number:"",due_date:"",notes:""});
+  const [saving,setSaving]=useState(false);
+  const [boardTab,setBoardTab]=useState("jobs");
+  const canAdmin=user.role==="admin"||user.role==="pm";
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+
+  useEffect(()=>{load();},[]);
+  async function load(){
+    setLoading(true);
+    try{const j=await API.mfg.jobs.list();setJobs(Array.isArray(j)?j:[]);}
+    catch(e){}
+    setLoading(false);
+  }
+  async function createJob(){
+    if(!f.job_number.trim())return;
+    setSaving(true);
+    try{await API.mfg.jobs.create({...f,created_by:user.name});setShowNew(false);setF({job_number:"",customer:"",description:"",po_number:"",due_date:"",notes:""});await load();}
+    catch(e){}
+    setSaving(false);
+  }
+  async function archiveJob(id,status){
+    if(!window.confirm(status==="active"?"Put job on hold?":"Reactivate job?"))return;
+    try{await API.mfg.jobs.update(id,{status:status==="active"?"on_hold":"active"});await load();}catch(e){}
+  }
+
+  const active=jobs.filter(j=>j.status==="active");
+  const held=jobs.filter(j=>j.status==="on_hold");
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:20}}>🏭</span>
+          <div style={{fontSize:15,fontWeight:900,color:T.purple}}>Manufacturing</div>
+        </div>
+        {canAdmin&&<button onClick={()=>setShowNew(s=>!s)} style={{background:T.purple,color:"#fff",border:"none",borderRadius:10,padding:"7px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+          + New Job
+        </button>}
+      </div>
+
+      <div style={{padding:"14px 16px 80px"}}>
+        {/* New job form */}
+        {showNew&&<div style={{...cardS,marginBottom:16,border:`1px solid ${T.purple}40`}}>
+          <div style={{fontSize:14,fontWeight:800,color:T.purple,marginBottom:14}}>🏭 New Manufacturing Job</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Job / WO # *</label><input value={f.job_number} onChange={e=>set("job_number",e.target.value)} placeholder="MFG-2026-001" style={inp}/></div>
+            <div><label style={lbl}>Customer</label><input value={f.customer} onChange={e=>set("customer",e.target.value)} placeholder="Customer name" style={inp}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>PO Number</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} placeholder="PO #" style={inp}/></div>
+            <div><label style={lbl}>Due Date</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
+          </div>
+          <div style={{marginBottom:10}}><label style={lbl}>Description</label><input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="What are we making?" style={inp}/></div>
+          <div style={{marginBottom:14}}><label style={lbl}>Notes</label><textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/></div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={createJob} disabled={!f.job_number.trim()||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.purple,opacity:f.job_number.trim()&&!saving?1:0.5}}>{saving?"Creating…":"Create Job"}</button>
+            <button onClick={()=>setShowNew(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+          </div>
+        </div>}
+
+        {loading&&<Spinner/>}
+
+        {/* Summary stats */}
+        {!loading&&jobs.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+          {[[active.length,"Active Jobs",T.purple],[held.length,"On Hold",T.muted]].map(([v,l,c])=>(
+            <div key={l} style={{...cardS,textAlign:"center"}}><div style={{fontSize:24,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",marginTop:2}}>{l}</div></div>
+          ))}
+        </div>}
+
+        {/* Dashboard tab toggle */}
+        {!loading&&jobs.length>0&&<div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4}}>
+          {[["jobs","🔩 Jobs"],["dashboard","📊 Dashboard"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setBoardTab(id)}
+              style={{flex:1,padding:"8px",background:boardTab===id?T.purple:"none",color:boardTab===id?"#fff":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
+              {label}
+            </button>
+          ))}
+        </div>}
+
+        {boardTab==="dashboard"&&jobs.length>0&&<ManufacturingDashboard jobs={jobs} user={user} onSelectJob={j=>onSelectJob(j)}/>}
+        {boardTab==="jobs"&&active.length===0&&!loading&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+          <div style={{fontSize:48,marginBottom:12}}>🏭</div>
+          <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No Manufacturing Jobs</div>
+          <div style={{fontSize:12}}>Tap <strong style={{color:T.purple}}>+ New Job</strong> to create your first production job.</div>
+        </div>}
+
+        {boardTab==="jobs"&&active.map(job=><MfgJobCard key={job.id} job={job} onSelect={()=>onSelectJob(job)} onArchive={()=>archiveJob(job.id,job.status)}/>)}
+        {boardTab==="jobs"&&held.length>0&&<><div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 8px"}}>On Hold</div>
+        {held.map(job=><MfgJobCard key={job.id} job={job} onSelect={()=>onSelectJob(job)} onArchive={()=>archiveJob(job.id,job.status)} dimmed/>)}</>}
+      </div>
+    </div>
+  );
+}
+
+function MfgJobCard({job,onSelect,onArchive,dimmed}){
+  const daysLeft=job.due_date?Math.ceil((new Date(job.due_date+"T12:00:00")-new Date())/86400000):null;
+  const dueCo=daysLeft===null?T.muted:daysLeft<0?T.red:daysLeft<=7?T.yellow:T.green;
+  return(
+    <div onClick={onSelect} style={{...cardS,marginBottom:10,cursor:"pointer",opacity:dimmed?0.6:1,borderLeft:`3px solid ${T.purple}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+        <div>
+          <div style={{fontSize:16,fontWeight:900,color:T.purple}}>{job.job_number}</div>
+          <div style={{fontSize:12,color:T.sub}}>{job.customer||"No customer"}{job.po_number?" · PO: "+job.po_number:""}</div>
+          {job.description&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{job.description}</div>}
+        </div>
+        <div style={{textAlign:"right",flexShrink:0}}>
+          {daysLeft!==null&&<div style={{fontSize:11,fontWeight:700,color:dueCo}}>{daysLeft<0?`${Math.abs(daysLeft)}d OVERDUE`:daysLeft===0?"Due TODAY":`${daysLeft}d left`}</div>}
+          <div style={{fontSize:9,color:T.muted,marginTop:2}}>Due: {job.due_date||"—"}</div>
+        </div>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{display:"flex",gap:6}}>
+          <span style={{...pill(T.purple),fontSize:10}}>{job.status==="active"?"● Active":"⏸ On Hold"}</span>
+          {job.due_date&&daysLeft<0&&<span style={{...pill(T.red),fontSize:10}}>⚠️ OVERDUE</span>}
+        </div>
+        <div style={{color:T.orange,fontSize:16,fontWeight:700}}>→</div>
+      </div>
+    </div>
+  );
+}
+
+/* ── MANUFACTURING JOB DETAIL ────────────────────────────────── */
+function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
+  const [parts,setParts]=useState([]);
+  const [boms,setBoms]=useState({});        // keyed by part_id
+  const [travelers,setTravelers]=useState({});
+  const [loading,setLoading]=useState(true);
+  const [tab,setTab]=useState("parts");     // parts | bom | labor | ncr | info
+  const [showNewPart,setShowNewPart]=useState(false);
+  const [showNewBom,setShowNewBom]=useState(null);  // part being BOM-edited
+  const [showReceipt,setShowReceipt]=useState(null); // bom item for receipt
+  const [pf,setPf]=useState({part_number:"",description:"",drawing_number:"",qty_ordered:"",material_spec:"",notes:""});
+  const [saving,setSaving]=useState(false);
+  const canAdmin=user.role==="admin"||user.role==="pm";
+  const setp=(k,v)=>setPf(x=>({...x,[k]:v}));
+
+  useEffect(()=>{load();},[job.id]);
+  const [labor,setLabor]=useState([]);
+  const [ncrs,setNcrs]=useState([]);
+
+  async function load(){
+    setLoading(true);
+    try{
+      const ps=await API.mfg.parts.forJob(job.id);
+      const partList=Array.isArray(ps)?ps:[];
+      setParts(partList);
+      const bomMap={};const travMap={};
+      const [laborData,ncrData]=await Promise.all([
+        API.mfg.labor.forJob(job.id).catch(()=>[]),
+        API.mfg.ncr.forJob(job.id).catch(()=>[]),
+      ]);
+      setLabor(Array.isArray(laborData)?laborData:[]);
+      setNcrs(Array.isArray(ncrData)?ncrData:[]);
+      await Promise.all(partList.map(async p=>{
+        try{
+          const [b,t]=await Promise.all([API.mfg.bom.forPart(p.id),API.mfg.travelers.forPart(p.id)]);
+          bomMap[p.id]=Array.isArray(b)?b:[];
+          travMap[p.id]=Array.isArray(t)&&t.length>0?t[0]:null;
+        }catch{}
+      }));
+      setBoms(bomMap);setTravelers(travMap);
+    }catch(e){}
+    setLoading(false);
+  }
+
+  async function createPart(){
+    if(!pf.part_number.trim())return;
+    setSaving(true);
+    try{await API.mfg.parts.create({...pf,job_id:job.id,qty_ordered:parseInt(pf.qty_ordered)||0});
+      setShowNewPart(false);setPf({part_number:"",description:"",drawing_number:"",qty_ordered:"",material_spec:"",notes:""});await load();}
+    catch(e){}setSaving(false);
+  }
+  async function deletePart(id){
+    if(!window.confirm("Delete this part and all its data?"))return;
+    try{await API.mfg.parts.remove(id);await load();}catch(e){}
+  }
+
+  // Shortage detection
+  const shortages=parts.filter(p=>{
+    const b=boms[p.id]||[];
+    return b.some(item=>(item.qty_received||0)<(item.qty_required||0));
+  });
+
+  const stageNum=part=>{const t=travelers[part.id];return t?t.current_stage:0;};
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:6}}>← Jobs</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div><div style={{fontSize:18,fontWeight:900,color:T.purple}}>{job.job_number}</div>
+            <div style={{fontSize:12,color:T.sub}}>{job.customer}{job.po_number?" · PO: "+job.po_number:""}</div>
+          </div>
+          {job.due_date&&<div style={{fontSize:12,fontWeight:700,color:T.muted}}>Due: {job.due_date}</div>}
+        </div>
+      </div>
+
+      {/* Shortage banner */}
+      {shortages.length>0&&<div style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"10px 16px",display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:18}}>⚠️</span>
+        <div>
+          <div style={{fontSize:12,fontWeight:800,color:T.red}}>MATERIAL SHORTAGES — {shortages.length} part{shortages.length!==1?"s":""} affected</div>
+          <div style={{fontSize:10,color:T.muted}}>{shortages.map(p=>p.part_number).join(", ")}</div>
+        </div>
+      </div>}
+
+      {/* Tabs */}
+      <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
+        {[["parts","🔩 Parts"],["bom","📋 Materials"],["labor","⏱ Labor"],["ncr","❌ NCRs"],["info","ℹ️ Info"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"11px 4px",background:"none",border:"none",borderBottom:`2px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{padding:"14px 16px 80px"}}>
+        {loading&&<Spinner/>}
+
+        {/* PARTS TAB */}
+        {!loading&&tab==="parts"&&<>
+          {canAdmin&&<button onClick={()=>setShowNewPart(s=>!s)} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.purple}}>
+            + Add Part Number
+          </button>}
+
+          {showNewPart&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.purple}40`}}>
+            <div style={{fontSize:13,fontWeight:800,color:T.purple,marginBottom:12}}>New Part Number</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <div><label style={lbl}>Part # *</label><input value={pf.part_number} onChange={e=>setp("part_number",e.target.value)} placeholder="e.g. P-12345" style={inp}/></div>
+              <div><label style={lbl}>Drawing #</label><input value={pf.drawing_number} onChange={e=>setp("drawing_number",e.target.value)} placeholder="DWG-001" style={inp}/></div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <div><label style={lbl}>Description</label><input value={pf.description} onChange={e=>setp("description",e.target.value)} placeholder="Part description" style={inp}/></div>
+              <div><label style={lbl}>Qty Ordered</label><input type="number" value={pf.qty_ordered} onChange={e=>setp("qty_ordered",e.target.value)} placeholder="50" style={inp}/></div>
+            </div>
+            <div style={{marginBottom:10}}><label style={lbl}>Material Spec</label><input value={pf.material_spec} onChange={e=>setp("material_spec",e.target.value)} placeholder="e.g. A106 Gr. B" style={inp}/></div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={createPart} disabled={!pf.part_number.trim()||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.purple,opacity:pf.part_number.trim()&&!saving?1:0.5}}>{saving?"Adding…":"Add Part"}</button>
+              <button onClick={()=>setShowNewPart(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+            </div>
+          </div>}
+
+          {parts.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+            <div style={{fontSize:44,marginBottom:12}}>🔩</div>
+            <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Parts Yet</div>
+            <div style={{fontSize:12}}>Add the part numbers you're manufacturing for this job.</div>
+          </div>}
+
+          {parts.map(part=>{
+            const t=travelers[part.id];
+            const stage=t?t.current_stage:0;
+            const bom=boms[part.id]||[];
+            const hasShortage=bom.some(b=>(b.qty_received||0)<(b.qty_required||0));
+            const stageInfo=stage>0?MFG_STAGES[stage-1]:null;
+            const pct=stage>0?Math.round((stage/7)*100):0;
+            return(
+              <div key={part.id} onClick={()=>onSelectPart(part)} style={{...cardS,marginBottom:10,cursor:"pointer",border:`1px solid ${hasShortage?T.red+"60":T.border}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:900,color:T.purple}}>{part.part_number}</div>
+                    {part.description&&<div style={{fontSize:12,color:T.sub}}>{part.description}</div>}
+                    {part.drawing_number&&<div style={{fontSize:11,color:T.muted}}>DWG: {part.drawing_number}</div>}
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:14,fontWeight:800,color:T.text}}>{part.qty_ordered||0}<span style={{fontSize:10,color:T.muted,fontWeight:400}}> ordered</span></div>
+                    {part.qty_shipped>0&&<div style={{fontSize:11,color:T.green}}>{part.qty_shipped} shipped</div>}
+                  </div>
+                </div>
+                {hasShortage&&<div style={{background:T.redLow,border:`1px solid ${T.red}30`,borderRadius:8,padding:"5px 10px",fontSize:11,color:T.red,fontWeight:700,marginBottom:4}}>⚠️ Material shortage — parts can't start</div>}
+                {/* Stage progress bar */}
+                <div style={{marginBottom:6}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{fontSize:10,color:T.muted,fontWeight:700,textTransform:"uppercase"}}>{stage===0?"Not started":stageInfo?`Stage ${stage}: ${stageInfo.label}`:"Complete"}</span>
+                    <span style={{fontSize:10,color:T.purple,fontWeight:700}}>{pct}%</span>
+                  </div>
+                  <div style={{background:T.border,borderRadius:4,height:5}}>
+                    <div style={{width:`${pct}%`,height:5,borderRadius:4,background:`linear-gradient(90deg,${T.purple},${T.blue})`,transition:"width 0.3s"}}/>
+                  </div>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{display:"flex",gap:4}}>
+                    {MFG_STAGES.map((s,i)=>(
+                      <div key={s.id} title={s.label} style={{width:14,height:14,borderRadius:3,background:i<stage?s.color:T.border,fontSize:7,display:"flex",alignItems:"center",justifyContent:"center",color:i<stage?"#000":"transparent"}}>
+                        {i<stage?"✓":""}
+                      </div>
+                    ))}
+                  </div>
+                  <span style={{color:T.orange,fontSize:14}}>→</span>
+                </div>
+              </div>
+            );
+          })}
+        </>}
+
+        {/* BOM / MATERIALS TAB */}
+        {!loading&&tab==="bom"&&<>
+          <div style={{fontSize:12,color:T.muted,marginBottom:14,lineHeight:1.6}}>Track all GFM (Customer Furnished) materials across all parts. Log receipts when materials arrive.</div>
+          {parts.map(part=>{
+            const bom=boms[part.id]||[];
+            return(
+              <div key={part.id} style={{...cardS,marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <div style={{fontSize:13,fontWeight:800,color:T.purple}}>{part.part_number}</div>
+                  {canAdmin&&<button onClick={e=>{e.stopPropagation();setShowNewBom(showNewBom===part.id?null:part.id);}}
+                    style={{...ghostBtn,fontSize:11,padding:"4px 10px",color:T.purple,border:`1px solid ${T.purple}40`}}>+ Material</button>}
+                </div>
+                {showNewBom===part.id&&<BomAddForm partId={part.id} onSave={async(d)=>{await API.mfg.bom.create({...d,part_id:part.id});setShowNewBom(null);await load();}} onCancel={()=>setShowNewBom(null)}/>}
+                {bom.length===0&&<div style={{fontSize:12,color:T.muted,fontStyle:"italic"}}>No materials added yet</div>}
+                {bom.map(item=>{
+                  const short=(item.qty_received||0)<(item.qty_required||0);
+                  const pct=item.qty_required>0?Math.min(100,((item.qty_received||0)/item.qty_required)*100):100;
+                  return(
+                    <div key={item.id} style={{background:T.surface,borderRadius:10,padding:"10px 12px",marginBottom:8,borderLeft:`3px solid ${short?T.red:T.green}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:700,color:T.text}}>{item.material}</div>
+                          {item.spec&&<div style={{fontSize:11,color:T.muted}}>Spec: {item.spec}</div>}
+                        </div>
+                        <div style={{textAlign:"right",flexShrink:0}}>
+                          <div style={{fontSize:13,fontWeight:800,color:short?T.red:T.green}}>{item.qty_received||0}/{item.qty_required||0} {item.unit}</div>
+                          {short&&<div style={{fontSize:10,color:T.red,fontWeight:700}}>⚠️ SHORT {(item.qty_required||0)-(item.qty_received||0)} {item.unit}</div>}
+                        </div>
+                      </div>
+                      <div style={{background:T.border,borderRadius:3,height:4,marginBottom:8}}>
+                        <div style={{width:`${pct}%`,height:4,borderRadius:3,background:short?T.red:T.green}}/>
+                      </div>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>setShowReceipt(showReceipt?.id===item.id?null:item)}
+                          style={{...ghostBtn,flex:1,textAlign:"center",fontSize:11,color:T.green,border:`1px solid ${T.green}40`}}>
+                          📦 Log Receipt
+                        </button>
+                        {canAdmin&&<button onClick={async()=>{if(window.confirm("Remove this material?"))await API.mfg.bom.remove(item.id).then(load);}}
+                          style={{...ghostBtn,fontSize:11,padding:"5px 10px",color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>}
+                      </div>
+                      {showReceipt?.id===item.id&&<ReceiptForm item={item} partId={part.id} user={user} onSave={async(d)=>{
+                        await API.mfg.receipts.create({...d,bom_id:item.id,part_id:part.id});
+                        await API.mfg.bom.update(item.id,{qty_received:(item.qty_received||0)+(parseFloat(d.qty_received)||0)});
+                        setShowReceipt(null);await load();
+                      }} onCancel={()=>setShowReceipt(null)}/>}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </>}
+
+        {/* LABOR TAB */}
+        {!loading&&tab==="labor"&&<LaborTab job={job} parts={parts} labor={labor} user={user} canAdmin={canAdmin} onRefresh={load}/>}
+
+        {/* NCR TAB */}
+        {!loading&&tab==="ncr"&&<NcrTab job={job} parts={parts} ncrs={ncrs} user={user} canAdmin={canAdmin} onRefresh={load}/>}
+
+        {/* INFO TAB */}
+        {!loading&&tab==="info"&&<div style={{...cardS}}>
+          {[["Job / WO #",job.job_number],["Customer",job.customer||"—"],["PO Number",job.po_number||"—"],["Due Date",job.due_date||"—"],["Description",job.description||"—"],["Notes",job.notes||"—"]].map(([l,v])=>(
+            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
+              <span style={{fontSize:12,color:T.muted,fontWeight:700}}>{l}</span>
+              <span style={{fontSize:13,color:T.text,fontWeight:600,maxWidth:"60%",textAlign:"right"}}>{v}</span>
+            </div>
+          ))}
+        </div>}
+      </div>
+    </div>
+  );
+}
+
+function BomAddForm({partId,onSave,onCancel}){
+  const [f,setF]=useState({material:"",spec:"",qty_required:"",unit:"ea"});
+  const UNITS=["ea","ft","in","lbs","kg","m","mm","set"];
+  return(
+    <div style={{background:T.surface,borderRadius:10,padding:12,marginBottom:10,border:`1px solid ${T.purple}30`}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>Material *</label><input value={f.material} onChange={e=>setF(x=>({...x,material:e.target.value}))} placeholder="e.g. 4\" Pipe" style={inp}/></div>
+        <div><label style={lbl}>Spec</label><input value={f.spec} onChange={e=>setF(x=>({...x,spec:e.target.value}))} placeholder="A106 Gr. B" style={inp}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+        <div><label style={lbl}>Qty Required *</label><input type="number" value={f.qty_required} onChange={e=>setF(x=>({...x,qty_required:e.target.value}))} placeholder="0" style={inp}/></div>
+        <div><label style={lbl}>Unit</label><select value={f.unit} onChange={e=>setF(x=>({...x,unit:e.target.value}))} style={inpSel}>{UNITS.map(u=><option key={u}>{u}</option>)}</select></div>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>f.material.trim()&&f.qty_required&&onSave(f)} style={{...primBtn,flex:2,borderRadius:10,fontSize:13,background:T.purple,opacity:f.material.trim()&&f.qty_required?1:0.5}}>Add Material</button>
+        <button onClick={onCancel} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function ReceiptForm({item,partId,user,onSave,onCancel}){
+  const [f,setF]=useState({qty_received:"",heat_number:"",condition:"Good",received_date:today(),received_by:user.name,notes:""});
+  return(
+    <div style={{background:T.surface,borderRadius:10,padding:12,marginTop:8,border:`1px solid ${T.green}30`}}>
+      <div style={{fontSize:12,fontWeight:800,color:T.green,marginBottom:10}}>📦 Log Material Receipt — {item.material}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>Qty Received *</label><input type="number" value={f.qty_received} onChange={e=>setF(x=>({...x,qty_received:e.target.value}))} placeholder="0" style={inp}/></div>
+        <div><label style={lbl}>Heat / Lot #</label><input value={f.heat_number} onChange={e=>setF(x=>({...x,heat_number:e.target.value}))} placeholder="Heat #" style={inp}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>Condition</label><select value={f.condition} onChange={e=>setF(x=>({...x,condition:e.target.value}))} style={inpSel}>{["Good","Damaged","Partial"].map(c=><option key={c}>{c}</option>)}</select></div>
+        <div><label style={lbl}>Date</label><input type="date" value={f.received_date} onChange={e=>setF(x=>({...x,received_date:e.target.value}))} style={inp}/></div>
+      </div>
+      <div style={{marginBottom:8}}><label style={lbl}>Received By</label><input value={f.received_by} onChange={e=>setF(x=>({...x,received_by:e.target.value}))} style={inp}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Notes</label><textarea value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} rows={2} style={{...inp,resize:"vertical"}}/></div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>f.qty_received&&onSave(f)} style={{...primBtn,flex:2,borderRadius:10,fontSize:13,background:T.green,color:"#000",opacity:f.qty_received?1:0.5}}>Confirm Receipt</button>
+        <button onClick={onCancel} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── MANUFACTURING TRAVELER ──────────────────────────────────── */
+function ManufacturingTraveler({part,job,user,onBack}){
+  const [traveler,setTraveler]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [activeStageForm,setActiveStageForm]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const [sf,setSf]=useState({});
+  const canAdmin=user.role==="admin"||user.role==="pm";
+
+  useEffect(()=>{load();},[part.id]);
+  async function load(){
+    setLoading(true);
+    try{
+      const t=await API.mfg.travelers.forPart(part.id);
+      const existing=Array.isArray(t)&&t.length>0?t[0]:null;
+      setTraveler(existing||{part_id:part.id,current_stage:0});
+    }catch(e){}
+    setLoading(false);
+  }
+
+  async function completeStage(stageIdx,data){
+    setSaving(true);
+    const stageKey=MFG_STAGES[stageIdx].id;
+    const newStage=Math.max((traveler?.current_stage||0),stageIdx+1);
+    const payload={
+      part_id:part.id,
+      current_stage:newStage,
+      [stageKey]:{...data,done:true,completed_at:new Date().toISOString(),completed_by:user.name},
+    };
+    try{
+      await API.mfg.travelers.upsert({...traveler,...payload});
+      // Update part qty if shipping stage
+      if(stageKey==="shipped"&&data.qty_shipped){
+        await API.mfg.parts.update(part.id,{qty_shipped:(part.qty_shipped||0)+(parseInt(data.qty_shipped)||0)});
+      }
+      setActiveStageForm(null);setSf({});await load();
+    }catch(e){alert("Error: "+e.message);}
+    setSaving(false);
+  }
+
+  const currentStage=traveler?.current_stage||0;
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:6}}>← {job.job_number}</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:900,color:T.purple}}>{part.part_number}</div>
+            <div style={{fontSize:12,color:T.sub}}>{part.description||""}{part.drawing_number?" · DWG: "+part.drawing_number:""}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:18,fontWeight:900,color:T.text}}>{part.qty_ordered||0}</div>
+            <div style={{fontSize:9,color:T.muted,textTransform:"uppercase"}}>Ordered</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{padding:"14px 16px 80px"}}>
+        {loading&&<Spinner/>}
+
+        {/* Progress bar */}
+        {!loading&&<div style={{...cardS,marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{fontSize:12,fontWeight:700,color:T.sub}}>Production Progress</span>
+            <span style={{fontSize:12,fontWeight:700,color:T.purple}}>{currentStage}/7 stages</span>
+          </div>
+          <div style={{background:T.border,borderRadius:6,height:8,marginBottom:12}}>
+            <div style={{width:`${(currentStage/7)*100}%`,height:8,borderRadius:6,background:`linear-gradient(90deg,${T.purple},${T.blue})`,transition:"width 0.4s"}}/>
+          </div>
+          {/* Stage dots */}
+          <div style={{display:"flex",gap:4}}>
+            {MFG_STAGES.map((s,i)=>(
+              <div key={s.id} style={{flex:1,textAlign:"center"}}>
+                <div style={{width:"100%",height:4,borderRadius:2,background:i<currentStage?s.color:T.border,marginBottom:4}}/>
+                <div style={{fontSize:8,color:i<currentStage?s.color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.icon}</div>
+              </div>
+            ))}
+          </div>
+        </div>}
+
+        {/* 7 Stage cards */}
+        {!loading&&MFG_STAGES.map((stage,i)=>{
+          const done=i<currentStage;
+          const active=i===currentStage;
+          const locked=i>currentStage;
+          const stageData=traveler?.[stage.id];
+
+          return(
+            <div key={stage.id} style={{...cardS,marginBottom:10,
+              borderLeft:`4px solid ${done?stage.color:active?stage.color:T.border}`,
+              opacity:locked?0.4:1}}>
+              {/* Stage header */}
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:done||active?10:0}}>
+                <div style={{width:36,height:36,borderRadius:10,background:done?stage.color:active?stage.color+"25":T.surface,border:`2px solid ${done?stage.color:active?stage.color:T.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                  {done?"✅":stage.icon}
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:800,color:done?stage.color:active?T.text:T.muted}}>
+                    Stage {i+1}: {stage.label}
+                  </div>
+                  <div style={{fontSize:11,color:T.muted}}>{stage.desc}</div>
+                </div>
+                {locked&&<span style={{fontSize:11,color:T.muted,background:T.surface,borderRadius:6,padding:"3px 8px"}}>🔒 Locked</span>}
+                {done&&stageData&&<span style={{fontSize:10,color:stage.color,fontWeight:700}}>✓ Done</span>}
+              </div>
+
+              {/* Completed stage summary */}
+              {done&&stageData&&<div style={{background:T.surface,borderRadius:8,padding:"8px 10px",fontSize:11,color:T.sub,lineHeight:1.7}}>
+                {stageData.completed_by&&<div><strong>By:</strong> {stageData.completed_by}</div>}
+                {stageData.completed_at&&<div><strong>Date:</strong> {new Date(stageData.completed_at).toLocaleDateString()}</div>}
+                {stageData.welder&&<div><strong>Welder:</strong> {stageData.welder}</div>}
+                {stageData.tacker&&<div><strong>Tacker:</strong> {stageData.tacker}</div>}
+                {stageData.inspector&&<div><strong>Inspector:</strong> {stageData.inspector}</div>}
+                {stageData.pass_fail&&<div><strong>Result:</strong> <span style={{color:stageData.pass_fail==="Pass"?T.green:T.red,fontWeight:800}}>{stageData.pass_fail}</span></div>}
+                {stageData.pallet_number&&<div><strong>Pallet:</strong> {stageData.pallet_number}</div>}
+                {stageData.qty_shipped&&<div><strong>Qty Shipped:</strong> {stageData.qty_shipped}</div>}
+                {stageData.heat_number&&<div><strong>Heat #:</strong> {stageData.heat_number}</div>}
+                {stageData.jig_number&&<div><strong>Jig #:</strong> {stageData.jig_number}</div>}
+                {stageData.notes&&<div><strong>Notes:</strong> {stageData.notes}</div>}
+              </div>}
+
+              {/* Active stage form trigger */}
+              {active&&<>
+                {activeStageForm===i
+                  ?<TravelerStageForm stage={stage} stageIdx={i} sf={sf} setSf={setSf} part={part} user={user} saving={saving} onSubmit={data=>completeStage(i,data)} onCancel={()=>{setActiveStageForm(null);setSf({});}}/>
+                  :<button onClick={()=>{setActiveStageForm(i);setSf({});}} style={{...primBtn,borderRadius:12,background:stage.color,color:stage.color==="#F0F4FF"||stage.color==="#FCD34D"?"#000":"#fff"}}>
+                    {stage.icon} Complete Stage {i+1}: {stage.label}
+                  </button>}
+              </>}
+            </div>
+          );
+        })}
+
+        {/* All done */}
+        {!loading&&currentStage>=7&&<div style={{...cardS,textAlign:"center",padding:"24px",background:`${T.green}10`,border:`1px solid ${T.green}40`}}>
+          <div style={{fontSize:48,marginBottom:8}}>🎉</div>
+          <div style={{fontSize:18,fontWeight:900,color:T.green,marginBottom:4}}>All Stages Complete!</div>
+          <div style={{fontSize:12,color:T.muted}}>Part #{part.part_number} has been produced and shipped.</div>
+        </div>}
+      </div>
+    </div>
+  );
+}
+
+function TravelerStageForm({stage,stageIdx,sf,setSf,part,user,saving,onSubmit,onCancel}){
+  const set=(k,v)=>setSf(x=>({...x,[k]:v}));
+
+  // Stage-specific fields
+  const fields={
+    mat_received:[
+      {k:"qty_received",l:"Qty Received *",t:"number",ph:"How many pieces/units arrived"},
+      {k:"heat_number",l:"Heat / Lot #",t:"text",ph:"Heat or lot number on material"},
+      {k:"condition",l:"Condition",t:"select",opts:["Good","Damaged","Partial"]},
+      {k:"received_by",l:"Received By",t:"text",ph:user.name,def:user.name},
+    ],
+    mat_inspection:[
+      {k:"inspector",l:"Inspector Name",t:"text",ph:user.name,def:user.name},
+      {k:"pass_fail",l:"Result *",t:"select",opts:["Pass","Fail"]},
+      {k:"defects",l:"Defects / Issues",t:"text",ph:"Describe any defects found"},
+    ],
+    tacked:[
+      {k:"tacker",l:"Tacker Name",t:"text",ph:user.name,def:user.name},
+      {k:"jig_number",l:"Jig Number",t:"text",ph:"Which jig was used"},
+    ],
+    welded:[
+      {k:"welder",l:"Welder Name *",t:"text",ph:"Welder's name"},
+    ],
+    welder_qc:[
+      {k:"welder",l:"Welder (Self-QC) *",t:"text",ph:user.name,def:user.name},
+      {k:"pass_fail",l:"Result *",t:"select",opts:["Pass","Fail"]},
+      {k:"rejection_reason",l:"Rejection Reason (if fail)",t:"text",ph:"What failed"},
+    ],
+    manager_qc:[
+      {k:"inspector",l:"Manager / Inspector *",t:"text",ph:user.name,def:user.name},
+      {k:"pass_fail",l:"Result *",t:"select",opts:["Pass","Fail"]},
+      {k:"rejection_reason",l:"Rejection Reason (if fail)",t:"text",ph:"What failed"},
+    ],
+    shipped:[
+      {k:"qty_shipped",l:"Qty Shipped *",t:"number",ph:`Max: ${part.qty_ordered||0}`},
+      {k:"pallet_number",l:"Pallet #",t:"text",ph:"Pallet or skid number"},
+      {k:"banding",l:"Banding Confirmed",t:"select",opts:["Yes","No"]},
+      {k:"shipped_by",l:"Packed By",t:"text",ph:user.name,def:user.name},
+    ],
+  };
+
+  const stageFields=fields[stage.id]||[];
+
+  // Initialize defaults
+  useState(()=>{
+    const defaults={};
+    stageFields.forEach(f=>{if(f.def)defaults[f.k]=f.def;if(f.t==="select"&&f.opts)defaults[f.k]=f.opts[0];});
+    setSf(x=>({...defaults,...x}));
+  });
+
+  const required=stageFields.filter(f=>f.l.includes("*")).map(f=>f.k);
+  const canSubmit=required.every(k=>sf[k]&&String(sf[k]).trim());
+
+  return(
+    <div style={{background:T.surface,borderRadius:10,padding:12,border:`1px solid ${stage.color}40`}}>
+      <div style={{fontSize:12,fontWeight:800,color:stage.color,marginBottom:12}}>{stage.icon} {stage.label}</div>
+      {stageFields.map(f=>(
+        <div key={f.k} style={{marginBottom:10}}>
+          <label style={lbl}>{f.l}</label>
+          {f.t==="select"
+            ?<select value={sf[f.k]||f.opts?.[0]||""} onChange={e=>set(f.k,e.target.value)} style={inpSel}>{(f.opts||[]).map(o=><option key={o}>{o}</option>)}</select>
+            :<input type={f.t||"text"} value={sf[f.k]||""} onChange={e=>set(f.k,e.target.value)} placeholder={f.ph} style={inp}/>}
+        </div>
+      ))}
+      <div style={{marginBottom:14}}><label style={lbl}>Notes</label><textarea value={sf.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}} placeholder="Any additional notes…"/></div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>canSubmit&&onSubmit(sf)} disabled={!canSubmit||saving}
+          style={{...primBtn,flex:2,borderRadius:12,background:stage.color,color:stage.color==="#F0F4FF"||stage.color==="#FCD34D"?"#000":"#fff",opacity:canSubmit&&!saving?1:0.5}}>
+          {saving?"Saving…":`✓ Complete Stage`}
+        </button>
+        <button onClick={onCancel} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+
+/* ── LABOR TAB ──────────────────────────────────────────────── */
+function LaborTab({job,parts,labor,user,canAdmin,onRefresh}){
+  const [showForm,setShowForm]=useState(false);
+  const [f,setF]=useState({worker_name:user.name,work_date:today(),hours:"",part_id:"",operation:"",notes:""});
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  const OPERATIONS=["Material Received","Material Inspection","Tacking","Welding","Welder QC","Manager QC","Palletizing/Shipping","General/Other"];
+
+  async function save(){
+    if(!f.worker_name.trim()||!f.hours)return;
+    setSaving(true);
+    try{
+      await API.mfg.labor.create({...f,job_id:job.id,hours:parseFloat(f.hours),part_id:f.part_id||null});
+      setShowForm(false);setF({worker_name:user.name,work_date:today(),hours:"",part_id:"",operation:"",notes:""});
+      await onRefresh();
+    }catch(e){alert(e.message);}
+    setSaving(false);
+  }
+
+  // Aggregate by worker
+  const byWorker={};
+  labor.forEach(l=>{
+    const n=l.worker_name;
+    if(!byWorker[n])byWorker[n]={name:n,total:0,entries:[]};
+    byWorker[n].total+=parseFloat(l.hours)||0;
+    byWorker[n].entries.push(l);
+  });
+  const totalHrs=labor.reduce((s,l)=>s+(parseFloat(l.hours)||0),0);
+
+  return(
+    <div>
+      <button onClick={()=>setShowForm(s=>!s)} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.blue}}>+ Log Hours</button>
+
+      {showForm&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.blue}40`}}>
+        <div style={{fontSize:13,fontWeight:800,color:T.blue,marginBottom:12}}>⏱ Log Labor Hours</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Worker *</label><input value={f.worker_name} onChange={e=>set("worker_name",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Date</label><input type="date" value={f.work_date} onChange={e=>set("work_date",e.target.value)} style={inp}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Hours *</label><input type="number" step="0.5" value={f.hours} onChange={e=>set("hours",e.target.value)} placeholder="8.0" style={inp}/></div>
+          <div><label style={lbl}>Part #</label>
+            <select value={f.part_id} onChange={e=>set("part_id",e.target.value)} style={inpSel}>
+              <option value="">— All / General —</option>
+              {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{marginBottom:10}}><label style={lbl}>Operation</label>
+          <select value={f.operation} onChange={e=>set("operation",e.target.value)} style={inpSel}>
+            <option value="">— Select operation —</option>
+            {OPERATIONS.map(o=><option key={o}>{o}</option>)}
+          </select>
+        </div>
+        <div style={{marginBottom:12}}><label style={lbl}>Notes</label><input value={f.notes} onChange={e=>set("notes",e.target.value)} placeholder="Optional notes" style={inp}/></div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={save} disabled={!f.worker_name.trim()||!f.hours||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.blue,opacity:f.worker_name.trim()&&f.hours&&!saving?1:0.5}}>{saving?"Saving…":"Save Hours"}</button>
+          <button onClick={()=>setShowForm(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+        </div>
+      </div>}
+
+      {/* Summary */}
+      {labor.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+        <div style={{...cardS,textAlign:"center"}}><div style={{fontSize:24,fontWeight:900,color:T.blue}}>{totalHrs.toFixed(1)}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Total Hours</div></div>
+        <div style={{...cardS,textAlign:"center"}}><div style={{fontSize:24,fontWeight:900,color:T.purple}}>{Object.keys(byWorker).length}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Workers</div></div>
+      </div>}
+
+      {/* By worker */}
+      {Object.values(byWorker).sort((a,b)=>b.total-a.total).map(w=>(
+        <div key={w.name} style={{...cardS,marginBottom:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <div style={{fontSize:14,fontWeight:800,color:T.blue}}>{w.name}</div>
+            <div style={{fontSize:16,fontWeight:900,color:T.green}}>{w.total.toFixed(1)}h</div>
+          </div>
+          {w.entries.map(e=>{
+            const p=parts.find(x=>x.id===e.part_id);
+            return(
+              <div key={e.id} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
+                <div>
+                  <span style={{color:T.sub}}>{e.work_date}</span>
+                  {p&&<span style={{color:T.purple,marginLeft:8}}>· {p.part_number}</span>}
+                  {e.operation&&<span style={{color:T.muted,marginLeft:8}}>· {e.operation}</span>}
+                </div>
+                <span style={{color:T.green,fontWeight:700}}>{parseFloat(e.hours).toFixed(1)}h</span>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+
+      {labor.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>⏱</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Labor Logged</div>
+        <div style={{fontSize:12}}>Tap <strong style={{color:T.blue}}>+ Log Hours</strong> to track worker hours per operation.</div>
+      </div>}
+    </div>
+  );
+}
+
+/* ── NCR TAB ─────────────────────────────────────────────────── */
+function NcrTab({job,parts,ncrs,user,canAdmin,onRefresh}){
+  const [showForm,setShowForm]=useState(false);
+  const [resolving,setResolving]=useState(null);
+  const [f,setF]=useState({part_id:"",found_by:user.name,found_date:today(),stage:"",issue_desc:"",qty_affected:1,disposition:"Rework"});
+  const [rf,setRf]=useState({resolved_by:user.name,resolved_date:today(),rework_hours:"",resolution_notes:""});
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  const setr=(k,v)=>setRf(x=>({...x,[k]:v}));
+  const open=ncrs.filter(n=>n.status==="Open");
+  const closed=ncrs.filter(n=>n.status==="Closed");
+
+  async function saveNcr(){
+    if(!f.issue_desc.trim()||!f.part_id)return;
+    setSaving(true);
+    try{
+      await API.mfg.ncr.create({...f,job_id:job.id});
+      setShowForm(false);setF({part_id:"",found_by:user.name,found_date:today(),stage:"",issue_desc:"",qty_affected:1,disposition:"Rework"});
+      await onRefresh();
+    }catch(e){alert(e.message);}
+    setSaving(false);
+  }
+  async function resolve(ncr){
+    setSaving(true);
+    try{
+      await API.mfg.ncr.update(ncr.id,{...rf,rework_hours:parseFloat(rf.rework_hours)||0,status:"Closed"});
+      setResolving(null);await onRefresh();
+    }catch(e){alert(e.message);}
+    setSaving(false);
+  }
+
+  const STAGES=["Material Received","Material Inspection","Tacking","Welding","Welder QC","Manager QC","Palletizing"];
+
+  return(
+    <div>
+      {open.length>0&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.red,fontWeight:700}}>
+        ⚠️ {open.length} Open NCR{open.length!==1?"s":""} — action required
+      </div>}
+      <button onClick={()=>setShowForm(s=>!s)} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.red}}>+ Log NCR / Reject</button>
+
+      {showForm&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.red}40`}}>
+        <div style={{fontSize:13,fontWeight:800,color:T.red,marginBottom:12}}>❌ New Non-Conformance Report</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Part # *</label>
+            <select value={f.part_id} onChange={e=>set("part_id",e.target.value)} style={inpSel}>
+              <option value="">— Select part —</option>
+              {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}</option>)}
+            </select>
+          </div>
+          <div><label style={lbl}>Found By</label><input value={f.found_by} onChange={e=>set("found_by",e.target.value)} style={inp}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Stage Found</label>
+            <select value={f.stage} onChange={e=>set("stage",e.target.value)} style={inpSel}>
+              <option value="">— Select stage —</option>
+              {STAGES.map(s=><option key={s}>{s}</option>)}
+            </select>
+          </div>
+          <div><label style={lbl}>Qty Affected</label><input type="number" value={f.qty_affected} onChange={e=>set("qty_affected",e.target.value)} style={inp}/></div>
+        </div>
+        <div style={{marginBottom:10}}><label style={lbl}>Issue Description *</label><textarea value={f.issue_desc} onChange={e=>set("issue_desc",e.target.value)} rows={3} placeholder="Describe the non-conformance in detail" style={{...inp,resize:"vertical"}}/></div>
+        <div style={{marginBottom:12}}><label style={lbl}>Disposition</label>
+          <select value={f.disposition} onChange={e=>set("disposition",e.target.value)} style={inpSel}>
+            {["Rework","Scrap","Accept-As-Is"].map(d=><option key={d}>{d}</option>)}
+          </select>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={saveNcr} disabled={!f.issue_desc.trim()||!f.part_id||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.red,opacity:f.issue_desc.trim()&&f.part_id&&!saving?1:0.5}}>{saving?"Saving…":"Log NCR"}</button>
+          <button onClick={()=>setShowForm(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+        </div>
+      </div>}
+
+      {/* Open NCRs */}
+      {open.map(ncr=>{
+        const p=parts.find(x=>x.id===ncr.part_id);
+        return(
+          <div key={ncr.id} style={{...cardS,marginBottom:10,borderLeft:`4px solid ${T.red}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:800,color:T.red}}>❌ NCR — {p?.part_number||"—"}</div>
+                <div style={{fontSize:11,color:T.muted}}>{ncr.found_date} · Found by {ncr.found_by}{ncr.stage?" at "+ncr.stage:""}</div>
+              </div>
+              <span style={{...pill(T.red),height:"fit-content"}}>OPEN</span>
+            </div>
+            <div style={{fontSize:13,color:T.sub,marginBottom:8,lineHeight:1.5}}>{ncr.issue_desc}</div>
+            <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+              <span style={{...pill(T.yellow)}}>Qty: {ncr.qty_affected}</span>
+              <span style={{...pill(ncr.disposition==="Scrap"?T.red:T.orange)}}>{ncr.disposition}</span>
+            </div>
+            {resolving===ncr.id?<div style={{background:T.surface,borderRadius:10,padding:12,border:`1px solid ${T.green}30`}}>
+              <div style={{fontSize:12,fontWeight:800,color:T.green,marginBottom:10}}>✓ Resolve NCR</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div><label style={lbl}>Resolved By</label><input value={rf.resolved_by} onChange={e=>setr("resolved_by",e.target.value)} style={inp}/></div>
+                <div><label style={lbl}>Rework Hours</label><input type="number" step="0.5" value={rf.rework_hours} onChange={e=>setr("rework_hours",e.target.value)} placeholder="0" style={inp}/></div>
+              </div>
+              <div style={{marginBottom:10}}><label style={lbl}>Resolution Notes</label><textarea value={rf.resolution_notes} onChange={e=>setr("resolution_notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}} placeholder="What was done to resolve it"/></div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>resolve(ncr)} style={{...primBtn,flex:2,borderRadius:10,background:T.green,color:"#000"}}>{saving?"Saving…":"Mark Resolved"}</button>
+                <button onClick={()=>setResolving(null)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+              </div>
+            </div>:
+            <button onClick={()=>setResolving(ncr.id)} style={{...ghostBtn,width:"100%",textAlign:"center",color:T.green,border:`1px solid ${T.green}40`,fontSize:13}}>✓ Resolve NCR</button>}
+          </div>
+        );
+      })}
+
+      {/* Closed NCRs */}
+      {closed.length>0&&<>
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 8px"}}>Closed ({closed.length})</div>
+        {closed.map(ncr=>{
+          const p=parts.find(x=>x.id===ncr.part_id);
+          return(
+            <div key={ncr.id} style={{...cardS,marginBottom:8,opacity:0.7,borderLeft:`4px solid ${T.green}`}}>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <div><div style={{fontSize:12,fontWeight:700,color:T.green}}>✓ {p?.part_number||"—"}</div>
+                  <div style={{fontSize:11,color:T.muted}}>{ncr.issue_desc?.slice(0,60)}…</div></div>
+                <span style={{...pill(T.green),height:"fit-content",fontSize:9}}>CLOSED</span>
+              </div>
+              {ncr.resolution_notes&&<div style={{fontSize:11,color:T.muted,marginTop:4}}>Resolution: {ncr.resolution_notes}</div>}
+            </div>
+          );
+        })}
+      </>}
+
+      {ncrs.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>✅</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No NCRs Logged</div>
+        <div style={{fontSize:12}}>Non-conformances, rejects, and rework are logged here. Quality issues from QC stages appear here automatically.</div>
+      </div>}
+    </div>
+  );
+}
+
+/* ── PRODUCTION DASHBOARD ────────────────────────────────────── */
+function ManufacturingDashboard({jobs,user,onSelectJob}){
+  const [allParts,setAllParts]=useState([]);
+  const [travelers,setTravelers]=useState({});
+  const [ncrs,setNcrs]=useState([]);
+  const [loading,setLoading]=useState(true);
+
+  useEffect(()=>{load();},[jobs]);
+  async function load(){
+    setLoading(true);
+    try{
+      const partArrays=await Promise.all(jobs.map(j=>API.mfg.parts.forJob(j.id).catch(()=>[])));
+      const parts=partArrays.flat().map((p,_,arr)=>{
+        const job=jobs.find(j=>j.id===p.job_id);
+        return{...p,jobName:job?.job_number||"",customer:job?.customer||"",due_date:job?.due_date};
+      });
+      setAllParts(parts);
+      const travMap={};
+      const ncrAll=[];
+      await Promise.all(parts.map(async p=>{
+        const [t,n]=await Promise.all([API.mfg.travelers.forPart(p.id).catch(()=>[]),API.mfg.ncr.forPart(p.id).catch(()=>[])]);
+        travMap[p.id]=Array.isArray(t)&&t.length>0?t[0]:null;
+        if(Array.isArray(n))ncrAll.push(...n);
+      }));
+      setTravelers(travMap);setNcrs(ncrAll);
+    }catch(e){}
+    setLoading(false);
+  }
+
+  if(loading)return<Spinner/>;
+
+  const getStage=p=>travelers[p.id]?.current_stage||0;
+  const notStarted=allParts.filter(p=>getStage(p)===0);
+  const inProgress=allParts.filter(p=>getStage(p)>0&&getStage(p)<7);
+  const complete=allParts.filter(p=>getStage(p)>=7);
+  const openNcrs=ncrs.filter(n=>n.status==="Open");
+  const totalOrdered=allParts.reduce((s,p)=>s+(p.qty_ordered||0),0);
+  const totalShipped=allParts.reduce((s,p)=>s+(p.qty_shipped||0),0);
+
+  return(
+    <div style={{padding:"0 0 20px"}}>
+      {/* Top stats */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+        {[
+          [totalOrdered,"Total Ordered",T.blue],
+          [totalShipped,"Shipped",T.green],
+          [openNcrs.length,"Open NCRs",openNcrs.length>0?T.red:T.muted],
+          [notStarted.length,"Awaiting Materials",notStarted.length>0?T.yellow:T.muted],
+        ].map(([v,l,c])=>(
+          <div key={l} style={{...cardS,textAlign:"center",padding:"12px 8px"}}>
+            <div style={{fontSize:26,fontWeight:900,color:c}}>{v}</div>
+            <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",marginTop:2}}>{l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Output bar — ordered vs shipped */}
+      <div style={{...cardS,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+          <span style={{fontSize:13,fontWeight:700,color:T.text}}>Production Output</span>
+          <span style={{fontSize:12,color:T.green,fontWeight:700}}>{totalShipped}/{totalOrdered} shipped</span>
+        </div>
+        <div style={{background:T.border,borderRadius:6,height:12,overflow:"hidden"}}>
+          <div style={{height:12,background:`linear-gradient(90deg,${T.green},${T.blue})`,width:`${totalOrdered>0?(totalShipped/totalOrdered)*100:0}%`,borderRadius:6,transition:"width 0.4s"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:8,fontSize:10,color:T.muted}}>
+          <span>🟢 {complete.length} complete</span>
+          <span>🟡 {inProgress.length} in progress</span>
+          <span>⚪ {notStarted.length} not started</span>
+        </div>
+      </div>
+
+      {/* Open NCRs */}
+      {openNcrs.length>0&&<div style={{...cardS,marginBottom:16,border:`1px solid ${T.red}40`}}>
+        <div style={{fontSize:13,fontWeight:800,color:T.red,marginBottom:10}}>⚠️ Open NCRs — {openNcrs.length} need attention</div>
+        {openNcrs.slice(0,5).map(n=>{
+          const p=allParts.find(x=>x.id===n.part_id);
+          return(<div key={n.id} style={{padding:"6px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
+            <span style={{color:T.red,fontWeight:700}}>{p?.part_number||"—"}</span>
+            <span style={{color:T.muted,marginLeft:8}}>{n.issue_desc?.slice(0,50)}…</span>
+            <span style={{color:T.muted,marginLeft:8}}>· {n.disposition}</span>
+          </div>);
+        })}
+      </div>}
+
+      {/* Per-job output */}
+      <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Output by Job</div>
+      {jobs.filter(j=>j.status==="active").map(job=>{
+        const jobParts=allParts.filter(p=>p.job_id===job.id);
+        const shipped=jobParts.reduce((s,p)=>s+(p.qty_shipped||0),0);
+        const ordered=jobParts.reduce((s,p)=>s+(p.qty_ordered||0),0);
+        const done=jobParts.filter(p=>getStage(p)>=7).length;
+        const pct=ordered>0?(shipped/ordered)*100:0;
+        const daysLeft=job.due_date?Math.ceil((new Date(job.due_date+"T12:00:00")-new Date())/86400000):null;
+        return(
+          <div key={job.id} style={{...cardS,marginBottom:8,cursor:"pointer"}} onClick={()=>onSelectJob(job)}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:800,color:T.purple}}>{job.job_number}</div>
+                <div style={{fontSize:11,color:T.muted}}>{job.customer} · {jobParts.length} part{jobParts.length!==1?"s":""}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:14,fontWeight:800,color:T.green}}>{shipped}/{ordered}</div>
+                <div style={{fontSize:9,color:T.muted}}>shipped</div>
+              </div>
+            </div>
+            <div style={{background:T.border,borderRadius:4,height:6,marginBottom:4}}>
+              <div style={{height:6,borderRadius:4,background:pct>=100?T.green:`linear-gradient(90deg,${T.purple},${T.blue})`,width:`${Math.min(100,pct)}%`}}/>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:T.muted}}>
+              <span>{done}/{jobParts.length} parts done</span>
+              {daysLeft!==null&&<span style={{color:daysLeft<0?T.red:daysLeft<=7?T.yellow:T.muted}}>{daysLeft<0?`${Math.abs(daysLeft)}d overdue`:daysLeft===0?"Due today":`${daysLeft}d left`}</span>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
 /* ── APP INNER ───────────────────────────────────────────────── */
 function AppInner(){
   const [publicRfiId]            = useState(()=>new URLSearchParams(window.location.search).get("rfi"));
@@ -4523,7 +5537,7 @@ function AppInner(){
 
   function handleLogin(profile){setUser(profile);}
   function handleLogout(){setUser(null);setScreen("division");setSelectedDiv(null);setSelectedProject(null);}
-  function handleDivisionSelect(div){setSelectedDiv(div);setScreen("jobs");}
+  function handleDivisionSelect(div){setSelectedDiv(div);setSelectedMfgJob(null);setSelectedMfgPart(null);setScreen("jobs");}
   function handleSelectProject(p){setSelectedProject(p);setScreen("detail");}
 
   if(!user) return(
@@ -4548,7 +5562,16 @@ function AppInner(){
       {user&&screen==="estimating"&&can(user,"estimating")&&(
         <EstimatingScreen user={user} onBack={()=>setScreen("division")}/>
       )}
-      {user&&screen==="jobs"&&selectedDiv&&(
+      {user&&screen==="jobs"&&selectedDiv==="Manufacturing"&&!selectedMfgJob&&(
+        <ManufacturingJobBoard user={user} onBack={()=>setScreen("division")} onSelectJob={j=>{setSelectedMfgJob(j);setSelectedMfgPart(null);}}/>
+      )}
+      {user&&screen==="jobs"&&selectedDiv==="Manufacturing"&&selectedMfgJob&&!selectedMfgPart&&(
+        <ManufacturingJobDetail job={selectedMfgJob} user={user} onBack={()=>setSelectedMfgJob(null)} onSelectPart={p=>setSelectedMfgPart(p)}/>
+      )}
+      {user&&screen==="jobs"&&selectedDiv==="Manufacturing"&&selectedMfgJob&&selectedMfgPart&&(
+        <ManufacturingTraveler part={selectedMfgPart} job={selectedMfgJob} user={user} onBack={()=>setSelectedMfgPart(null)}/>
+      )}
+      {user&&screen==="jobs"&&selectedDiv&&selectedDiv!=="Manufacturing"&&(
         <JobBoard user={user} projects={projects} division={selectedDiv} onSelect={handleSelectProject}
           onBack={()=>setScreen("division")} onNew={()=>setScreen("newProject")} onRefresh={loadProjects}/>
       )}
