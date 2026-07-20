@@ -2630,6 +2630,7 @@ function DocsTab({projectId,user,onErr}){
 /* ── DOC ROW ─────────────────────────────────────────────────── */
 function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons,onDragStart,onDragEnd,isDragging}){
   const [showPreview,setShowPreview]=useState(false);
+  const [showMove,setShowMove]=useState(false);   // must be before any conditional return
 
   const fname=(doc.file_name||doc.name||"").toLowerCase();
   const isImage=doc.file_type?.startsWith("image/")||(doc.file||"").startsWith("data:image")||[".jpg",".jpeg",".png",".gif",".webp",".bmp"].some(e=>fname.endsWith(e));
@@ -2670,7 +2671,6 @@ function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelet
       </div>
     );
   }
-  const [showMove,setShowMove]=useState(false);
   const ext=doc.file_name?.split(".").pop()?.toUpperCase()||"";
   const icon=getMimeIcon(doc.file_type||"")||docIcons[doc.doc_type]||"📁";
   return(
