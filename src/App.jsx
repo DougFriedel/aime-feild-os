@@ -2354,6 +2354,8 @@ function DocsTab({projectId,user,onErr}){
   const [uploading,setUploading]=useState(false);
   const [dragging,setDragging]=useState(false);
   const [editPerms,setEditPerms]=useState(null);
+  const [dragDoc,setDragDoc]=useState(null);   // doc being dragged
+  const [dragOverFolder,setDragOverFolder]=useState(null); // folder being hovered
   const fileRef=useRef(null);
 
   const FOLDER_COLORS=["#60A5FA","#34D399","#F97316","#FC8181","#FBBF24","#A78BFA","#2DD4BF","#F472B6"];
@@ -2529,12 +2531,23 @@ function DocsTab({projectId,user,onErr}){
       {!loading&&!currentFolder&&<>
         {folders.length>0&&<div style={{marginBottom:16}}>
           <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Folders ({folders.length})</div>
+          {dragDoc&&<div style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 12px",marginBottom:8,fontSize:12,color:T.orange,fontWeight:700,textAlign:"center"}}>
+            📂 Drop onto a folder to move the file
+          </div>}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {folders.map(folder=>{
               const count=docs.filter(d=>d.folder_id===folder.id).length;
               return(
-                <div key={folder.id} onClick={()=>setCurrentFolder(folder)}
-                  style={{...cardS,cursor:"pointer",padding:"12px 14px",border:`1px solid ${folder.color||T.orange}30`,position:"relative"}}>
+                <div key={folder.id}
+                  onClick={()=>!dragDoc&&setCurrentFolder(folder)}
+                  onDragOver={e=>{e.preventDefault();setDragOverFolder(folder.id);}}
+                  onDragLeave={()=>setDragOverFolder(null)}
+                  onDrop={e=>{e.preventDefault();setDragOverFolder(null);if(dragDoc){moveDocToFolder(dragDoc,folder.id);setDragDoc(null);}}}
+                  style={{...cardS,cursor:dragDoc?"copy":"pointer",padding:"12px 14px",
+                    border:`2px solid ${dragOverFolder===folder.id?folder.color||T.orange:(folder.color||T.orange)+"30"}`,
+                    background:dragOverFolder===folder.id?`${folder.color||T.orange}18`:T.card,
+                    transform:dragOverFolder===folder.id?"scale(1.02)":"scale(1)",
+                    transition:"all 0.15s",position:"relative"}}>
                   <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
                     <div style={{fontSize:20}}>📁</div>
                     <div style={{flex:1,minWidth:0}}>
@@ -2562,7 +2575,9 @@ function DocsTab({projectId,user,onErr}){
         {currentDocs.map(doc=>(<DocRow key={doc.id} doc={doc} folders={folders} user={user} canAdmin={canAdmin}
           onDownload={()=>downloadDoc(doc)} canDownload={canDownload(doc)}
           onMove={fid=>moveDocToFolder(doc,fid)} onDelete={()=>removeDoc(doc.id)}
-          getMimeIcon={getMimeIcon} fmtSize={fmtSize} docIcons={docIcons}/>))}
+          getMimeIcon={getMimeIcon} fmtSize={fmtSize} docIcons={docIcons}
+          onDragStart={()=>setDragDoc(doc.id)} onDragEnd={()=>{setDragDoc(null);setDragOverFolder(null);}}
+          isDragging={dragDoc===doc.id}/>))}
         {folders.length===0&&rootDocCount===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
           <div style={{fontSize:44,marginBottom:12}}>📁</div>
           <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No Documents Yet</div>
@@ -2584,7 +2599,9 @@ function DocsTab({projectId,user,onErr}){
         {currentDocs.map(doc=>(<DocRow key={doc.id} doc={doc} folders={folders} user={user} canAdmin={canAdmin}
           onDownload={()=>downloadDoc(doc)} canDownload={canDownload(doc)}
           onMove={fid=>moveDocToFolder(doc,fid)} onDelete={()=>removeDoc(doc.id)}
-          getMimeIcon={getMimeIcon} fmtSize={fmtSize} docIcons={docIcons}/>))}
+          getMimeIcon={getMimeIcon} fmtSize={fmtSize} docIcons={docIcons}
+          onDragStart={()=>setDragDoc(doc.id)} onDragEnd={()=>{setDragDoc(null);setDragOverFolder(null);}}
+          isDragging={dragDoc===doc.id}/>))}
         {currentDocs.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
           <div style={{fontSize:44,marginBottom:12}}>📁</div>
           <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>This folder is empty</div>
@@ -2596,12 +2613,22 @@ function DocsTab({projectId,user,onErr}){
 }
 
 /* ── DOC ROW ─────────────────────────────────────────────────── */
-function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons}){
+function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons,onDragStart,onDragEnd,isDragging}){
   const [showMove,setShowMove]=useState(false);
   const ext=doc.file_name?.split(".").pop()?.toUpperCase()||"";
   const icon=getMimeIcon(doc.file_type||"")||docIcons[doc.doc_type]||"📁";
   return(
-    <div style={{...cardS,marginBottom:8,padding:"10px 14px"}}>
+    <div draggable={!!onDragStart} onDragStart={onDragStart} onDragEnd={onDragEnd}
+      style={{...cardS,marginBottom:8,padding:"10px 14px",
+        opacity:isDragging?0.4:1,
+        cursor:onDragStart?"grab":"default",
+        border:isDragging?`2px solid ${T.orange}`:undefined,
+        transition:"opacity 0.15s,border 0.15s"}}>
+      {/* Drag handle hint */}
+      {onDragStart&&<div style={{display:"flex",alignItems:"center",gap:4,marginBottom:6,color:T.muted,fontSize:10}}>
+        <span style={{letterSpacing:"1px",fontSize:8}}>⠿⠿</span>
+        <span>Drag to a folder</span>
+      </div>}
       <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
         <div style={{fontSize:24,flexShrink:0,marginTop:2}}>{icon}</div>
         <div style={{flex:1,minWidth:0}}>
