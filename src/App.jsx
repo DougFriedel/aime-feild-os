@@ -104,6 +104,7 @@ const API={
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
+  docFolders:{forProject:(pid)=>sb(`/document_folders?project_id=eq.${pid}&order=name.asc`),create:(d)=>sb("/document_folders",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/document_folders?id=eq.${id}`,{method:"PATCH",body:d}),remove:(id)=>sb(`/document_folders?id=eq.${id}`,{method:"DELETE"})},
   docs:     {forProject:(pid)=>sb(`/documents?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/documents?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
   milestones:{forProject:(pid)=>sb(`/milestones?project_id=eq.${pid}&order=sort_order.asc,target_date.asc`),create:(d)=>sb("/milestones",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/milestones?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/milestones?id=eq.${id}`,{method:"DELETE"})},
   crew:     {list:()=>sb("/crew_members?order=name.asc"),create:(d)=>sb("/crew_members",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/crew_members?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/crew_members?id=eq.${id}`,{method:"DELETE"})},
@@ -2336,215 +2337,313 @@ function SafetyTab({projectId,safety,user,onRefresh,onErr}){
 
 /* ── DOCS TAB ───────────────────────────────────────────────── */
 function DocsTab({projectId,user,onErr}){
-  const [docs,setDocs]=useState([]);const [loading,setLoading]=useState(true);
-  const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
-  const [dragging,setDragging]=useState(false);const [uploading,setUploading]=useState(false);
-  const [editPerms,setEditPerms]=useState(null); // doc being permission-edited
+  const canAdmin=user.role==="admin"||user.role==="pm";
+
+  // Folders state
+  const [folders,setFolders]=useState([]);
+  const [currentFolder,setCurrentFolder]=useState(null); // null = root view
+  const [showNewFolder,setShowNewFolder]=useState(false);
+  const [folderName,setFolderName]=useState("");
+  const [folderColor,setFolderColor]=useState("#60A5FA");
+  const [folderDesc,setFolderDesc]=useState("");
+  const [editingFolder,setEditingFolder]=useState(null);
+
+  // Docs state
+  const [docs,setDocs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [uploading,setUploading]=useState(false);
+  const [dragging,setDragging]=useState(false);
+  const [editPerms,setEditPerms]=useState(null);
   const fileRef=useRef(null);
-  const allRoles=["admin","pm","estimator","foreman","crew"];
-  const roleLabels={admin:"🔴 Admin",pm:"🟠 PM",foreman:"🟡 Foreman",crew:"🟢 Field Crew"};
-  const [f,setF]=useState({name:"",doc_type:"Drawing",notes:"",visible_to:["admin","pm","estimator","foreman","crew"],can_download:["admin","pm","estimator","foreman","crew"]});
-  const docTypes=["Drawing","Specification","Manual","Permit","Contract","As-Built","ITP","Procedure","Safety Plan","Other"];
-  const docIcons={Drawing:"📐",Specification:"📄",Manual:"📗",Permit:"🗂️",Contract:"📝","As-Built":"🗺️",ITP:"✅",Procedure:"📋","Safety Plan":"⛑️",Other:"📁"};
+
+  const FOLDER_COLORS=["#60A5FA","#34D399","#F97316","#FC8181","#FBBF24","#A78BFA","#2DD4BF","#F472B6"];
+  const docIcons={Drawing:"📐",Specification:"📄",Manual:"📗",Permit:"🗂️",Contract:"📝","As-Built":"🗺️",ITP:"✅",Procedure:"📋","Safety Plan":"⛑️",Other:"📁","Fillable Form":"📝"};
   const mimeIcons={"application/pdf":"📄","image/":"🖼️","application/vnd.openxmlformats-officedocument.spreadsheetml":"📊","application/vnd.openxmlformats-officedocument.wordprocessingml":"📝","application/vnd.openxmlformats-officedocument.presentationml":"📊","video/":"🎬","text/":"📝"};
+  function getMimeIcon(mime=""){for(const[k,v] of Object.entries(mimeIcons)){if(mime.startsWith(k))return v;}return"📁";}
+  function fmtSize(bytes){if(!bytes)return"";if(bytes<1024)return bytes+"B";if(bytes<1048576)return(bytes/1024).toFixed(1)+"KB";return(bytes/1048576).toFixed(1)+"MB";}
 
-  function getMimeIcon(mime=""){
-    for(const[k,v] of Object.entries(mimeIcons)){if(mime.startsWith(k))return v;}
-    return "📁";
+  async function load(){
+    setLoading(true);
+    try{
+      const [f,d]=await Promise.all([API.docFolders.forProject(projectId),API.docs.forProject(projectId)]);
+      setFolders(Array.isArray(f)?f:[]);
+      setDocs(Array.isArray(d)?d:[]);
+    }catch(e){onErr(e.message);}
+    setLoading(false);
   }
-  function fmtSize(bytes){
-    if(!bytes)return"";
-    if(bytes<1024)return bytes+"B";
-    if(bytes<1048576)return(bytes/1024).toFixed(1)+"KB";
-    return(bytes/1048576).toFixed(1)+"MB";
-  }
-  function guessType(filename=""){
-    const ext=filename.split(".").pop().toLowerCase();
-    const map={pdf:"Specification",dwg:"Drawing",dxf:"Drawing",png:"Drawing",jpg:"Drawing",jpeg:"Drawing",xlsx:"Other",xls:"Other",docx:"Other",doc:"Other",pptx:"Other",ifc:"Drawing"};
-    return map[ext]||"Other";
-  }
-
-  async function load(){setLoading(true);try{setDocs(await API.docs.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[projectId]);
 
-  async function fileToBase64(file){
-    return new Promise((res,rej)=>{
-      const rd=new FileReader();
-      rd.onload=e=>res(e.target.result);
-      rd.onerror=rej;
-      rd.readAsDataURL(file);
-    });
+  // ── Folder actions ────────────────────────────────────────────
+  async function createFolder(){
+    if(!folderName.trim())return;
+    try{
+      await API.docFolders.create({project_id:projectId,name:folderName.trim(),description:folderDesc.trim(),color:folderColor,created_by:user.name});
+      setFolderName("");setFolderDesc("");setFolderColor("#60A5FA");
+      setShowNewFolder(false);await load();
+    }catch(e){onErr(e.message);}
+  }
+  async function renameFolder(folder){
+    const name=window.prompt("Rename folder:",folder.name);
+    if(!name||!name.trim()||name===folder.name)return;
+    try{await API.docFolders.update(folder.id,{name:name.trim()});await load();}
+    catch(e){onErr(e.message);}
+  }
+  async function deleteFolder(folder){
+    const docsInFolder=docs.filter(d=>d.folder_id===folder.id);
+    const msg=docsInFolder.length>0
+      ?`"${folder.name}" contains ${docsInFolder.length} document${docsInFolder.length!==1?"s":""}. Documents will be moved to the root. Delete folder?`
+      :`Delete folder "${folder.name}"?`;
+    if(!window.confirm(msg))return;
+    try{
+      // Move docs to root first
+      await Promise.all(docsInFolder.map(d=>API.docs.update(d.id,{folder_id:null})));
+      await API.docFolders.remove(folder.id);
+      if(currentFolder?.id===folder.id)setCurrentFolder(null);
+      await load();
+    }catch(e){onErr(e.message);}
+  }
+  async function moveDocToFolder(doc,folderId){
+    try{await API.docs.update(doc.id,{folder_id:folderId||null});await load();}
+    catch(e){onErr(e.message);}
   }
 
+  // ── File upload ───────────────────────────────────────────────
+  function toB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});}
   async function uploadFiles(files){
     setUploading(true);
     let uploaded=0;
     for(const file of files){
-      if(file.size>8*1024*1024){onErr(`${file.name} is too large (max 8MB)`);continue;}
       try{
-        const data=await fileToBase64(file);
+        const data=await toB64(file);
+        const isFillable=file.name.toLowerCase().endsWith('.pdf');
         await API.docs.create({
           project_id:projectId,
-          name:file.name.replace(/\.[^/.]+$/,""),
+          name:file.name.replace(/\.[^.]+$/,""),
+          doc_type:isFillable?"Fillable Form":"Other",
+          file:data,
           file_name:file.name,
-          file_mime:file.type,
           file_size:file.size,
-          file_data:data,
-          doc_type:guessType(file.name),
-          notes:"",
-          uploaded_by:user.name,
+          file_type:file.type,
+          folder_id:currentFolder?.id||null,
           visible_to:["admin","pm","estimator","foreman","crew"],
           can_download:["admin","pm","estimator","foreman","crew"],
+          uploaded_by:user.name,
+          is_fillable:isFillable,
         });
         uploaded++;
-      }catch(e){onErr(`Failed to upload ${file.name}: ${e.message}`);}
+      }catch(e){onErr(e.message);}
     }
-    await load();
     setUploading(false);
-    if(uploaded>0)onErr(""); // clear any prior errors
+    if(uploaded>0)await load();
   }
-
-  function handleDrop(e){
-    e.preventDefault();setDragging(false);
-    uploadFiles(Array.from(e.dataTransfer.files));
+  async function removeDoc(id){
+    if(!window.confirm("Delete this document?"))return;
+    try{await API.docs.remove(id);await load();}catch(e){onErr(e.message);}
   }
-
   function downloadDoc(doc){
-    if(!doc.file_data)return;
+    if(!doc.file)return;
     const a=document.createElement("a");
-    a.href=doc.file_data;
-    a.download=doc.file_name||doc.name;
-    a.click();
+    a.href=doc.file;
+    a.download=doc.file_name||doc.name||"document";
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+  }
+  function canDownload(doc){
+    return(doc.can_download||[]).includes(user.role)||user.role==="admin";
   }
 
-  async function savePerms(doc,visible_to,can_download){
-    try{await API.docs.update?.(doc.id,{visible_to,can_download})||await sb(`/documents?id=eq.${doc.id}`,{method:"PATCH",body:{visible_to,can_download}});await load();setEditPerms(null);}
-    catch(e){onErr(e.message);}
-  }
+  // ── Current view ──────────────────────────────────────────────
+  const currentDocs=currentFolder
+    ?docs.filter(d=>d.folder_id===currentFolder.id)
+    :docs.filter(d=>!d.folder_id);
 
-  async function remove(id){try{await API.docs.remove(id);await load();}catch(e){onErr(e.message);}}
+  const rootDocCount=docs.filter(d=>!d.folder_id).length;
 
-  // Filter docs user can see
-  const visibleDocs=docs.filter(d=>{
-    const vt=d.visible_to||["admin","pm","estimator","foreman","crew"];
-    return vt.includes(user.role)||user.role==="admin";
-  });
-  const grouped={};visibleDocs.forEach(d=>{const t=d.doc_type||"Other";if(!grouped[t])grouped[t]=[];grouped[t].push(d);});
-
+  // ── Render ────────────────────────────────────────────────────
   return(
-    <div>
-      {/* Permission editor modal */}
-      {editPerms&&(
-        <div onClick={()=>setEditPerms(null)} style={{position:"fixed",inset:0,zIndex:200,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",width:"100%",maxWidth:480}}>
-            <div style={{fontSize:16,fontWeight:800,marginBottom:4}}>{editPerms.name}</div>
-            <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Set who can see and download this document</div>
-            {["visible_to","can_download"].map(perm=>(
-              <div key={perm} style={{marginBottom:16}}>
-                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
-                  {perm==="visible_to"?"👁 Can View":"📥 Can Download"}
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                  {allRoles.map(role=>{
-                    const current=(editPerms[perm]||allRoles);
-                    const on=current.includes(role);
-                    const m=ROLE_META[role];
-                    return(
-                      <button key={role} onClick={()=>{
-                        const next=on?current.filter(r=>r!==role):[...current,role];
-                        setEditPerms(p=>({...p,[perm]:next}));
-                      }} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderRadius:10,border:`2px solid ${on?m.color:T.border}`,background:on?m.color+"18":T.surface,cursor:"pointer",fontFamily:"inherit"}}>
-                        <div style={{width:16,height:16,borderRadius:4,border:`2px solid ${on?m.color:T.border}`,background:on?m.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",fontWeight:900,flexShrink:0}}>{on?"✓":""}</div>
-                        <span style={{fontSize:12,fontWeight:700,color:on?m.color:T.sub}}>{roleLabels[role]}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-            <button onClick={()=>savePerms(editPerms,editPerms.visible_to||allRoles,editPerms.can_download||allRoles)} style={{...primBtn,borderRadius:12}}>Save Permissions</button>
-            <button onClick={()=>setEditPerms(null)} style={{...ghostBtn,width:"100%",textAlign:"center",marginTop:8}}>Cancel</button>
-          </div>
-        </div>
-      )}
+    <div onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)}
+      onDrop={e=>{e.preventDefault();setDragging(false);uploadFiles(Array.from(e.dataTransfer.files));}}
+      style={{minHeight:200}}>
 
-      {/* Drag and drop zone */}
-      <div
-        onDrop={handleDrop}
-        onDragOver={e=>{e.preventDefault();setDragging(true);}}
-        onDragLeave={()=>setDragging(false)}
-        onClick={()=>fileRef.current?.click()}
-        style={{
-          border:`2px dashed ${dragging?T.orange:T.teal}`,
-          borderRadius:16,
-          background:dragging?T.orangeLow:T.teal+"0A",
-          padding:"28px 16px",
-          textAlign:"center",
-          cursor:"pointer",
-          marginBottom:14,
-          transition:"all 0.15s",
-        }}
-      >
-        <div style={{fontSize:36,marginBottom:8}}>{uploading?"⏳":dragging?"📂":"📁"}</div>
-        <div style={{fontSize:15,fontWeight:700,color:dragging?T.orange:T.teal,marginBottom:4}}>
-          {uploading?"Uploading…":dragging?"Drop to upload":"Drag & drop files here"}
-        </div>
-        <div style={{fontSize:12,color:T.muted}}>or tap to browse · PDF, images, Word, Excel, drawings · max 8MB each</div>
-        <input ref={fileRef} type="file" multiple style={{display:"none"}} onChange={e=>{uploadFiles(Array.from(e.target.files));e.target.value="";}}/>
+      {/* Breadcrumb nav */}
+      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:12,padding:"8px 0"}}>
+        <button onClick={()=>setCurrentFolder(null)}
+          style={{background:"none",border:"none",color:currentFolder?T.orange:T.text,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",padding:0}}>
+          📁 Documents
+        </button>
+        {currentFolder&&<>
+          <span style={{color:T.muted,fontSize:13}}>›</span>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:currentFolder.color||T.orange}}/>
+            <span style={{fontSize:13,fontWeight:700,color:T.text}}>{currentFolder.name}</span>
+          </div>
+        </>}
       </div>
 
-      {loading&&<Spinner/>}
-      {!loading&&visibleDocs.length===0&&(
-        <div style={{textAlign:"center",padding:"32px 0",color:T.muted}}>
-          <div style={{fontSize:32,marginBottom:8}}>📁</div>
-          <div>No documents yet. Drag and drop files above to upload.</div>
-        </div>
-      )}
+      {/* Drop zone hint */}
+      {dragging&&<div style={{background:T.orangeLow,border:`2px dashed ${T.orange}`,borderRadius:12,padding:"20px",textAlign:"center",fontSize:14,color:T.orange,fontWeight:700,marginBottom:12}}>
+        Drop files to upload{currentFolder?` into "${currentFolder.name}"`:""}</div>}
 
-      {!loading&&Object.entries(grouped).map(([type,typeDocs])=>(
-        <div key={type} style={{marginBottom:16}}>
-          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
-            {docIcons[type]||"📁"} {type} ({typeDocs.length})
+      {/* Action row */}
+      <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+        <button onClick={()=>fileRef.current?.click()}
+          style={{...primBtn,flex:1,minWidth:120,borderRadius:12,fontSize:13}}>
+          {uploading?"Uploading…":"📎 Upload Files"}
+        </button>
+        {canAdmin&&!currentFolder&&<button onClick={()=>setShowNewFolder(true)}
+          style={{...ghostBtn,flex:1,minWidth:120,textAlign:"center",fontSize:13,borderRadius:12,color:T.orange,border:`1px solid ${T.orange}40`}}>
+          📁 New Folder
+        </button>}
+        {currentFolder&&<button onClick={()=>setCurrentFolder(null)}
+          style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,borderRadius:12}}>
+          ← Back to Root
+        </button>}
+        <input ref={fileRef} type="file" multiple accept="*/*" style={{display:"none"}}
+          onChange={e=>{uploadFiles(Array.from(e.target.files));e.target.value="";}}/>
+      </div>
+
+      {/* New folder form */}
+      {showNewFolder&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.orange}40`}}>
+        <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:12}}>📁 Create New Folder</div>
+        <div style={{marginBottom:10}}><label style={lbl}>Folder Name *</label>
+          <input value={folderName} onChange={e=>setFolderName(e.target.value)} placeholder="e.g. As-Builts, Safety Plans, Permits" style={inp} autoFocus/></div>
+        <div style={{marginBottom:10}}><label style={lbl}>Description (optional)</label>
+          <input value={folderDesc} onChange={e=>setFolderDesc(e.target.value)} placeholder="What goes in this folder?" style={inp}/></div>
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Color</label>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {FOLDER_COLORS.map(c=><div key={c} onClick={()=>setFolderColor(c)}
+              style={{width:28,height:28,borderRadius:8,background:c,cursor:"pointer",border:folderColor===c?"3px solid #fff":"2px solid transparent",boxShadow:folderColor===c?"0 0 0 2px "+c:"none"}}/>)}
           </div>
-          {typeDocs.map(doc=>{
-            const icon=doc.file_mime?getMimeIcon(doc.file_mime):docIcons[doc.doc_type]||"📁";
-            const canDl=(doc.can_download||allRoles).includes(user.role)||user.role==="admin";
-            const vt=doc.visible_to||allRoles;
-            const restrictedView=!vt.includes("crew")||!vt.includes("foreman");
-            return(
-              <div key={doc.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.teal}`}}>
-                <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
-                  <div style={{fontSize:28,flexShrink:0,marginTop:2}}>{icon}</div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:14,fontWeight:700,color:T.text}}>{doc.name}</div>
-                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>
-                      {doc.file_name&&<span style={pill(T.teal)}>{doc.file_name.split(".").pop().toUpperCase()}</span>}
-                      {doc.file_size&&<span style={pill(T.muted)}>{fmtSize(doc.file_size)}</span>}
-                      {restrictedView&&<span style={pill(T.yellow)}>🔒 Restricted</span>}
-                    </div>
-                    {doc.notes&&<div style={{fontSize:12,color:T.sub,marginTop:4}}>{doc.notes}</div>}
-                    <div style={{fontSize:11,color:T.muted,marginTop:4}}>Uploaded by {doc.uploaded_by}</div>
-                  </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
-                    {doc.file_data&&canDl&&(
-                      <button onClick={()=>downloadDoc(doc)} style={{background:T.teal+"20",border:`1px solid ${T.teal}40`,borderRadius:8,padding:"6px 12px",color:T.teal,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>📥 Download</button>
-                    )}
-                    {(user.role==="admin"||user.role==="pm")&&(
-                      <button onClick={()=>setEditPerms({...doc,visible_to:doc.visible_to||allRoles,can_download:doc.can_download||allRoles})} style={{background:T.yellowLow,border:`1px solid ${T.yellow}40`,borderRadius:8,padding:"6px 12px",color:T.yellow,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>🔒 Perms</button>
-                    )}
-                    <button onClick={()=>remove(doc.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:"4px 0",textAlign:"center"}}>🗑</button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
         </div>
-      ))}
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={createFolder} disabled={!folderName.trim()}
+            style={{...primBtn,flex:2,borderRadius:12,opacity:folderName.trim()?1:0.5}}>Create Folder</button>
+          <button onClick={()=>{setShowNewFolder(false);setFolderName("");}}
+            style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+        </div>
+      </div>}
+
+      {loading&&<Spinner/>}
+
+      {/* Root view — show folders + root docs */}
+      {!loading&&!currentFolder&&<>
+        {folders.length>0&&<div style={{marginBottom:16}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Folders ({folders.length})</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {folders.map(folder=>{
+              const count=docs.filter(d=>d.folder_id===folder.id).length;
+              return(
+                <div key={folder.id} onClick={()=>setCurrentFolder(folder)}
+                  style={{...cardS,cursor:"pointer",padding:"12px 14px",border:`1px solid ${folder.color||T.orange}30`,position:"relative"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                    <div style={{fontSize:20}}>📁</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:800,color:T.text,lineHeight:1.2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{folder.name}</div>
+                      <div style={{fontSize:10,color:T.muted,marginTop:1}}>{count} item{count!==1?"s":""}</div>
+                    </div>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:folder.color||T.orange,flexShrink:0}}/>
+                  </div>
+                  {folder.description&&<div style={{fontSize:10,color:T.muted,lineHeight:1.4}}>{folder.description}</div>}
+                  {canAdmin&&<div style={{display:"flex",gap:4,marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`}}
+                    onClick={e=>e.stopPropagation()}>
+                    <button onClick={()=>renameFolder(folder)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:11,padding:"3px 6px"}}>✏️</button>
+                    <button onClick={()=>deleteFolder(folder)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:11,padding:"3px 6px",color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>
+                  </div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>}
+
+        {/* Root-level docs */}
+        {rootDocCount>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+          Root Files ({rootDocCount})
+        </div>}
+        {currentDocs.map(doc=>(<DocRow key={doc.id} doc={doc} folders={folders} user={user} canAdmin={canAdmin}
+          onDownload={()=>downloadDoc(doc)} canDownload={canDownload(doc)}
+          onMove={fid=>moveDocToFolder(doc,fid)} onDelete={()=>removeDoc(doc.id)}
+          getMimeIcon={getMimeIcon} fmtSize={fmtSize} docIcons={docIcons}/>))}
+        {folders.length===0&&rootDocCount===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+          <div style={{fontSize:44,marginBottom:12}}>📁</div>
+          <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No Documents Yet</div>
+          <div style={{fontSize:12,lineHeight:1.6}}>Tap <strong style={{color:T.orange}}>📁 New Folder</strong> to organize your files, or <strong style={{color:T.orange}}>📎 Upload Files</strong> to add documents directly.<br/><br/>You can upload PDFs, drawings, specs, permits, contracts — any file type.</div>
+        </div>}
+      </>}
+
+      {/* Folder view — show docs inside this folder */}
+      {!loading&&currentFolder&&<>
+        <div style={{...cardS,marginBottom:12,background:currentFolder.color+"12",border:`1px solid ${currentFolder.color}30`,padding:"10px 14px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:800,color:T.text}}>{currentFolder.name}</div>
+              {currentFolder.description&&<div style={{fontSize:11,color:T.muted,marginTop:2}}>{currentFolder.description}</div>}
+            </div>
+            <div style={{fontSize:13,fontWeight:700,color:currentFolder.color||T.orange}}>{currentDocs.length} item{currentDocs.length!==1?"s":""}</div>
+          </div>
+        </div>
+        {currentDocs.map(doc=>(<DocRow key={doc.id} doc={doc} folders={folders} user={user} canAdmin={canAdmin}
+          onDownload={()=>downloadDoc(doc)} canDownload={canDownload(doc)}
+          onMove={fid=>moveDocToFolder(doc,fid)} onDelete={()=>removeDoc(doc.id)}
+          getMimeIcon={getMimeIcon} fmtSize={fmtSize} docIcons={docIcons}/>))}
+        {currentDocs.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+          <div style={{fontSize:44,marginBottom:12}}>📁</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>This folder is empty</div>
+          <div style={{fontSize:12}}>Tap <strong style={{color:T.orange}}>📎 Upload Files</strong> above to add documents to <strong style={{color:T.text}}>"{currentFolder.name}"</strong>.</div>
+        </div>}
+      </>}
     </div>
   );
 }
 
-/* ── SCHEDULE TAB ───────────────────────────────────────────── */
+/* ── DOC ROW ─────────────────────────────────────────────────── */
+function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons}){
+  const [showMove,setShowMove]=useState(false);
+  const ext=doc.file_name?.split(".").pop()?.toUpperCase()||"";
+  const icon=getMimeIcon(doc.file_type||"")||docIcons[doc.doc_type]||"📁";
+  return(
+    <div style={{...cardS,marginBottom:8,padding:"10px 14px"}}>
+      <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+        <div style={{fontSize:24,flexShrink:0,marginTop:2}}>{icon}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text,lineHeight:1.3}}>{doc.name}</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4,alignItems:"center"}}>
+            {ext&&<span style={{background:T.surface,borderRadius:4,padding:"1px 6px",fontSize:9,color:T.muted,fontWeight:700}}>{ext}</span>}
+            {doc.doc_type&&<span style={{fontSize:10,color:T.muted}}>{doc.doc_type}</span>}
+            {doc.file_size&&<span style={{fontSize:10,color:T.muted}}>{fmtSize(doc.file_size)}</span>}
+            {doc.is_fillable&&<span style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:4,padding:"1px 6px",fontSize:9,color:T.blue,fontWeight:700}}>FILLABLE</span>}
+          </div>
+          {doc.notes&&<div style={{fontSize:11,color:T.muted,marginTop:4,fontStyle:"italic"}}>{doc.notes}</div>}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+        {canDownload&&doc.file&&<button onClick={onDownload}
+          style={{...primBtn,flex:2,borderRadius:10,fontSize:12,background:T.green,color:"#000",padding:"8px"}}>
+          ⬇️ Download
+        </button>}
+        {canAdmin&&folders.length>0&&<div style={{position:"relative",flex:1}}>
+          <button onClick={()=>setShowMove(s=>!s)}
+            style={{...ghostBtn,width:"100%",textAlign:"center",fontSize:12,padding:"8px"}}>📁 Move</button>
+          {showMove&&<div style={{position:"absolute",bottom:"100%",left:0,right:0,background:T.card,border:`1px solid ${T.border}`,borderRadius:10,zIndex:50,overflow:"hidden",marginBottom:4}}>
+            <div onClick={()=>{onMove(null);setShowMove(false);}} style={{padding:"8px 12px",fontSize:12,cursor:"pointer",color:T.muted,borderBottom:`1px solid ${T.border}`}}>📁 Root (no folder)</div>
+            {folders.map(f=>(
+              <div key={f.id} onClick={()=>{onMove(f.id);setShowMove(false);}}
+                style={{padding:"8px 12px",fontSize:12,cursor:"pointer",color:T.text,borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:6}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:f.color||T.orange}}/>
+                {f.name}
+              </div>
+            ))}
+          </div>}
+        </div>}
+        {canAdmin&&<button onClick={onDelete}
+          style={{...ghostBtn,fontSize:12,padding:"8px 12px",color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>}
+      </div>
+    </div>
+  );
+}
+
+
 function ScheduleTab({projectId,user,onErr}){
   const [milestones,setMilestones]=useState([]);const [loading,setLoading]=useState(true);const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
   const [f,setF]=useState({title:"",description:"",target_date:"",status:"pending"});
