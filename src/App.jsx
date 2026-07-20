@@ -2405,8 +2405,14 @@ function DocsTab({projectId,user,onErr}){
     }catch(e){onErr(e.message);}
   }
   async function moveDocToFolder(doc,folderId){
-    try{await API.docs.update(doc.id,{folder_id:folderId||null});await load();}
-    catch(e){onErr(e.message);}
+    try{
+      await API.docs.update(doc.id,{folder_id:folderId||null});
+      await load();
+    }catch(e){
+      if(e.message?.includes("folder_id")||e.message?.includes("PGRST204")){
+        onErr("Run AIME_docs_fix.sql in Supabase SQL Editor to enable folders, then try again.");
+      }else{onErr(e.message);}
+    }
   }
 
   // ── File upload ───────────────────────────────────────────────
@@ -2418,7 +2424,7 @@ function DocsTab({projectId,user,onErr}){
       try{
         const data=await toB64(file);
         const isFillable=file.name.toLowerCase().endsWith('.pdf');
-        await API.docs.create({
+        const payload={
           project_id:projectId,
           name:file.name.replace(/\.[^.]+$/,""),
           doc_type:isFillable?"Fillable Form":"Other",
@@ -2431,9 +2437,18 @@ function DocsTab({projectId,user,onErr}){
           can_download:["admin","pm","estimator","foreman","crew"],
           uploaded_by:user.name,
           is_fillable:isFillable,
-        });
+        };
+        try{
+          await API.docs.create(payload);
+        }catch(colErr){
+          // If column missing, try without newer columns (schema not yet updated)
+          if(colErr.message?.includes("PGRST204")||colErr.message?.includes("schema cache")){
+            const{file_type,file_size,is_fillable,uploaded_by,folder_id,...safe}=payload;
+            await API.docs.create(safe);
+          }else{throw colErr;}
+        }
         uploaded++;
-      }catch(e){onErr(e.message);}
+      }catch(e){onErr("Upload failed: "+e.message+". Run AIME_docs_fix.sql in Supabase then try again.");}
     }
     setUploading(false);
     if(uploaded>0)await load();
