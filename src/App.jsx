@@ -4625,13 +4625,15 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
     const bom=boms[partId]||[];
     return bom.map(item=>{
       const itemTxns=txns[item.id]||[];
-      const received=itemTxns.filter(t=>t.transaction_type==="Received").reduce((s,t)=>s+(t.qty_received||0),0);
-      const damaged=itemTxns.filter(t=>t.transaction_type==="Damaged").reduce((s,t)=>s+(t.qty_received||0),0);
-      const issued=itemTxns.filter(t=>t.transaction_type==="Issued").reduce((s,t)=>s+(t.qty_received||0),0);
-      const onHand=received-damaged-issued;
+      const received=itemTxns.reduce((s,t)=>s+(t.qty_received||0),0);
+      const issued=itemTxns.reduce((s,t)=>s+(t.qty_issued||0),0);
+      const damaged=itemTxns.reduce((s,t)=>s+(t.qty_damaged||0),0);
+      const usedInAsm=itemTxns.filter(t=>t.transaction_type==="Issued").reduce((s,t)=>s+(t.qty_received||0),0);
+      const onHand=received-issued-damaged-usedInAsm;
       const qtyPerAsm=item.qty_per_assembly||1;
-      const canBuild=qtyPerAsm>0?Math.floor(onHand/qtyPerAsm):0;
-      return{...item,received,damaged,issued,onHand,canBuild,qtyPerAsm};
+      const canBuild=qtyPerAsm>0?Math.floor(Math.max(0,onHand)/qtyPerAsm):0;
+      const needsReorder=(item.reorder_level||0)>0&&onHand<=(item.reorder_level||0);
+      return{...item,received,issued,damaged,usedInAsm,onHand,canBuild,qtyPerAsm,needsReorder};
     });
   }
 
@@ -4676,7 +4678,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
       </div>}
 
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`,overflowX:"auto"}}>
-        {[["parts","🔩 Assemblies"],["bom","📦 Components"],["assembly","🏭 Assembly Log"],["shipping","📤 Shipping"],["labor","⏱ Labor"],["ncr","❌ NCRs"]].map(([id,label])=>(
+        {[["parts","📊 Inventory Summary"],["bom","📋 Transaction Log"],["assembly","🏭 Assembly Log"],["shipping","📤 Shipping Log"],["labor","⏱ Labor"],["ncr","❌ NCRs"]].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flexShrink:0,padding:"11px 12px",background:"none",border:"none",borderBottom:`2px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -4776,6 +4778,47 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   );
 }
 
+/* ── BOM ADD FORM ────────────────────────────────────────────── */
+function BomAddForm({partId,onSave,onCancel}){
+  const [f,setF]=useState({component_part_number:"",material:"",spec:"",qty_per_assembly:"1",unit:"ea",reorder_level:""});
+  const UNITS=["ea","ft","in","lbs","kg","m","mm","set","pcs"];
+  return(
+    <div style={{background:T.surface,borderRadius:10,padding:12,marginBottom:10,border:`1px solid ${T.purple}30`}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.purple,marginBottom:10,textTransform:"uppercase",letterSpacing:"1px"}}>Add Component Part</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>Customer Part # *</label>
+          <input value={f.component_part_number} onChange={e=>setF(x=>({...x,component_part_number:e.target.value}))} placeholder="e.g. 3572922" style={inp}/>
+        </div>
+        <div><label style={lbl}>Description *</label>
+          <input value={f.material} onChange={e=>setF(x=>({...x,material:e.target.value}))} placeholder="e.g. Side Pieces" style={inp}/>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>Qty / Assembly *</label>
+          <input type="number" value={f.qty_per_assembly} onChange={e=>setF(x=>({...x,qty_per_assembly:e.target.value}))} placeholder="1" style={inp}/>
+        </div>
+        <div><label style={lbl}>Unit</label>
+          <select value={f.unit} onChange={e=>setF(x=>({...x,unit:e.target.value}))} style={inpSel}>{UNITS.map(u=><option key={u}>{u}</option>)}</select>
+        </div>
+        <div><label style={lbl}>Reorder Level</label>
+          <input type="number" value={f.reorder_level} onChange={e=>setF(x=>({...x,reorder_level:e.target.value}))} placeholder="e.g. 50" style={inp}/>
+        </div>
+      </div>
+      <div style={{marginBottom:10}}><label style={lbl}>Spec (optional)</label>
+        <input value={f.spec} onChange={e=>setF(x=>({...x,spec:e.target.value}))} placeholder="Material spec" style={inp}/>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>f.component_part_number.trim()&&f.material.trim()&&onSave({...f,qty_per_assembly:parseFloat(f.qty_per_assembly)||1,reorder_level:parseFloat(f.reorder_level)||0})}
+          style={{...primBtn,flex:2,borderRadius:10,fontSize:13,background:T.purple,opacity:f.component_part_number.trim()&&f.material.trim()?1:0.5}}>
+          Add Component
+        </button>
+        <button onClick={onCancel} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+
 /* ── INVENTORY TAB (Components / BOM) ──────────────────────── */
 function InventoryTab({parts,boms,txns,job,user,canAdmin,onRefresh}){
   const [showNewBom,setShowNewBom]=useState(null);
@@ -4786,29 +4829,38 @@ function InventoryTab({parts,boms,txns,job,user,canAdmin,onRefresh}){
 
   function calcInv(item){
     const itemTxns=txns[item.id]||[];
-    const received=itemTxns.filter(t=>t.transaction_type==="Received").reduce((s,t)=>s+(t.qty_received||0),0);
-    const damaged=itemTxns.filter(t=>t.transaction_type==="Damaged").reduce((s,t)=>s+(t.qty_received||0),0);
-    const issued=itemTxns.filter(t=>t.transaction_type==="Issued").reduce((s,t)=>s+(t.qty_received||0),0);
-    const onHand=received-damaged-issued;
+    const received=itemTxns.reduce((s,t)=>s+(t.qty_received||0),0);
+    const issued=itemTxns.reduce((s,t)=>s+(t.qty_issued||0),0);
+    const damaged=itemTxns.reduce((s,t)=>s+(t.qty_damaged||0),0);
+    // Used in assemblies = auto-deducted qty (stored as qty_issued with transaction_type=Issued)
+    const usedInAsm=itemTxns.filter(t=>t.transaction_type==="Issued").reduce((s,t)=>s+(t.qty_received||0),0);
+    const onHand=received-issued-damaged-usedInAsm;
     const qpa=item.qty_per_assembly||1;
-    return{received,damaged,issued,onHand,canBuild:Math.floor(onHand/qpa)};
+    const reorderLevel=item.reorder_level||0;
+    const needsReorder=reorderLevel>0&&onHand<=reorderLevel;
+    return{received,issued,damaged,usedInAsm,onHand,canBuild:Math.floor(Math.max(0,onHand)/qpa),needsReorder,reorderLevel};
   }
 
   async function logTxn(){
     if(!tf.qty||!showTxn)return;
     setSaving(true);
     try{
+      const isReceived=showTxn.type==="Received";
+      const isDamaged=showTxn.type==="Damaged";
       await API.mfg.receipts.create({
         bom_id:showTxn.item.id,
         part_id:showTxn.item.part_id,
-        qty_received:parseFloat(tf.qty),
-        transaction_type:tf.transaction_type,
+        qty_received:isReceived?parseFloat(tf.qty):0,
+        qty_damaged:isDamaged?parseFloat(tf.qty):0,
+        qty_issued:0,
+        transaction_type:showTxn.type,
         reference_bol:tf.reference_bol||null,
         notes:tf.notes||null,
         received_date:tf.received_date,
         received_by:tf.received_by||user.name,
         heat_number:tf.heat_number||null,
-        condition:"Good",
+        condition:isDamaged?"Damaged":"Good",
+        job_number:job.job_number||null,
       });
       setShowTxn(null);
       setTf({qty:"",transaction_type:"Received",reference_bol:"",notes:"",received_date:today(),received_by:""});
@@ -4872,9 +4924,13 @@ function InventoryTab({parts,boms,txns,job,user,canAdmin,onRefresh}){
                     </div>
                   </div>
 
+                  {/* REORDER badge */}
+                  {inv.needsReorder&&<div style={{background:"#7c2d12",border:"1px solid #f97316",borderRadius:8,padding:"5px 10px",fontSize:11,color:"#fed7aa",fontWeight:800,marginBottom:8}}>
+                    🔴 REORDER — {inv.onHand} on hand (reorder at {inv.reorderLevel})
+                  </div>}
                   {/* Stats row */}
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
-                    {[["Received",inv.received,T.blue],["Issued",inv.issued,T.muted],["Damaged",inv.damaged,T.red],["Can Build",inv.canBuild,T.green]].map(([l,v,c])=>(
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                    {[["Received",inv.received,T.blue],["Used/Asm",inv.usedInAsm,T.muted],["Issued",inv.issued,T.muted],["Damaged",inv.damaged,T.red],["On Hand",inv.onHand,inv.onHand<=0?T.red:T.green]].map(([l,v,c])=>(
                       <div key={l} style={{background:T.card,borderRadius:6,padding:"4px",textAlign:"center"}}>
                         <div style={{fontSize:13,fontWeight:800,color:c}}>{v}</div>
                         <div style={{fontSize:8,color:T.muted,textTransform:"uppercase"}}>{l}</div>
@@ -4957,10 +5013,12 @@ function AssemblyLogTab({parts,assemblyLogs,boms,txns,job,user,canAdmin,onRefres
         API.mfg.receipts.create({
           bom_id:item.id,part_id:f.part_id,
           qty_received:qtyAsm*(item.qty_per_assembly||1),
+          qty_issued:0, qty_damaged:0,
           transaction_type:"Issued",
           received_date:f.completion_date,
           received_by:f.entered_by,
-          notes:`Auto-issued: ${qtyAsm} assemblies completed`,
+          job_number:job.job_number||null,
+          notes:`Auto: ${qtyAsm} assemblies completed on ${f.completion_date}`,
         }).catch(()=>{})
       ));
       setShowForm(false);setF({part_id:"",qty_completed:"",completion_date:today(),entered_by:user.name,notes:""});
