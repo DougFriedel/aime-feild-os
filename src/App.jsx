@@ -4450,6 +4450,10 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
     if(!window.confirm(status==="active"?"Put job on hold?":"Reactivate job?"))return;
     try{await API.mfg.jobs.update(id,{status:status==="active"?"on_hold":"active"});await load();}catch(e){console.error("MFG error:",e.message||e);}
   }
+  async function deleteJob(id){
+    if(!window.confirm("Permanently delete this job and ALL its data? This cannot be undone."))return;
+    try{await API.mfg.jobs.remove(id);await load();}catch(e){alert("Error: "+e.message);}
+  }
 
   const active=jobs.filter(j=>j.status==="active");
   const held=jobs.filter(j=>j.status==="on_hold");
@@ -4514,9 +4518,9 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
           <div style={{fontSize:12}}>Tap <strong style={{color:T.purple}}>+ New Job</strong> to create your first production job.</div>
         </div>}
 
-        {boardTab==="jobs"&&active.map(job=><MfgJobCard key={job.id} job={job} onSelect={()=>onSelectJob(job)} onArchive={()=>archiveJob(job.id,job.status)}/>)}
+        {boardTab==="jobs"&&active.map(job=><MfgJobCard key={job.id} job={job} onSelect={()=>onSelectJob(job)} onArchive={()=>archiveJob(job.id,job.status)} onDelete={()=>deleteJob(job.id)}/>)}
         {boardTab==="jobs"&&held.length>0&&<><div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 8px"}}>On Hold</div>
-        {held.map(job=><MfgJobCard key={job.id} job={job} onSelect={()=>onSelectJob(job)} onArchive={()=>archiveJob(job.id,job.status)} dimmed/>)}</>}
+        {held.map(job=><MfgJobCard key={job.id} job={job} onSelect={()=>onSelectJob(job)} onArchive={()=>archiveJob(job.id,job.status)} onDelete={()=>deleteJob(job.id)} dimmed/>)}</>}
       </div>
     </div>
   );
@@ -4543,7 +4547,13 @@ function MfgJobCard({job,onSelect,onArchive,dimmed}){
           <span style={{...pill(T.purple),fontSize:10}}>{job.status==="active"?"● Active":"⏸ On Hold"}</span>
           {job.due_date&&daysLeft<0&&<span style={{...pill(T.red),fontSize:10}}>⚠️ OVERDUE</span>}
         </div>
-        <div style={{color:T.orange,fontSize:16,fontWeight:700}}>→</div>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <button onClick={e=>{e.stopPropagation();onArchive&&onArchive();}} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 8px",color:T.muted,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
+            {job.status==="active"?"⏸":"▶"}
+          </button>
+          <button onClick={e=>{e.stopPropagation();onDelete&&onDelete();}} style={{background:"none",border:`1px solid ${T.red}40`,borderRadius:8,padding:"4px 8px",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+          <span style={{color:T.orange,fontSize:16,fontWeight:700}}>→</span>
+        </div>
       </div>
     </div>
   );
@@ -4728,11 +4738,19 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
                     {part.description&&<div style={{fontSize:12,color:T.sub}}>{part.description}</div>}
                     {part.drawing_number&&<div style={{fontSize:11,color:T.muted}}>DWG: {part.drawing_number}</div>}
                   </div>
-                  <div onClick={()=>onSelectPart(part)} style={{background:T.purpleLow||T.blueLow,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:T.purple}}>
-                    Traveler →
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <div onClick={()=>onSelectPart(part)} style={{background:T.blueLow,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:T.purple}}>
+                      Traveler →
+                    </div>
+                    {canAdmin&&<button onClick={()=>deletePart(part.id)} style={{background:"none",border:`1px solid ${T.red}40`,borderRadius:8,padding:"6px 10px",color:T.red,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>}
                   </div>
                 </div>
 
+                {/* Can Build banner */}
+                {(boms[part.id]||[]).length>0&&<div style={{background:maxBuild>0?`${T.green}15`:`${T.red}15`,border:`1px solid ${maxBuild>0?T.green:T.red}40`,borderRadius:10,padding:"8px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:12,color:T.muted}}>Can build with current inventory:</span>
+                  <span style={{fontSize:20,fontWeight:900,color:maxBuild>0?T.green:T.red}}>{maxBuild} assemblies</span>
+                </div>}
                 {/* Inventory summary bar */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:10}}>
                   {[[part.qty_ordered||0,"Ordered",T.blue],[completed,"Completed",T.green],[shipped,"Shipped",T.teal],[onHand,"On Hand",onHand<0?T.red:T.orange]].map(([v,l,c])=>(
@@ -5069,13 +5087,16 @@ function AssemblyLogTab({parts,assemblyLogs,boms,txns,job,user,canAdmin,onRefres
         const part=parts.find(p=>p.id===a.part_id);
         return(
           <div key={a.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.green}`}}>
-            <div style={{display:"flex",justifyContent:"space-between"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
                 <div style={{fontSize:16,fontWeight:900,color:T.green}}>{a.qty_completed} assemblies</div>
                 <div style={{fontSize:12,color:T.sub}}>{a.completion_date} · {part?.part_number||"—"}</div>
                 {a.entered_by&&<div style={{fontSize:11,color:T.muted}}>By: {a.entered_by}</div>}
               </div>
-              <div style={{fontSize:24}}>🏭</div>
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                <div style={{fontSize:20}}>🏭</div>
+                {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete this assembly log entry?"))try{await sb(`/mfg_assembly_log?id=eq.${a.id}`,{method:"DELETE"});await onRefresh();}catch(e){}}} style={{background:"none",border:`1px solid ${T.red}40`,borderRadius:8,padding:"4px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>}
+              </div>
             </div>
             {a.notes&&<div style={{fontSize:11,color:T.muted,marginTop:4,fontStyle:"italic"}}>{a.notes}</div>}
           </div>
@@ -5151,14 +5172,17 @@ function ShippingLogTab({parts,shippingLogs,assemblyLogs,job,user,canAdmin,onRef
         const part=parts.find(p=>p.id===s.part_id);
         return(
           <div key={s.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.blue}`}}>
-            <div style={{display:"flex",justifyContent:"space-between"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div>
                 <div style={{fontSize:16,fontWeight:900,color:T.blue}}>{s.qty_shipped} shipped</div>
                 <div style={{fontSize:12,color:T.sub}}>{s.ship_date} · {part?.part_number||"—"} · {s.customer||""}</div>
                 {s.bol_number&&<div style={{fontSize:11,color:T.muted}}>BOL: {s.bol_number}</div>}
                 {s.customer_po&&<div style={{fontSize:11,color:T.muted}}>PO: {s.customer_po}</div>}
               </div>
-              <div style={{fontSize:24}}>📤</div>
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                <div style={{fontSize:20}}>📤</div>
+                {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete this shipment entry?"))try{await sb(`/mfg_shipping_log?id=eq.${s.id}`,{method:"DELETE"});await onRefresh();}catch(e){}}} style={{background:"none",border:`1px solid ${T.red}40`,borderRadius:8,padding:"4px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>}
+              </div>
             </div>
           </div>
         );
