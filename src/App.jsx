@@ -4419,19 +4419,31 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
   async function load(){
     setLoading(true);
     try{const j=await API.mfg.jobs.list();setJobs(Array.isArray(j)?j:[]);}
-    catch(e){}
+    catch(e){console.error("MFG error:",e.message||e);}
     setLoading(false);
   }
+  const [formErr,setFormErr]=useState("");
   async function createJob(){
     if(!f.job_number.trim())return;
-    setSaving(true);
-    try{await API.mfg.jobs.create({...f,created_by:user.name});setShowNew(false);setF({job_number:"",customer:"",description:"",po_number:"",due_date:"",notes:""});await load();}
-    catch(e){}
+    setSaving(true);setFormErr("");
+    try{
+      await API.mfg.jobs.create({...f,created_by:user.name});
+      setShowNew(false);
+      setF({job_number:"",customer:"",description:"",po_number:"",due_date:"",notes:""});
+      await load();
+    }catch(e){
+      const msg=e.message||String(e);
+      if(msg.includes("mfg_jobs")||msg.includes("relation")||msg.includes("exist")){
+        setFormErr("⚠️ Database table missing — please run AIME_manufacturing.sql in Supabase SQL Editor first, then try again.");
+      }else{
+        setFormErr("Error: "+msg);
+      }
+    }
     setSaving(false);
   }
   async function archiveJob(id,status){
     if(!window.confirm(status==="active"?"Put job on hold?":"Reactivate job?"))return;
-    try{await API.mfg.jobs.update(id,{status:status==="active"?"on_hold":"active"});await load();}catch(e){}
+    try{await API.mfg.jobs.update(id,{status:status==="active"?"on_hold":"active"});await load();}catch(e){console.error("MFG error:",e.message||e);}
   }
 
   const active=jobs.filter(j=>j.status==="active");
@@ -4465,6 +4477,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
           <div style={{marginBottom:10}}><label style={lbl}>Description</label><input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="What are we making?" style={inp}/></div>
           <div style={{marginBottom:14}}><label style={lbl}>Notes</label><textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/></div>
           <div style={{display:"flex",gap:8}}>
+            {formErr&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 12px",marginBottom:8,fontSize:12,color:T.red,lineHeight:1.6}}>{formErr}</div>}
             <button onClick={createJob} disabled={!f.job_number.trim()||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.purple,opacity:f.job_number.trim()&&!saving?1:0.5}}>{saving?"Creating…":"Create Job"}</button>
             <button onClick={()=>setShowNew(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
           </div>
@@ -4571,7 +4584,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
         }catch{}
       }));
       setBoms(bomMap);setTravelers(travMap);
-    }catch(e){}
+    }catch(e){console.error("MFG error:",e.message||e);}
     setLoading(false);
   }
 
@@ -4580,11 +4593,11 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
     setSaving(true);
     try{await API.mfg.parts.create({...pf,job_id:job.id,qty_ordered:parseInt(pf.qty_ordered)||0});
       setShowNewPart(false);setPf({part_number:"",description:"",drawing_number:"",qty_ordered:"",material_spec:"",notes:""});await load();}
-    catch(e){}setSaving(false);
+    catch(e){console.error("MFG error:",e.message||e);}setSaving(false);
   }
   async function deletePart(id){
     if(!window.confirm("Delete this part and all its data?"))return;
-    try{await API.mfg.parts.remove(id);await load();}catch(e){}
+    try{await API.mfg.parts.remove(id);await load();}catch(e){console.error("MFG error:",e.message||e);}
   }
 
   // Shortage detection
@@ -4834,7 +4847,7 @@ function ManufacturingTraveler({part,job,user,onBack}){
       const t=await API.mfg.travelers.forPart(part.id);
       const existing=Array.isArray(t)&&t.length>0?t[0]:null;
       setTraveler(existing||{part_id:part.id,current_stage:0});
-    }catch(e){}
+    }catch(e){console.error("MFG error:",e.message||e);}
     setLoading(false);
   }
 
@@ -5294,7 +5307,7 @@ function ManufacturingDashboard({jobs,user,onSelectJob}){
         if(Array.isArray(n))ncrAll.push(...n);
       }));
       setTravelers(travMap);setNcrs(ncrAll);
-    }catch(e){}
+    }catch(e){console.error("MFG error:",e.message||e);}
     setLoading(false);
   }
 
