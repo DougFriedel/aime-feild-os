@@ -2629,6 +2629,45 @@ function DocsTab({projectId,user,onErr}){
 
 /* ── DOC ROW ─────────────────────────────────────────────────── */
 function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons,onDragStart,onDragEnd,isDragging}){
+  const [showPreview,setShowPreview]=useState(false);
+
+  const isImage=doc.file_type?.startsWith("image/")||(doc.file||"").startsWith("data:image");
+  const isPdf=doc.file_type==="application/pdf"||(doc.file||"").startsWith("data:application/pdf")||(doc.file_name||"").toLowerCase().endsWith(".pdf");
+  const canPreview=isImage||isPdf;
+
+  // Preview modal
+  if(showPreview){
+    return(
+      <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.97)",display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
+        {/* Header */}
+        <div style={{background:"#141418",borderBottom:"1px solid #26262E",padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:800,color:"#F0F4FF",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{doc.name}</div>
+            <div style={{fontSize:11,color:"#7080A0"}}>{doc.file_name||""}{doc.file_size?` · ${fmtSize(doc.file_size)}`:""}</div>
+          </div>
+          <div style={{display:"flex",gap:8,flexShrink:0,marginLeft:12}}>
+            {canDownload&&<button onClick={onDownload}
+              style={{background:"#34D399",color:"#000",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              ⬇️ Download
+            </button>}
+            <button onClick={()=>setShowPreview(false)}
+              style={{background:"#26262E",color:"#F0F4FF",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              ✕ Close
+            </button>
+          </div>
+        </div>
+
+        {/* Preview content */}
+        <div style={{flex:1,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",padding:8}}>
+          {isImage&&<img src={doc.file} alt={doc.name}
+            style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:8}}/>}
+
+          {isPdf&&<iframe src={doc.file} title={doc.name}
+            style={{width:"100%",height:"100%",border:"none",borderRadius:8,background:"#fff"}}/>}
+        </div>
+      </div>
+    );
+  }
   const [showMove,setShowMove]=useState(false);
   const ext=doc.file_name?.split(".").pop()?.toUpperCase()||"";
   const icon=getMimeIcon(doc.file_type||"")||docIcons[doc.doc_type]||"📁";
@@ -2660,9 +2699,13 @@ function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelet
 
       {/* Actions */}
       <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+        {doc.file&&canPreview&&<button onClick={()=>setShowPreview(true)}
+          style={{...primBtn,flex:2,borderRadius:10,fontSize:12,background:T.blue,color:"#fff",padding:"8px"}}>
+          👁 Preview
+        </button>}
         {canDownload&&doc.file&&<button onClick={onDownload}
-          style={{...primBtn,flex:2,borderRadius:10,fontSize:12,background:T.green,color:"#000",padding:"8px"}}>
-          ⬇️ Download
+          style={{...primBtn,flex:canPreview?1:2,borderRadius:10,fontSize:12,background:T.green,color:"#000",padding:"8px"}}>
+          ⬇️
         </button>}
         {canAdmin&&folders.length>0&&<div style={{position:"relative",flex:1}}>
           <button onClick={()=>setShowMove(s=>!s)}
