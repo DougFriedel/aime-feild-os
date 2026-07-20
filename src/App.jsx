@@ -486,8 +486,6 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           </div>
         </div>
       </div>
-
-      {/* Division picker */}
       <div style={{padding:"20px 16px 80px"}}>
         <div style={{marginBottom:24}}>
           <div style={{fontSize:22,fontWeight:900,color:T.text,letterSpacing:"-0.5px",marginBottom:4}}>Select Division</div>
@@ -525,7 +523,6 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
                     {stats?.count===0&&<div style={{background:T.border,borderRadius:20,padding:"2px 10px",fontSize:10,color:T.muted}}>No jobs</div>}
                   </div>
                 </div>
-                {/* Stats */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
                   {[["Active Jobs",stats?.count||0,divColor],["Reports",stats?.reports||0,T.green],["Billed","$"+(stats?.billed>=1000?(stats.billed/1000).toFixed(1)+"k":fmt(stats?.billed||0)),T.blue]].map(([l,v,c])=>(
                     <div key={l} style={{textAlign:"center"}}>
@@ -629,13 +626,11 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
           </div>
           {canCreate&&<button onClick={onNew} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Job</button>}
         </div>
-        {/* Search */}
         <div style={{position:"relative",marginBottom:10}}>
           <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",fontSize:14,pointerEvents:"none"}}>🔍</span>
           <input type="text" placeholder="Search jobs…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,paddingLeft:38,borderRadius:12,fontSize:14}}/>
           {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:0}}>×</button>}
         </div>
-        {/* Tabs */}
         <div style={{display:"flex",gap:6}}>
           {[["active","Active"],["archived","Archived"],["all","All"]].map(([v,l])=>(<button key={v} onClick={()=>setFilter(v)} style={{padding:"8px 14px",borderRadius:"10px 10px 0 0",background:filter===v?T.bg:"transparent",border:filter===v?`1px solid ${T.border}`:"1px solid transparent",borderBottom:filter===v?`1px solid ${T.bg}`:"none",color:filter===v?T.text:T.muted,fontSize:13,fontWeight:filter===v?700:500,cursor:"pointer",fontFamily:"inherit",position:"relative",zIndex:filter===v?1:0,marginBottom:filter===v?-1:0}}>{l}{v==="active"&&active.length>0&&<span style={{marginLeft:5,background:meta.color+"25",color:meta.color,borderRadius:20,padding:"1px 6px",fontSize:10,fontWeight:800}}>{active.length}</span>}</button>))}
         </div>
@@ -683,16 +678,12 @@ function JobCard({p,onSelect,divColor}){
             <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:1}}>Billed</div>
           </div>
         </div>
-
-        {/* Pills */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
           {p.afe&&<span style={pill(T.muted)}>AFE: {p.afe}</span>}
           {p.work_order&&<span style={pill(T.muted)}>PO: {p.work_order}</span>}
           <span style={pill(p.job_type==="Contract"?T.blue:T.orange)}>{p.job_type||"T&M"}</span>
           <span style={pill(isArchived?T.muted:T.green)}>{isArchived?"Archived":"Active"}</span>
         </div>
-
-        {/* Stats row */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:10}}>
           {[
             [p._reports||0,"📋","Reports",c],
@@ -706,8 +697,6 @@ function JobCard({p,onSelect,divColor}){
             </div>
           ))}
         </div>
-
-        {/* Last activity + Enter button */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:10,borderTop:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:actColor,flexShrink:0}}/>
@@ -750,8 +739,6 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
             ))}
           </div>
         </div>
-
-        {/* Contract value — only shown for Contract jobs */}
         {f.job_type==="Contract"&&(<>
           <div style={{marginBottom:12}}>
             <label style={lbl}>Contract Total Value ($)</label>
@@ -1074,7 +1061,6 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
           <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${divMeta.color}`}}><div style={{fontSize:11,color:T.muted,marginBottom:2}}>Project · {project.division}</div><div style={{fontSize:15,fontWeight:700}}>{project.name}</div>{project.afe&&<div style={{fontSize:12,color:T.sub}}>AFE: {project.afe}{project.work_order?" · PO: "+project.work_order:""}</div>}<div style={{marginTop:6,display:"flex",gap:6}}><span style={pill(divMeta.color)}>{divMeta.icon} {project.division} Rates</span></div></div>
           <div style={{marginBottom:12}}><label style={lbl}>Date</label><input type="date" value={rpt.date} onChange={e=>setR("date",e.target.value)} style={inp}/></div>
           <div style={{marginBottom:12}}><label style={lbl}>Report No.</label><input type="text" placeholder="Report #" value={rpt.report_no||""} onChange={e=>setR("report_no",e.target.value)} style={inp}/></div>
-          {/* Site Conditions + Weather */}
           <div style={{...cardS,marginBottom:12,border:`1px solid ${T.blue}30`,padding:"12px 14px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <label style={lbl}>🌤️ Site Conditions / Weather</label>
@@ -1086,8 +1072,6 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
             <input value={rpt.site_conditions||""} onChange={e=>setR("site_conditions",e.target.value)}
               placeholder="e.g. Clear · 72°F · Wind 5mph · Humidity 45%" style={inp}/>
           </div>
-
-          {/* Description with voice-to-text */}
           <div style={{marginBottom:12}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
               <label style={lbl}>Description of Work Done</label>
@@ -1126,8 +1110,6 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
         {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/></div>)}
         {step===5&&(<div>
           <div style={{fontSize:17,fontWeight:800,marginBottom:16}}>📋 Site Notes</div>
-
-          {/* Manpower Summary — auto-count from labor */}
           <div style={{...cardS,marginBottom:12,background:T.blueLow,border:`1px solid ${T.blue}30`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
@@ -1141,8 +1123,6 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
               </div>
             </div>
           </div>
-
-          {/* Visitor Log */}
           <div style={{...cardS,marginBottom:12}}>
             <div style={{fontSize:14,fontWeight:800,color:T.text,marginBottom:12}}>🏗️ Visitor Log</div>
             {(rpt.visitor_log||[]).map((v,i)=>(
@@ -1157,8 +1137,6 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
             ))}
             <VisitorAddRow onAdd={v=>add("visitor_log",v)}/>
           </div>
-
-          {/* Delay / Issue Tracking */}
           <div style={{...cardS,marginBottom:12}}>
             <div style={{fontSize:14,fontWeight:800,color:T.text,marginBottom:12}}>⚠️ Delays & Issues</div>
             {(rpt.delays||[]).map((d,i)=>(
@@ -1677,8 +1655,6 @@ function SignaturePad({onSave,onCancel,reportName}){
             autoComplete="off"
           />
         </div>
-
-        {/* Signature canvas */}
         <div style={{marginBottom:8}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <label style={lbl}>Signature *</label>
@@ -1711,8 +1687,6 @@ function SignaturePad({onSave,onCancel,reportName}){
           {hasStrokes&&<div style={{fontSize:11,color:T.green,marginTop:4,textAlign:"center",fontWeight:600}}>✓ Signature captured</div>}
         </div>
       </div>
-
-      {/* Buttons */}
       <div style={{padding:"16px",display:"flex",flexDirection:"column",gap:10,borderTop:`1px solid ${T.border}`,background:T.surface,flexShrink:0}}>
         <button
           onClick={save}
@@ -2039,8 +2013,6 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
             <div style={{fontSize:13,fontWeight:800,color:T.text}}>{project.name}</div>
             <div style={{fontSize:11,color:T.muted}}>{report.date} · Report #{report.report_no} · {report.submitted_by}</div>
           </div>
-
-          {/* Section toggles */}
           <div style={{...cardS,marginBottom:14}}>
             <div style={{fontSize:12,fontWeight:800,color:T.text,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>Report Sections</div>
             <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginBottom:10}}>
@@ -2059,8 +2031,6 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
               </div>
             ))}
           </div>
-
-          {/* Photo selection */}
           <div style={{...cardS,marginBottom:14}}>
             <div style={{fontSize:12,fontWeight:800,color:T.text,textTransform:"uppercase",letterSpacing:"1px",marginBottom:4}}>
               📷 Photos ({selectedPhotos.length}/{reportPhotos.length} selected)
@@ -2093,8 +2063,6 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
                   );
                 })}
               </div>
-
-              {/* Photo layout option */}
               {selectedPhotos.length>0&&<div>
                 <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Photo Layout in PDF</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -2111,8 +2079,6 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
               </div>}
             </>}
           </div>
-
-          {/* Generate button */}
           <button onClick={generate}
             style={{...primBtn,borderRadius:14,background:T.blue,color:"#fff"}}>
             🖨️ Generate PDF ({Object.values(printSections).filter(Boolean).length} sections{selectedPhotos.length>0?`, ${selectedPhotos.length} photos`:""})
@@ -2504,8 +2470,6 @@ function DocsTab({projectId,user,onErr}){
           </div>
         </>}
       </div>
-
-      {/* Drop zone hint */}
       {dragging&&<div style={{background:T.orangeLow,border:`2px dashed ${T.orange}`,borderRadius:12,padding:"20px",textAlign:"center",fontSize:14,color:T.orange,fontWeight:700,marginBottom:12}}>
         Drop files to upload{currentFolder?` into "${currentFolder.name}"`:""}</div>}
 
@@ -2526,8 +2490,6 @@ function DocsTab({projectId,user,onErr}){
         <input ref={fileRef} type="file" multiple accept="*/*" style={{display:"none"}}
           onChange={e=>{uploadFiles(Array.from(e.target.files));e.target.value="";}}/>
       </div>
-
-      {/* New folder form */}
       {showNewFolder&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.orange}40`}}>
         <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:12}}>📁 Create New Folder</div>
         <div style={{marginBottom:10}}><label style={lbl}>Folder Name *</label>
@@ -2668,8 +2630,6 @@ function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelet
             </button>
           </div>
         </div>
-
-        {/* Preview content */}
         <div style={{flex:1,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",padding:8}}>
           {isImage&&<img src={doc.file} alt={doc.name}
             style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:8}}/>}
@@ -2707,8 +2667,6 @@ function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelet
           {doc.notes&&<div style={{fontSize:11,color:T.muted,marginTop:4,fontStyle:"italic"}}>{doc.notes}</div>}
         </div>
       </div>
-
-      {/* Actions */}
       <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
         {canPreview&&<button onClick={()=>{
             if(!hasFileData){alert("File data not found — please delete and re-upload this document. (It was likely uploaded before the database was updated.)");return;}
@@ -2935,8 +2893,6 @@ function PhotosTab({projectId,photos,onRefresh,onErr}){
         <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}}
           onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}}/>
       </div>
-
-      {/* Category filter */}
       {photos.length>0&&<div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:6,marginBottom:12,WebkitOverflowScrolling:"touch"}}>
         {["All",...CATEGORIES].map(c=>(
           <button key={c} onClick={()=>setFilterCat(c)}
@@ -2949,7 +2905,7 @@ function PhotosTab({projectId,photos,onRefresh,onErr}){
       {filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
         <div style={{fontSize:44,marginBottom:12}}>📷</div>
         <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>{filterCat==="All"?"No Photos Yet":`No ${filterCat} Photos`}</div>
-        <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>>{filterCat==="All"?"Tap 📷 Add Site Photos above. GPS location and category are captured automatically.":"Try a different category filter or add new photos above."}</div>
+        <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{filterCat==="All"?"Tap 📷 Add Site Photos above. GPS location and category are captured automatically.":"Try a different category filter or add new photos above."}</div>
       </div>}
 
       {/* Photos grouped by date */}
@@ -3555,7 +3511,6 @@ function TimeCardsScreen({user,projects,onBack}){
             <div><label style={lbl}>From</label><input type="date" value={fromDate} onChange={e=>setFromDate(e.target.value)} style={inp}/></div>
             <div><label style={lbl}>To</label><input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} style={inp}/></div>
           </div>
-          {/* Quick ranges */}
           <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
             {[['This Week',0,6],['Last 2 Weeks',0,13],['This Month',0,29],['Last Month',30,59]].map(([label,from,to])=>(
               <button key={label} onClick={()=>{
@@ -3570,8 +3525,6 @@ function TimeCardsScreen({user,projects,onBack}){
             ))}
           </div>
         </div>
-
-        {/* Job filter */}
         <div style={{...cardS,marginBottom:12}}>
           <button onClick={()=>setShowJobFilter(s=>!s)} style={{background:'none',border:'none',color:T.text,fontWeight:700,fontSize:13,cursor:'pointer',fontFamily:'inherit',width:'100%',textAlign:'left',display:'flex',justifyContent:'space-between'}}>
             <span>🏗️ Jobs {selectedJobs.length>0?`(${selectedJobs.length} selected)`:'(All)'}</span>
@@ -3590,8 +3543,6 @@ function TimeCardsScreen({user,projects,onBack}){
             {selectedJobs.length>0&&<button onClick={()=>setSelectedJobs([])} style={{...ghostBtn,fontSize:12,textAlign:'center'}}>Clear filter</button>}
           </div>}
         </div>
-
-        {/* Summary totals */}
         {filtered.length>0&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:12}}>
           {[[totalHrs.toFixed(1),'Total Hrs',T.orange],[totalOT.toFixed(1),'OT Hrs',T.yellow],[workerRows.length,'Workers',T.blue]].map(([v,l,c])=>(
             <div key={l} style={{...cardS,textAlign:'center',padding:'10px 6px'}}><div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:'uppercase',marginTop:2}}>{l}</div></div>
@@ -4387,8 +4338,6 @@ function PublicInspectorForm({reportId}){
           <div style={{fontSize:20,fontWeight:900,color:"#60A5FA",marginBottom:2}}>AIME</div>
           <div style={{fontSize:11,color:"#7080A0"}}>Atlantic Industrial Mechanical & Environmental Inc.</div>
         </div>
-
-        {/* Report summary */}
         <div style={{background:s.card,borderRadius:12,padding:"14px 16px",marginBottom:14,border:"1px solid #26262E"}}>
           <div style={{fontSize:11,fontWeight:700,color:"#7080A0",textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Daily Report — Inspector Sign-Off</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
@@ -4657,8 +4606,6 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           {job.due_date&&<div style={{fontSize:12,fontWeight:700,color:T.muted}}>Due: {job.due_date}</div>}
         </div>
       </div>
-
-      {/* Shortage banner */}
       {shortages.length>0&&<div style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"10px 16px",display:"flex",alignItems:"center",gap:8}}>
         <span style={{fontSize:18}}>⚠️</span>
         <div>
@@ -4833,7 +4780,7 @@ function BomAddForm({partId,onSave,onCancel}){
   return(
     <div style={{background:T.surface,borderRadius:10,padding:12,marginBottom:10,border:`1px solid ${T.purple}30`}}>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-        <div><label style={lbl}>Material *</label><input value={f.material} onChange={e=>setF(x=>({...x,material:e.target.value}))} placeholder="e.g. 4\" Pipe" style={inp}/></div>
+        <div><label style={lbl}>Material *</label><input value={f.material} onChange={e=>setF(x=>({...x,material:e.target.value}))} placeholder={'e.g. 4" Pipe'} style={inp}/></div>
         <div><label style={lbl}>Spec</label><input value={f.spec} onChange={e=>setF(x=>({...x,spec:e.target.value}))} placeholder="A106 Gr. B" style={inp}/></div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
@@ -4941,7 +4888,6 @@ function ManufacturingTraveler({part,job,user,onBack}){
           <div style={{background:T.border,borderRadius:6,height:8,marginBottom:12}}>
             <div style={{width:`${(currentStage/7)*100}%`,height:8,borderRadius:6,background:`linear-gradient(90deg,${T.purple},${T.blue})`,transition:"width 0.4s"}}/>
           </div>
-          {/* Stage dots */}
           <div style={{display:"flex",gap:4}}>
             {MFG_STAGES.map((s,i)=>(
               <div key={s.id} style={{flex:1,textAlign:"center"}}>
@@ -4977,8 +4923,6 @@ function ManufacturingTraveler({part,job,user,onBack}){
                 {locked&&<span style={{fontSize:11,color:T.muted,background:T.surface,borderRadius:6,padding:"3px 8px"}}>🔒 Locked</span>}
                 {done&&stageData&&<span style={{fontSize:10,color:stage.color,fontWeight:700}}>✓ Done</span>}
               </div>
-
-              {/* Completed stage summary */}
               {done&&stageData&&<div style={{background:T.surface,borderRadius:8,padding:"8px 10px",fontSize:11,color:T.sub,lineHeight:1.7}}>
                 {stageData.completed_by&&<div><strong>By:</strong> {stageData.completed_by}</div>}
                 {stageData.completed_at&&<div><strong>Date:</strong> {new Date(stageData.completed_at).toLocaleDateString()}</div>}
@@ -5380,8 +5324,6 @@ function ManufacturingDashboard({jobs,user,onSelectJob}){
           </div>
         ))}
       </div>
-
-      {/* Output bar — ordered vs shipped */}
       <div style={{...cardS,marginBottom:16}}>
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
           <span style={{fontSize:13,fontWeight:700,color:T.text}}>Production Output</span>
@@ -5396,8 +5338,6 @@ function ManufacturingDashboard({jobs,user,onSelectJob}){
           <span>⚪ {notStarted.length} not started</span>
         </div>
       </div>
-
-      {/* Open NCRs */}
       {openNcrs.length>0&&<div style={{...cardS,marginBottom:16,border:`1px solid ${T.red}40`}}>
         <div style={{fontSize:13,fontWeight:800,color:T.red,marginBottom:10}}>⚠️ Open NCRs — {openNcrs.length} need attention</div>
         {openNcrs.slice(0,5).map(n=>{
@@ -5441,9 +5381,7 @@ function ManufacturingDashboard({jobs,user,onSelectJob}){
           </div>
         );
       })}
-    </div>   {/* end jobs list */}
-    </div>   {/* end per-job section */}
-    </div>   {/* end padding wrapper */}
+  </div>
   );
 }
 
