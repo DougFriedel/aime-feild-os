@@ -2631,9 +2631,11 @@ function DocsTab({projectId,user,onErr}){
 function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons,onDragStart,onDragEnd,isDragging}){
   const [showPreview,setShowPreview]=useState(false);
 
-  const isImage=doc.file_type?.startsWith("image/")||(doc.file||"").startsWith("data:image");
-  const isPdf=doc.file_type==="application/pdf"||(doc.file||"").startsWith("data:application/pdf")||(doc.file_name||"").toLowerCase().endsWith(".pdf");
+  const fname=(doc.file_name||doc.name||"").toLowerCase();
+  const isImage=doc.file_type?.startsWith("image/")||(doc.file||"").startsWith("data:image")||[".jpg",".jpeg",".png",".gif",".webp",".bmp"].some(e=>fname.endsWith(e));
+  const isPdf=doc.file_type==="application/pdf"||(doc.file||"").startsWith("data:application/pdf")||fname.endsWith(".pdf");
   const canPreview=isImage||isPdf;
+  const hasFileData=!!(doc.file&&doc.file.length>100);
 
   // Preview modal
   if(showPreview){
@@ -2699,9 +2701,12 @@ function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelet
 
       {/* Actions */}
       <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
-        {doc.file&&canPreview&&<button onClick={()=>setShowPreview(true)}
-          style={{...primBtn,flex:2,borderRadius:10,fontSize:12,background:T.blue,color:"#fff",padding:"8px"}}>
-          👁 Preview
+        {canPreview&&<button onClick={()=>{
+            if(!hasFileData){alert("File data not found — please delete and re-upload this document. (It was likely uploaded before the database was updated.)");return;}
+            setShowPreview(true);
+          }}
+          style={{...primBtn,flex:2,borderRadius:10,fontSize:12,background:hasFileData?T.blue:"#26262E",color:hasFileData?"#fff":T.muted,padding:"8px"}}>
+          👁 {hasFileData?"Preview":"Preview (re-upload)"}
         </button>}
         {canDownload&&doc.file&&<button onClick={onDownload}
           style={{...primBtn,flex:canPreview?1:2,borderRadius:10,fontSize:12,background:T.green,color:"#000",padding:"8px"}}>
