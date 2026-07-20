@@ -4427,7 +4427,10 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
     if(!f.job_number.trim())return;
     setSaving(true);setFormErr("");
     try{
-      await API.mfg.jobs.create({...f,created_by:user.name});
+      const payload={...f,created_by:user.name};
+      if(!payload.due_date)payload.due_date=null;
+      if(!payload.po_number)payload.po_number=null;
+      await API.mfg.jobs.create(payload);
       setShowNew(false);
       setF({job_number:"",customer:"",description:"",po_number:"",due_date:"",notes:""});
       await load();
@@ -4591,7 +4594,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   async function createPart(){
     if(!pf.part_number.trim())return;
     setSaving(true);
-    try{await API.mfg.parts.create({...pf,job_id:job.id,qty_ordered:parseInt(pf.qty_ordered)||0});
+    try{await API.mfg.parts.create({...pf,job_id:job.id,qty_ordered:parseInt(pf.qty_ordered)||0,drawing_number:pf.drawing_number||null,material_spec:pf.material_spec||null,notes:pf.notes||null});
       setShowNewPart(false);setPf({part_number:"",description:"",drawing_number:"",qty_ordered:"",material_spec:"",notes:""});await load();}
     catch(e){console.error("MFG error:",e.message||e);}setSaving(false);
   }
