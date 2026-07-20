@@ -110,6 +110,8 @@ const API={
     bom:{forPart:(pid)=>sb(`/mfg_bom?part_id=eq.${pid}`),create:(d)=>sb('/mfg_bom',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_bom?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_bom?id=eq.${id}`,{method:'DELETE'})},
     receipts:{forPart:(pid)=>sb(`/mfg_receipts?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_receipts',{method:'POST',body:d,prefer:'return=representation'})},
     travelers:{forPart:(pid)=>sb(`/mfg_travelers?part_id=eq.${pid}&limit=1`),upsert:(d)=>sb('/mfg_travelers',{method:'POST',body:d,prefer:'return=representation',resolution:'merge-duplicates'})},
+    assemblyLog:{forPart:(pid)=>sb(`/mfg_assembly_log?part_id=eq.${pid}&order=completion_date.desc`),forJob:(jid)=>sb(`/mfg_assembly_log?job_id=eq.${jid}&order=completion_date.desc`),create:(d)=>sb('/mfg_assembly_log',{method:'POST',body:d,prefer:'return=representation'})},
+    shippingLog:{forPart:(pid)=>sb(`/mfg_shipping_log?part_id=eq.${pid}&order=ship_date.desc`),forJob:(jid)=>sb(`/mfg_shipping_log?job_id=eq.${jid}&order=ship_date.desc`),create:(d)=>sb('/mfg_shipping_log',{method:'POST',body:d,prefer:'return=representation'})},
     labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
     ncr:{forJob:(jid)=>sb(`/mfg_ncr?job_id=eq.${jid}&order=created_at.desc`),forPart:(pid)=>sb(`/mfg_ncr?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_ncr',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_ncr?id=eq.${id}`,{method:'PATCH',body:d})},
   },
@@ -4550,66 +4552,109 @@ function MfgJobCard({job,onSelect,onArchive,dimmed}){
 /* ── MANUFACTURING JOB DETAIL ────────────────────────────────── */
 function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [parts,setParts]=useState([]);
-  const [boms,setBoms]=useState({});        // keyed by part_id
+  const [boms,setBoms]=useState({});
+  const [txns,setTxns]=useState({});        // receipts/transactions per bom_id
+  const [assemblyLogs,setAssemblyLogs]=useState([]);
+  const [shippingLogs,setShippingLogs]=useState([]);
   const [travelers,setTravelers]=useState({});
   const [loading,setLoading]=useState(true);
-  const [tab,setTab]=useState("parts");     // parts | bom | labor | ncr | info
+  const [tab,setTab]=useState("parts");
   const [showNewPart,setShowNewPart]=useState(false);
-  const [showNewBom,setShowNewBom]=useState(null);  // part being BOM-edited
-  const [showReceipt,setShowReceipt]=useState(null); // bom item for receipt
-  const [pf,setPf]=useState({part_number:"",description:"",drawing_number:"",qty_ordered:"",material_spec:"",notes:""});
   const [saving,setSaving]=useState(false);
   const canAdmin=user.role==="admin"||user.role==="pm";
+
+  // Forms
+  const [pf,setPf]=useState({part_number:"",description:"",drawing_number:"",qty_ordered:"",material_spec:"",notes:""});
   const setp=(k,v)=>setPf(x=>({...x,[k]:v}));
 
   useEffect(()=>{load();},[job.id]);
-  const [labor,setLabor]=useState([]);
-  const [ncrs,setNcrs]=useState([]);
-
   async function load(){
     setLoading(true);
     try{
       const ps=await API.mfg.parts.forJob(job.id);
       const partList=Array.isArray(ps)?ps:[];
       setParts(partList);
-      const bomMap={};const travMap={};
-      const [laborData,ncrData]=await Promise.all([
+      const bomMap={};const txnMap={};const travMap={};
+      const [aLog,sLog,labor,ncrs]=await Promise.all([
+        API.mfg.assemblyLog.forJob(job.id).catch(()=>[]),
+        API.mfg.shippingLog.forJob(job.id).catch(()=>[]),
         API.mfg.labor.forJob(job.id).catch(()=>[]),
         API.mfg.ncr.forJob(job.id).catch(()=>[]),
       ]);
-      setLabor(Array.isArray(laborData)?laborData:[]);
-      setNcrs(Array.isArray(ncrData)?ncrData:[]);
+      setAssemblyLogs(Array.isArray(aLog)?aLog:[]);
+      setShippingLogs(Array.isArray(sLog)?sLog:[]);
       await Promise.all(partList.map(async p=>{
         try{
-          const [b,t]=await Promise.all([API.mfg.bom.forPart(p.id),API.mfg.travelers.forPart(p.id)]);
+          const [b,t,trav]=await Promise.all([
+            API.mfg.bom.forPart(p.id),
+            API.mfg.receipts.forPart(p.id),
+            API.mfg.travelers.forPart(p.id),
+          ]);
           bomMap[p.id]=Array.isArray(b)?b:[];
-          travMap[p.id]=Array.isArray(t)&&t.length>0?t[0]:null;
-        }catch{}
+          // Build txn map by bom_id
+          (Array.isArray(t)?t:[]).forEach(tx=>{
+            if(!txnMap[tx.bom_id])txnMap[tx.bom_id]=[];
+            txnMap[tx.bom_id].push(tx);
+          });
+          travMap[p.id]=Array.isArray(trav)&&trav.length>0?trav[0]:null;
+        }catch(e){console.error(e);}
       }));
-      setBoms(bomMap);setTravelers(travMap);
-    }catch(e){console.error("MFG error:",e.message||e);}
+      setBoms(bomMap);setTxns(txnMap);setTravelers(travMap);
+    }catch(e){console.error(e);}
     setLoading(false);
   }
 
   async function createPart(){
     if(!pf.part_number.trim())return;
     setSaving(true);
-    try{await API.mfg.parts.create({...pf,job_id:job.id,qty_ordered:parseInt(pf.qty_ordered)||0,drawing_number:pf.drawing_number||null,material_spec:pf.material_spec||null,notes:pf.notes||null});
-      setShowNewPart(false);setPf({part_number:"",description:"",drawing_number:"",qty_ordered:"",material_spec:"",notes:""});await load();}
-    catch(e){console.error("MFG error:",e.message||e);}setSaving(false);
+    try{
+      await API.mfg.parts.create({...pf,job_id:job.id,qty_ordered:parseInt(pf.qty_ordered)||0,
+        drawing_number:pf.drawing_number||null,material_spec:pf.material_spec||null,notes:pf.notes||null});
+      setShowNewPart(false);setPf({part_number:"",description:"",drawing_number:"",qty_ordered:"",material_spec:"",notes:""});
+      await load();
+    }catch(e){alert("Error: "+e.message);}
+    setSaving(false);
   }
   async function deletePart(id){
     if(!window.confirm("Delete this part and all its data?"))return;
-    try{await API.mfg.parts.remove(id);await load();}catch(e){console.error("MFG error:",e.message||e);}
+    try{await API.mfg.parts.remove(id);await load();}catch(e){}
   }
 
-  // Shortage detection
-  const shortages=parts.filter(p=>{
-    const b=boms[p.id]||[];
-    return b.some(item=>(item.qty_received||0)<(item.qty_required||0));
-  });
+  // ── Inventory calculations per part ──────────────────────────
+  function getInventory(partId){
+    const bom=boms[partId]||[];
+    return bom.map(item=>{
+      const itemTxns=txns[item.id]||[];
+      const received=itemTxns.filter(t=>t.transaction_type==="Received").reduce((s,t)=>s+(t.qty_received||0),0);
+      const damaged=itemTxns.filter(t=>t.transaction_type==="Damaged").reduce((s,t)=>s+(t.qty_received||0),0);
+      const issued=itemTxns.filter(t=>t.transaction_type==="Issued").reduce((s,t)=>s+(t.qty_received||0),0);
+      const onHand=received-damaged-issued;
+      const qtyPerAsm=item.qty_per_assembly||1;
+      const canBuild=qtyPerAsm>0?Math.floor(onHand/qtyPerAsm):0;
+      return{...item,received,damaged,issued,onHand,canBuild,qtyPerAsm};
+    });
+  }
 
-  const stageNum=part=>{const t=travelers[part.id];return t?t.current_stage:0;};
+  function getMaxAssemblies(partId){
+    const inv=getInventory(partId);
+    if(inv.length===0)return 0;
+    return Math.min(...inv.map(i=>i.canBuild));
+  }
+
+  // Assembly totals per part
+  function getAssemblyTotals(partId){
+    const completed=assemblyLogs.filter(a=>a.part_id===partId).reduce((s,a)=>s+(a.qty_completed||0),0);
+    const shipped=shippingLogs.filter(s=>s.part_id===partId).reduce((s,a)=>s+(a.qty_shipped||0),0);
+    return{completed,shipped,onHand:completed-shipped};
+  }
+
+  // Shortages
+  const shortages=parts.filter(p=>{
+    const maxBuild=getMaxAssemblies(p.id);
+    const {completed}=getAssemblyTotals(p.id);
+    const remaining=(p.qty_ordered||0)-completed;
+    return remaining>0&&maxBuild<remaining&&(boms[p.id]||[]).length>0;
+  });
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -4622,18 +4667,17 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           {job.due_date&&<div style={{fontSize:12,fontWeight:700,color:T.muted}}>Due: {job.due_date}</div>}
         </div>
       </div>
+
       {shortages.length>0&&<div style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"10px 16px",display:"flex",alignItems:"center",gap:8}}>
         <span style={{fontSize:18}}>⚠️</span>
-        <div>
-          <div style={{fontSize:12,fontWeight:800,color:T.red}}>MATERIAL SHORTAGES — {shortages.length} part{shortages.length!==1?"s":""} affected</div>
+        <div><div style={{fontSize:12,fontWeight:800,color:T.red}}>MATERIAL SHORTAGES — {shortages.length} assembly affected</div>
           <div style={{fontSize:10,color:T.muted}}>{shortages.map(p=>p.part_number).join(", ")}</div>
         </div>
       </div>}
 
-      {/* Tabs */}
-      <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
-        {[["parts","🔩 Parts"],["bom","📋 Materials"],["labor","⏱ Labor"],["ncr","❌ NCRs"],["info","ℹ️ Info"]].map(([id,label])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"11px 4px",background:"none",border:"none",borderBottom:`2px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+      <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`,overflowX:"auto"}}>
+        {[["parts","🔩 Assemblies"],["bom","📦 Components"],["assembly","🏭 Assembly Log"],["shipping","📤 Shipping"],["labor","⏱ Labor"],["ncr","❌ NCRs"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{flexShrink:0,padding:"11px 12px",background:"none",border:"none",borderBottom:`2px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
         ))}
@@ -4642,194 +4686,425 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
       <div style={{padding:"14px 16px 80px"}}>
         {loading&&<Spinner/>}
 
-        {/* PARTS TAB */}
+        {/* ASSEMBLIES TAB */}
         {!loading&&tab==="parts"&&<>
-          {canAdmin&&<button onClick={()=>setShowNewPart(s=>!s)} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.purple}}>
-            + Add Part Number
-          </button>}
-
+          {canAdmin&&<button onClick={()=>setShowNewPart(s=>!s)} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.purple}}>+ Add Assembly Part #</button>}
           {showNewPart&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.purple}40`}}>
-            <div style={{fontSize:13,fontWeight:800,color:T.purple,marginBottom:12}}>New Part Number</div>
+            <div style={{fontSize:13,fontWeight:800,color:T.purple,marginBottom:12}}>New Assembly Part Number</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-              <div><label style={lbl}>Part # *</label><input value={pf.part_number} onChange={e=>setp("part_number",e.target.value)} placeholder="e.g. P-12345" style={inp}/></div>
+              <div><label style={lbl}>AIME Part # *</label><input value={pf.part_number} onChange={e=>setp("part_number",e.target.value)} placeholder="e.g. 1651" style={inp}/></div>
               <div><label style={lbl}>Drawing #</label><input value={pf.drawing_number} onChange={e=>setp("drawing_number",e.target.value)} placeholder="DWG-001" style={inp}/></div>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-              <div><label style={lbl}>Description</label><input value={pf.description} onChange={e=>setp("description",e.target.value)} placeholder="Part description" style={inp}/></div>
-              <div><label style={lbl}>Qty Ordered</label><input type="number" value={pf.qty_ordered} onChange={e=>setp("qty_ordered",e.target.value)} placeholder="50" style={inp}/></div>
+              <div><label style={lbl}>Description</label><input value={pf.description} onChange={e=>setp("description",e.target.value)} placeholder="Boom Pivot" style={inp}/></div>
+              <div><label style={lbl}>Qty Ordered</label><input type="number" value={pf.qty_ordered} onChange={e=>setp("qty_ordered",e.target.value)} placeholder="500" style={inp}/></div>
             </div>
-            <div style={{marginBottom:10}}><label style={lbl}>Material Spec</label><input value={pf.material_spec} onChange={e=>setp("material_spec",e.target.value)} placeholder="e.g. A106 Gr. B" style={inp}/></div>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={createPart} disabled={!pf.part_number.trim()||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.purple,opacity:pf.part_number.trim()&&!saving?1:0.5}}>{saving?"Adding…":"Add Part"}</button>
+              <button onClick={createPart} disabled={!pf.part_number.trim()||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.purple,opacity:pf.part_number.trim()&&!saving?1:0.5}}>{saving?"Adding…":"Add Assembly"}</button>
               <button onClick={()=>setShowNewPart(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
             </div>
           </div>}
 
           {parts.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
             <div style={{fontSize:44,marginBottom:12}}>🔩</div>
-            <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Parts Yet</div>
-            <div style={{fontSize:12}}>Add the part numbers you're manufacturing for this job.</div>
+            <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Assembly Parts Yet</div>
+            <div style={{fontSize:12}}>Add the finished part numbers you're assembling for this job.</div>
           </div>}
 
           {parts.map(part=>{
-            const t=travelers[part.id];
-            const stage=t?t.current_stage:0;
-            const bom=boms[part.id]||[];
-            const hasShortage=bom.some(b=>(b.qty_received||0)<(b.qty_required||0));
-            const stageInfo=stage>0?MFG_STAGES[stage-1]:null;
-            const pct=stage>0?Math.round((stage/7)*100):0;
+            const{completed,shipped,onHand}=getAssemblyTotals(part.id);
+            const maxBuild=getMaxAssemblies(part.id);
+            const remaining=(part.qty_ordered||0)-completed;
+            const hasShortage=remaining>0&&maxBuild<remaining&&(boms[part.id]||[]).length>0;
+            const pct=part.qty_ordered>0?Math.min(100,(completed/part.qty_ordered)*100):0;
+            const trav=travelers[part.id];
             return(
-              <div key={part.id} onClick={()=>onSelectPart(part)} style={{...cardS,marginBottom:10,cursor:"pointer",border:`1px solid ${hasShortage?T.red+"60":T.border}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+              <div key={part.id} style={{...cardS,marginBottom:10,border:`1px solid ${hasShortage?T.red+"60":T.border}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                   <div>
                     <div style={{fontSize:15,fontWeight:900,color:T.purple}}>{part.part_number}</div>
                     {part.description&&<div style={{fontSize:12,color:T.sub}}>{part.description}</div>}
                     {part.drawing_number&&<div style={{fontSize:11,color:T.muted}}>DWG: {part.drawing_number}</div>}
                   </div>
-                  <div style={{textAlign:"right",flexShrink:0}}>
-                    <div style={{fontSize:14,fontWeight:800,color:T.text}}>{part.qty_ordered||0}<span style={{fontSize:10,color:T.muted,fontWeight:400}}> ordered</span></div>
-                    {part.qty_shipped>0&&<div style={{fontSize:11,color:T.green}}>{part.qty_shipped} shipped</div>}
+                  <div onClick={()=>onSelectPart(part)} style={{background:T.purpleLow||T.blueLow,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:T.purple}}>
+                    Traveler →
                   </div>
                 </div>
-                {hasShortage&&<div style={{background:T.redLow,border:`1px solid ${T.red}30`,borderRadius:8,padding:"5px 10px",fontSize:11,color:T.red,fontWeight:700,marginBottom:4}}>⚠️ Material shortage — parts can't start</div>}
-                {/* Stage progress bar */}
-                <div style={{marginBottom:6}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                    <span style={{fontSize:10,color:T.muted,fontWeight:700,textTransform:"uppercase"}}>{stage===0?"Not started":stageInfo?`Stage ${stage}: ${stageInfo.label}`:"Complete"}</span>
-                    <span style={{fontSize:10,color:T.purple,fontWeight:700}}>{pct}%</span>
-                  </div>
-                  <div style={{background:T.border,borderRadius:4,height:5}}>
-                    <div style={{width:`${pct}%`,height:5,borderRadius:4,background:`linear-gradient(90deg,${T.purple},${T.blue})`,transition:"width 0.3s"}}/>
-                  </div>
+
+                {/* Inventory summary bar */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:10}}>
+                  {[[part.qty_ordered||0,"Ordered",T.blue],[completed,"Completed",T.green],[shipped,"Shipped",T.teal],[onHand,"On Hand",onHand<0?T.red:T.orange]].map(([v,l,c])=>(
+                    <div key={l} style={{background:T.surface,borderRadius:8,padding:"6px 4px",textAlign:"center"}}>
+                      <div style={{fontSize:18,fontWeight:900,color:c}}>{v}</div>
+                      <div style={{fontSize:8,color:T.muted,textTransform:"uppercase"}}>{l}</div>
+                    </div>
+                  ))}
                 </div>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div style={{display:"flex",gap:4}}>
-                    {MFG_STAGES.map((s,i)=>(
-                      <div key={s.id} title={s.label} style={{width:14,height:14,borderRadius:3,background:i<stage?s.color:T.border,fontSize:7,display:"flex",alignItems:"center",justifyContent:"center",color:i<stage?"#000":"transparent"}}>
-                        {i<stage?"✓":""}
+
+                {hasShortage&&<div style={{background:T.redLow,border:`1px solid ${T.red}30`,borderRadius:8,padding:"5px 10px",fontSize:11,color:T.red,fontWeight:700,marginBottom:8}}>
+                  ⚠️ Can build {maxBuild} more — need {remaining} — {remaining-maxBuild} short
+                </div>}
+
+                <div style={{background:T.border,borderRadius:4,height:6}}>
+                  <div style={{width:`${pct}%`,height:6,borderRadius:4,background:`linear-gradient(90deg,${T.purple},${T.blue})`}}/>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:4,fontSize:10,color:T.muted}}>
+                  <span>{completed}/{part.qty_ordered||0} completed</span>
+                  <span>{pct.toFixed(0)}%</span>
+                </div>
+              </div>
+            );
+          })}
+        </>}
+
+        {/* COMPONENTS / BOM TAB */}
+        {!loading&&tab==="bom"&&<InventoryTab parts={parts} boms={boms} txns={txns} job={job} user={user} canAdmin={canAdmin} onRefresh={load}/>}
+
+        {/* ASSEMBLY LOG TAB */}
+        {!loading&&tab==="assembly"&&<AssemblyLogTab parts={parts} assemblyLogs={assemblyLogs} boms={boms} txns={txns} job={job} user={user} canAdmin={canAdmin} onRefresh={load}/>}
+
+        {/* SHIPPING TAB */}
+        {!loading&&tab==="shipping"&&<ShippingLogTab parts={parts} shippingLogs={shippingLogs} assemblyLogs={assemblyLogs} job={job} user={user} canAdmin={canAdmin} onRefresh={load}/>}
+
+        {/* LABOR TAB */}
+        {!loading&&tab==="labor"&&<LaborTab job={job} parts={parts} labor={[]} user={user} canAdmin={canAdmin} onRefresh={load}/>}
+
+        {/* NCR TAB */}
+        {!loading&&tab==="ncr"&&<NcrTab job={job} parts={parts} ncrs={[]} user={user} canAdmin={canAdmin} onRefresh={load}/>}
+      </div>
+    </div>
+  );
+}
+
+/* ── INVENTORY TAB (Components / BOM) ──────────────────────── */
+function InventoryTab({parts,boms,txns,job,user,canAdmin,onRefresh}){
+  const [showNewBom,setShowNewBom]=useState(null);
+  const [showTxn,setShowTxn]=useState(null); // {bomItem, type}
+  const [tf,setTf]=useState({qty:"",transaction_type:"Received",reference_bol:"",notes:"",received_date:today(),received_by:""});
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>setTf(x=>({...x,[k]:v}));
+
+  function calcInv(item){
+    const itemTxns=txns[item.id]||[];
+    const received=itemTxns.filter(t=>t.transaction_type==="Received").reduce((s,t)=>s+(t.qty_received||0),0);
+    const damaged=itemTxns.filter(t=>t.transaction_type==="Damaged").reduce((s,t)=>s+(t.qty_received||0),0);
+    const issued=itemTxns.filter(t=>t.transaction_type==="Issued").reduce((s,t)=>s+(t.qty_received||0),0);
+    const onHand=received-damaged-issued;
+    const qpa=item.qty_per_assembly||1;
+    return{received,damaged,issued,onHand,canBuild:Math.floor(onHand/qpa)};
+  }
+
+  async function logTxn(){
+    if(!tf.qty||!showTxn)return;
+    setSaving(true);
+    try{
+      await API.mfg.receipts.create({
+        bom_id:showTxn.item.id,
+        part_id:showTxn.item.part_id,
+        qty_received:parseFloat(tf.qty),
+        transaction_type:tf.transaction_type,
+        reference_bol:tf.reference_bol||null,
+        notes:tf.notes||null,
+        received_date:tf.received_date,
+        received_by:tf.received_by||user.name,
+        heat_number:tf.heat_number||null,
+        condition:"Good",
+      });
+      setShowTxn(null);
+      setTf({qty:"",transaction_type:"Received",reference_bol:"",notes:"",received_date:today(),received_by:""});
+      await onRefresh();
+    }catch(e){alert("Error: "+e.message);}
+    setSaving(false);
+  }
+
+  return(
+    <div>
+      <div style={{fontSize:12,color:T.muted,marginBottom:14,lineHeight:1.6,background:T.blueLow,border:`1px solid ${T.blue}30`,borderRadius:10,padding:"10px 14px"}}>
+        📦 Track all GFM (Customer Furnished) component parts. Each component has its own customer part # and qty required per assembly.
+      </div>
+
+      {parts.map(part=>{
+        const bom=boms[part.id]||[];
+        const minCanBuild=bom.length>0?Math.min(...bom.map(item=>calcInv(item).canBuild)):0;
+        return(
+          <div key={part.id} style={{...cardS,marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:800,color:T.purple}}>{part.part_number}</div>
+                {part.description&&<div style={{fontSize:11,color:T.muted}}>{part.description}</div>}
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:13,fontWeight:700,color:bom.length>0?T.green:T.muted}}>Can build: {minCanBuild}</div>
+                <div style={{fontSize:10,color:T.muted}}>assemblies now</div>
+              </div>
+            </div>
+
+            {canAdmin&&<button onClick={()=>setShowNewBom(showNewBom===part.id?null:part.id)}
+              style={{...ghostBtn,width:"100%",textAlign:"center",fontSize:12,color:T.purple,border:`1px solid ${T.purple}40`,marginBottom:10}}>
+              + Add Component Part
+            </button>}
+
+            {showNewBom===part.id&&<BomAddForm partId={part.id} onSave={async(d)=>{
+              await API.mfg.bom.create({...d,part_id:part.id});
+              setShowNewBom(null);await onRefresh();
+            }} onCancel={()=>setShowNewBom(null)}/>}
+
+            {/* Component list */}
+            {bom.length===0&&<div style={{fontSize:12,color:T.muted,fontStyle:"italic",textAlign:"center",padding:"10px 0"}}>No components added — tap above to add customer part numbers</div>}
+            {bom.map(item=>{
+              const inv=calcInv(item);
+              const short=inv.onHand<0;
+              const itemTxns=txns[item.id]||[];
+              return(
+                <div key={item.id} style={{background:T.surface,borderRadius:10,padding:"10px 12px",marginBottom:8,borderLeft:`3px solid ${short?T.red:inv.onHand===0?T.yellow:T.green}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                    <div>
+                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                        <div style={{fontSize:13,fontWeight:800,color:T.orange}}>{item.component_part_number||"—"}</div>
+                        <span style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:4,padding:"1px 6px",fontSize:9,color:T.muted,fontWeight:700}}>{item.qty_per_assembly||1}× per asm</span>
+                      </div>
+                      <div style={{fontSize:12,color:T.sub,marginTop:1}}>{item.material}</div>
+                      {item.spec&&<div style={{fontSize:10,color:T.muted}}>Spec: {item.spec}</div>}
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontSize:18,fontWeight:900,color:short?T.red:inv.onHand===0?T.yellow:T.green}}>{inv.onHand}</div>
+                      <div style={{fontSize:9,color:T.muted,textTransform:"uppercase"}}>On Hand</div>
+                    </div>
+                  </div>
+
+                  {/* Stats row */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4,marginBottom:8}}>
+                    {[["Received",inv.received,T.blue],["Issued",inv.issued,T.muted],["Damaged",inv.damaged,T.red],["Can Build",inv.canBuild,T.green]].map(([l,v,c])=>(
+                      <div key={l} style={{background:T.card,borderRadius:6,padding:"4px",textAlign:"center"}}>
+                        <div style={{fontSize:13,fontWeight:800,color:c}}>{v}</div>
+                        <div style={{fontSize:8,color:T.muted,textTransform:"uppercase"}}>{l}</div>
                       </div>
                     ))}
                   </div>
-                  <span style={{color:T.orange,fontSize:14}}>→</span>
-                </div>
-              </div>
-            );
-          })}
-        </>}
 
-        {/* BOM / MATERIALS TAB */}
-        {!loading&&tab==="bom"&&<>
-          <div style={{fontSize:12,color:T.muted,marginBottom:14,lineHeight:1.6}}>Track all GFM (Customer Furnished) materials across all parts. Log receipts when materials arrive.</div>
-          {parts.map(part=>{
-            const bom=boms[part.id]||[];
-            return(
-              <div key={part.id} style={{...cardS,marginBottom:12}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                  <div style={{fontSize:13,fontWeight:800,color:T.purple}}>{part.part_number}</div>
-                  {canAdmin&&<button onClick={e=>{e.stopPropagation();setShowNewBom(showNewBom===part.id?null:part.id);}}
-                    style={{...ghostBtn,fontSize:11,padding:"4px 10px",color:T.purple,border:`1px solid ${T.purple}40`}}>+ Material</button>}
-                </div>
-                {showNewBom===part.id&&<BomAddForm partId={part.id} onSave={async(d)=>{await API.mfg.bom.create({...d,part_id:part.id});setShowNewBom(null);await load();}} onCancel={()=>setShowNewBom(null)}/>}
-                {bom.length===0&&<div style={{fontSize:12,color:T.muted,fontStyle:"italic"}}>No materials added yet</div>}
-                {bom.map(item=>{
-                  const short=(item.qty_received||0)<(item.qty_required||0);
-                  const pct=item.qty_required>0?Math.min(100,((item.qty_received||0)/item.qty_required)*100):100;
-                  return(
-                    <div key={item.id} style={{background:T.surface,borderRadius:10,padding:"10px 12px",marginBottom:8,borderLeft:`3px solid ${short?T.red:T.green}`}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-                        <div>
-                          <div style={{fontSize:13,fontWeight:700,color:T.text}}>{item.material}</div>
-                          {item.spec&&<div style={{fontSize:11,color:T.muted}}>Spec: {item.spec}</div>}
-                        </div>
-                        <div style={{textAlign:"right",flexShrink:0}}>
-                          <div style={{fontSize:13,fontWeight:800,color:short?T.red:T.green}}>{item.qty_received||0}/{item.qty_required||0} {item.unit}</div>
-                          {short&&<div style={{fontSize:10,color:T.red,fontWeight:700}}>⚠️ SHORT {(item.qty_required||0)-(item.qty_received||0)} {item.unit}</div>}
-                        </div>
-                      </div>
-                      <div style={{background:T.border,borderRadius:3,height:4,marginBottom:8}}>
-                        <div style={{width:`${pct}%`,height:4,borderRadius:3,background:short?T.red:T.green}}/>
-                      </div>
-                      <div style={{display:"flex",gap:6}}>
-                        <button onClick={()=>setShowReceipt(showReceipt?.id===item.id?null:item)}
-                          style={{...ghostBtn,flex:1,textAlign:"center",fontSize:11,color:T.green,border:`1px solid ${T.green}40`}}>
-                          📦 Log Receipt
-                        </button>
-                        {canAdmin&&<button onClick={async()=>{if(window.confirm("Remove this material?"))await API.mfg.bom.remove(item.id).then(load);}}
-                          style={{...ghostBtn,fontSize:11,padding:"5px 10px",color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>}
-                      </div>
-                      {showReceipt?.id===item.id&&<ReceiptForm item={item} partId={part.id} user={user} onSave={async(d)=>{
-                        await API.mfg.receipts.create({...d,bom_id:item.id,part_id:part.id});
-                        await API.mfg.bom.update(item.id,{qty_received:(item.qty_received||0)+(parseFloat(d.qty_received)||0)});
-                        setShowReceipt(null);await load();
-                      }} onCancel={()=>setShowReceipt(null)}/>}
+                  {/* Transaction buttons */}
+                  <div style={{display:"flex",gap:6}}>
+                    {["Received","Damaged"].map(type=>(
+                      <button key={type} onClick={()=>{setShowTxn({item,type});setTf({qty:"",transaction_type:type,reference_bol:"",notes:"",received_date:today(),received_by:user.name,heat_number:""});}}
+                        style={{...ghostBtn,flex:1,textAlign:"center",fontSize:11,padding:"6px 4px",color:type==="Received"?T.green:T.red,border:`1px solid ${type==="Received"?T.green:T.red}30`}}>
+                        {type==="Received"?"📦 Receive":"⚠️ Damage"}
+                      </button>
+                    ))}
+                    {canAdmin&&<button onClick={async()=>{if(window.confirm("Remove?"))await API.mfg.bom.remove(item.id).then(onRefresh);}} style={{...ghostBtn,fontSize:11,padding:"6px 10px",color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>}
+                  </div>
+
+                  {/* Transaction form */}
+                  {showTxn?.item?.id===item.id&&<div style={{marginTop:10,background:T.card,borderRadius:10,padding:12,border:`1px solid ${showTxn.type==="Received"?T.green:T.red}30`}}>
+                    <div style={{fontSize:12,fontWeight:800,color:showTxn.type==="Received"?T.green:T.red,marginBottom:10}}>
+                      {showTxn.type==="Received"?"📦 Log Receipt":"⚠️ Log Damage"} — {item.component_part_number||item.material}
                     </div>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </>}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                      <div><label style={lbl}>Qty *</label><input type="number" value={tf.qty} onChange={e=>set("qty",e.target.value)} placeholder="0" style={inp}/></div>
+                      <div><label style={lbl}>Date</label><input type="date" value={tf.received_date} onChange={e=>set("received_date",e.target.value)} style={inp}/></div>
+                    </div>
+                    {showTxn.type==="Received"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                      <div><label style={lbl}>Heat / Lot #</label><input value={tf.heat_number||""} onChange={e=>set("heat_number",e.target.value)} placeholder="Heat #" style={inp}/></div>
+                      <div><label style={lbl}>BOL / Ref #</label><input value={tf.reference_bol} onChange={e=>set("reference_bol",e.target.value)} placeholder="BOL #" style={inp}/></div>
+                    </div>}
+                    <div style={{marginBottom:8}}><label style={lbl}>Received By</label><input value={tf.received_by} onChange={e=>set("received_by",e.target.value)} style={inp}/></div>
+                    <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input value={tf.notes} onChange={e=>set("notes",e.target.value)} placeholder="Optional" style={inp}/></div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={logTxn} disabled={!tf.qty||saving} style={{...primBtn,flex:2,borderRadius:10,background:showTxn.type==="Received"?T.green:T.red,color:"#000",opacity:tf.qty&&!saving?1:0.5}}>{saving?"Saving…":"Confirm"}</button>
+                      <button onClick={()=>setShowTxn(null)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+                    </div>
+                  </div>}
 
-        {/* LABOR TAB */}
-        {!loading&&tab==="labor"&&<LaborTab job={job} parts={parts} labor={labor} user={user} canAdmin={canAdmin} onRefresh={load}/>}
+                  {/* Recent transactions */}
+                  {itemTxns.length>0&&<div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:10,fontWeight:700,color:T.muted,textTransform:"uppercase",marginBottom:4}}>Recent Transactions</div>
+                    {itemTxns.slice(0,3).map((t,i)=>(
+                      <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0",borderBottom:`1px solid ${T.border}`}}>
+                        <span style={{color:t.transaction_type==="Received"?T.green:T.red}}>{t.transaction_type}</span>
+                        <span style={{color:T.sub}}>{t.received_date}</span>
+                        {t.reference_bol&&<span style={{color:T.muted}}>BOL: {t.reference_bol}</span>}
+                        <span style={{fontWeight:700,color:T.text}}>{t.qty_received>0?"+":""}{t.qty_received}</span>
+                      </div>
+                    ))}
+                  </div>}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
-        {/* NCR TAB */}
-        {!loading&&tab==="ncr"&&<NcrTab job={job} parts={parts} ncrs={ncrs} user={user} canAdmin={canAdmin} onRefresh={load}/>}
+/* ── ASSEMBLY LOG TAB ────────────────────────────────────────── */
+function AssemblyLogTab({parts,assemblyLogs,boms,txns,job,user,canAdmin,onRefresh}){
+  const [showForm,setShowForm]=useState(false);
+  const [f,setF]=useState({part_id:"",qty_completed:"",completion_date:today(),entered_by:user.name,notes:""});
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
 
-        {/* INFO TAB */}
-        {!loading&&tab==="info"&&<div style={{...cardS}}>
-          {[["Job / WO #",job.job_number],["Customer",job.customer||"—"],["PO Number",job.po_number||"—"],["Due Date",job.due_date||"—"],["Description",job.description||"—"],["Notes",job.notes||"—"]].map(([l,v])=>(
-            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
-              <span style={{fontSize:12,color:T.muted,fontWeight:700}}>{l}</span>
-              <span style={{fontSize:13,color:T.text,fontWeight:600,maxWidth:"60%",textAlign:"right"}}>{v}</span>
-            </div>
-          ))}
+  const totalCompleted=assemblyLogs.reduce((s,a)=>s+(a.qty_completed||0),0);
+
+  async function save(){
+    if(!f.qty_completed||!f.part_id)return;
+    setSaving(true);
+    try{
+      await API.mfg.assemblyLog.create({...f,job_id:job.id,qty_completed:parseInt(f.qty_completed)||0,part_id:f.part_id||null});
+      // Auto-create "Issued" transactions for components used
+      const partBom=boms[f.part_id]||[];
+      const qtyAsm=parseInt(f.qty_completed)||0;
+      await Promise.all(partBom.map(item=>
+        API.mfg.receipts.create({
+          bom_id:item.id,part_id:f.part_id,
+          qty_received:qtyAsm*(item.qty_per_assembly||1),
+          transaction_type:"Issued",
+          received_date:f.completion_date,
+          received_by:f.entered_by,
+          notes:`Auto-issued: ${qtyAsm} assemblies completed`,
+        }).catch(()=>{})
+      ));
+      setShowForm(false);setF({part_id:"",qty_completed:"",completion_date:today(),entered_by:user.name,notes:""});
+      await onRefresh();
+    }catch(e){alert("Error: "+e.message);}
+    setSaving(false);
+  }
+
+  return(
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+        <div style={{...cardS,textAlign:"center"}}><div style={{fontSize:26,fontWeight:900,color:T.green}}>{totalCompleted}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Total Completed</div></div>
+        <div style={{...cardS,textAlign:"center"}}><div style={{fontSize:26,fontWeight:900,color:T.purple}}>{parts.reduce((s,p)=>s+(p.qty_ordered||0),0)}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Total Ordered</div></div>
+      </div>
+
+      <button onClick={()=>setShowForm(s=>!s)} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.green,color:"#000"}}>🏭 Log Completed Assemblies</button>
+
+      {showForm&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.green}40`}}>
+        <div style={{fontSize:13,fontWeight:800,color:T.green,marginBottom:12}}>🏭 Log Completed Assembly Batch</div>
+        <div style={{marginBottom:10}}><label style={lbl}>Assembly Part # *</label>
+          <select value={f.part_id} onChange={e=>set("part_id",e.target.value)} style={inpSel}>
+            <option value="">— Select part —</option>
+            {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}{p.description?" — "+p.description:""}</option>)}
+          </select>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Assemblies Completed *</label><input type="number" value={f.qty_completed} onChange={e=>set("qty_completed",e.target.value)} placeholder="e.g. 71" style={inp}/></div>
+          <div><label style={lbl}>Date</label><input type="date" value={f.completion_date} onChange={e=>set("completion_date",e.target.value)} style={inp}/></div>
+        </div>
+        <div style={{marginBottom:10}}><label style={lbl}>Entered By</label><input value={f.entered_by} onChange={e=>set("entered_by",e.target.value)} style={inp}/></div>
+        <div style={{marginBottom:10}}><label style={lbl}>Notes</label><textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/></div>
+        {f.part_id&&f.qty_completed&&<div style={{background:T.blueLow,border:`1px solid ${T.blue}30`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:11,color:T.blue}}>
+          ℹ️ Logging {f.qty_completed} assemblies will auto-deduct components from inventory
         </div>}
-      </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={save} disabled={!f.qty_completed||!f.part_id||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.green,color:"#000",opacity:f.qty_completed&&f.part_id&&!saving?1:0.5}}>{saving?"Saving…":"Log Assemblies"}</button>
+          <button onClick={()=>setShowForm(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+        </div>
+      </div>}
+
+      {assemblyLogs.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>🏭</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Assemblies Logged</div>
+        <div style={{fontSize:12}}>Tap the button above when batches of assemblies are completed.</div>
+      </div>}
+
+      {assemblyLogs.map(a=>{
+        const part=parts.find(p=>p.id===a.part_id);
+        return(
+          <div key={a.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.green}`}}>
+            <div style={{display:"flex",justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontSize:16,fontWeight:900,color:T.green}}>{a.qty_completed} assemblies</div>
+                <div style={{fontSize:12,color:T.sub}}>{a.completion_date} · {part?.part_number||"—"}</div>
+                {a.entered_by&&<div style={{fontSize:11,color:T.muted}}>By: {a.entered_by}</div>}
+              </div>
+              <div style={{fontSize:24}}>🏭</div>
+            </div>
+            {a.notes&&<div style={{fontSize:11,color:T.muted,marginTop:4,fontStyle:"italic"}}>{a.notes}</div>}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function BomAddForm({partId,onSave,onCancel}){
-  const [f,setF]=useState({material:"",spec:"",qty_required:"",unit:"ea"});
-  const UNITS=["ea","ft","in","lbs","kg","m","mm","set"];
-  return(
-    <div style={{background:T.surface,borderRadius:10,padding:12,marginBottom:10,border:`1px solid ${T.purple}30`}}>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-        <div><label style={lbl}>Material *</label><input value={f.material} onChange={e=>setF(x=>({...x,material:e.target.value}))} placeholder={'e.g. 4" Pipe'} style={inp}/></div>
-        <div><label style={lbl}>Spec</label><input value={f.spec} onChange={e=>setF(x=>({...x,spec:e.target.value}))} placeholder="A106 Gr. B" style={inp}/></div>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-        <div><label style={lbl}>Qty Required *</label><input type="number" value={f.qty_required} onChange={e=>setF(x=>({...x,qty_required:e.target.value}))} placeholder="0" style={inp}/></div>
-        <div><label style={lbl}>Unit</label><select value={f.unit} onChange={e=>setF(x=>({...x,unit:e.target.value}))} style={inpSel}>{UNITS.map(u=><option key={u}>{u}</option>)}</select></div>
-      </div>
-      <div style={{display:"flex",gap:8}}>
-        <button onClick={()=>f.material.trim()&&f.qty_required&&onSave(f)} style={{...primBtn,flex:2,borderRadius:10,fontSize:13,background:T.purple,opacity:f.material.trim()&&f.qty_required?1:0.5}}>Add Material</button>
-        <button onClick={onCancel} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>Cancel</button>
-      </div>
-    </div>
-  );
-}
+/* ── SHIPPING LOG TAB ────────────────────────────────────────── */
+function ShippingLogTab({parts,shippingLogs,assemblyLogs,job,user,canAdmin,onRefresh}){
+  const [showForm,setShowForm]=useState(false);
+  const [f,setF]=useState({part_id:"",qty_shipped:"",ship_date:today(),customer:job.customer||"",customer_po:"",bol_number:"",entered_by:user.name,notes:""});
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
 
-function ReceiptForm({item,partId,user,onSave,onCancel}){
-  const [f,setF]=useState({qty_received:"",heat_number:"",condition:"Good",received_date:today(),received_by:user.name,notes:""});
+  const totalShipped=shippingLogs.reduce((s,a)=>s+(a.qty_shipped||0),0);
+  const totalCompleted=assemblyLogs.reduce((s,a)=>s+(a.qty_completed||0),0);
+  const onHand=totalCompleted-totalShipped;
+
+  async function save(){
+    if(!f.qty_shipped||!f.part_id)return;
+    setSaving(true);
+    try{
+      await API.mfg.shippingLog.create({...f,job_id:job.id,qty_shipped:parseInt(f.qty_shipped)||0});
+      await API.mfg.parts.update(f.part_id,{qty_shipped:(parts.find(p=>p.id===f.part_id)?.qty_shipped||0)+(parseInt(f.qty_shipped)||0)});
+      setShowForm(false);setF({part_id:"",qty_shipped:"",ship_date:today(),customer:job.customer||"",customer_po:"",bol_number:"",entered_by:user.name,notes:""});
+      await onRefresh();
+    }catch(e){alert("Error: "+e.message);}
+    setSaving(false);
+  }
+
   return(
-    <div style={{background:T.surface,borderRadius:10,padding:12,marginTop:8,border:`1px solid ${T.green}30`}}>
-      <div style={{fontSize:12,fontWeight:800,color:T.green,marginBottom:10}}>📦 Log Material Receipt — {item.material}</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-        <div><label style={lbl}>Qty Received *</label><input type="number" value={f.qty_received} onChange={e=>setF(x=>({...x,qty_received:e.target.value}))} placeholder="0" style={inp}/></div>
-        <div><label style={lbl}>Heat / Lot #</label><input value={f.heat_number} onChange={e=>setF(x=>({...x,heat_number:e.target.value}))} placeholder="Heat #" style={inp}/></div>
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+        {[[totalCompleted,"Completed",T.green],[totalShipped,"Shipped",T.blue],[onHand,"On Hand",onHand<0?T.red:T.orange]].map(([v,l,c])=>(
+          <div key={l} style={{...cardS,textAlign:"center"}}><div style={{fontSize:22,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>{l}</div></div>
+        ))}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-        <div><label style={lbl}>Condition</label><select value={f.condition} onChange={e=>setF(x=>({...x,condition:e.target.value}))} style={inpSel}>{["Good","Damaged","Partial"].map(c=><option key={c}>{c}</option>)}</select></div>
-        <div><label style={lbl}>Date</label><input type="date" value={f.received_date} onChange={e=>setF(x=>({...x,received_date:e.target.value}))} style={inp}/></div>
-      </div>
-      <div style={{marginBottom:8}}><label style={lbl}>Received By</label><input value={f.received_by} onChange={e=>setF(x=>({...x,received_by:e.target.value}))} style={inp}/></div>
-      <div style={{marginBottom:10}}><label style={lbl}>Notes</label><textarea value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} rows={2} style={{...inp,resize:"vertical"}}/></div>
-      <div style={{display:"flex",gap:8}}>
-        <button onClick={()=>f.qty_received&&onSave(f)} style={{...primBtn,flex:2,borderRadius:10,fontSize:13,background:T.green,color:"#000",opacity:f.qty_received?1:0.5}}>Confirm Receipt</button>
-        <button onClick={onCancel} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>Cancel</button>
-      </div>
+
+      <button onClick={()=>setShowForm(s=>!s)} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.blue}}>📤 Log Shipment</button>
+
+      {showForm&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.blue}40`}}>
+        <div style={{fontSize:13,fontWeight:800,color:T.blue,marginBottom:12}}>📤 Log Assembly Shipment</div>
+        <div style={{marginBottom:10}}><label style={lbl}>Assembly Part # *</label>
+          <select value={f.part_id} onChange={e=>set("part_id",e.target.value)} style={inpSel}>
+            <option value="">— Select part —</option>
+            {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}{p.description?" — "+p.description:""}</option>)}
+          </select>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Qty Shipped *</label><input type="number" value={f.qty_shipped} onChange={e=>set("qty_shipped",e.target.value)} placeholder="e.g. 40" style={inp}/></div>
+          <div><label style={lbl}>Ship Date</label><input type="date" value={f.ship_date} onChange={e=>set("ship_date",e.target.value)} style={inp}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Customer</label><input value={f.customer} onChange={e=>set("customer",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Customer PO</label><input value={f.customer_po} onChange={e=>set("customer_po",e.target.value)} placeholder="PO #" style={inp}/></div>
+        </div>
+        <div style={{marginBottom:10}}><label style={lbl}>BOL / Packing Slip #</label><input value={f.bol_number} onChange={e=>set("bol_number",e.target.value)} placeholder="BOL #" style={inp}/></div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={save} disabled={!f.qty_shipped||!f.part_id||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.blue,opacity:f.qty_shipped&&f.part_id&&!saving?1:0.5}}>{saving?"Saving…":"Log Shipment"}</button>
+          <button onClick={()=>setShowForm(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+        </div>
+      </div>}
+
+      {shippingLogs.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>📤</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Shipments Logged</div>
+        <div style={{fontSize:12}}>Log shipments here to track completed assemblies leaving the shop.</div>
+      </div>}
+
+      {shippingLogs.map(s=>{
+        const part=parts.find(p=>p.id===s.part_id);
+        return(
+          <div key={s.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.blue}`}}>
+            <div style={{display:"flex",justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontSize:16,fontWeight:900,color:T.blue}}>{s.qty_shipped} shipped</div>
+                <div style={{fontSize:12,color:T.sub}}>{s.ship_date} · {part?.part_number||"—"} · {s.customer||""}</div>
+                {s.bol_number&&<div style={{fontSize:11,color:T.muted}}>BOL: {s.bol_number}</div>}
+                {s.customer_po&&<div style={{fontSize:11,color:T.muted}}>PO: {s.customer_po}</div>}
+              </div>
+              <div style={{fontSize:24}}>📤</div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
