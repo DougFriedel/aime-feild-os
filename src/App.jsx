@@ -5396,6 +5396,8 @@ function AppInner(){
   const [screen,setScreen]       = useState("division");
   const [selectedDiv,setSelectedDiv] = useState(null);
   const [selectedProject,setSelectedProject] = useState(null);
+  const [selectedMfgJob,setSelectedMfgJob]   = useState(null);
+  const [selectedMfgPart,setSelectedMfgPart] = useState(null);
   const [isOnline,setIsOnline]   = useState(navigator.onLine);
   const [pendingCount,setPendingCount] = useState(0);
   const [syncMsg,setSyncMsg]     = useState("");
