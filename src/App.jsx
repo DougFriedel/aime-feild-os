@@ -110,6 +110,7 @@ const API={
     bom:{forPart:(pid)=>sb(`/mfg_bom?part_id=eq.${pid}`),create:(d)=>sb('/mfg_bom',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_bom?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_bom?id=eq.${id}`,{method:'DELETE'})},
     receipts:{forPart:(pid)=>sb(`/mfg_receipts?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_receipts',{method:'POST',body:d,prefer:'return=representation'})},
     travelers:{forPart:(pid)=>sb(`/mfg_travelers?part_id=eq.${pid}&limit=1`),upsert:(d)=>sb('/mfg_travelers',{method:'POST',body:d,prefer:'return=representation',resolution:'merge-duplicates'})},
+    stageLog:{forPart:(pid)=>sb(`/mfg_stage_log?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_stage_log',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_stage_log?id=eq.${id}`,{method:'DELETE'})},
     assemblyLog:{forPart:(pid)=>sb(`/mfg_assembly_log?part_id=eq.${pid}&order=completion_date.desc`),forJob:(jid)=>sb(`/mfg_assembly_log?job_id=eq.${jid}&order=completion_date.desc`),create:(d)=>sb('/mfg_assembly_log',{method:'POST',body:d,prefer:'return=representation'})},
     shippingLog:{forPart:(pid)=>sb(`/mfg_shipping_log?part_id=eq.${pid}&order=ship_date.desc`),forJob:(jid)=>sb(`/mfg_shipping_log?job_id=eq.${jid}&order=ship_date.desc`),create:(d)=>sb('/mfg_shipping_log',{method:'POST',body:d,prefer:'return=representation'})},
     labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
@@ -5191,50 +5192,104 @@ function ShippingLogTab({parts,shippingLogs,assemblyLogs,job,user,canAdmin,onRef
   );
 }
 
-/* ── MANUFACTURING TRAVELER ──────────────────────────────────── */
+/* ── MANUFACTURING TRAVELER (Production Log) ───────────────── */
 function ManufacturingTraveler({part,job,user,onBack}){
-  const [traveler,setTraveler]=useState(null);
+  const [logs,setLogs]=useState([]);
   const [loading,setLoading]=useState(true);
-  const [activeStageForm,setActiveStageForm]=useState(null);
-  const [saving,setSaving]=useState(false);
+  const [openStage,setOpenStage]=useState(null); // which stage form is open
   const [sf,setSf]=useState({});
-  const canAdmin=user.role==="admin"||user.role==="pm";
+  const [saving,setSaving]=useState(false);
+  const canAdmin=user.role==="admin"||user.role==="pm"||user.role==="foreman";
+
+  const STAGES=[
+    {id:"mat_received",   label:"Material Received",   icon:"📦",color:"#60A5FA", fields:[
+      {k:"qty",l:"Qty Received *",t:"number",ph:"0"},
+      {k:"heat_number",l:"Heat / Lot #",t:"text",ph:"Heat #"},
+      {k:"entered_by",l:"Received By",t:"text",ph:user.name,def:user.name},
+      {k:"notes",l:"Notes",t:"text",ph:"Condition, reference, etc."},
+    ]},
+    {id:"mat_inspection", label:"Material Inspection", icon:"🔍",color:"#FBBF24", fields:[
+      {k:"qty",l:"Qty Inspected *",t:"number",ph:"0"},
+      {k:"pass_fail",l:"Result *",t:"select",opts:["Pass","Fail"]},
+      {k:"entered_by",l:"Inspector",t:"text",ph:user.name,def:user.name},
+      {k:"notes",l:"Defects / Notes",t:"text",ph:"Describe any issues"},
+    ]},
+    {id:"tacked",         label:"Tacked in Jig",       icon:"🔩",color:"#F97316", fields:[
+      {k:"qty",l:"Qty Tacked *",t:"number",ph:"0"},
+      {k:"worker_name",l:"Tacker Name",t:"text",ph:user.name,def:user.name},
+      {k:"jig_number",l:"Jig Number",t:"text",ph:"Jig #"},
+      {k:"notes",l:"Notes",t:"text",ph:""},
+    ]},
+    {id:"welded",         label:"Fully Welded",         icon:"🔥",color:"#EF4444", fields:[
+      {k:"qty",l:"Qty Welded *",t:"number",ph:"0"},
+      {k:"worker_name",l:"Welder Name",t:"text",ph:user.name,def:user.name},
+      {k:"notes",l:"Notes",t:"text",ph:""},
+    ]},
+    {id:"welder_qc",      label:"Welder QC 🟡",         icon:"🟡",color:"#FCD34D", fields:[
+      {k:"qty",l:"Qty QC'd *",t:"number",ph:"0"},
+      {k:"worker_name",l:"Welder (Self-QC)",t:"text",ph:user.name,def:user.name},
+      {k:"pass_fail",l:"Result *",t:"select",opts:["Pass","Fail"]},
+      {k:"notes",l:"Notes / Rejects",t:"text",ph:"Any issues found"},
+    ]},
+    {id:"manager_qc",     label:"Manager QC ⚪",        icon:"⚪",color:"#E2E8F0", fields:[
+      {k:"qty",l:"Qty QC'd *",t:"number",ph:"0"},
+      {k:"worker_name",l:"Inspector / Manager",t:"text",ph:user.name,def:user.name},
+      {k:"pass_fail",l:"Result *",t:"select",opts:["Pass","Fail"]},
+      {k:"notes",l:"Notes / Rejects",t:"text",ph:"Any issues found"},
+    ]},
+    {id:"shipped",        label:"Palletized & Shipped", icon:"📦",color:"#34D399", fields:[
+      {k:"qty",l:"Qty Shipped *",t:"number",ph:"0"},
+      {k:"pallet_number",l:"Pallet #",t:"text",ph:"Pallet or skid #"},
+      {k:"entered_by",l:"Packed By",t:"text",ph:user.name,def:user.name},
+      {k:"notes",l:"Notes",t:"text",ph:"Banding confirmed, etc."},
+    ]},
+  ];
 
   useEffect(()=>{load();},[part.id]);
   async function load(){
     setLoading(true);
-    try{
-      const t=await API.mfg.travelers.forPart(part.id);
-      const existing=Array.isArray(t)&&t.length>0?t[0]:null;
-      setTraveler(existing||{part_id:part.id,current_stage:0});
-    }catch(e){console.error("MFG error:",e.message||e);}
+    try{const r=await API.mfg.stageLog.forPart(part.id);setLogs(Array.isArray(r)?r:[]);}
+    catch(e){console.error(e);}
     setLoading(false);
   }
 
-  async function completeStage(stageIdx,data){
+  function getStageTotal(stageId){
+    return logs.filter(l=>l.stage===stageId).reduce((s,l)=>s+(l.qty||0),0);
+  }
+
+  async function saveEntry(){
+    if(!sf.qty||!openStage)return;
     setSaving(true);
-    const stageKey=MFG_STAGES[stageIdx].id;
-    const newStage=Math.max((traveler?.current_stage||0),stageIdx+1);
-    const payload={
-      part_id:part.id,
-      current_stage:newStage,
-      [stageKey]:{...data,done:true,completed_at:new Date().toISOString(),completed_by:user.name},
-    };
     try{
-      await API.mfg.travelers.upsert({...traveler,...payload});
-      // Update part qty if shipping stage
-      if(stageKey==="shipped"&&data.qty_shipped){
-        await API.mfg.parts.update(part.id,{qty_shipped:(part.qty_shipped||0)+(parseInt(data.qty_shipped)||0)});
-      }
-      setActiveStageForm(null);setSf({});await load();
+      await API.mfg.stageLog.create({
+        part_id:part.id,
+        job_id:job.id,
+        stage:openStage,
+        log_date:sf.log_date||today(),
+        qty:parseInt(sf.qty)||0,
+        entered_by:sf.entered_by||user.name,
+        worker_name:sf.worker_name||null,
+        pass_fail:sf.pass_fail||null,
+        jig_number:sf.jig_number||null,
+        heat_number:sf.heat_number||null,
+        pallet_number:sf.pallet_number||null,
+        notes:sf.notes||null,
+      });
+      setOpenStage(null);setSf({});await load();
     }catch(e){alert("Error: "+e.message);}
     setSaving(false);
   }
 
-  const currentStage=traveler?.current_stage||0;
+  async function deleteEntry(id){
+    if(!window.confirm("Delete this log entry?"))return;
+    try{await API.mfg.stageLog.remove(id);await load();}catch(e){}
+  }
+
+  const ordered=part.qty_ordered||0;
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      {/* Header */}
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:6}}>← {job.job_number}</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -5243,7 +5298,7 @@ function ManufacturingTraveler({part,job,user,onBack}){
             <div style={{fontSize:12,color:T.sub}}>{part.description||""}{part.drawing_number?" · DWG: "+part.drawing_number:""}</div>
           </div>
           <div style={{textAlign:"right"}}>
-            <div style={{fontSize:18,fontWeight:900,color:T.text}}>{part.qty_ordered||0}</div>
+            <div style={{fontSize:18,fontWeight:900,color:T.text}}>{ordered}</div>
             <div style={{fontSize:9,color:T.muted,textTransform:"uppercase"}}>Ordered</div>
           </div>
         </div>
@@ -5252,158 +5307,115 @@ function ManufacturingTraveler({part,job,user,onBack}){
       <div style={{padding:"14px 16px 80px"}}>
         {loading&&<Spinner/>}
 
-        {/* Progress bar */}
+        {/* Stage progress summary row */}
         {!loading&&<div style={{...cardS,marginBottom:16}}>
-          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-            <span style={{fontSize:12,fontWeight:700,color:T.sub}}>Production Progress</span>
-            <span style={{fontSize:12,fontWeight:700,color:T.purple}}>{currentStage}/7 stages</span>
-          </div>
-          <div style={{background:T.border,borderRadius:6,height:8,marginBottom:12}}>
-            <div style={{width:`${(currentStage/7)*100}%`,height:8,borderRadius:6,background:`linear-gradient(90deg,${T.purple},${T.blue})`,transition:"width 0.4s"}}/>
-          </div>
-          <div style={{display:"flex",gap:4}}>
-            {MFG_STAGES.map((s,i)=>(
-              <div key={s.id} style={{flex:1,textAlign:"center"}}>
-                <div style={{width:"100%",height:4,borderRadius:2,background:i<currentStage?s.color:T.border,marginBottom:4}}/>
-                <div style={{fontSize:8,color:i<currentStage?s.color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.icon}</div>
-              </div>
-            ))}
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Production Progress — {ordered} ordered</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
+            {STAGES.map(s=>{
+              const total=getStageTotal(s.id);
+              const pct=ordered>0?Math.min(100,(total/ordered)*100):0;
+              return(
+                <div key={s.id} style={{textAlign:"center"}}>
+                  <div style={{fontSize:16,marginBottom:2}}>{s.icon}</div>
+                  <div style={{fontSize:13,fontWeight:900,color:total>0?s.color:T.muted}}>{total}</div>
+                  <div style={{background:T.border,borderRadius:3,height:4,margin:"3px 0"}}>
+                    <div style={{height:4,borderRadius:3,background:s.color,width:`${pct}%`,transition:"width 0.3s"}}/>
+                  </div>
+                  <div style={{fontSize:7,color:T.muted,lineHeight:1.2}}>{s.label.split(" ").slice(0,2).join(" ")}</div>
+                </div>
+              );
+            })}
           </div>
         </div>}
 
-        {/* 7 Stage cards */}
-        {!loading&&MFG_STAGES.map((stage,i)=>{
-          const done=i<currentStage;
-          const active=i===currentStage;
-          const locked=i>currentStage;
-          const stageData=traveler?.[stage.id];
+        {/* Stage cards — each is independent, no locking */}
+        {!loading&&STAGES.map(stage=>{
+          const stageLogs=logs.filter(l=>l.stage===stage.id);
+          const total=stageLogs.reduce((s,l)=>s+(l.qty||0),0);
+          const isOpen=openStage===stage.id;
+          const passes=stageLogs.filter(l=>l.pass_fail==="Pass").reduce((s,l)=>s+(l.qty||0),0);
+          const fails=stageLogs.filter(l=>l.pass_fail==="Fail").reduce((s,l)=>s+(l.qty||0),0);
 
           return(
-            <div key={stage.id} style={{...cardS,marginBottom:10,
-              borderLeft:`4px solid ${done?stage.color:active?stage.color:T.border}`,
-              opacity:locked?0.4:1}}>
+            <div key={stage.id} style={{...cardS,marginBottom:10,borderLeft:`4px solid ${total>0?stage.color:T.border}`}}>
               {/* Stage header */}
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:done||active?10:0}}>
-                <div style={{width:36,height:36,borderRadius:10,background:done?stage.color:active?stage.color+"25":T.surface,border:`2px solid ${done?stage.color:active?stage.color:T.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
-                  {done?"✅":stage.icon}
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                <div style={{width:38,height:38,borderRadius:10,background:`${stage.color}20`,border:`2px solid ${stage.color}60`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>
+                  {stage.icon}
                 </div>
                 <div style={{flex:1}}>
-                  <div style={{fontSize:14,fontWeight:800,color:done?stage.color:active?T.text:T.muted}}>
-                    Stage {i+1}: {stage.label}
+                  <div style={{fontSize:14,fontWeight:800,color:T.text}}>{stage.label}</div>
+                  <div style={{display:"flex",gap:10,marginTop:2}}>
+                    <span style={{fontSize:12,color:stage.color,fontWeight:700}}>{total} logged</span>
+                    {ordered>0&&<span style={{fontSize:11,color:T.muted}}>of {ordered} ordered ({Math.round((total/ordered)*100)}%)</span>}
+                    {stage.fields.some(f=>f.k==="pass_fail")&&total>0&&<>
+                      <span style={{fontSize:11,color:T.green,fontWeight:700}}>✓ {passes}</span>
+                      {fails>0&&<span style={{fontSize:11,color:T.red,fontWeight:700}}>✗ {fails}</span>}
+                    </>}
                   </div>
-                  <div style={{fontSize:11,color:T.muted}}>{stage.desc}</div>
                 </div>
-                {locked&&<span style={{fontSize:11,color:T.muted,background:T.surface,borderRadius:6,padding:"3px 8px"}}>🔒 Locked</span>}
-                {done&&stageData&&<span style={{fontSize:10,color:stage.color,fontWeight:700}}>✓ Done</span>}
+                {canAdmin&&<button onClick={()=>{
+                    if(isOpen){setOpenStage(null);setSf({});}
+                    else{
+                      const defaults={log_date:today()};
+                      stage.fields.forEach(f=>{if(f.def)defaults[f.k]=f.def;if(f.t==="select"&&f.opts)defaults[f.k]=f.opts[0];});
+                      setSf(defaults);setOpenStage(stage.id);
+                    }
+                  }}
+                  style={{background:isOpen?T.surface:stage.color,color:isOpen?T.muted:"#000",border:`1px solid ${stage.color}60`,borderRadius:10,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+                  {isOpen?"✕ Cancel":"+ Log"}
+                </button>}
               </div>
-              {done&&stageData&&<div style={{background:T.surface,borderRadius:8,padding:"8px 10px",fontSize:11,color:T.sub,lineHeight:1.7}}>
-                {stageData.completed_by&&<div><strong>By:</strong> {stageData.completed_by}</div>}
-                {stageData.completed_at&&<div><strong>Date:</strong> {new Date(stageData.completed_at).toLocaleDateString()}</div>}
-                {stageData.welder&&<div><strong>Welder:</strong> {stageData.welder}</div>}
-                {stageData.tacker&&<div><strong>Tacker:</strong> {stageData.tacker}</div>}
-                {stageData.inspector&&<div><strong>Inspector:</strong> {stageData.inspector}</div>}
-                {stageData.pass_fail&&<div><strong>Result:</strong> <span style={{color:stageData.pass_fail==="Pass"?T.green:T.red,fontWeight:800}}>{stageData.pass_fail}</span></div>}
-                {stageData.pallet_number&&<div><strong>Pallet:</strong> {stageData.pallet_number}</div>}
-                {stageData.qty_shipped&&<div><strong>Qty Shipped:</strong> {stageData.qty_shipped}</div>}
-                {stageData.heat_number&&<div><strong>Heat #:</strong> {stageData.heat_number}</div>}
-                {stageData.jig_number&&<div><strong>Jig #:</strong> {stageData.jig_number}</div>}
-                {stageData.notes&&<div><strong>Notes:</strong> {stageData.notes}</div>}
+
+              {/* Log entry form */}
+              {isOpen&&<div style={{background:T.surface,borderRadius:10,padding:12,marginBottom:10,border:`1px solid ${stage.color}40`}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <div><label style={lbl}>Date</label><input type="date" value={sf.log_date||today()} onChange={e=>setSf(x=>({...x,log_date:e.target.value}))} style={inp}/></div>
+                  {stage.fields.filter(f=>f.k!=="notes").map(f=>(
+                    <div key={f.k}>
+                      <label style={lbl}>{f.l}</label>
+                      {f.t==="select"
+                        ?<select value={sf[f.k]||f.opts?.[0]||""} onChange={e=>setSf(x=>({...x,[f.k]:e.target.value}))} style={inpSel}>{(f.opts||[]).map(o=><option key={o}>{o}</option>)}</select>
+                        :<input type={f.t||"text"} value={sf[f.k]||""} onChange={e=>setSf(x=>({...x,[f.k]:e.target.value}))} placeholder={f.ph} style={inp}/>}
+                    </div>
+                  ))}
+                </div>
+                <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input value={sf.notes||""} onChange={e=>setSf(x=>({...x,notes:e.target.value}))} placeholder="Optional notes" style={inp}/></div>
+                <button onClick={saveEntry} disabled={!sf.qty||saving}
+                  style={{...primBtn,borderRadius:12,background:stage.color,color:"#000",opacity:sf.qty&&!saving?1:0.5,width:"100%"}}>
+                  {saving?"Saving…":`✓ Save ${stage.label} Entry`}
+                </button>
               </div>}
 
-              {/* Active stage form trigger */}
-              {active&&<>
-                {activeStageForm===i
-                  ?<TravelerStageForm stage={stage} stageIdx={i} sf={sf} setSf={setSf} part={part} user={user} saving={saving} onSubmit={data=>completeStage(i,data)} onCancel={()=>{setActiveStageForm(null);setSf({});}}/>
-                  :<button onClick={()=>{setActiveStageForm(i);setSf({});}} style={{...primBtn,borderRadius:12,background:stage.color,color:stage.color==="#F0F4FF"||stage.color==="#FCD34D"?"#000":"#fff"}}>
-                    {stage.icon} Complete Stage {i+1}: {stage.label}
-                  </button>}
-              </>}
+              {/* Log entries */}
+              {stageLogs.length>0&&<div>
+                <div style={{fontSize:10,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Log ({stageLogs.length} entries)</div>
+                {stageLogs.map(entry=>(
+                  <div key={entry.id} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}>
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                        <span style={{fontSize:13,fontWeight:800,color:stage.color}}>{entry.qty} {entry.qty===1?"unit":"units"}</span>
+                        <span style={{fontSize:11,color:T.muted}}>{entry.log_date}</span>
+                        {entry.worker_name&&<span style={{fontSize:11,color:T.sub}}>· {entry.worker_name}</span>}
+                        {entry.entered_by&&entry.entered_by!==entry.worker_name&&<span style={{fontSize:11,color:T.muted}}>· {entry.entered_by}</span>}
+                        {entry.pass_fail&&<span style={{fontSize:11,fontWeight:700,color:entry.pass_fail==="Pass"?T.green:T.red}}>· {entry.pass_fail}</span>}
+                        {entry.jig_number&&<span style={{fontSize:11,color:T.muted}}>· Jig {entry.jig_number}</span>}
+                        {entry.heat_number&&<span style={{fontSize:11,color:T.muted}}>· Heat {entry.heat_number}</span>}
+                        {entry.pallet_number&&<span style={{fontSize:11,color:T.muted}}>· Pallet {entry.pallet_number}</span>}
+                      </div>
+                      {entry.notes&&<div style={{fontSize:11,color:T.muted,fontStyle:"italic",marginTop:2}}>{entry.notes}</div>}
+                    </div>
+                    {canAdmin&&<button onClick={()=>deleteEntry(entry.id)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:13,padding:"0 4px",flexShrink:0}}>🗑</button>}
+                  </div>
+                ))}
+              </div>}
+
+              {stageLogs.length===0&&!isOpen&&<div style={{fontSize:12,color:T.muted,fontStyle:"italic",textAlign:"center",padding:"8px 0"}}>
+                No entries yet — tap <strong style={{color:stage.color}}>+ Log</strong> to record production
+              </div>}
             </div>
           );
         })}
-
-        {/* All done */}
-        {!loading&&currentStage>=7&&<div style={{...cardS,textAlign:"center",padding:"24px",background:`${T.green}10`,border:`1px solid ${T.green}40`}}>
-          <div style={{fontSize:48,marginBottom:8}}>🎉</div>
-          <div style={{fontSize:18,fontWeight:900,color:T.green,marginBottom:4}}>All Stages Complete!</div>
-          <div style={{fontSize:12,color:T.muted}}>Part #{part.part_number} has been produced and shipped.</div>
-        </div>}
-      </div>
-    </div>
-  );
-}
-
-function TravelerStageForm({stage,stageIdx,sf,setSf,part,user,saving,onSubmit,onCancel}){
-  const set=(k,v)=>setSf(x=>({...x,[k]:v}));
-
-  // Stage-specific fields
-  const fields={
-    mat_received:[
-      {k:"qty_received",l:"Qty Received *",t:"number",ph:"How many pieces/units arrived"},
-      {k:"heat_number",l:"Heat / Lot #",t:"text",ph:"Heat or lot number on material"},
-      {k:"condition",l:"Condition",t:"select",opts:["Good","Damaged","Partial"]},
-      {k:"received_by",l:"Received By",t:"text",ph:user.name,def:user.name},
-    ],
-    mat_inspection:[
-      {k:"inspector",l:"Inspector Name",t:"text",ph:user.name,def:user.name},
-      {k:"pass_fail",l:"Result *",t:"select",opts:["Pass","Fail"]},
-      {k:"defects",l:"Defects / Issues",t:"text",ph:"Describe any defects found"},
-    ],
-    tacked:[
-      {k:"tacker",l:"Tacker Name",t:"text",ph:user.name,def:user.name},
-      {k:"jig_number",l:"Jig Number",t:"text",ph:"Which jig was used"},
-    ],
-    welded:[
-      {k:"welder",l:"Welder Name *",t:"text",ph:"Welder's name"},
-    ],
-    welder_qc:[
-      {k:"welder",l:"Welder (Self-QC) *",t:"text",ph:user.name,def:user.name},
-      {k:"pass_fail",l:"Result *",t:"select",opts:["Pass","Fail"]},
-      {k:"rejection_reason",l:"Rejection Reason (if fail)",t:"text",ph:"What failed"},
-    ],
-    manager_qc:[
-      {k:"inspector",l:"Manager / Inspector *",t:"text",ph:user.name,def:user.name},
-      {k:"pass_fail",l:"Result *",t:"select",opts:["Pass","Fail"]},
-      {k:"rejection_reason",l:"Rejection Reason (if fail)",t:"text",ph:"What failed"},
-    ],
-    shipped:[
-      {k:"qty_shipped",l:"Qty Shipped *",t:"number",ph:`Max: ${part.qty_ordered||0}`},
-      {k:"pallet_number",l:"Pallet #",t:"text",ph:"Pallet or skid number"},
-      {k:"banding",l:"Banding Confirmed",t:"select",opts:["Yes","No"]},
-      {k:"shipped_by",l:"Packed By",t:"text",ph:user.name,def:user.name},
-    ],
-  };
-
-  const stageFields=fields[stage.id]||[];
-
-  // Initialize defaults once on mount
-  useEffect(()=>{
-    const defaults={};
-    stageFields.forEach(f=>{if(f.def)defaults[f.k]=f.def;if(f.t==="select"&&f.opts)defaults[f.k]=f.opts[0];});
-    setSf(prev=>({...defaults,...prev}));
-  },[]);
-
-  const required=stageFields.filter(f=>f.l.includes("*")).map(f=>f.k);
-  const canSubmit=required.every(k=>sf[k]&&String(sf[k]).trim());
-
-  return(
-    <div style={{background:T.surface,borderRadius:10,padding:12,border:`1px solid ${stage.color}40`}}>
-      <div style={{fontSize:12,fontWeight:800,color:stage.color,marginBottom:12}}>{stage.icon} {stage.label}</div>
-      {stageFields.map(f=>(
-        <div key={f.k} style={{marginBottom:10}}>
-          <label style={lbl}>{f.l}</label>
-          {f.t==="select"
-            ?<select value={sf[f.k]||f.opts?.[0]||""} onChange={e=>set(f.k,e.target.value)} style={inpSel}>{(f.opts||[]).map(o=><option key={o}>{o}</option>)}</select>
-            :<input type={f.t||"text"} value={sf[f.k]||""} onChange={e=>set(f.k,e.target.value)} placeholder={f.ph} style={inp}/>}
-        </div>
-      ))}
-      <div style={{marginBottom:14}}><label style={lbl}>Notes</label><textarea value={sf.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}} placeholder="Any additional notes…"/></div>
-      <div style={{display:"flex",gap:8}}>
-        <button onClick={()=>canSubmit&&onSubmit(sf)} disabled={!canSubmit||saving}
-          style={{...primBtn,flex:2,borderRadius:12,background:stage.color,color:stage.color==="#F0F4FF"||stage.color==="#FCD34D"?"#000":"#fff",opacity:canSubmit&&!saving?1:0.5}}>
-          {saving?"Saving…":`✓ Complete Stage`}
-        </button>
-        <button onClick={onCancel} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
       </div>
     </div>
   );
