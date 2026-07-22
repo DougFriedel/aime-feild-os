@@ -4642,6 +4642,32 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
     return{done,shipped,readyToShip:done-shipped};
   }
 
+  // ── Create assembly part ──────────────────────────────
+  async function createPart(){
+    if(!pf.part_number.trim())return;
+    setSaving(true);
+    try{
+      await API.mfg.parts.create({...pf,job_id:job.id,qty_ordered:parseInt(pf.qty_ordered)||0,drawing_number:pf.drawing_number||null});
+      setShowNewPart(false);setPf({part_number:"",description:"",drawing_number:"",qty_ordered:""});
+      await load();
+    }catch(e){alert("Error: "+e.message);}
+    setSaving(false);
+  }
+  async function addCompPart(){
+    if(!newCompNum.trim()||!newCompDesc.trim()||!newCompPartId)return;
+    setSaving(true);
+    try{
+      await API.mfg.bom.create({part_id:newCompPartId,component_part_number:newCompNum.trim(),material:newCompDesc.trim(),qty_per_assembly:parseFloat(newCompQpa)||1,reorder_level:parseFloat(newCompReorder)||0,unit:"ea"});
+      setNewCompNum("");setNewCompDesc("");setNewCompQpa("1");setNewCompReorder("");setShowAddComp(false);
+      await load();
+    }catch(e){alert("Error: "+e.message);}
+    setSaving(false);
+  }
+  async function deletePart(id){
+    if(!window.confirm("Delete this assembly and all its data?"))return;
+    try{await API.mfg.parts.remove(id);await load();}catch(e){}
+  }
+
   // ── Log receipt ────────────────────────────────────────
   async function logReceipt(){
     if(!selectedBomItem||!rQty){setFormErr("Please select a part and enter a quantity.");return;}
@@ -4789,9 +4815,85 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
         {/* ══ RECEIVED PARTS ════════════════════════════════════ */}
         {!loading&&tab==="received"&&<>
-          {/* Receive form */}
-          <div style={{...cardS,marginBottom:16,border:`1px solid ${T.green}40`}}>
-            <div style={{fontSize:14,fontWeight:800,color:T.green,marginBottom:12}}>📦 Log Received Parts</div>
+
+          {/* STEP 1: Create assembly if none exist */}
+          <div style={{...cardS,marginBottom:12,border:`1px solid ${T.purple}40`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:800,color:T.purple}}>Step 1 — Assembly Part #</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                  {parts.length===0?"Create your assembly first (e.g. 1651 — Boom Pivot)":parts.map(p=>p.part_number+(p.description?" – "+p.description:"")).join(", ")}
+                </div>
+              </div>
+              {canAdmin&&<button onClick={()=>setShowNewPart(s=>!s)}
+                style={{background:parts.length===0?T.purple:T.surface,color:parts.length===0?"#fff":T.muted,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+                {showNewPart?"✕ Cancel":"+ Add"}
+              </button>}
+            </div>
+            {showNewPart&&<div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div><label style={lbl}>Assembly Part # *</label><input value={pf.part_number} onChange={e=>setPf(x=>({...x,part_number:e.target.value}))} placeholder="e.g. 1651" style={inp} autoFocus/></div>
+                <div><label style={lbl}>Description</label><input value={pf.description} onChange={e=>setPf(x=>({...x,description:e.target.value}))} placeholder="e.g. Boom Pivot" style={inp}/></div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                <div><label style={lbl}>Drawing #</label><input value={pf.drawing_number} onChange={e=>setPf(x=>({...x,drawing_number:e.target.value}))} placeholder="DWG-001" style={inp}/></div>
+                <div><label style={lbl}>Qty Ordered</label><input type="number" value={pf.qty_ordered} onChange={e=>setPf(x=>({...x,qty_ordered:e.target.value}))} placeholder="e.g. 500" style={inp}/></div>
+              </div>
+              <button onClick={createPart} disabled={!pf.part_number.trim()||saving}
+                style={{...primBtn,borderRadius:12,background:T.purple,opacity:pf.part_number.trim()&&!saving?1:0.5}}>
+                {saving?"Creating…":"Create Assembly"}
+              </button>
+            </div>}
+          </div>
+
+          {/* STEP 2: Add component parts */}
+          {parts.length>0&&<div style={{...cardS,marginBottom:12,border:`1px solid ${T.orange}40`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:800,color:T.orange}}>Step 2 — Component Parts</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                  {allBomItems.length===0?"Add the customer part numbers that make up this assembly":""+allBomItems.length+" component part"+(allBomItems.length!==1?"s":"")+" configured"}
+                </div>
+              </div>
+              {canAdmin&&<button onClick={()=>setShowAddComp(s=>!s)}
+                style={{background:allBomItems.length===0?T.orange:T.surface,color:allBomItems.length===0?"#000":T.muted,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+                {showAddComp?"✕ Cancel":"+ Add"}
+              </button>}
+            </div>
+            {showAddComp&&<div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+              <div style={{marginBottom:8}}><label style={lbl}>Assembly *</label>
+                <select value={newCompPartId} onChange={e=>setNewCompPartId(e.target.value)} style={inpSel}>
+                  <option value="">— Select assembly —</option>
+                  {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}{p.description?" — "+p.description:""}</option>)}
+                </select>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div><label style={lbl}>Customer Part # *</label><input value={newCompNum} onChange={e=>setNewCompNum(e.target.value)} placeholder="e.g. 3572922" style={inp}/></div>
+                <div><label style={lbl}>Description *</label><input value={newCompDesc} onChange={e=>setNewCompDesc(e.target.value)} placeholder="e.g. Side Pieces" style={inp}/></div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                <div><label style={lbl}>Qty Per Assembly</label><input type="number" value={newCompQpa} onChange={e=>setNewCompQpa(e.target.value)} placeholder="1" style={inp}/></div>
+                <div><label style={lbl}>Reorder Level</label><input type="number" value={newCompReorder} onChange={e=>setNewCompReorder(e.target.value)} placeholder="e.g. 50" style={inp}/></div>
+              </div>
+              <button onClick={addCompPart} disabled={!newCompNum.trim()||!newCompDesc.trim()||!newCompPartId||saving}
+                style={{...primBtn,borderRadius:12,background:T.orange,color:"#000",opacity:newCompNum.trim()&&newCompDesc.trim()&&newCompPartId&&!saving?1:0.5}}>
+                {saving?"Adding…":"Add Component Part"}
+              </button>
+            </div>}
+            {/* List current components */}
+            {allBomItems.length>0&&<div style={{marginTop:10}}>
+              {allBomItems.map(item=>(
+                <div key={item.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
+                  <div><span style={{color:T.orange,fontWeight:700}}>{item.component_part_number}</span> <span style={{color:T.sub}}>{item.material}</span> <span style={{color:T.muted}}>· {item.qty_per_assembly||1}x/asm</span></div>
+                  {canAdmin&&<button onClick={async()=>{if(window.confirm("Remove?"))try{await API.mfg.bom.remove(item.id);await load();}catch(e){}}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12}}>🗑</button>}
+                </div>
+              ))}
+            </div>}
+          </div>}
+
+          {/* STEP 3: Log receipt */}
+          {allBomItems.length>0&&<div style={{...cardS,marginBottom:16,border:`1px solid ${T.green}40`}}>
+            <div style={{fontSize:13,fontWeight:800,color:T.green,marginBottom:12}}>Step 3 — Log Received Parts</div>
 
             {formErr&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:T.red}}>{formErr}</div>}
 
@@ -4808,11 +4910,6 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
               </select>
             </div>
 
-            {/* If no BOM items, prompt to add */}
-            {allBomItems.length===0&&<div style={{background:T.blueLow,border:`1px solid ${T.blue}30`,borderRadius:8,padding:"10px 12px",marginBottom:10,fontSize:12,color:T.blue}}>
-              No component parts set up yet. Add them below first.
-            </div>}
-
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
               <div><label style={lbl}>Qty Received *</label><input type="number" value={rQty} onChange={e=>setRQty(e.target.value)} placeholder="0" style={inp}/></div>
               <div><label style={lbl}>Date</label><input type="date" value={rDate} onChange={e=>setRDate(e.target.value)} style={inp}/></div>
@@ -4826,10 +4923,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
               style={{...primBtn,borderRadius:12,background:T.green,color:"#000",opacity:rQty&&selectedBomItem&&!saving?1:0.4}}>
               {saving?"Saving…":"✓ Log Receipt"}
             </button>
-          </div>
-
-          {/* Add new component part */}
-          {canAdmin&&<AddBomItemSection parts={parts} onSaved={load} job={job}/>}
+          </div>}
 
           {/* Running receipt list */}
           <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10,marginTop:4}}>Receipt History</div>
