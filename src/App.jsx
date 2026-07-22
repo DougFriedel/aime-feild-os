@@ -1462,7 +1462,7 @@ body{font-size:10pt;color:#000;}
 .fl{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;margin-bottom:2px;}
 .fv{font-size:10pt;font-weight:600;color:#111;}
 .section{margin-bottom:14px;}
-.section h2{font-size:9pt;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#1f3864;border-bottom:1.5px solid #1f3864;padding-bottom:5px;margin-bottom:8px;}
+.section h2{font-size:9pt;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#1f3864;border-bottom:1.5px solid #1f3864;padding-bottom:5px;margin-bottom:3px;}
 .desc-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:10pt;line-height:1.7;min-height:48px;}
 table{width:100%;border-collapse:collapse;margin-bottom:6px;font-size:9pt;}
 th{background:#1f3864;color:#fff;padding:5px 8px;text-align:left;font-size:8pt;}
@@ -6114,40 +6114,37 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved}){
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Packing Slip ${slipNo||""} — ${job.job_number}</title>
 <style>
-@page{size:letter portrait;margin:0.4in;}
-*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;font-size:9pt;}
+@page{size:letter portrait;margin:0.3in;}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;font-size:7.5pt;}
 body{color:#000;}
-.header{display:grid;grid-template-columns:200px 1fr auto auto;gap:0;border:1.5px solid #1f3864;margin-bottom:8px;}
-.logo-cell{padding:8px;border-right:1px solid #1f3864;display:flex;flex-direction:column;justify-content:center;}
-.logo-text{font-size:20pt;font-weight:900;color:#1f3864;letter-spacing:2px;}
-.logo-sub{font-size:7pt;color:#444;margin-top:2px;}
-.title-cell{background:#1f3864;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22pt;font-weight:300;letter-spacing:4px;padding:10px;}
-.slip-no-cell{border-left:1px solid #1f3864;padding:8px 12px;min-width:140px;}
-.ship-date-cell{border-left:1px solid #1f3864;padding:8px 12px;min-width:120px;}
-.field-label{font-size:7pt;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:4px;}
-.field-value{font-size:10pt;border-bottom:1px solid #000;min-height:16px;padding-bottom:2px;}
-.section-header{background:#1f3864;color:#fff;font-weight:700;font-size:8pt;padding:4px 8px;text-transform:uppercase;letter-spacing:0.5px;margin:8px 0 4px 0;}
+.header{display:grid;grid-template-columns:160px 1fr 130px 110px;gap:0;border:1.5px solid #1f3864;margin-bottom:4px;}
+.logo-cell{padding:5px 6px;border-right:1px solid #1f3864;display:flex;flex-direction:column;justify-content:center;}
+.logo-text{font-size:15pt;font-weight:900;color:#1f3864;letter-spacing:2px;}
+.logo-sub{font-size:6pt;color:#444;margin-top:1px;}
+.title-cell{background:#1f3864;color:#fff;display:flex;align-items:center;justify-content:center;font-size:17pt;font-weight:300;letter-spacing:3px;padding:6px;}
+.slip-no-cell{border-left:1px solid #1f3864;padding:5px 8px;}
+.ship-date-cell{border-left:1px solid #1f3864;padding:5px 8px;}
+.field-label{font-size:6pt;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:2px;}
+.field-value{font-size:8.5pt;border-bottom:1px solid #000;min-height:14px;padding-bottom:1px;}
+.section-header{background:#1f3864;color:#fff;font-weight:700;font-size:7pt;padding:2px 6px;text-transform:uppercase;letter-spacing:0.5px;margin:4px 0 2px 0;}
 table{width:100%;border-collapse:collapse;}
-th{background:#1f3864;color:#fff;padding:5px 6px;text-align:left;font-size:8pt;font-weight:700;}
-td{padding:5px 6px;border:1px solid #ccc;font-size:8.5pt;min-height:20px;}
-.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #ccc;}
-.info-row{display:grid;grid-template-columns:140px 1fr;border-bottom:1px solid #ccc;}
+th{background:#1f3864;color:#fff;padding:3px 4px;text-align:left;font-size:6.5pt;font-weight:700;}
+td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
+.info-row{display:grid;grid-template-columns:110px 1fr;border-bottom:1px solid #ccc;}
 .info-row:last-child{border-bottom:none;}
-.info-label{background:#f0f4ff;padding:5px 8px;font-weight:700;font-size:8pt;border-right:1px solid #ccc;}
-.info-value{padding:5px 8px;font-size:9pt;}
-.info-grid-right{display:grid;grid-template-columns:1fr 1fr;border-left:1px solid #ccc;}
-.ship-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #ccc;margin-bottom:4px;}
-.ship-row{border-bottom:1px solid #ccc;display:grid;grid-template-columns:120px 1fr;}
-.ship-label{background:#f0f4ff;padding:4px 8px;font-weight:700;font-size:7.5pt;border-right:1px solid #ccc;}
-.ship-value{padding:4px 8px;font-size:9pt;}
-.check-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;padding:4px;border:1px solid #ccc;}
-.check-item{font-size:8pt;display:flex;align-items:center;gap:4px;padding:2px;}
+.info-label{background:#f0f4ff;padding:3px 6px;font-weight:700;font-size:6.5pt;border-right:1px solid #ccc;}
+.info-value{padding:3px 6px;font-size:7.5pt;}
+.ship-row{border-bottom:1px solid #ccc;display:grid;grid-template-columns:100px 1fr;}
+.ship-row:last-child{border-bottom:none;}
+.ship-label{background:#f0f4ff;padding:2px 6px;font-weight:700;font-size:6.5pt;border-right:1px solid #ccc;}
+.ship-value{padding:2px 6px;font-size:7.5pt;}
+.check-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:2px;padding:3px;border:1px solid #ccc;}
+.check-item{font-size:7pt;display:flex;align-items:center;gap:3px;padding:1px;}
 .sig-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;border:1px solid #ccc;}
-.sig-cell{padding:8px;border-right:1px solid #ccc;}
+.sig-cell{padding:5px 6px;border-right:1px solid #ccc;}
 .sig-cell:last-child{border-right:none;}
-.sig-header{background:#1f3864;color:#fff;padding:4px 8px;font-size:8pt;font-weight:700;text-align:center;}
-.sig-line{border-bottom:1px solid #000;margin:16px 0 4px;min-height:30px;}
-.sig-sub{font-size:7.5pt;color:#555;}
+.sig-line{border-bottom:1px solid #000;margin:12px 0 3px;min-height:22px;}
+.sig-sub{font-size:6.5pt;color:#555;}
 @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
 </style></head><body>
 
@@ -6243,14 +6240,14 @@ td{padding:5px 6px;border:1px solid #ccc;font-size:8.5pt;min-height:20px;}
 
 <!-- SECTION 5: NOTES -->
 <div class="section-header">5. Notes / Exceptions</div>
-<div style="border:1px solid #ccc;min-height:50px;padding:8px;margin-bottom:4px;font-size:9pt;">${notes||"&nbsp;"}</div>
+<div style="border:1px solid #ccc;min-height:50px;padding:8px;margin-bottom:2px;font-size:7.5pt;">${notes||"&nbsp;"}</div>
 
 <!-- SECTION 6: SIGNATURES -->
 <div class="section-header">6. Release / Receipt</div>
 <div class="sig-grid">
   ${[["Packed / Prepared By",""],["QC Release",""],["Delivered By / Driver",""],["Received By / Customer",""]].map(([title])=>`
   <div class="sig-cell">
-    <div style="font-size:8pt;font-weight:700;color:#1f3864;margin-bottom:8px;">${title}</div>
+    <div style="font-size:7pt;font-weight:700;color:#1f3864;margin-bottom:4px;">${title}</div>
     <div class="sig-sub">Name / Signature:</div>
     <div class="sig-line"></div>
     <div class="sig-sub">Date / Time:</div>
@@ -6258,7 +6255,7 @@ td{padding:5px 6px;border:1px solid #ccc;font-size:8.5pt;min-height:20px;}
   </div>`).join("")}
 </div>
 
-<div style="text-align:center;margin-top:12px;font-size:7.5pt;color:#666;border-top:1px solid #eee;padding-top:6px;">
+<div style="text-align:center;margin-top:5px;font-size:6.5pt;color:#666;border-top:1px solid #eee;padding-top:3px;">
   Atlantic Industrial Mechanical &amp; Environmental | 5730 Pennington Ave, Baltimore, Maryland, 21226
 </div>
 
