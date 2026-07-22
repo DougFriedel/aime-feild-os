@@ -4580,6 +4580,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [rBy,setRBy]=useState(user.name);
   const [saving,setSaving]=useState(false);
   const [formErr,setFormErr]=useState("");
+  const [showPackingSlip,setShowPackingSlip]=useState(false);
   const [showNewPart,setShowNewPart]=useState(false);
   const [showAddComp,setShowAddComp]=useState(false);
   const [pf,setPf]=useState({part_number:"",description:"",drawing_number:"",qty_ordered:""});
@@ -4730,6 +4731,10 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const totalReadyToShip=parts.reduce((s,p)=>s+asmTotals(p.id).readyToShip,0);
   const totalShipped=parts.reduce((s,p)=>s+asmTotals(p.id).shipped,0);
   const reorderNeeded=allBomItems.filter(item=>inv(item).needsReorder);
+
+  if(showPackingSlip) return(
+    <PackingSlipScreen job={job} parts={parts} user={user} onBack={()=>setShowPackingSlip(false)} onSaved={()=>setShowPackingSlip(false)}/>
+  );
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -5007,7 +5012,10 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
               <div key={l} style={{...cardS,textAlign:"center"}}><div style={{fontSize:26,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>{l}</div></div>
             ))}
           </div>
-          <button onClick={()=>setShowShipForm(s=>!s)} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.blue}}>📤 Log Shipment</button>
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
+            <button onClick={()=>setShowShipForm(s=>!s)} style={{...primBtn,flex:2,borderRadius:12,background:T.blue}}>📤 Log Shipment</button>
+            <button onClick={()=>setShowPackingSlip(true)} style={{background:"#1f3864",color:"#fff",border:"none",borderRadius:12,padding:"12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",flex:1}}>📄 Packing Slip</button>
+          </div>
           {showShipForm&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.blue}40`}}>
             <div style={{fontSize:13,fontWeight:800,color:T.blue,marginBottom:12}}>Log Shipment</div>
             <div style={{marginBottom:10}}><label style={lbl}>Assembly *</label>
@@ -6066,6 +6074,311 @@ function ManufacturingDashboard({jobs,user,onSelectJob}){
         );
       })}
   </div>
+  );
+}
+
+
+/* ── PACKING SLIP SCREEN ─────────────────────────────────────── */
+function PackingSlipScreen({job,parts,user,onBack,onSaved}){
+  const [slipNo,setSlipNo]=useState("");
+  const [shipDate,setShipDate]=useState(today());
+  const [carrier,setCarrier]=useState("Vendor Truck");
+  const [truckTrailer,setTruckTrailer]=useState("");
+  const [bolTracking,setBolTracking]=useState("");
+  const [skidCount,setSkidCount]=useState("");
+  const [totalWeight,setTotalWeight]=useState("");
+  const [sealNo,setSealNo]=useState("");
+  const [sqrs,setSqrs]=useState("SQR03, SQR04, SQR06, SQR33, SQR35");
+  const [drawingRev,setDrawingRev]=useState("");
+  const [deliveryAppt,setDeliveryAppt]=useState("Call 24 hrs. in advance: (814) 539-6922 x299");
+  const [recvHours,setRecvHours]=useState("7:00 AM thru 3:00 PM ONLY");
+  const [notes,setNotes]=useState("");
+
+  // Line items - up to 6 rows
+  const blankLine={poLine:"",partNo:"",description:"",qtyOrdered:"",qtyShipped:"",qtyBackordered:"",pkgSkid:"",notes:""};
+  const [lines,setLines]=useState(()=>parts.map(p=>({...blankLine,partNo:p.part_number,description:p.description||"",qtyOrdered:String(p.qty_ordered||"")})).concat(Array(Math.max(0,6-parts.length)).fill(blankLine)));
+  const setLine=(i,k,v)=>setLines(ls=>ls.map((l,j)=>j===i?{...l,[k]:v}:l));
+
+  // Checkboxes
+  const [checks,setChecks]=useState({
+    packingSlip:false,shippingTicket:false,cofc:false,qcSheet:false,
+    ctqLog:false,bolTicket:false,yellowRibbon:false,whiteRibbon:false,
+    weatherProtect:false,damageProtect:false,noHold:false,qtyVerified:false,
+  });
+  const setCheck=(k)=>setChecks(c=>({...c,[k]:!c[k]}));
+
+  function printSlip(){
+    const CHECKMARK="✓";
+    const CB=(checked)=>checked?`<span style="font-size:14px">☑</span>`:`<span style="font-size:14px">☐</span>`;
+
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Packing Slip ${slipNo||""} — ${job.job_number}</title>
+<style>
+@page{size:letter portrait;margin:0.4in;}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;font-size:9pt;}
+body{color:#000;}
+.header{display:grid;grid-template-columns:200px 1fr auto auto;gap:0;border:1.5px solid #1f3864;margin-bottom:8px;}
+.logo-cell{padding:8px;border-right:1px solid #1f3864;display:flex;flex-direction:column;justify-content:center;}
+.logo-text{font-size:20pt;font-weight:900;color:#1f3864;letter-spacing:2px;}
+.logo-sub{font-size:7pt;color:#444;margin-top:2px;}
+.title-cell{background:#1f3864;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22pt;font-weight:300;letter-spacing:4px;padding:10px;}
+.slip-no-cell{border-left:1px solid #1f3864;padding:8px 12px;min-width:140px;}
+.ship-date-cell{border-left:1px solid #1f3864;padding:8px 12px;min-width:120px;}
+.field-label{font-size:7pt;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:4px;}
+.field-value{font-size:10pt;border-bottom:1px solid #000;min-height:16px;padding-bottom:2px;}
+.section-header{background:#1f3864;color:#fff;font-weight:700;font-size:8pt;padding:4px 8px;text-transform:uppercase;letter-spacing:0.5px;margin:8px 0 4px 0;}
+table{width:100%;border-collapse:collapse;}
+th{background:#1f3864;color:#fff;padding:5px 6px;text-align:left;font-size:8pt;font-weight:700;}
+td{padding:5px 6px;border:1px solid #ccc;font-size:8.5pt;min-height:20px;}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #ccc;}
+.info-row{display:grid;grid-template-columns:140px 1fr;border-bottom:1px solid #ccc;}
+.info-row:last-child{border-bottom:none;}
+.info-label{background:#f0f4ff;padding:5px 8px;font-weight:700;font-size:8pt;border-right:1px solid #ccc;}
+.info-value{padding:5px 8px;font-size:9pt;}
+.info-grid-right{display:grid;grid-template-columns:1fr 1fr;border-left:1px solid #ccc;}
+.ship-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #ccc;margin-bottom:4px;}
+.ship-row{border-bottom:1px solid #ccc;display:grid;grid-template-columns:120px 1fr;}
+.ship-label{background:#f0f4ff;padding:4px 8px;font-weight:700;font-size:7.5pt;border-right:1px solid #ccc;}
+.ship-value{padding:4px 8px;font-size:9pt;}
+.check-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;padding:4px;border:1px solid #ccc;}
+.check-item{font-size:8pt;display:flex;align-items:center;gap:4px;padding:2px;}
+.sig-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;border:1px solid #ccc;}
+.sig-cell{padding:8px;border-right:1px solid #ccc;}
+.sig-cell:last-child{border-right:none;}
+.sig-header{background:#1f3864;color:#fff;padding:4px 8px;font-size:8pt;font-weight:700;text-align:center;}
+.sig-line{border-bottom:1px solid #000;margin:16px 0 4px;min-height:30px;}
+.sig-sub{font-size:7.5pt;color:#555;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo-cell">
+    <div class="logo-text">AIME</div>
+    <div class="logo-sub">Atlantic Industrial Mechanical &amp; Environmental</div>
+  </div>
+  <div class="title-cell">PACKING SLIP</div>
+  <div class="slip-no-cell">
+    <div class="field-label">Packing Slip No.</div>
+    <div class="field-value">${slipNo||"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"}</div>
+  </div>
+  <div class="ship-date-cell">
+    <div class="field-label">Ship Date</div>
+    <div class="field-value">${shipDate||"____/____/______"}</div>
+  </div>
+</div>
+
+<!-- SECTION 1: SHIP TO / ORDER INFO -->
+<div class="section-header">1. Ship To / Order Information</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #ccc;margin-bottom:4px;">
+  <div style="border-right:1px solid #ccc;">
+    ${[["From","AIME / Atlantic Welders Inc.<br/>5730 Pennington Ave, Baltimore, MD 21226"],
+       ["Customer / Project",job.customer||"JWF Industries"],
+       ["Buyer / Contact","JWFI Purchasing"],
+       ["Ship Via",carrier||"Vendor Truck"]].map(([l,v])=>`
+    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v}</div></div>`).join("")}
+  </div>
+  <div>
+    ${[["Ship To","JWFI<br/>84 Iron Street - Dock 2 Johnstown, PA 15906"],
+       ["Customer PO #",job.po_number||"222577-00"],
+       ["Delivery Appointment",deliveryAppt],
+       ["Receiving Hours",recvHours]].map(([l,v])=>`
+    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v}</div></div>`).join("")}
+  </div>
+</div>
+
+<!-- SECTION 2: SHIPMENT DETAILS -->
+<div class="section-header">2. Shipment Details</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;border:1px solid #ccc;margin-bottom:4px;">
+  ${[["Part Number",parts.map(p=>p.part_number).join(", ")||"1651"],
+     ["Description",parts.map(p=>p.description).filter(Boolean).join(", ")||""],
+     ["Drawing Rev.",drawingRev],
+     ["Operation","OSP Fit / Weld"],
+     ["UOM","EA"],
+     ["SQRs",sqrs],
+     ["Carrier / Driver",carrier],
+     ["Truck / Trailer #",truckTrailer],
+     ["BOL / Tracking #",bolTracking],
+     ["Skid / Package Count",skidCount],
+     ["Total Weight",totalWeight?(totalWeight+" lbs"):""],
+     ["Seal #",sealNo]].map(([l,v])=>`
+  <div class="ship-row"><div class="ship-label">${l}</div><div class="ship-value">${v||"&nbsp;"}</div></div>`).join("")}
+</div>
+
+<!-- SECTION 3: PARTS PACKED/SHIPPED -->
+<div class="section-header">3. Parts Packed / Shipped</div>
+<table style="margin-bottom:4px;">
+  <thead><tr>
+    <th style="width:30px">Line</th>
+    <th>PO Line / WO #</th><th>Part No.</th><th>Description</th>
+    <th style="text-align:center">Qty Ordered</th>
+    <th style="text-align:center">Qty Shipped</th>
+    <th style="text-align:center">Qty Backordered</th>
+    <th>Package / Skid #</th><th>Notes</th>
+  </tr></thead>
+  <tbody>
+    ${lines.slice(0,6).map((l,i)=>`
+    <tr>
+      <td style="text-align:center">${i+1}</td>
+      <td>${l.poLine||"&nbsp;"}</td>
+      <td>${l.partNo||"&nbsp;"}</td>
+      <td>${l.description||"&nbsp;"}</td>
+      <td style="text-align:center">${l.qtyOrdered||"&nbsp;"}</td>
+      <td style="text-align:center">${l.qtyShipped||"&nbsp;"}</td>
+      <td style="text-align:center">${l.qtyBackordered||"&nbsp;"}</td>
+      <td>${l.pkgSkid||"&nbsp;"}</td>
+      <td>${l.notes||"&nbsp;"}</td>
+    </tr>`).join("")}
+  </tbody>
+</table>
+
+<!-- SECTION 4: DOCUMENTS -->
+<div class="section-header">4. Documents / Checks Included</div>
+<div class="check-grid" style="margin-bottom:4px;">
+  ${[["packingSlip","Packing slip attached"],["shippingTicket","Shipping ticket attached"],["cofc","CofC included"],["qcSheet","QC inspection sheet included"],
+     ["ctqLog","CTQ / dimensional log included"],["bolTicket","BOL / delivery ticket included"],["yellowRibbon","Yellow ribbon attached"],["whiteRibbon","White ribbon attached"],
+     ["weatherProtect","Parts protected from weather"],["damageProtect","Parts protected from damage"],["noHold","No HOLD material included"],["qtyVerified","Qty verified before loading"]
+  ].map(([k,label])=>`<div class="check-item">${CB(checks[k])} ${label}</div>`).join("")}
+</div>
+
+<!-- SECTION 5: NOTES -->
+<div class="section-header">5. Notes / Exceptions</div>
+<div style="border:1px solid #ccc;min-height:50px;padding:8px;margin-bottom:4px;font-size:9pt;">${notes||"&nbsp;"}</div>
+
+<!-- SECTION 6: SIGNATURES -->
+<div class="section-header">6. Release / Receipt</div>
+<div class="sig-grid">
+  ${[["Packed / Prepared By",""],["QC Release",""],["Delivered By / Driver",""],["Received By / Customer",""]].map(([title])=>`
+  <div class="sig-cell">
+    <div style="font-size:8pt;font-weight:700;color:#1f3864;margin-bottom:8px;">${title}</div>
+    <div class="sig-sub">Name / Signature:</div>
+    <div class="sig-line"></div>
+    <div class="sig-sub">Date / Time:</div>
+    <div class="sig-line" style="margin-top:8px;"></div>
+  </div>`).join("")}
+</div>
+
+<div style="text-align:center;margin-top:12px;font-size:7.5pt;color:#666;border-top:1px solid #eee;padding-top:6px;">
+  Atlantic Industrial Mechanical &amp; Environmental | 5730 Pennington Ave, Baltimore, Maryland, 21226
+</div>
+
+</body></html>`;
+
+    const win=window.open("","_blank","width=950,height=800");
+    if(!win){alert("Popup blocked — please allow popups.");return;}
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(()=>win.print(),600);
+  }
+
+  const CB_UI=({checked,onChange,label})=>(
+    <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:11,color:T.sub,padding:"4px 0"}}>
+      <div onClick={onChange} style={{width:16,height:16,border:`2px solid ${checked?T.blue:T.border}`,borderRadius:3,background:checked?T.blue:T.surface,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}}>
+        {checked&&<span style={{color:"#fff",fontSize:10,fontWeight:900}}>✓</span>}
+      </div>
+      {label}
+    </label>
+  );
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",display:"block",marginBottom:4}}>← Back</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:15,fontWeight:900,color:T.text}}>📄 Packing Slip</div>
+          <button onClick={printSlip} style={{background:"#1f3864",color:"#fff",border:"none",borderRadius:10,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            🖨️ Print / Save PDF
+          </button>
+        </div>
+      </div>
+
+      <div style={{padding:"14px 16px 100px"}}>
+        {/* Header fields */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.blue,marginBottom:12}}>📋 Slip Info</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><label style={lbl}>Packing Slip #</label><input value={slipNo} onChange={e=>setSlipNo(e.target.value)} placeholder="Slip #" style={inp}/></div>
+            <div><label style={lbl}>Ship Date</label><input type="date" value={shipDate} onChange={e=>setShipDate(e.target.value)} style={inp}/></div>
+          </div>
+        </div>
+
+        {/* Auto-filled from job */}
+        <div style={{...cardS,marginBottom:12,background:T.blueLow,border:`1px solid ${T.blue}30`}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.blue,marginBottom:8}}>📦 Auto-filled from Job</div>
+          {[["Customer / Project",job.customer||"JWF Industries"],["Customer PO #",job.po_number||""],["Part Number",parts.map(p=>p.part_number).join(", ")],["Description",parts.map(p=>p.description).filter(Boolean).join(", ")]].map(([l,v])=>(
+            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
+              <span style={{color:T.muted,fontWeight:700}}>{l}</span>
+              <span style={{color:T.text}}>{v||"—"}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Shipment details */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:12}}>🚛 Shipment Details</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Carrier / Driver</label><input value={carrier} onChange={e=>setCarrier(e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>Truck / Trailer #</label><input value={truckTrailer} onChange={e=>setTruckTrailer(e.target.value)} placeholder="Truck/Trailer #" style={inp}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>BOL / Tracking #</label><input value={bolTracking} onChange={e=>setBolTracking(e.target.value)} placeholder="BOL #" style={inp}/></div>
+            <div><label style={lbl}>Skid / Package Count</label><input value={skidCount} onChange={e=>setSkidCount(e.target.value)} placeholder="e.g. 2 skids" style={inp}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><label style={lbl}>Total Weight (lbs)</label><input type="number" value={totalWeight} onChange={e=>setTotalWeight(e.target.value)} placeholder="lbs" style={inp}/></div>
+            <div><label style={lbl}>Seal #</label><input value={sealNo} onChange={e=>setSealNo(e.target.value)} placeholder="Seal #" style={inp}/></div>
+          </div>
+        </div>
+
+        {/* Line items */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:12}}>📦 Parts Packed / Shipped</div>
+          {lines.slice(0,6).map((line,i)=>(
+            <div key={i} style={{marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${T.border}`}}>
+              <div style={{fontSize:10,fontWeight:700,color:T.muted,marginBottom:6}}>Line {i+1}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:6}}>
+                <div><label style={lbl}>Part No.</label><input value={line.partNo} onChange={e=>setLine(i,"partNo",e.target.value)} placeholder="Part #" style={inp}/></div>
+                <div><label style={lbl}>Description</label><input value={line.description} onChange={e=>setLine(i,"description",e.target.value)} placeholder="Description" style={inp}/></div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}}>
+                <div><label style={lbl}>PO/WO #</label><input value={line.poLine} onChange={e=>setLine(i,"poLine",e.target.value)} style={inp}/></div>
+                <div><label style={lbl}>Qty Ordered</label><input type="number" value={line.qtyOrdered} onChange={e=>setLine(i,"qtyOrdered",e.target.value)} style={inp}/></div>
+                <div><label style={lbl}>Qty Shipped</label><input type="number" value={line.qtyShipped} onChange={e=>setLine(i,"qtyShipped",e.target.value)} style={inp}/></div>
+                <div><label style={lbl}>Pkg / Skid #</label><input value={line.pkgSkid} onChange={e=>setLine(i,"pkgSkid",e.target.value)} style={inp}/></div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Checkboxes */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10}}>✅ Documents / Checks Included</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+            {[["packingSlip","Packing slip attached"],["shippingTicket","Shipping ticket attached"],["cofc","CofC included"],["qcSheet","QC inspection sheet included"],
+              ["ctqLog","CTQ / dimensional log included"],["bolTicket","BOL / delivery ticket included"],["yellowRibbon","🟡 Yellow ribbon attached"],["whiteRibbon","⚪ White ribbon attached"],
+              ["weatherProtect","Parts protected from weather"],["damageProtect","Parts protected from damage"],["noHold","No HOLD material included"],["qtyVerified","Qty verified before loading"]
+            ].map(([k,label])=>(
+              <CB_UI key={k} checked={checks[k]} onChange={()=>setCheck(k)} label={label}/>
+            ))}
+          </div>
+        </div>
+
+        {/* Notes */}
+        <div style={{...cardS,marginBottom:16}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:8}}>📝 Notes / Exceptions</div>
+          <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={3} placeholder="Any notes or exceptions..." style={{...inp,resize:"vertical"}}/>
+        </div>
+
+        {/* Print button */}
+        <button onClick={printSlip} style={{...primBtn,borderRadius:14,background:"#1f3864",fontSize:15}}>
+          🖨️ Print Packing Slip
+        </button>
+        <div style={{fontSize:11,color:T.muted,textAlign:"center",marginTop:8}}>
+          Print → Sign physically → Upload signed copy to job Docs tab
+        </div>
+      </div>
+    </div>
   );
 }
 
