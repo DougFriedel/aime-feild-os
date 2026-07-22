@@ -4580,6 +4580,14 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [rBy,setRBy]=useState(user.name);
   const [saving,setSaving]=useState(false);
   const [formErr,setFormErr]=useState("");
+  const [showNewPart,setShowNewPart]=useState(false);
+  const [showAddComp,setShowAddComp]=useState(false);
+  const [pf,setPf]=useState({part_number:"",description:"",drawing_number:"",qty_ordered:""});
+  const [newCompPartId,setNewCompPartId]=useState("");
+  const [newCompNum,setNewCompNum]=useState("");
+  const [newCompDesc,setNewCompDesc]=useState("");
+  const [newCompQpa,setNewCompQpa]=useState("1");
+  const [newCompReorder,setNewCompReorder]=useState("");
 
   // Assembly log form
   const [showAsmForm,setShowAsmForm]=useState(false);
