@@ -113,6 +113,7 @@ const API={
     stageLog:{forPart:(pid)=>sb(`/mfg_stage_log?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_stage_log',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_stage_log?id=eq.${id}`,{method:'DELETE'})},
     assemblyLog:{forPart:(pid)=>sb(`/mfg_assembly_log?part_id=eq.${pid}&order=completion_date.desc`),forJob:(jid)=>sb(`/mfg_assembly_log?job_id=eq.${jid}&order=completion_date.desc`),create:(d)=>sb('/mfg_assembly_log',{method:'POST',body:d,prefer:'return=representation'})},
     shippingLog:{forPart:(pid)=>sb(`/mfg_shipping_log?part_id=eq.${pid}&order=ship_date.desc`),forJob:(jid)=>sb(`/mfg_shipping_log?job_id=eq.${jid}&order=ship_date.desc`),create:(d)=>sb('/mfg_shipping_log',{method:'POST',body:d,prefer:'return=representation'})},
+    packingSlips:{forJob:(jid)=>sb(`/mfg_packing_slips?job_id=eq.${jid}&order=created_at.desc`),create:(d)=>sb('/mfg_packing_slips',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'DELETE'})},
     labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
     ncr:{forJob:(jid)=>sb(`/mfg_ncr?job_id=eq.${jid}&order=created_at.desc`),forPart:(pid)=>sb(`/mfg_ncr?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_ncr',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_ncr?id=eq.${id}`,{method:'PATCH',body:d})},
   },
@@ -4581,6 +4582,8 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [saving,setSaving]=useState(false);
   const [formErr,setFormErr]=useState("");
   const [showPackingSlip,setShowPackingSlip]=useState(false);
+  const [editingSlip,setEditingSlip]=useState(null);
+  const [packingSlips,setPackingSlips]=useState([]);
   const [showNewPart,setShowNewPart]=useState(false);
   const [showAddComp,setShowAddComp]=useState(false);
   const [pf,setPf]=useState({part_number:"",description:"",drawing_number:"",qty_ordered:""});
@@ -4618,10 +4621,12 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
       }));
       setBoms(bomMap);
       setReceipts(allReceipts.sort((a,b)=>(b.received_date||"").localeCompare(a.received_date||"")));
-      const [aLog,sLog]=await Promise.all([
+      const [aLog,sLog,pSlips]=await Promise.all([
         API.mfg.assemblyLog.forJob(job.id).catch(()=>[]),
         API.mfg.shippingLog.forJob(job.id).catch(()=>[]),
+        API.mfg.packingSlips.forJob(job.id).catch(()=>[]),
       ]);
+      setPackingSlips(Array.isArray(pSlips)?pSlips:[]);
       setAssemblyLogs(Array.isArray(aLog)?aLog:[]);
       setShippingLogs(Array.isArray(sLog)?sLog:[]);
     }catch(e){console.error(e);}
@@ -4733,7 +4738,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const reorderNeeded=allBomItems.filter(item=>inv(item).needsReorder);
 
   if(showPackingSlip) return(
-    <PackingSlipScreen job={job} parts={parts} user={user} onBack={()=>setShowPackingSlip(false)} onSaved={()=>setShowPackingSlip(false)}/>
+    <PackingSlipScreen job={job} parts={parts} user={user} existingSlip={editingSlip} onBack={()=>{setShowPackingSlip(false);setEditingSlip(null);}} onSaved={async()=>{await load();}}/>
   );
 
   return(
@@ -5048,6 +5053,27 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
             </div>);
           })}
           {shippingLogs.length===0&&<div style={{textAlign:"center",padding:30,color:T.muted,fontSize:12}}>No shipments logged yet.</div>}
+
+          {/* Saved Packing Slips */}
+          {packingSlips.length>0&&<>
+            <div style={{fontSize:12,fontWeight:800,color:T.text,marginTop:16,marginBottom:8}}>📄 Saved Packing Slips</div>
+            {packingSlips.map(slip=>(
+              <div key={slip.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid #1f3864`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:800,color:"#60A5FA"}}>Packing Slip {slip.slip_number||"(no #)"}</div>
+                  <div style={{fontSize:11,color:T.muted}}>{slip.ship_date||""}{slip.created_by?" · "+slip.created_by:""} · Saved {new Date(slip.created_at).toLocaleDateString()}</div>
+                </div>
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>{setEditingSlip(slip);setShowPackingSlip(true);}}
+                    style={{background:"#1f3864",color:"#fff",border:"none",borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                    Open
+                  </button>
+                  {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete this packing slip?"))try{await API.mfg.packingSlips.remove(slip.id);await load();}catch(e){}}}
+                    style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:8,padding:"5px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>}
+                </div>
+              </div>
+            ))}
+          </>}
         </>}
       </div>
     </div>
@@ -6079,33 +6105,56 @@ function ManufacturingDashboard({jobs,user,onSelectJob}){
 
 
 /* ── PACKING SLIP SCREEN ─────────────────────────────────────── */
-function PackingSlipScreen({job,parts,user,onBack,onSaved}){
-  const [slipNo,setSlipNo]=useState("");
-  const [shipDate,setShipDate]=useState(today());
-  const [carrier,setCarrier]=useState("Vendor Truck");
-  const [truckTrailer,setTruckTrailer]=useState("");
-  const [bolTracking,setBolTracking]=useState("");
-  const [skidCount,setSkidCount]=useState("");
-  const [totalWeight,setTotalWeight]=useState("");
+function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
+  // Load from existing slip if editing
+  const [slipId,setSlipId]=useState(existingSlip?.id||null);
+  const [slipNo,setSlipNo]=useState(existingSlip?.slip_number||existingSlip?.data?.slipNo||"");
+  const [shipDate,setShipDate]=useState(existingSlip?.ship_date||existingSlip?.data?.shipDate||today());
+  const [carrier,setCarrier]=useState(existingSlip?.data?.carrier||"Vendor Truck");
+  const [truckTrailer,setTruckTrailer]=useState(existingSlip?.data?.truckTrailer||"");
+  const [bolTracking,setBolTracking]=useState(existingSlip?.data?.bolTracking||"");
+  const [skidCount,setSkidCount]=useState(existingSlip?.data?.skidCount||"");
+  const [totalWeight,setTotalWeight]=useState(existingSlip?.data?.totalWeight||"");
   const [sealNo,setSealNo]=useState("");
   const [sqrs,setSqrs]=useState("SQR03, SQR04, SQR06, SQR33, SQR35");
   const [drawingRev,setDrawingRev]=useState("");
   const [deliveryAppt,setDeliveryAppt]=useState("Call 24 hrs. in advance: (814) 539-6922 x299");
   const [recvHours,setRecvHours]=useState("7:00 AM thru 3:00 PM ONLY");
-  const [notes,setNotes]=useState("");
+  const [notes,setNotes]=useState(existingSlip?.data?.notes||"");
 
   // Line items - up to 6 rows
   const blankLine={poLine:"",partNo:"",description:"",qtyOrdered:"",qtyShipped:"",qtyBackordered:"",pkgSkid:"",notes:""};
-  const [lines,setLines]=useState(()=>parts.map(p=>({...blankLine,partNo:p.part_number,description:p.description||"",qtyOrdered:String(p.qty_ordered||"")})).concat(Array(Math.max(0,6-parts.length)).fill(blankLine)));
+  const [lines,setLines]=useState(()=>existingSlip?.data?.lines||parts.map(p=>({...blankLine,partNo:p.part_number,description:p.description||"",qtyOrdered:String(p.qty_ordered||"")})).concat(Array(Math.max(0,6-parts.length)).fill(blankLine)));
   const setLine=(i,k,v)=>setLines(ls=>ls.map((l,j)=>j===i?{...l,[k]:v}:l));
 
   // Checkboxes
-  const [checks,setChecks]=useState({
+  const [checks,setChecks]=useState(existingSlip?.data?.checks||{
     packingSlip:false,shippingTicket:false,cofc:false,qcSheet:false,
     ctqLog:false,bolTicket:false,yellowRibbon:false,whiteRibbon:false,
     weatherProtect:false,damageProtect:false,noHold:false,qtyVerified:false,
   });
   const setCheck=(k)=>setChecks(c=>({...c,[k]:!c[k]}));
+  const [saving,setSaving]=useState(false);
+  const [saved,setSaved]=useState(!!existingSlip);
+  const [saveMsg,setSaveMsg]=useState("");
+
+  async function saveSlip(){
+    setSaving(true);setSaveMsg("");
+    const data={slipNo,shipDate,carrier,truckTrailer,bolTracking,skidCount,totalWeight,sealNo,sqrs,drawingRev,deliveryAppt,recvHours,notes,checks,lines};
+    try{
+      if(slipId){
+        await API.mfg.packingSlips.update(slipId,{slip_number:slipNo,ship_date:shipDate||null,data,updated_at:new Date().toISOString()});
+      }else{
+        const r=await API.mfg.packingSlips.create({job_id:job.id,slip_number:slipNo,ship_date:shipDate||null,data,created_by:user.name});
+        const newId=Array.isArray(r)?r[0]?.id:r?.id;
+        if(newId)setSlipId(newId);
+      }
+      setSaved(true);setSaveMsg("✓ Saved");
+      setTimeout(()=>setSaveMsg(""),3000);
+      onSaved&&onSaved();
+    }catch(e){setSaveMsg("Error: "+e.message);}
+    setSaving(false);
+  }
 
   function printSlip(){
     const CHECKMARK="✓";
@@ -6284,9 +6333,16 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",display:"block",marginBottom:4}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontSize:15,fontWeight:900,color:T.text}}>📄 Packing Slip</div>
-          <button onClick={printSlip} style={{background:"#1f3864",color:"#fff",border:"none",borderRadius:10,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-            🖨️ Print / Save PDF
-          </button>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {saveMsg&&<span style={{fontSize:11,color:saveMsg.startsWith("✓")?T.green:T.red,fontWeight:700}}>{saveMsg}</span>}
+            <button onClick={saveSlip} disabled={saving}
+              style={{background:saved?T.green:T.orange,color:"#000",border:"none",borderRadius:10,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
+              {saving?"Saving…":saved?"✓ Saved":"💾 Save"}
+            </button>
+            <button onClick={printSlip} style={{background:"#1f3864",color:"#fff",border:"none",borderRadius:10,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              🖨️ Print
+            </button>
+          </div>
         </div>
       </div>
 
@@ -6368,11 +6424,16 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
         </div>
 
         {/* Print button */}
-        <button onClick={printSlip} style={{...primBtn,borderRadius:14,background:"#1f3864",fontSize:15}}>
-          🖨️ Print Packing Slip
-        </button>
-        <div style={{fontSize:11,color:T.muted,textAlign:"center",marginTop:8}}>
-          Print → Sign physically → Upload signed copy to job Docs tab
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
+          <button onClick={saveSlip} disabled={saving} style={{...primBtn,borderRadius:14,background:saved?T.green:T.orange,color:"#000",opacity:saving?0.6:1,fontSize:14}}>
+            {saving?"Saving…":saved?"✓ Saved":"💾 Save Slip"}
+          </button>
+          <button onClick={printSlip} style={{...primBtn,borderRadius:14,background:"#1f3864",fontSize:14}}>
+            🖨️ Print
+          </button>
+        </div>
+        <div style={{fontSize:11,color:T.muted,textAlign:"center"}}>
+          Save to reference later · Print to sign · Upload signed copy to Docs
         </div>
       </div>
     </div>
