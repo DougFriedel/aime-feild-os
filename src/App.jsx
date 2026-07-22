@@ -4784,7 +4784,16 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           </div>
 
           {/* Parts in stock — one card per component */}
-          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10}}>Parts in Stock</div>
+          {/* Assembly parts with delete */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontSize:12,fontWeight:800,color:T.text}}>Parts in Stock</div>
+            {canAdmin&&parts.map(p=>(
+              <div key={p.id} style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:11,color:T.purple,fontWeight:700}}>{p.part_number}</span>
+                <button onClick={()=>deletePart(p.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"2px 8px",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>🗑 Delete Job Part</button>
+              </div>
+            ))}
+          </div>
           {allBomItems.length===0&&<div style={{...cardS,textAlign:"center",padding:30,color:T.muted}}>
             <div style={{fontSize:32,marginBottom:8}}>📦</div>
             <div style={{fontWeight:700,color:T.sub,marginBottom:4}}>No component parts added yet</div>
@@ -4802,7 +4811,8 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
                     <div style={{fontSize:12,color:T.sub}}>{item.material}</div>
                     <div style={{fontSize:10,color:T.muted,marginTop:2}}>{i.qpa}× per assembly · Reorder at {i.reorderLevel||"—"}</div>
                   </div>
-                  <div style={{textAlign:"right"}}>
+                  <div style={{textAlign:"right",display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+                    {canAdmin&&<button onClick={async e=>{e.stopPropagation();if(window.confirm("Remove "+item.component_part_number+" from BOM?"))try{await API.mfg.bom.remove(item.id);await load();}catch(err){}}} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"2px 8px",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>🗑 Remove</button>}
                     <div style={{fontSize:28,fontWeight:900,color:i.needsReorder?T.red:i.onHand<=0?T.yellow:T.green,lineHeight:1}}>{i.onHand}</div>
                     <div style={{fontSize:10,color:T.muted,marginTop:2}}>on hand</div>
                     {i.needsReorder&&<div style={{background:"#7c2d12",color:"#fca5a5",borderRadius:6,padding:"2px 8px",fontSize:9,fontWeight:800,marginTop:4}}>🔴 REORDER</div>}
@@ -4828,9 +4838,9 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           <div style={{...cardS,marginBottom:12,border:`1px solid ${T.purple}40`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <div style={{fontSize:13,fontWeight:800,color:T.purple}}>Step 1 — Assembly Part #</div>
+                <div style={{fontSize:13,fontWeight:800,color:T.purple}}>Step 1 — What are you BUILDING?</div>
                 <div style={{fontSize:11,color:T.muted,marginTop:2}}>
-                  {parts.length===0?"Create your assembly first (e.g. 1651 — Boom Pivot)":parts.map(p=>p.part_number+(p.description?" – "+p.description:"")).join(", ")}
+                  {parts.length===0?"Enter the finished product you're manufacturing (e.g. 1651 — Boom Pivot)":parts.map(p=>p.part_number+(p.description?" – "+p.description:"")).join(", ")}
                 </div>
               </div>
               {canAdmin&&<button onClick={()=>setShowNewPart(s=>!s)}
@@ -4840,7 +4850,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
             </div>
             {showNewPart&&<div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-                <div><label style={lbl}>Assembly Part # *</label><input value={pf.part_number} onChange={e=>setPf(x=>({...x,part_number:e.target.value}))} placeholder="e.g. 1651" style={inp} autoFocus/></div>
+                <div><label style={lbl}>Finished Product Part # *</label><input value={pf.part_number} onChange={e=>setPf(x=>({...x,part_number:e.target.value}))} placeholder="e.g. 1651 (your part #)" style={inp} autoFocus/></div>
                 <div><label style={lbl}>Description</label><input value={pf.description} onChange={e=>setPf(x=>({...x,description:e.target.value}))} placeholder="e.g. Boom Pivot" style={inp}/></div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
@@ -4849,7 +4859,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
               </div>
               <button onClick={createPart} disabled={!pf.part_number.trim()||saving}
                 style={{...primBtn,borderRadius:12,background:T.purple,opacity:pf.part_number.trim()&&!saving?1:0.5}}>
-                {saving?"Creating…":"Create Assembly"}
+                {saving?"Creating…":"Create Finished Part"}
               </button>
             </div>}
           </div>
@@ -4858,9 +4868,9 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           {parts.length>0&&<div style={{...cardS,marginBottom:12,border:`1px solid ${T.orange}40`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <div style={{fontSize:13,fontWeight:800,color:T.orange}}>Step 2 — Component Parts</div>
+                <div style={{fontSize:13,fontWeight:800,color:T.orange}}>Step 2 — What parts COME IN from the customer?</div>
                 <div style={{fontSize:11,color:T.muted,marginTop:2}}>
-                  {allBomItems.length===0?"Add the customer part numbers that make up this assembly":""+allBomItems.length+" component part"+(allBomItems.length!==1?"s":"")+" configured"}
+                  {allBomItems.length===0?"These are the JLG/customer part #s that arrive as raw materials (e.g. 3572922 Side Pieces)":""+allBomItems.length+" component part"+(allBomItems.length!==1?"s":"")+" configured"}
                 </div>
               </div>
               {canAdmin&&<button onClick={()=>setShowAddComp(s=>!s)}
@@ -4876,7 +4886,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
                 </select>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-                <div><label style={lbl}>Customer Part # *</label><input value={newCompNum} onChange={e=>setNewCompNum(e.target.value)} placeholder="e.g. 3572922" style={inp}/></div>
+                <div><label style={lbl}>Customer (JLG) Part # *</label><input value={newCompNum} onChange={e=>setNewCompNum(e.target.value)} placeholder="e.g. 3572922" style={inp}/></div>
                 <div><label style={lbl}>Description *</label><input value={newCompDesc} onChange={e=>setNewCompDesc(e.target.value)} placeholder="e.g. Side Pieces" style={inp}/></div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
@@ -4885,7 +4895,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
               </div>
               <button onClick={addCompPart} disabled={!newCompNum.trim()||!newCompDesc.trim()||!newCompPartId||saving}
                 style={{...primBtn,borderRadius:12,background:T.orange,color:"#000",opacity:newCompNum.trim()&&newCompDesc.trim()&&newCompPartId&&!saving?1:0.5}}>
-                {saving?"Adding…":"Add Component Part"}
+                {saving?"Adding…":"Add Incoming Part"}
               </button>
             </div>}
             {/* List current components */}
@@ -4901,7 +4911,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
           {/* STEP 3: Log receipt */}
           {allBomItems.length>0&&<div style={{...cardS,marginBottom:16,border:`1px solid ${T.green}40`}}>
-            <div style={{fontSize:13,fontWeight:800,color:T.green,marginBottom:12}}>Step 3 — Log Received Parts</div>
+            <div style={{fontSize:13,fontWeight:800,color:T.green,marginBottom:12}}>Step 3 — Log Parts Received from Customer</div>
 
             {formErr&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:T.red}}>{formErr}</div>}
 
@@ -5064,14 +5074,14 @@ function AddBomItemSection({parts,onSaved,job}){
       </button>
       {show&&<div style={{...cardS,border:`1px solid ${T.purple}40`}}>
         <div style={{fontSize:12,fontWeight:800,color:T.purple,marginBottom:12}}>Add Component Part to Assembly</div>
-        <div style={{marginBottom:10}}><label style={lbl}>Assembly Part # *</label>
+        <div style={{marginBottom:10}}><label style={lbl}>Finished Product Part # *</label>
           <select value={partId} onChange={e=>setPartId(e.target.value)} style={inpSel}>
             <option value="">— Select assembly —</option>
             {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}{p.description?" — "+p.description:""}</option>)}
           </select>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-          <div><label style={lbl}>Customer Part # *</label><input value={compNum} onChange={e=>setCompNum(e.target.value)} placeholder="e.g. 3572922" style={inp}/></div>
+          <div><label style={lbl}>Customer (JLG) Part # *</label><input value={compNum} onChange={e=>setCompNum(e.target.value)} placeholder="e.g. 3572922" style={inp}/></div>
           <div><label style={lbl}>Description *</label><input value={desc} onChange={e=>setDesc(e.target.value)} placeholder="e.g. Side Pieces" style={inp}/></div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
@@ -5079,7 +5089,7 @@ function AddBomItemSection({parts,onSaved,job}){
           <div><label style={lbl}>Reorder Level</label><input type="number" value={reorder} onChange={e=>setReorder(e.target.value)} placeholder="e.g. 50" style={inp}/></div>
         </div>
         <button onClick={save} disabled={!compNum.trim()||!desc.trim()||!partId||saving} style={{...primBtn,borderRadius:12,background:T.purple,opacity:compNum.trim()&&desc.trim()&&partId&&!saving?1:0.5}}>
-          {saving?"Adding…":"Add Component Part"}
+          {saving?"Adding…":"Add Incoming Part"}
         </button>
       </div>}
     </div>
@@ -5094,7 +5104,7 @@ function BomAddForm({partId,onSave,onCancel}){
     <div style={{background:T.surface,borderRadius:10,padding:12,marginBottom:10,border:`1px solid ${T.purple}30`}}>
       <div style={{fontSize:11,fontWeight:700,color:T.purple,marginBottom:10,textTransform:"uppercase",letterSpacing:"1px"}}>Add Component Part</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-        <div><label style={lbl}>Customer Part # *</label>
+        <div><label style={lbl}>Customer (JLG) Part # *</label>
           <input value={f.component_part_number} onChange={e=>setF(x=>({...x,component_part_number:e.target.value}))} placeholder="e.g. 3572922" style={inp}/>
         </div>
         <div><label style={lbl}>Description *</label>
@@ -5346,7 +5356,7 @@ function AssemblyLogTab({parts,assemblyLogs,boms,txns,job,user,canAdmin,onRefres
 
       {showForm&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.green}40`}}>
         <div style={{fontSize:13,fontWeight:800,color:T.green,marginBottom:12}}>🏭 Log Completed Assembly Batch</div>
-        <div style={{marginBottom:10}}><label style={lbl}>Assembly Part # *</label>
+        <div style={{marginBottom:10}}><label style={lbl}>Finished Product Part # *</label>
           <select value={f.part_id} onChange={e=>set("part_id",e.target.value)} style={inpSel}>
             <option value="">— Select part —</option>
             {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}{p.description?" — "+p.description:""}</option>)}
@@ -5431,7 +5441,7 @@ function ShippingLogTab({parts,shippingLogs,assemblyLogs,job,user,canAdmin,onRef
 
       {showForm&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.blue}40`}}>
         <div style={{fontSize:13,fontWeight:800,color:T.blue,marginBottom:12}}>📤 Log Assembly Shipment</div>
-        <div style={{marginBottom:10}}><label style={lbl}>Assembly Part # *</label>
+        <div style={{marginBottom:10}}><label style={lbl}>Finished Product Part # *</label>
           <select value={f.part_id} onChange={e=>set("part_id",e.target.value)} style={inpSel}>
             <option value="">— Select part —</option>
             {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}{p.description?" — "+p.description:""}</option>)}
