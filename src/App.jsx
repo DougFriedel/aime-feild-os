@@ -1352,7 +1352,7 @@ function printReport(report, project){
     <td class="sig-box">${report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleDateString():''}</td>
     <td class="sig-box"></td>
     <td class="sig-box"></td>
-    <td class="sig-box" style="text-align:center">${report.inspector_signature?`<img src="${report.inspector_signature}" style="max-height:44px;max-width:100%;object-fit:contain">`:''}</td>
+    <td class="sig-box" style="text-align:center">${report.inspector_signature?`<img src="${report.inspector_signature}" style="max-height:44px;max-width:100%;object-fit:contain;filter:invert(1) grayscale(1) contrast(1.5);background:#fff;">`:''}</td>
   </tr>
 </table>
 
@@ -1481,8 +1481,8 @@ ${delays.map(d=>`<div class="delay-row"><div style="display:flex;gap:10px;align-
 
 ${sections.signature&&report.inspector_signature?`<div class="section"><h2>✍️ Inspector Sign-Off</h2>
 <div style="background:#fff;border:1px solid #86efac;border-radius:6px;padding:10px;display:flex;align-items:center;gap:16px">
-<div style="background:#fff;border:1px solid #ccc;border-radius:4px;padding:6px;display:inline-block;">
-<img src="${report.inspector_signature}" style="max-height:70px;max-width:240px;object-fit:contain;display:block;background:#fff;"/>
+<div style="background:#fff;border:1px solid #ccc;border-radius:4px;padding:6px;display:inline-block;overflow:hidden;">
+<img src="${report.inspector_signature}" style="max-height:70px;max-width:240px;object-fit:contain;display:block;filter:invert(1) grayscale(1) contrast(1.5);"/>
 </div>
 <div><div style="font-weight:700">${report.inspector_name||'Inspector'}</div><div style="font-size:9pt;color:#555">${report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleString():''}</div></div>
 </div></div>`:''}
