@@ -1362,7 +1362,7 @@ function printReport(report, project){
   win.document.write(html);
   win.document.close();
   win.focus();
-  setTimeout(()=>{ win.print(); }, 400);
+  setTimeout(()=>{win.focus();win.print();},1200);
 }
 
 function printReportWithOptions(report, project, sections, photos, photoLayout){
@@ -1432,7 +1432,7 @@ tr:nth-child(even) td{background:#f9fafb;}
 .sig-box{border-top:1.5px solid #000;padding-top:8px;}
 .sig-label{font-size:8pt;color:#555;text-transform:uppercase;}
 .footer{margin-top:16px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}img{background:#ffffff !important;}}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
 </style></head><body>
 
 <div class="header">
@@ -1503,177 +1503,123 @@ ${photoHTML}
   win.document.write(html);
   win.document.close();
   win.focus();
-  setTimeout(()=>win.print(),500);
+  setTimeout(()=>{win.focus();win.print();},1200);
 }
 
 function SignaturePad({onSave,onCancel,reportName}){
-  const canvasRef=useRef(null);
-  const [drawing,setDrawing]=useState(false);
-  const [hasStrokes,setHasStrokes]=useState(false);
-  const [inspectorName,setInspectorName]=useState("");
+  const [name,setName]=useState("");
+  const [company,setCompany]=useState("");
+  const [role,setRole]=useState("");
+  const [font,setFont]=useState("'Dancing Script', cursive");
   const [saving,setSaving]=useState(false);
-  const [sigErr,setSigErr]=useState("");
-  const lastPos=useRef(null);
+  const [err,setErr]=useState("");
+  const previewRef=useRef(null);
 
-  function getPos(e,canvas){
-    const rect=canvas.getBoundingClientRect();
-    const scaleX=canvas.width/rect.width;
-    const scaleY=canvas.height/rect.height;
-    if(e.touches&&e.touches.length>0){
-      return{x:(e.touches[0].clientX-rect.left)*scaleX,y:(e.touches[0].clientY-rect.top)*scaleY};
-    }
-    return{x:(e.clientX-rect.left)*scaleX,y:(e.clientY-rect.top)*scaleY};
-  }
+  const FONTS=[
+    {label:"Classic",value:"'Dancing Script', cursive"},
+    {label:"Elegant",value:"'Great Vibes', cursive"},
+    {label:"Bold",value:"'Pacifico', cursive"},
+    {label:"Formal",value:"'Pinyon Script', cursive"},
+  ];
 
-  function startDraw(e){
-    e.preventDefault();
-    const canvas=canvasRef.current;
-    if(!canvas)return;
-    const ctx=canvas.getContext("2d");
-    // Ensure white background on first stroke
-    if(!hasStrokes){
-      ctx.fillStyle="#ffffff";
-      ctx.fillRect(0,0,canvas.width,canvas.height);
-    }
-    const pos=getPos(e,canvas);
-    ctx.beginPath();
-    ctx.moveTo(pos.x,pos.y);
-    lastPos.current=pos;
-    setDrawing(true);
-    setHasStrokes(true);
-  }
-
-  function draw(e){
-    e.preventDefault();
-    if(!drawing)return;
-    const canvas=canvasRef.current;
-    if(!canvas)return;
-    const ctx=canvas.getContext("2d");
-    const pos=getPos(e,canvas);
-    ctx.lineWidth=4;
-    ctx.lineCap="round";
-    ctx.lineJoin="round";
-    ctx.strokeStyle="#000000";
-    ctx.lineTo(pos.x,pos.y);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(pos.x,pos.y);
-    lastPos.current=pos;
-  }
-
-  function endDraw(e){
-    if(e)e.preventDefault();
-    setDrawing(false);
-  }
-
-  function clearPad(){
-    const canvas=canvasRef.current;
-    if(!canvas)return;
-    const ctx=canvas.getContext("2d");
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    setHasStrokes(false);
-    setSigErr("");
-  }
+  // Load Google Fonts
+  useEffect(()=>{
+    const link=document.createElement("link");
+    link.rel="stylesheet";
+    link.href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&family=Great+Vibes&family=Pacifico&family=Pinyon+Script&display=swap";
+    document.head.appendChild(link);
+    return()=>document.head.removeChild(link);
+  },[]);
 
   async function save(){
-    if(!hasStrokes||!inspectorName.trim()||saving)return;
-    const canvas=canvasRef.current;
-    if(!canvas){setSigErr("Signature canvas not ready. Try again.");return;}
-    setSaving(true);
-    setSigErr("");
+    if(!name.trim()){setErr("Please enter your name.");return;}
+    setSaving(true);setErr("");
     try{
-      // Save as PNG to preserve transparency (white container in PDF)
-      const fc=document.createElement("canvas");fc.width=canvas.width;fc.height=canvas.height;
-      const fx=fc.getContext("2d");
-      fx.fillStyle="#ffffff";
-      fx.fillRect(0,0,fc.width,fc.height);
-      fx.drawImage(canvas,0,0);
-      const sig=fc.toDataURL("image/png");
-      await onSave(inspectorName.trim(),sig);
-    }catch(err){
-      setSigErr("Failed to save: "+err.message);
-      setSaving(false);
-    }
+      // Render the typed signature to a canvas for storage
+      const canvas=document.createElement("canvas");
+      canvas.width=600;canvas.height=200;
+      const ctx=canvas.getContext("2d");
+      // White background
+      ctx.fillStyle="#ffffff";
+      ctx.fillRect(0,0,600,200);
+      // Draw name in chosen font
+      ctx.fillStyle="#000000";
+      ctx.font=`bold 72px ${font}`;
+      ctx.textAlign="center";
+      ctx.textBaseline="middle";
+      ctx.fillText(name.trim(),300,100);
+      const sigData=canvas.toDataURL("image/png");
+      await onSave(`${name.trim()}${company?" · "+company:""}${role?" · "+role:""}`,sigData);
+    }catch(e){setErr("Error: "+e.message);}
+    setSaving(false);
   }
 
-  const canSign=hasStrokes&&inspectorName.trim().length>0&&!saving;
-
   return(
-    <div style={{position:"fixed",inset:0,zIndex:300,background:T.bg,display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
-      {/* Header */}
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px 16px 12px",flexShrink:0}}>
-        <div style={{fontSize:18,fontWeight:900,color:T.text,marginBottom:2}}>✍️ Inspector Sign-Off</div>
-        <div style={{fontSize:12,color:T.muted}}>{reportName}</div>
-      </div>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16,fontFamily:"inherit"}}>
+      <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:440,color:"#111"}}>
+        <div style={{fontSize:16,fontWeight:900,color:"#1f3864",marginBottom:4}}>✍️ Inspector Sign-Off</div>
+        <div style={{fontSize:12,color:"#666",marginBottom:20}}>{reportName||"Daily Field Report"}</div>
 
-      <div style={{flex:1,overflow:"auto",padding:"16px"}}>
-        {sigErr&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:13,color:T.red}}>⚠️ {sigErr}</div>}
+        {err&&<div style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#dc2626"}}>{err}</div>}
 
-        {/* Inspector name */}
-        <div style={{marginBottom:16}}>
-          <label style={lbl}>Inspector Name *</label>
-          <input
-            type="text"
-            placeholder="Print inspector's full name"
-            value={inspectorName}
-            onChange={e=>{setInspectorName(e.target.value);setSigErr("");}}
-            style={inp}
-            autoComplete="off"
-          />
+        {/* Name input */}
+        <div style={{marginBottom:12}}>
+          <label style={{display:"block",fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Full Name *</label>
+          <input value={name} onChange={e=>setName(e.target.value)}
+            placeholder="e.g. John Smith"
+            style={{width:"100%",padding:"10px 12px",fontSize:15,border:"2px solid #e5e7eb",borderRadius:8,fontFamily:"inherit",boxSizing:"border-box",outline:"none"}}/>
         </div>
-        <div style={{marginBottom:8}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <label style={lbl}>Signature *</label>
-            {hasStrokes&&<button onClick={clearPad} style={{background:"none",border:"none",color:T.orange,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Clear</button>}
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+          <div>
+            <label style={{display:"block",fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Company</label>
+            <input value={company} onChange={e=>setCompany(e.target.value)}
+              placeholder="Optional"
+              style={{width:"100%",padding:"8px 10px",fontSize:13,border:"2px solid #e5e7eb",borderRadius:8,fontFamily:"inherit",boxSizing:"border-box"}}/>
           </div>
-          <div style={{background:"#fff",borderRadius:14,border:`2px solid ${hasStrokes?T.orange:T.border}`,overflow:"hidden",position:"relative",userSelect:"none"}}>
-            {!hasStrokes&&(
-              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-                <div style={{textAlign:"center",color:"#D4D4D8"}}>
-                  <div style={{fontSize:36,marginBottom:6}}>✍️</div>
-                  <div style={{fontSize:14,fontWeight:600,color:T.text}}>Sign here</div>
-                  <div style={{fontSize:11,marginTop:2}}>Use finger or stylus</div>
-                </div>
-              </div>
-            )}
-            <canvas
-              ref={canvasRef}
-              width={600}
-              height={200}
-              style={{width:"100%",height:200,display:"block",touchAction:"none",cursor:"crosshair"}}
-              onMouseDown={startDraw}
-              onMouseMove={draw}
-              onMouseUp={endDraw}
-              onMouseLeave={endDraw}
-              onTouchStart={startDraw}
-              onTouchMove={draw}
-              onTouchEnd={endDraw}
-            />
+          <div>
+            <label style={{display:"block",fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Title / Role</label>
+            <input value={role} onChange={e=>setRole(e.target.value)}
+              placeholder="Optional"
+              style={{width:"100%",padding:"8px 10px",fontSize:13,border:"2px solid #e5e7eb",borderRadius:8,fontFamily:"inherit",boxSizing:"border-box"}}/>
           </div>
-          {hasStrokes&&<div style={{fontSize:11,color:T.green,marginTop:4,textAlign:"center",fontWeight:600}}>✓ Signature captured</div>}
         </div>
-      </div>
-      <div style={{padding:"16px",display:"flex",flexDirection:"column",gap:10,borderTop:`1px solid ${T.border}`,background:T.surface,flexShrink:0}}>
-        <button
-          onClick={save}
-          style={{
-            ...primBtn,
-            borderRadius:14,
-            opacity:canSign?1:0.45,
-            background:canSign?T.green:T.muted,
-            color:"#0D0D0F",
-          }}
-        >
-          {saving?"Saving…":"✅ Confirm & Sign Report"}
-        </button>
-        <button onClick={onCancel} style={{...ghostBtn,width:"100%",textAlign:"center"}} disabled={saving}>
-          Cancel
-        </button>
-        {!canSign&&!saving&&<div style={{fontSize:11,color:T.muted,textAlign:"center"}}>{!inspectorName.trim()?"Enter inspector name above":!hasStrokes?"Draw signature above to continue":""}</div>}
+
+        {/* Font picker */}
+        <div style={{marginBottom:14}}>
+          <label style={{display:"block",fontSize:11,fontWeight:700,color:"#555",textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Signature Style</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {FONTS.map(f=>(
+              <button key={f.value} onClick={()=>setFont(f.value)}
+                style={{padding:"8px 10px",border:`2px solid ${font===f.value?"#1f3864":"#e5e7eb"}`,borderRadius:8,background:font===f.value?"#f0f4ff":"#fff",cursor:"pointer",fontFamily:f.value,fontSize:18,color:"#111",textAlign:"center"}}>
+                {name||"Signature"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Live preview */}
+        {name&&<div style={{background:"#f9fafb",border:"2px solid #e5e7eb",borderRadius:10,padding:"16px 20px",marginBottom:16,textAlign:"center"}}>
+          <div style={{fontFamily:font,fontSize:48,color:"#000",lineHeight:1.2,minHeight:60}}>{name}</div>
+          <div style={{width:"80%",height:2,background:"#000",margin:"8px auto 0"}}/>
+          <div style={{fontSize:11,color:"#666",marginTop:4}}>{name.trim()}{company?" · "+company:""}{role?" · "+role:""}</div>
+        </div>}
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <button onClick={save} disabled={!name.trim()||saving}
+            style={{padding:"12px",background:name.trim()&&!saving?"#1f3864":"#9ca3af",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:name.trim()&&!saving?"pointer":"default",fontFamily:"inherit"}}>
+            {saving?"Saving…":"✓ Sign Report"}
+          </button>
+          <button onClick={onCancel}
+            style={{padding:"12px",background:"#f3f4f6",color:"#374151",border:"2px solid #e5e7eb",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );
 }
+
 
 function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,onFlag}){
   const [report,setReport]=useState(initReport);
@@ -1681,6 +1627,12 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   const [showSigPad,setShowSigPad]=useState(false);const [sigSaving,setSigSaving]=useState(false);
   const [showInspectorShare,setShowInspectorShare]=useState(false);
   const [inspLinkCopied,setInspLinkCopied]=useState(false);
+  const [showEsigModal,setShowEsigModal]=useState(false);
+  const [esigEmail,setEsigEmail]=useState("");
+  const [esigName,setEsigName]=useState("");
+  const [esigSending,setEsigSending]=useState(false);
+  const [esigError,setEsigError]=useState("");
+  const [esigSent,setEsigSent]=useState(false);
   const [showPrintModal,setShowPrintModal]=useState(false);
   const [reportPhotos,setReportPhotos]=useState([]);
   const [selectedPhotos,setSelectedPhotos]=useState([]);
@@ -1717,6 +1669,37 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       setSelectedPhotos(onDate.map(ph=>ph.id));
     }catch(e){}
     setPhotosLoading(false);
+  }
+
+  async function sendEsig(){
+    if(!esigEmail.trim()||!esigName.trim()){setEsigError("Please enter inspector name and email.");return;}
+    setEsigSending(true);setEsigError("");
+    try{
+      const tot=reportTotals(report,project.division);
+      const res=await fetch("/.netlify/functions/hellosign-create",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          reportId:report.id,
+          inspectorEmail:esigEmail.trim(),
+          inspectorName:esigName.trim(),
+          projectName:project.name,
+          reportNo:report.report_no||"",
+          reportDate:report.date||"",
+          submittedBy:report.submitted_by||"",
+          laborTotal:"$"+(tot.labor||0).toFixed(2),
+          equipmentTotal:"$"+(tot.equip||0).toFixed(2),
+          grandTotal:"$"+(tot.total||0).toFixed(2),
+        }),
+      });
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||"Failed to send");
+      // Save request ID to report
+      await API.reports.update(report.id,{hellosign_request_id:data.requestId,hellosign_status:"pending"});
+      setEsigSent(true);
+      setShowEsigModal(false);
+    }catch(e){setEsigError("Error: "+e.message);}
+    setEsigSending(false);
   }
 
   async function saveSignature(inspectorName,sigData){
@@ -2101,21 +2084,47 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       ):(
         <div style={{marginBottom:12}}>
           <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>🔏 Inspector Sign-Off</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {report.hellosign_status==="pending"&&<div style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"10px 14px",marginBottom:8,fontSize:12,color:T.blue,fontWeight:600}}>
+            ⏳ eSignature request sent — waiting for inspector to sign
+          </div>}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
             <button onClick={()=>setShowSigPad(true)}
-              style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12,fontSize:13}}>
+              style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12,fontSize:12}}>
               ✍️ Sign Here
             </button>
             <button onClick={()=>setShowInspectorShare(true)}
-              style={{...primBtn,background:T.blueLow,color:T.blue,border:`1px solid ${T.blue}40`,borderRadius:12,fontSize:13}}>
-              📤 Send Link
+              style={{...primBtn,background:T.blueLow,color:T.blue,border:`1px solid ${T.blue}40`,borderRadius:12,fontSize:12}}>
+              🔗 Send Link
+            </button>
+            <button onClick={()=>setShowEsigModal(true)}
+              style={{...primBtn,background:"#1e3a5f",color:"#60A5FA",border:"1px solid #2563EB40",borderRadius:12,fontSize:12}}>
+              ✉️ eSign
             </button>
           </div>
-          <div style={{fontSize:11,color:T.muted,textAlign:"center",marginTop:6}}>
-            Sign Here = inspector uses this device · Send Link = inspector signs on their own phone
+          <div style={{fontSize:10,color:T.muted,textAlign:"center",marginTop:5}}>
+            Sign Here = on this device · Send Link = inspector's phone · eSign = Dropbox Sign email
           </div>
         </div>
       )}
+
+      {/* eSignature Modal */}
+      {showEsigModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16,fontFamily:"inherit"}}>
+        <div style={{background:T.card,borderRadius:16,padding:24,width:"100%",maxWidth:400,border:`1px solid ${T.blue}40`}}>
+          <div style={{fontSize:16,fontWeight:900,color:T.blue,marginBottom:4}}>✉️ Send for eSignature</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Inspector will receive a Dropbox Sign email and can sign on any device. You'll be notified when signed.</div>
+          {esigError&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:T.red}}>{esigError}</div>}
+          <div style={{marginBottom:10}}><label style={lbl}>Inspector Name *</label><input value={esigName} onChange={e=>setEsigName(e.target.value)} placeholder="John Smith" style={inp} autoFocus/></div>
+          <div style={{marginBottom:16}}><label style={lbl}>Inspector Email *</label><input type="email" value={esigEmail} onChange={e=>setEsigEmail(e.target.value)} placeholder="inspector@company.com" style={inp}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button onClick={sendEsig} disabled={esigSending||!esigEmail.trim()||!esigName.trim()}
+              style={{...primBtn,borderRadius:12,background:T.blue,opacity:esigSending||!esigEmail.trim()||!esigName.trim()?0.5:1}}>
+              {esigSending?"Sending…":"Send Request"}
+            </button>
+            <button onClick={()=>{setShowEsigModal(false);setEsigError("");}}
+              style={{...ghostBtn,textAlign:"center",borderRadius:12}}>Cancel</button>
+          </div>
+        </div>
+      </div>}
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
         <button onClick={async()=>{setShowPrintModal(true);await loadPhotosForPrint();}} style={{...primBtn,background:"#1f3864",color:"#fff",borderRadius:14}}>🖨️ Print / Save PDF</button>
@@ -3299,7 +3308,7 @@ tr:nth-child(even) td{background:#f9fafb;}
 .sigs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:20px;}
 .sig-box{border-top:1.5px solid #000;padding-top:8px;text-align:center;}
 .sig-label{font-size:8pt;color:#555;text-transform:uppercase;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}img{background:#ffffff !important;}}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
 </style></head><body>
 ${employees.length===0
   ? `<div style="text-align:center;padding:60px;color:#666"><h2>No entries found for ${fmtD(from)} – ${fmtD(to)}</h2></div>`
@@ -3346,7 +3355,7 @@ ${employees.length===0
   win.document.write(html);
   win.document.close();
   win.focus();
-  setTimeout(()=>win.print(),600);
+  setTimeout(()=>{win.focus();win.print();},1200);
 }
 
 function TimeCardsScreen({user,projects,onBack}){
@@ -3669,7 +3678,7 @@ function ChangeOrdersTab({project,user,onErr}){
 .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;}
 .sig-box{border-top:1.5px solid #000;padding-top:8px;}.sig-label{font-size:8pt;color:#666;text-transform:uppercase;}
 .footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}img{background:#ffffff !important;}}</style></head><body>
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
 <div class="lh"><div><div class="co">AIME</div><div class="co-sub">Atlantic Industrial Mechanical & Environmental Inc.<br>Field Operations Division</div></div>
 <div class="doc-title"><h1>Change Order</h1><div>${co.co_number}</div><div><span class="badge">${co.status.toUpperCase()}</span></div></div></div>
 <div class="proj-box">
@@ -3688,7 +3697,7 @@ ${co.client_signature?`<div style="background:#fff;border:1px solid #86efac;bord
 <div class="sig-box">${co.client_signature?`<img src="${co.client_signature}" style="max-height:60px;max-width:200px;object-fit:contain;display:block;margin-bottom:4px"/>`:`<div style="height:60px;border-bottom:1px solid #000;margin-bottom:4px"></div>`}<div class="sig-label">Accepted by (Client)</div><div style="font-size:10pt;font-weight:700;margin-top:4px">${co.client_signed_by||""}</div><div style="font-size:9pt;color:#555;margin-top:4px">Date: ${co.approved_date||"______________"}</div></div></div>
 <div class="footer"><span>AIME Field Pro · CO ${co.co_number} · ${project.name}</span><span>Generated: ${new Date().toLocaleString()}</span></div>
 </body></html>`;
-    const win=window.open("","_blank","width=900,height=750");win.document.write(html);win.document.close();win.focus();setTimeout(()=>win.print(),400);
+    const win=window.open("","_blank","width=900,height=750");win.document.write(html);win.document.close();win.focus();setTimeout(()=>{win.focus();win.print();},1200);
   }
 
   const contractVal=parseFloat(project.contract_value)||0;
@@ -3852,7 +3861,7 @@ input.fillable{min-height:auto;height:38px;}
 .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;}
 .sig-box{border-top:1.5px solid #000;padding-top:8px;}.sig-label{font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:0.5px;}
 .footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}img{background:#ffffff !important;}}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
 </style></head><body>
 <div class="action-bar"><div><h2>📝 RFI #${rfi.rfi_number} — Fill in your response below, then Print/Save as PDF</h2></div>
 <div class="btns"><button class="btn btn-print" onclick="window.print()">🖨️ Print / Save as PDF</button></div></div>
@@ -6022,7 +6031,7 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
 .sig-cell:last-child{border-right:none;}
 .sig-line{border-bottom:1px solid #000;margin:12px 0 3px;min-height:22px;}
 .sig-sub{font-size:6.5pt;color:#555;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}img{background:#ffffff !important;}}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
 </style></head><body>
 
 <!-- HEADER -->
@@ -6143,7 +6152,7 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
     win.document.write(html);
     win.document.close();
     win.focus();
-    setTimeout(()=>win.print(),600);
+    setTimeout(()=>{win.focus();win.print();},1200);
   }
 
   const CB_UI=({checked,onChange,label})=>(
@@ -6428,4 +6437,3 @@ export default function App(){
     </ErrorBoundary>
   );
 }
-
