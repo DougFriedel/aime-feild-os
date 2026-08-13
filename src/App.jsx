@@ -1530,6 +1530,11 @@ function SignaturePad({onSave,onCancel,reportName}){
     const canvas=canvasRef.current;
     if(!canvas)return;
     const ctx=canvas.getContext("2d");
+    // Ensure white background on first stroke
+    if(!hasStrokes){
+      ctx.fillStyle="#ffffff";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+    }
     const pos=getPos(e,canvas);
     ctx.beginPath();
     ctx.moveTo(pos.x,pos.y);
@@ -6421,4 +6426,3 @@ export default function App(){
     </ErrorBoundary>
   );
 }
-
