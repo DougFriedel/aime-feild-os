@@ -171,7 +171,7 @@ const ghostBtn={background:"transparent",border:`1px solid ${T.border}`,borderRa
 const dangerBtn={background:T.redLow,border:`1px solid ${T.red}30`,borderRadius:12,padding:"12px 16px",color:T.red,fontSize:14,cursor:"pointer",fontFamily:"inherit",fontWeight:600,width:"100%",textAlign:"center"};
 
 const POSITIONS_PIPELINE=[{name:"Project Manager",rate:64.50},{name:"Foreman",rate:63.25},{name:"Technician",rate:60.75},{name:"Inspector",rate:53.75},{name:"Certified Welder",rate:60.75},{name:"Fitter",rate:58.50},{name:"Mechanic",rate:58.50},{name:"Operator",rate:58.50},{name:"Truck Driver",rate:58.50},{name:"Helper (Welder)",rate:57.25},{name:"Laborer",rate:51.00},{name:"Foreman (Elect)",rate:82.25},{name:"Electrician",rate:82.25},{name:"Helper (Elect)",rate:45.50},{name:"Per Diem",rate:190.00,flat:true}];
-const NAMES=["Alan Fairbrother","Alan Robinson","Doug Friedel","Peggy Carver","Jaden Pugh","Brandon Milano","Charles Acree","Charles Dovel","Chris Utz","Christopher Dean","Chuck Dean","Clay Lau","Connor Kestner","Morgan Schramek","Eric Bowens","Eric Shumate","Jackson Fama","Howard Lau","Jeff White","Jessica Vance","John Baier","John P. Cosner Jr.","Jordan Gorwell","Joseph Lau","Josh Gladhill","Kevin Gabrish","Kurt Batterton","Leo Velez","Edgrado Ruiz","Mark Hamilton","Alejandro Figueroa","Matthew Linton","Mike Gamble","Mike Gamble III","Mike Seiler","Pat Gorman","Paul Howard","Rich Raborg","Robert Neslein","Roland Long","Shane Hower","Steve Kestner","Tom Hatfield","Troy Strother","Tyrone Davis","Walter Chicas-Luna","Will Wychulis","Wyatt Gill"].sort();
+const NAMES=["Alan Fairbrother","Alan Robinson","Doug Friedel","Jaden Pugh","Brandon Milano","Charles Acree","Charles Dovel","Chris Utz","Christopher Dean","Chuck Dean","Clay Lau","Connor Kestner","Morgan Schramek","Eric Bowens","Eric Shumate","Jackson Fama","Howard Lau","Jeff White","Jessica Vance","John Baier","John P. Cosner Jr.","Jordan Gorwell","Joseph Lau","Josh Gladhill","Kevin Gabrish","Kurt Batterton","Leo Velez","Edgrado Ruiz","Mark Hamilton","Alejandro Figueroa","Matthew Linton","Mike Gamble","Mike Gamble III","Mike Seiler","Pat Gorman","Paul Howard","Rich Raborg","Robert Neslein","Roland Long","Shane Hower","Steve Kestner","Tom Hatfield","Troy Strother","Tyrone Davis","Walter Chicas-Luna","Will Wychulis","Wyatt Gill"].sort();
 const EQUIP_LIST_PIPELINE=[{section:"Trucks & Trailers"},{name:"Truck - 1 Ton",rate:21.50,unit:"Hours"},{name:"Truck - 3/4 Ton w/ Snow Plow",rate:350,unit:"Days"},{name:"Truck - 1/2 Ton",rate:18.50,unit:"Hours"},{name:"Truck - Boom (20-29 Ton)",rate:65,unit:"Hours"},{name:"Truck - Bucket",rate:45,unit:"Hours"},{name:"Truck - Dump Truck (3 Axle)",rate:35,unit:"Hours"},{name:"Truck - Haul Truck - No Trailer",rate:70,unit:"Hours"},{name:"Truck - Tru-Vac",rate:13500,unit:"Month"},{name:"Truck - Welding Rig",rate:35,unit:"Hours"},{name:"Trailer - Electrical - Colonial",rate:147,unit:"Month"},{name:"Trailer - Lowboy - 2 Axle",rate:28,unit:"Hours"},{name:"Trailer - Tag Along",rate:50,unit:"Days"},{name:"Trailer - Tool Trailer - 18-25ft",rate:175,unit:"Days"},{name:"Trailer - Tool Trailer - 26-40ft",rate:200,unit:"Days"},{section:"Earthmoving & ROW"},{name:"ATV - 4 Wheel",rate:125,unit:"Days"},{name:"Backhoe Loader - 80-105 HP",rate:62.45,unit:"Hours"},{name:"Excavator - Mini - 2-8K LB",rate:299,unit:"Days"},{name:"Excavator - Mini - 9K LB",rate:335,unit:"Days"},{name:"Excavator - Mini - 12-16K LB",rate:475,unit:"Days"},{name:"Excavator - Small - 21-29K LB",rate:565,unit:"Days"},{name:"Excavator - Small - 30-33K LB",rate:632,unit:"Days"},{name:"Excavator - Medium - 48-55K LB",rate:852,unit:"Days"},{name:"Excavator - Large - 80-89K LB",rate:1050,unit:"Days"},{name:"Excavator - Large - 90-119K LB",rate:1350,unit:"Days"},{name:"Skidsteer Loader - 70-80 HP",rate:440,unit:"Days"},{name:"Skidsteer Loader - 81-100 HP",rate:475,unit:"Days"},{name:"Tractor - 50 HP 4x4 w/ Bush Hog",rate:36.50,unit:"Hours"},{name:"Mower - Riding/Zero Turn",rate:175,unit:"Days"},{section:"Air, Compressors & Blast"},{name:"Air Compressor - 185 CFM",rate:195,unit:"Days"},{name:"Air Compressor - 375 CFM",rate:275,unit:"Days"},{name:"Air Impact Wrench - 1in",rate:50,unit:"Days"},{name:"Air Spade / Knife",rate:55,unit:"Days"},{name:"Blast Rig - 4 Bag Pot w/ 185 CFM AC",rate:55.50,unit:"Hours"},{name:"Blast Rig - 1 Pot w/ 375 CFM AC",rate:500,unit:"Days"},{section:"Testing & Misc. Tools"},{name:"Holiday Detector / Pipe Jeep",rate:72,unit:"Days"},{name:"Hydraulic Torque",rate:200,unit:"Days"},{name:"Hydro Test Pump",rate:60,unit:"Days"},{name:"Hydrotest - High Pressure",rate:3800,unit:"Days"},{name:"Jack Hammer",rate:72,unit:"Days"},{name:"LEL/Gas Monitor - 4 Gas",rate:50,unit:"Days"},{name:"Line Locator",rate:50,unit:"Days"},{name:"HEPA Vacuum",rate:100,unit:"Days"},{name:"Torque Wrench w/Sockets Hyd/Pneu",rate:195,unit:"Days"},{name:"Pipe Beveling Machine 16-22in",rate:100,unit:"Days"}];
 
 const POSITIONS_MECHANICAL=[
@@ -1432,7 +1432,7 @@ tr:nth-child(even) td{background:#f9fafb;}
 .sig-box{border-top:1.5px solid #000;padding-top:8px;}
 .sig-label{font-size:8pt;color:#555;text-transform:uppercase;}
 .footer{margin-top:16px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}img{background:#ffffff !important;}}
 </style></head><body>
 
 <div class="header">
@@ -3299,7 +3299,7 @@ tr:nth-child(even) td{background:#f9fafb;}
 .sigs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:20px;}
 .sig-box{border-top:1.5px solid #000;padding-top:8px;text-align:center;}
 .sig-label{font-size:8pt;color:#555;text-transform:uppercase;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}img{background:#ffffff !important;}}
 </style></head><body>
 ${employees.length===0
   ? `<div style="text-align:center;padding:60px;color:#666"><h2>No entries found for ${fmtD(from)} – ${fmtD(to)}</h2></div>`
@@ -3669,7 +3669,7 @@ function ChangeOrdersTab({project,user,onErr}){
 .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;}
 .sig-box{border-top:1.5px solid #000;padding-top:8px;}.sig-label{font-size:8pt;color:#666;text-transform:uppercase;}
 .footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}img{background:#ffffff !important;}}</style></head><body>
 <div class="lh"><div><div class="co">AIME</div><div class="co-sub">Atlantic Industrial Mechanical & Environmental Inc.<br>Field Operations Division</div></div>
 <div class="doc-title"><h1>Change Order</h1><div>${co.co_number}</div><div><span class="badge">${co.status.toUpperCase()}</span></div></div></div>
 <div class="proj-box">
@@ -3852,7 +3852,7 @@ input.fillable{min-height:auto;height:38px;}
 .sig-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;}
 .sig-box{border-top:1.5px solid #000;padding-top:8px;}.sig-label{font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:0.5px;}
 .footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}img{background:#ffffff !important;}}
 </style></head><body>
 <div class="action-bar"><div><h2>📝 RFI #${rfi.rfi_number} — Fill in your response below, then Print/Save as PDF</h2></div>
 <div class="btns"><button class="btn btn-print" onclick="window.print()">🖨️ Print / Save as PDF</button></div></div>
@@ -6022,7 +6022,7 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
 .sig-cell:last-child{border-right:none;}
 .sig-line{border-bottom:1px solid #000;margin:12px 0 3px;min-height:22px;}
 .sig-sub{font-size:6.5pt;color:#555;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}img{background:#ffffff !important;}}
 </style></head><body>
 
 <!-- HEADER -->
