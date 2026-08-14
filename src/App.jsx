@@ -3035,20 +3035,26 @@ function DrawingsTab({projectId,user,onErr}){
           <div style={{fontSize:12}}>{canAdmin?"Upload a PDF drawing set to get started.":"No drawings have been uploaded yet."}</div>
         </div>
       ):filtered.map(d=>(
-        <div key={d.id} style={{...cardS,marginBottom:10,display:"flex",alignItems:"center",gap:12}}>
-          <div onClick={()=>setViewing(d)} style={{flex:1,cursor:"pointer",minWidth:0}}>
-            <div style={{fontSize:14,fontWeight:800,color:"#60A5FA",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+        <div key={d.id} style={{...cardS,marginBottom:10}}>
+          <div onClick={()=>setViewing(d)} style={{cursor:"pointer"}}>
+            <div style={{fontSize:15,fontWeight:800,color:"#60A5FA",lineHeight:1.35,wordBreak:"break-word"}}>
               {d.sheet_number?`${d.sheet_number} · `:""}{d.title}
             </div>
-            <div style={{fontSize:11,color:T.muted,marginTop:3}}>
+            <div style={{fontSize:12,color:T.sub,marginTop:6,lineHeight:1.5}}>
               {[d.discipline,d.revision?`Rev ${d.revision}`:null,d.page_count?`${d.page_count} sheet${d.page_count!==1?"s":""}`:null,fmtSize(d.file_size)]
-                .filter(Boolean).join(" · ")||"PDF"}
+                .filter(Boolean).join("  ·  ")||"PDF"}
             </div>
-            <div style={{fontSize:10,color:T.muted,marginTop:2}}>{d.uploaded_by||""}{d.created_at?` · ${new Date(d.created_at).toLocaleDateString()}`:""}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:4}}>
+              {d.uploaded_by||""}{d.created_at?`  ·  ${new Date(d.created_at).toLocaleDateString()}`:""}
+            </div>
           </div>
-          <button onClick={()=>setViewing(d)} style={{...primBtn,padding:"8px 14px",fontSize:12,borderRadius:10,background:"#1f3864",flexShrink:0}}>Open</button>
-          {canAdmin&&<button onClick={()=>del(d)}
-            style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:18,padding:"0 4px",flexShrink:0}}>×</button>}
+          <div style={{display:"flex",gap:8,marginTop:12}}>
+            <button onClick={()=>setViewing(d)}
+              style={{...primBtn,width:"auto",flex:1,padding:"11px",fontSize:13,borderRadius:10,background:"#1f3864"}}>Open</button>
+            {canAdmin&&<button onClick={()=>del(d)} title="Delete"
+              style={{...primBtn,width:"auto",flex:"0 0 auto",padding:"11px 16px",fontSize:13,borderRadius:10,
+                background:T.redLow,color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>}
+          </div>
         </div>
       ))}
     </div>
@@ -3304,11 +3310,11 @@ function DrawingViewer({drawing,user,onBack,onErr}){
   async function changePage(n){ if(dirty)await saveMarkup(); setPage(n); }
   async function goBack(){ if(dirty)await saveMarkup(); onBack(); }
 
-  const btn={...primBtn,padding:"4px 9px",fontSize:11,fontWeight:700,borderRadius:8,background:T.surface,border:`1px solid ${T.border}`,color:T.text,lineHeight:1.4,minWidth:0};
+  const btn={...primBtn,width:"auto",flex:"0 0 auto",padding:"6px 10px",fontSize:12,fontWeight:700,borderRadius:8,background:T.surface,border:`1px solid ${T.border}`,color:T.text,lineHeight:1.4,minWidth:0,whiteSpace:"nowrap"};
   const pill={background:"rgba(20,20,24,0.92)",border:`1px solid ${T.border}`,borderRadius:20,backdropFilter:"blur(6px)"};
   const tBtn=(id,label)=>(
     <button key={id} onClick={()=>setTool(id)} title={id}
-      style={{...btn,background:tool===id?T.orange:T.surface,color:tool===id?"#000":T.text,padding:"4px 8px"}}>{label}</button>
+      style={{...btn,background:tool===id?T.orange:T.surface,color:tool===id?"#000":T.text,padding:"6px 10px",fontSize:13}}>{label}</button>
   );
 
   return(
@@ -3365,13 +3371,13 @@ function DrawingViewer({drawing,user,onBack,onErr}){
         {/* Main bar */}
         {barOpen?(
           <div style={{...pill,position:"absolute",left:"50%",bottom:12,transform:"translateX(-50%)",
-            padding:"5px 8px",display:"flex",alignItems:"center",gap:5,zIndex:20,maxWidth:"96%",flexWrap:"nowrap"}}>
+            padding:"6px 9px",display:"flex",alignItems:"center",gap:6,zIndex:20,maxWidth:"96%",flexWrap:"wrap",justifyContent:"center"}}>
             <button onClick={()=>changePage(Math.max(1,page-1))} disabled={page<=1} style={{...btn,opacity:page<=1?0.35:1}}>‹</button>
-            <span style={{fontSize:11,color:T.sub,minWidth:52,textAlign:"center",whiteSpace:"nowrap"}}>{page}/{pages||"…"}</span>
+            <span style={{fontSize:12,color:T.text,fontWeight:700,minWidth:54,textAlign:"center",whiteSpace:"nowrap"}}>{page}/{pages||"…"}</span>
             <button onClick={()=>changePage(Math.min(pages,page+1))} disabled={page>=pages} style={{...btn,opacity:page>=pages?0.35:1}}>›</button>
             <div style={{width:1,height:18,background:T.border,flexShrink:0}}/>
             <button onClick={()=>setScale(s=>clamp(s*0.8,0.5,8))} style={btn}>−</button>
-            <span style={{fontSize:11,color:T.sub,minWidth:38,textAlign:"center",whiteSpace:"nowrap"}}>{Math.round(scale*100)}%</span>
+            <span style={{fontSize:12,color:T.text,fontWeight:700,minWidth:44,textAlign:"center",whiteSpace:"nowrap"}}>{Math.round(scale*100)}%</span>
             <button onClick={()=>setScale(s=>clamp(s*1.25,0.5,8))} style={btn}>+</button>
             <button onClick={()=>{setScale(1);setOffset({x:0,y:0});}} style={btn}>Fit</button>
             <div style={{width:1,height:18,background:T.border,flexShrink:0}}/>
