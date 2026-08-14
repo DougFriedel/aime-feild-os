@@ -3067,6 +3067,7 @@ function DrawingViewer({drawing,user,onBack,onErr}){
   const [err,setErr]=useState("");
   const [rendering,setRendering]=useState(false);
 
+  const [barOpen,setBarOpen]=useState(true);
   const canvasRef=useRef(null);
   const wrapRef=useRef(null);
   const renderTaskRef=useRef(null);
@@ -3163,7 +3164,8 @@ function DrawingViewer({drawing,user,onBack,onErr}){
   }
 
   const resetView=()=>{setScale(1);setOffset({x:0,y:0});};
-  const btn={...primBtn,padding:"8px 10px",fontSize:12,borderRadius:10,background:T.surface,border:`1px solid ${T.border}`,color:T.text};
+  const btn={...primBtn,padding:"4px 9px",fontSize:11,fontWeight:700,borderRadius:8,background:T.surface,border:`1px solid ${T.border}`,color:T.text,lineHeight:1.4,minWidth:0};
+  const pill={background:"rgba(20,20,24,0.92)",border:`1px solid ${T.border}`,borderRadius:20,backdropFilter:"blur(6px)"};
 
   return(
     <div style={{position:"fixed",inset:0,background:T.bg,zIndex:150,display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
@@ -3189,18 +3191,32 @@ function DrawingViewer({drawing,user,onBack,onErr}){
           <canvas ref={canvasRef} style={{display:"block",background:"#fff",boxShadow:"0 4px 24px rgba(0,0,0,0.5)"}}/>
         </div>
         {rendering&&!loading&&<div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:10,padding:"4px 8px",borderRadius:6}}>rendering…</div>}
-      </div>
 
-      {/* Controls */}
-      <div style={{background:T.surface,borderTop:`1px solid ${T.border}`,padding:"8px 12px",display:"flex",alignItems:"center",gap:8,flexShrink:0,flexWrap:"wrap",justifyContent:"center"}}>
-        <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page<=1} style={{...btn,opacity:page<=1?0.4:1}}>‹ Prev</button>
-        <span style={{fontSize:12,color:T.sub,minWidth:78,textAlign:"center"}}>Sheet {page} / {pages||"…"}</span>
-        <button onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={page>=pages} style={{...btn,opacity:page>=pages?0.4:1}}>Next ›</button>
-        <div style={{width:1,height:22,background:T.border}}/>
-        <button onClick={()=>setScale(s=>clamp(s*0.8,0.5,8))} style={btn}>−</button>
-        <span style={{fontSize:12,color:T.sub,minWidth:46,textAlign:"center"}}>{Math.round(scale*100)}%</span>
-        <button onClick={()=>setScale(s=>clamp(s*1.25,0.5,8))} style={btn}>+</button>
-        <button onClick={resetView} style={btn}>Fit</button>
+      {/* Controls — collapsible, floats over the sheet so it costs no layout height */}
+      {barOpen?(
+        <div style={{...pill,position:"absolute",left:"50%",bottom:12,transform:"translateX(-50%)",
+          padding:"5px 8px",display:"flex",alignItems:"center",gap:5,zIndex:20,maxWidth:"96%",flexWrap:"nowrap"}}>
+          <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page<=1} style={{...btn,opacity:page<=1?0.35:1}}>‹</button>
+          <span style={{fontSize:11,color:T.sub,minWidth:52,textAlign:"center",whiteSpace:"nowrap"}}>{page}/{pages||"…"}</span>
+          <button onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={page>=pages} style={{...btn,opacity:page>=pages?0.35:1}}>›</button>
+          <div style={{width:1,height:18,background:T.border,flexShrink:0}}/>
+          <button onClick={()=>setScale(s=>clamp(s*0.8,0.5,8))} style={btn}>−</button>
+          <span style={{fontSize:11,color:T.sub,minWidth:38,textAlign:"center",whiteSpace:"nowrap"}}>{Math.round(scale*100)}%</span>
+          <button onClick={()=>setScale(s=>clamp(s*1.25,0.5,8))} style={btn}>+</button>
+          <button onClick={resetView} style={btn}>Fit</button>
+          <div style={{width:1,height:18,background:T.border,flexShrink:0}}/>
+          <button onClick={()=>setBarOpen(false)} title="Hide controls"
+            style={{...btn,background:"none",border:"none",color:T.muted,padding:"4px 6px",fontSize:13}}>⌄</button>
+        </div>
+      ):(
+        <button onClick={()=>setBarOpen(true)} title="Show controls"
+          style={{...pill,position:"absolute",left:"50%",bottom:12,transform:"translateX(-50%)",
+            padding:"5px 12px",display:"flex",alignItems:"center",gap:7,zIndex:20,cursor:"pointer",
+            color:T.sub,fontSize:11,fontWeight:700,fontFamily:"inherit"}}>
+          <span style={{whiteSpace:"nowrap"}}>{page}/{pages||"…"} · {Math.round(scale*100)}%</span>
+          <span style={{color:T.muted,fontSize:13}}>⌃</span>
+        </button>
+      )}
       </div>
     </div>
   );
