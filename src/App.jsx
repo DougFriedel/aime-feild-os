@@ -90,6 +90,13 @@ const API={
     update:(id,d)=>sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
     remove:(id)=>sb(`/daily_reports?id=eq.${id}`,{method:"DELETE"}),
   },
+  tmTickets:{
+    forProject:(pid)=>sb(`/tm_tickets?project_id=eq.${pid}&order=created_at.desc`),
+    byId:(id)=>sb(`/tm_tickets?id=eq.${id}&limit=1`),
+    create:(d)=>sb('/tm_tickets',{method:'POST',body:d,prefer:'return=representation'}),
+    update:(id,d)=>sb(`/tm_tickets?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),
+    remove:(id)=>sb(`/tm_tickets?id=eq.${id}`,{method:'DELETE'}),
+  },
   safety:   {forProject:(pid)=>sb(`/safety_logs?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/safety_logs",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/safety_logs?id=eq.${id}`,{method:"DELETE"})},
   photos:   {forProject:(pid)=>sb(`/project_photos?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/project_photos",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/project_photos?id=eq.${id}`,{method:"DELETE"})},
   timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
@@ -1676,7 +1683,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     setEsigSending(true);setEsigError("");
     try{
       const tot=reportTotals(report,project.division);
-      const res=await fetch("/.netlify/functions/hellosign-create",{
+      const res=await fetch("/.netlify/functions/box-sign-create",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
@@ -2085,7 +2092,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
         <div style={{marginBottom:12}}>
           <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>🔏 Inspector Sign-Off</div>
           {report.hellosign_status==="pending"&&<div style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"10px 14px",marginBottom:8,fontSize:12,color:T.blue,fontWeight:600}}>
-            ⏳ eSignature request sent — waiting for inspector to sign
+            📦 Box Sign request sent — waiting for inspector to sign
           </div>}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
             <button onClick={()=>setShowSigPad(true)}
@@ -2110,8 +2117,8 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       {/* eSignature Modal */}
       {showEsigModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16,fontFamily:"inherit"}}>
         <div style={{background:T.card,borderRadius:16,padding:24,width:"100%",maxWidth:400,border:`1px solid ${T.blue}40`}}>
-          <div style={{fontSize:16,fontWeight:900,color:T.blue,marginBottom:4}}>✉️ Send for eSignature</div>
-          <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Inspector will receive a Dropbox Sign email and can sign on any device. You'll be notified when signed.</div>
+          <div style={{fontSize:16,fontWeight:900,color:T.blue,marginBottom:4}}>📦 Send via Box Sign</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Inspector gets a Box Sign email and can sign on any device. Report updates automatically when signed.</div>
           {esigError&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:T.red}}>{esigError}</div>}
           <div style={{marginBottom:10}}><label style={lbl}>Inspector Name *</label><input value={esigName} onChange={e=>setEsigName(e.target.value)} placeholder="John Smith" style={inp} autoFocus/></div>
           <div style={{marginBottom:16}}><label style={lbl}>Inspector Email *</label><input type="email" value={esigEmail} onChange={e=>setEsigEmail(e.target.value)} placeholder="inspector@company.com" style={inp}/></div>
@@ -2896,6 +2903,7 @@ function InfoTab({project,user,onEdit,onArchive,onDelete}){
 
 const PTABS=[
   {id:"reports",icon:"📋",label:"Reports",perm:"submit_report"},
+  {id:"tm",icon:"🧾",label:"T&M",perm:"submit_report"},
   {id:"time",icon:"⏱️",label:"Time",perm:"approve_report"},
   {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
   {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
@@ -3529,7 +3537,9 @@ function EmailSummaryModal({user,projects,onClose}){return(<div style={{position
 function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true,onErr:onErrProp,onRefresh}){
   const [project,setProject]=useState(initP);
   const [reports,setReports]=useState([]);const [safety,setSafety]=useState([]);const [photos,setPhotos]=useState([]);const [weather,setWeather]=useState([]);
-  const [tab,setTab]=useState("reports");const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
+  const [tab,setTab]=useState("reports");
+  const [showTMForm,setShowTMForm]=useState(false);
+  const [editingTicket,setEditingTicket]=useState(null);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
   const [screen,setScreen]=useState("detail");const [activeReport,setActiveReport]=useState(null);const [editProject,setEditProject]=useState(false);
   const [projSaving,setProjSaving]=useState(false);
   const visibleTabs=PTABS.filter(t=>!t.perm||can(user,t.perm));
@@ -3587,6 +3597,15 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
       <div style={{padding:"14px 16px 80px"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
         {loading&&<Spinner/>}
+        {!loading&&tab==="tm"&&(showTMForm||editingTicket?(
+          <TMTicketForm project={project} user={user} ticket={editingTicket}
+            onBack={()=>{setShowTMForm(false);setEditingTicket(null);}}
+            onSaved={()=>{setShowTMForm(false);setEditingTicket(null);}}/>
+        ):(
+          <TMTicketList project={project} user={user}
+            onNew={()=>{setEditingTicket(null);setShowTMForm(true);}}
+            onOpen={(t)=>{setEditingTicket(t);setShowTMForm(true);}}/>
+        ))}
         {!loading&&tab==="reports"&&(<div>
           {can(user,"submit_report")&&<button onClick={()=>setScreen("newReport")} style={{...primBtn,marginBottom:16,borderRadius:14,padding:"18px",fontSize:17,background:divMeta.color}}>📋 + New Daily Report</button>}
           {reports.length===0&&<div style={{textAlign:"center",padding:"32px 16px",color:T.muted}}>
@@ -6435,5 +6454,416 @@ export default function App(){
     <ErrorBoundary>
       <AppInner/>
     </ErrorBoundary>
+  );
+}
+
+/* ── T&M TICKET LIST (inside ProjectDetail tab) ─────────────── */
+function TMTicketList({project,user,onOpen,onNew}){
+  const [tickets,setTickets]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const canCreate=user.role==="admin"||user.role==="pm";
+
+  useEffect(()=>{load();},[project.id]);
+  async function load(){
+    setLoading(true);
+    try{const t=await API.tmTickets.forProject(project.id);setTickets(Array.isArray(t)?t:[]);}
+    catch(e){console.error(e);}
+    setLoading(false);
+  }
+  async function removeTicket(id){
+    if(!window.confirm("Delete this T&M ticket?"))return;
+    try{await API.tmTickets.remove(id);await load();}catch(e){}
+  }
+
+  const statusColor={draft:T.muted,submitted:T.yellow,approved:T.green};
+  const total=tickets.reduce((s,t)=>s+(t.grand_total||0),0);
+
+  return(
+    <div>
+      {canCreate&&<button onClick={onNew} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.orange,color:"#000"}}>
+        + New T&M Ticket
+      </button>}
+      {tickets.length>0&&<div style={{...cardS,marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{fontSize:12,color:T.muted}}>{tickets.length} ticket{tickets.length!==1?"s":""}</div>
+        <div style={{fontSize:15,fontWeight:900,color:T.green}}>${total.toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+      </div>}
+      {loading&&<Spinner/>}
+      {!loading&&tickets.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>🧾</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No T&M Tickets</div>
+        <div style={{fontSize:12}}>Create your first Time & Materials ticket above.</div>
+      </div>}
+      {tickets.map(t=>(
+        <div key={t.id} onClick={()=>onOpen(t)} style={{...cardS,marginBottom:8,cursor:"pointer",borderLeft:`3px solid ${statusColor[t.status]||T.muted}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:800,color:T.orange}}>T&M #{t.ticket_no||"—"}</div>
+              <div style={{fontSize:12,color:T.sub}}>{t.ticket_date} {t.submitted_by?"· "+t.submitted_by:""}</div>
+              {t.description&&<div style={{fontSize:11,color:T.muted,marginTop:2}}>{t.description.slice(0,60)}{t.description.length>60?"…":""}</div>}
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:16,fontWeight:900,color:T.green}}>${(t.grand_total||0).toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+              <span style={{background:statusColor[t.status]+"20",color:statusColor[t.status],borderRadius:6,padding:"2px 8px",fontSize:10,fontWeight:700,textTransform:"uppercase"}}>{t.status}</span>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── T&M TICKET FORM ─────────────────────────────────────────── */
+function TMTicketForm({project,user,ticket,onBack,onSaved}){
+  const isNew=!ticket?.id;
+  const canEdit=user.role==="admin"||user.role==="pm";
+
+  // Header fields
+  const [ticketNo,setTicketNo]=useState(ticket?.ticket_no||"");
+  const [ticketDate,setTicketDate]=useState(ticket?.ticket_date||today());
+  const [description,setDescription]=useState(ticket?.description||"");
+  const [poNumber,setPoNumber]=useState(ticket?.po_number||project.po_number||"");
+  const [afeNumber,setAfeNumber]=useState(ticket?.afe_number||project.afe_number||"");
+  const [workOrder,setWorkOrder]=useState(ticket?.work_order||"");
+  const [location,setLocation]=useState(ticket?.location||"");
+  const [markupPct,setMarkupPct]=useState(ticket?.markup_pct||0);
+  const [notes,setNotes]=useState(ticket?.notes||"");
+  const [status,setStatus]=useState(ticket?.status||"draft");
+
+  // Line items
+  const [labor,setLabor]=useState(ticket?.labor||[]);
+  const [equipment,setEquipment]=useState(ticket?.equipment||[]);
+  const [materials,setMaterials]=useState(ticket?.materials||[]);
+  const [other,setOther]=useState(ticket?.other_charges||[]);
+
+  const [saving,setSaving]=useState(false);
+  const [tab,setTab]=useState("labor");
+  const [showSigPad,setShowSigPad]=useState(false);
+  const [signerName,setSignerName]=useState(ticket?.inspector_name||"");
+  const [sigData,setSigData]=useState(ticket?.inspector_signature||null);
+  const [sigAt,setSigAt]=useState(ticket?.inspector_signed_at||null);
+
+  // Unique id helper
+  const uid=()=>Math.random().toString(36).slice(2,10);
+
+  // Line item helpers
+  const addRow=(setter,template)=>setter(rows=>[...rows,{id:uid(),...template}]);
+  const updateRow=(setter,id,key,val)=>setter(rows=>rows.map(r=>r.id===id?{...r,[key]:val}:r));
+  const removeRow=(setter,id)=>setter(rows=>rows.filter(r=>r.id!==id));
+
+  // Totals
+  const sumRows=(rows,key="total")=>rows.reduce((s,r)=>s+(parseFloat(r[key])||0),0);
+  const laborTotal=labor.reduce((s,r)=>s+((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)),0);
+  const equipTotal=equipment.reduce((s,r)=>s+((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)),0);
+  const matsTotal=materials.reduce((s,r)=>s+((parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0)),0);
+  const otherTotal=other.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const subtotal=laborTotal+equipTotal+matsTotal+otherTotal;
+  const markupAmt=subtotal*(parseFloat(markupPct)||0)/100;
+  const grandTotal=subtotal+markupAmt;
+
+  async function save(newStatus){
+    setSaving(true);
+    const data={
+      project_id:project.id,
+      ticket_no:ticketNo,ticket_date:ticketDate,description,
+      po_number:poNumber,afe_number:afeNumber,work_order:workOrder,
+      location,notes,markup_pct:parseFloat(markupPct)||0,
+      status:newStatus||status,
+      submitted_by:ticket?.submitted_by||user.name,
+      labor,equipment,materials,other_charges:other,
+      labor_total:laborTotal,equipment_total:equipTotal,
+      materials_total:matsTotal,other_total:otherTotal,
+      subtotal,markup_amount:markupAmt,grand_total:grandTotal,
+      inspector_name:signerName||null,
+      inspector_signature:sigData||null,
+      inspector_signed_at:sigAt||null,
+      customer:project.client||null,
+      updated_at:new Date().toISOString(),
+    };
+    try{
+      if(isNew){await API.tmTickets.create(data);}
+      else{await API.tmTickets.update(ticket.id,data);}
+      onSaved&&onSaved();
+    }catch(e){alert("Error saving: "+e.message);}
+    setSaving(false);
+  }
+
+  function printTicket(){
+    const fmt=(n)=>"$"+(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const row=(cells,bold=false)=>`<tr style="border-bottom:1px solid #e5e7eb">${cells.map(c=>`<td style="padding:6px 8px;font-size:9pt;${bold?"font-weight:700;":""}text-align:${typeof c==="number"||String(c).startsWith("$")?"right":"left"}">${c??""}</td>`).join("")}</tr>`;
+    const section=(title,color,tableHead,rows)=>rows.length===0?"":
+      `<div style="margin-bottom:10px">
+        <div style="background:${color};color:#fff;font-size:8pt;font-weight:700;padding:4px 8px;text-transform:uppercase;letter-spacing:1px">${title}</div>
+        <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb">
+          <thead><tr style="background:#f3f4f6">${tableHead.map(h=>`<th style="padding:5px 8px;font-size:8pt;text-align:${h.right?"right":"left"}">${h.label}</th>`).join("")}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+
+    const laborRows=labor.map(r=>row([r.name,r.classification,r.hours,fmt(r.rate),fmt((r.hours||0)*(r.rate||0))])).join("");
+    const equipRows=equipment.map(r=>row([r.description,r.unit,r.qty,fmt(r.rate),fmt((r.qty||0)*(r.rate||0))])).join("");
+    const matsRows=materials.map(r=>row([r.description,r.qty,r.unit,fmt(r.unit_price),fmt((r.qty||0)*(r.unit_price||0))])).join("");
+    const otherRows=other.map(r=>row([r.description,"","","",fmt(r.amount)])).join("");
+
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>T&M Ticket #${ticketNo}</title>
+<style>@page{size:letter portrait;margin:0.4in;}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
+body{color:#111;font-size:9pt;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+<!-- Header -->
+<div style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:12px;border-bottom:3px solid #1f3864;padding-bottom:10px">
+  <div><div style="font-size:24pt;font-weight:900;color:#1f3864">AIME</div>
+    <div style="font-size:8pt;color:#555">Atlantic Industrial Mechanical & Environmental Inc.</div></div>
+  <div style="text-align:right">
+    <div style="font-size:18pt;font-weight:700;color:#1f3864">Time & Materials Ticket</div>
+    <div style="font-size:10pt;font-weight:700">T&M #${ticketNo||"—"}</div>
+    <div style="font-size:9pt;color:#555">Date: ${ticketDate}</div>
+  </div>
+</div>
+<!-- Info grid -->
+<div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb;margin-bottom:10px">
+  ${[["Project",project.name||"—"],["Customer",project.client||"—"],["PO #",poNumber||"—"],["AFE / WO #",(afeNumber||workOrder||"—")],["Location",location||"—"],["Submitted By",user.name]].map(([l,v])=>`<div style="display:flex;border-bottom:1px solid #e5e7eb"><div style="background:#f3f4f6;padding:4px 8px;font-weight:700;font-size:8pt;width:110px;border-right:1px solid #e5e7eb">${l}</div><div style="padding:4px 8px;font-size:8.5pt">${v}</div></div>`).join("")}
+</div>
+${description?`<div style="border:1px solid #e5e7eb;padding:6px 8px;margin-bottom:10px;font-size:9pt"><strong>Description:</strong> ${description}</div>`:""}
+${section("Labor","#1f3864",[{label:"Name"},{label:"Classification"},{label:"Hours"},{label:"Rate/Hr",right:true},{label:"Amount",right:true}],laborRows)}
+${section("Equipment","#374151",[{label:"Equipment"},{label:"Unit"},{label:"Qty"},{label:"Rate",right:true},{label:"Amount",right:true}],equipRows)}
+${section("Materials","#4B5563",[{label:"Description"},{label:"Qty"},{label:"Unit"},{label:"Unit Price",right:true},{label:"Amount",right:true}],matsRows)}
+${section("Other Charges","#6B7280",[{label:"Description"},{label:""},{label:""},{label:"",right:true},{label:"Amount",right:true}],otherRows)}
+<!-- Totals -->
+<table style="width:280px;margin-left:auto;border-collapse:collapse;border:1px solid #e5e7eb;margin-bottom:10px">
+  ${[["Labor",fmt(laborTotal)],["Equipment",fmt(equipTotal)],["Materials",fmt(matsTotal)],["Other",fmt(otherTotal)],["Subtotal",fmt(subtotal)],...(markupPct>0?[[`Markup (${markupPct}%)`,fmt(markupAmt)]]:[])].map(([l,v])=>`<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:5px 8px;font-size:9pt">${l}</td><td style="padding:5px 8px;font-size:9pt;text-align:right">${v}</td></tr>`).join("")}
+  <tr style="background:#1f3864;color:#fff"><td style="padding:6px 8px;font-size:10pt;font-weight:900">GRAND TOTAL</td><td style="padding:6px 8px;font-size:10pt;font-weight:900;text-align:right">${fmt(grandTotal)}</td></tr>
+</table>
+${notes?`<div style="border:1px solid #e5e7eb;padding:6px 8px;margin-bottom:10px;font-size:8.5pt"><strong>Notes:</strong> ${notes}</div>`:""}
+<!-- Signatures -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;border-top:2px solid #e5e7eb;padding-top:12px">
+  <div><div style="font-size:8pt;font-weight:700;color:#555;margin-bottom:4px">PREPARED BY / PM</div>
+    ${sigData?`<div style="background:#fff;border:1px solid #ccc;border-radius:4px;padding:4px;display:inline-block"><img src="${sigData}" style="max-height:50px;max-width:180px;display:block;background:#fff;"/></div>`:
+    `<div style="border-bottom:1px solid #000;width:200px;height:36px;margin-bottom:4px"></div>`}
+    <div style="font-size:9pt;font-weight:700;margin-top:4px">${signerName||user.name}</div>
+    <div style="font-size:8pt;color:#555">Date: ${ticketDate}</div>
+  </div>
+  <div><div style="font-size:8pt;font-weight:700;color:#555;margin-bottom:4px">CUSTOMER APPROVAL</div>
+    <div style="border-bottom:1px solid #000;width:200px;height:36px;margin-bottom:4px"></div>
+    <div style="font-size:8pt;color:#555">Name / Signature</div>
+    <div style="border-bottom:1px solid #000;width:200px;margin-top:8px;margin-bottom:4px"></div>
+    <div style="font-size:8pt;color:#555">Date / Title</div>
+  </div>
+</div>
+<div style="text-align:center;margin-top:10px;font-size:7pt;color:#999;border-top:1px solid #eee;padding-top:6px">
+  AIME Field Pro · ${project.name} · T&M #${ticketNo} · Generated ${new Date().toLocaleString()}
+</div>
+</body></html>`;
+
+    const win=window.open("","_blank","width=950,height=800");
+    if(!win){alert("Allow popups to print.");return;}
+    win.document.write(html);
+    win.document.close();
+    setTimeout(()=>{win.focus();win.print();},1200);
+  }
+
+  // Row input style
+  const ri={...inp,fontSize:12,padding:"5px 8px"};
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",display:"block",marginBottom:4}}>← Back</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:15,fontWeight:900,color:T.orange}}>🧾 {isNew?"New T&M Ticket":"T&M #"+ticketNo}</div>
+          <div style={{fontSize:18,fontWeight:900,color:T.green}}>${grandTotal.toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+        </div>
+      </div>
+
+      <div style={{padding:"14px 16px 100px"}}>
+        {/* Header info */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <div><label style={lbl}>Ticket #</label><input value={ticketNo} onChange={e=>setTicketNo(e.target.value)} placeholder="T&M-001" style={inp}/></div>
+            <div><label style={lbl}>Date</label><input type="date" value={ticketDate} onChange={e=>setTicketDate(e.target.value)} style={inp}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <div><label style={lbl}>PO #</label><input value={poNumber} onChange={e=>setPoNumber(e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>AFE / WO #</label><input value={afeNumber} onChange={e=>setAfeNumber(e.target.value)} style={inp}/></div>
+          </div>
+          <div style={{marginBottom:8}}><label style={lbl}>Location</label><input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Site location" style={inp}/></div>
+          <div><label style={lbl}>Description of Work</label><textarea value={description} onChange={e=>setDescription(e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/></div>
+        </div>
+
+        {/* Tab selector */}
+        <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:12,gap:4}}>
+          {[["labor","👷 Labor"],["equipment","🚜 Equipment"],["materials","🔩 Materials"],["other","➕ Other"],["summary","📊 Summary"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"8px 2px",background:tab===id?T.orange:"transparent",color:tab===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* LABOR TAB */}
+        {tab==="labor"&&<div>
+          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:""})} style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Worker</button>
+          {labor.map(r=>(
+            <div key={r.id} style={{...cardS,marginBottom:8}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:6}}>
+                <div><label style={lbl}>Name</label><input value={r.name} onChange={e=>updateRow(setLabor,r.id,"name",e.target.value)} placeholder="Worker name" style={ri}/></div>
+                <div><label style={lbl}>Classification</label><input value={r.classification} onChange={e=>updateRow(setLabor,r.id,"classification",e.target.value)} placeholder="Foreman, Welder…" style={ri}/></div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"flex-end"}}>
+                <div><label style={lbl}>Hours</label><input type="number" value={r.hours} onChange={e=>updateRow(setLabor,r.id,"hours",e.target.value)} placeholder="8" style={ri}/></div>
+                <div><label style={lbl}>Rate / Hr ($)</label><input type="number" value={r.rate} onChange={e=>updateRow(setLabor,r.id,"rate",e.target.value)} placeholder="0.00" style={ri}/></div>
+                <div style={{paddingBottom:2}}>
+                  <div style={{fontSize:14,fontWeight:900,color:T.green,textAlign:"right",marginBottom:2}}>${((r.hours||0)*(r.rate||0)).toFixed(2)}</div>
+                  <button onClick={()=>removeRow(setLabor,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {labor.length===0&&<div style={{textAlign:"center",padding:"20px",color:T.muted,fontSize:12}}>No labor rows — tap + Add Worker</div>}
+          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:16,marginTop:8}}>Labor Total: ${laborTotal.toFixed(2)}</div>
+        </div>}
+
+        {/* EQUIPMENT TAB */}
+        {tab==="equipment"&&<div>
+          <button onClick={()=>addRow(setEquipment,{description:"",unit:"Hours",qty:"",rate:""})} style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Equipment</button>
+          {equipment.map(r=>(
+            <div key={r.id} style={{...cardS,marginBottom:8}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:6}}>
+                <div><label style={lbl}>Equipment</label><input value={r.description} onChange={e=>updateRow(setEquipment,r.id,"description",e.target.value)} placeholder="Excavator, Truck…" style={ri}/></div>
+                <div><label style={lbl}>Unit</label>
+                  <select value={r.unit} onChange={e=>updateRow(setEquipment,r.id,"unit",e.target.value)} style={inpSel}>
+                    {["Hours","Days","Weeks","Miles","EA"].map(u=><option key={u}>{u}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"flex-end"}}>
+                <div><label style={lbl}>Qty</label><input type="number" value={r.qty} onChange={e=>updateRow(setEquipment,r.id,"qty",e.target.value)} placeholder="1" style={ri}/></div>
+                <div><label style={lbl}>Rate ($)</label><input type="number" value={r.rate} onChange={e=>updateRow(setEquipment,r.id,"rate",e.target.value)} placeholder="0.00" style={ri}/></div>
+                <div style={{paddingBottom:2}}>
+                  <div style={{fontSize:14,fontWeight:900,color:T.green,textAlign:"right",marginBottom:2}}>${((r.qty||0)*(r.rate||0)).toFixed(2)}</div>
+                  <button onClick={()=>removeRow(setEquipment,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {equipment.length===0&&<div style={{textAlign:"center",padding:"20px",color:T.muted,fontSize:12}}>No equipment — tap + Add Equipment</div>}
+          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:16,marginTop:8}}>Equipment Total: ${equipTotal.toFixed(2)}</div>
+        </div>}
+
+        {/* MATERIALS TAB */}
+        {tab==="materials"&&<div>
+          <button onClick={()=>addRow(setMaterials,{description:"",qty:"",unit:"EA",unit_price:""})} style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Material</button>
+          {materials.map(r=>(
+            <div key={r.id} style={{...cardS,marginBottom:8}}>
+              <div style={{marginBottom:6}}><label style={lbl}>Description</label><input value={r.description} onChange={e=>updateRow(setMaterials,r.id,"description",e.target.value)} placeholder="Material description" style={ri}/></div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:8,alignItems:"flex-end"}}>
+                <div><label style={lbl}>Qty</label><input type="number" value={r.qty} onChange={e=>updateRow(setMaterials,r.id,"qty",e.target.value)} placeholder="1" style={ri}/></div>
+                <div><label style={lbl}>Unit</label><input value={r.unit} onChange={e=>updateRow(setMaterials,r.id,"unit",e.target.value)} placeholder="EA" style={ri}/></div>
+                <div><label style={lbl}>Unit Price ($)</label><input type="number" value={r.unit_price} onChange={e=>updateRow(setMaterials,r.id,"unit_price",e.target.value)} placeholder="0.00" style={ri}/></div>
+                <div style={{paddingBottom:2}}>
+                  <div style={{fontSize:13,fontWeight:900,color:T.green,textAlign:"right",marginBottom:2}}>${((r.qty||0)*(r.unit_price||0)).toFixed(2)}</div>
+                  <button onClick={()=>removeRow(setMaterials,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {materials.length===0&&<div style={{textAlign:"center",padding:"20px",color:T.muted,fontSize:12}}>No materials — tap + Add Material</div>}
+          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:16,marginTop:8}}>Materials Total: ${matsTotal.toFixed(2)}</div>
+        </div>}
+
+        {/* OTHER TAB */}
+        {tab==="other"&&<div>
+          <button onClick={()=>addRow(setOther,{description:"",amount:""})} style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Charge</button>
+          {other.map(r=>(
+            <div key={r.id} style={{...cardS,marginBottom:8,display:"flex",gap:10,alignItems:"flex-end"}}>
+              <div style={{flex:2}}><label style={lbl}>Description</label><input value={r.description} onChange={e=>updateRow(setOther,r.id,"description",e.target.value)} placeholder="Misc charge" style={ri}/></div>
+              <div style={{flex:1}}><label style={lbl}>Amount ($)</label><input type="number" value={r.amount} onChange={e=>updateRow(setOther,r.id,"amount",e.target.value)} placeholder="0.00" style={ri}/></div>
+              <button onClick={()=>removeRow(setOther,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"6px 10px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit",marginBottom:2}}>🗑</button>
+            </div>
+          ))}
+          {other.length===0&&<div style={{textAlign:"center",padding:"20px",color:T.muted,fontSize:12}}>No other charges</div>}
+          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:16,marginTop:8}}>Other Total: ${otherTotal.toFixed(2)}</div>
+        </div>}
+
+        {/* SUMMARY TAB */}
+        {tab==="summary"&&<div>
+          {/* Totals breakdown */}
+          <div style={{...cardS,marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:12}}>Totals</div>
+            {[["👷 Labor",laborTotal],["🚜 Equipment",equipTotal],["🔩 Materials",matsTotal],["➕ Other",otherTotal]].map(([l,v])=>(
+              <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}>
+                <span style={{fontSize:13,color:T.sub}}>{l}</span>
+                <span style={{fontSize:13,fontWeight:700,color:T.text}}>${v.toFixed(2)}</span>
+              </div>
+            ))}
+            <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}>
+              <span style={{fontSize:13,color:T.sub}}>Subtotal</span>
+              <span style={{fontSize:14,fontWeight:800,color:T.text}}>${subtotal.toFixed(2)}</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:`1px solid ${T.border}`}}>
+              <span style={{fontSize:13,color:T.sub}}>Markup %</span>
+              <input type="number" value={markupPct} onChange={e=>setMarkupPct(e.target.value)} style={{...ri,width:70,textAlign:"center"}} placeholder="0"/>
+              <span style={{fontSize:13,fontWeight:700,color:T.text,marginLeft:"auto"}}>${markupAmt.toFixed(2)}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",marginTop:4,borderTop:`2px solid ${T.border}`}}>
+              <span style={{fontSize:16,fontWeight:900,color:T.text}}>GRAND TOTAL</span>
+              <span style={{fontSize:22,fontWeight:900,color:T.green}}>${grandTotal.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div style={{...cardS,marginBottom:12}}>
+            <label style={lbl}>Notes</label>
+            <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={3} placeholder="Any notes or special conditions…" style={{...inp,resize:"vertical"}}/>
+          </div>
+
+          {/* Status */}
+          {canEdit&&<div style={{...cardS,marginBottom:12}}>
+            <label style={lbl}>Status</label>
+            <select value={status} onChange={e=>setStatus(e.target.value)} style={inpSel}>
+              <option value="draft">Draft</option>
+              <option value="submitted">Submitted</option>
+              <option value="approved">Approved</option>
+            </select>
+          </div>}
+
+          {/* Signature */}
+          <div style={{...cardS,marginBottom:12}}>
+            <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:8}}>✍️ PM Sign-Off</div>
+            {sigData?(
+              <div>
+                <div style={{background:"#fff",border:"1px solid #ccc",borderRadius:8,padding:8,display:"inline-block",marginBottom:8}}>
+                  <img src={sigData} style={{maxHeight:60,maxWidth:200,display:"block"}}/>
+                </div>
+                <div style={{fontSize:12,color:T.sub,marginBottom:8}}>{signerName} · {sigAt?new Date(sigAt).toLocaleString():""}</div>
+                <button onClick={()=>{setSigData(null);setSigAt(null);}} style={{...ghostBtn,fontSize:11,color:T.red,border:`1px solid ${T.red}30`}}>Clear Signature</button>
+              </div>
+            ):(
+              <button onClick={()=>setShowSigPad(true)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>✍️ Sign Here</button>
+            )}
+          </div>
+        </div>}
+
+        {/* Action buttons */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:16}}>
+          <button onClick={()=>save()} disabled={saving}
+            style={{...primBtn,borderRadius:14,background:T.orange,color:"#000",opacity:saving?0.5:1}}>
+            {saving?"Saving…":"💾 Save"}
+          </button>
+          <button onClick={printTicket}
+            style={{...primBtn,borderRadius:14,background:"#1f3864"}}>
+            🖨️ Print T&M
+          </button>
+        </div>
+        {!isNew&&canEdit&&<button onClick={async()=>{if(window.confirm("Delete this ticket?"))try{await API.tmTickets.remove(ticket.id);onBack();}catch(e){}}}
+          style={{...primBtn,borderRadius:14,background:T.redLow,color:T.red,border:`1px solid ${T.red}30`,marginTop:8,width:"100%",fontSize:13}}>
+          🗑 Delete Ticket
+        </button>}
+      </div>
+
+      {showSigPad&&<SignaturePad
+        reportName={`T&M #${ticketNo} · ${project.name}`}
+        onSave={async(name,sig)=>{setSignerName(name);setSigData(sig);setSigAt(new Date().toISOString());setShowSigPad(false);}}
+        onCancel={()=>setShowSigPad(false)}/>}
+    </div>
   );
 }
