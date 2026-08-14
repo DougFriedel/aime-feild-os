@@ -74,7 +74,40 @@ async function sb(path,opts={}){
   const t=await res.text();return t?JSON.parse(t):null;
 }
 
+/* Supabase Storage over plain REST — the app has no supabase-js client. */
+async function storageUpload(bucket,path,file,contentType){
+  const res=await fetch(`${SUPA_URL}/storage/v1/object/${bucket}/${path}`,{
+    method:"POST",
+    headers:{apikey:SUPA_KEY,Authorization:`Bearer ${SUPA_KEY}`,"x-upsert":"true",
+      ...(contentType?{"Content-Type":contentType}:{})},
+    body:file,
+  });
+  if(!res.ok)throw new Error((await res.text())||`Upload failed (${res.status})`);
+  return res.json().catch(()=>({}));
+}
+function storagePublicUrl(bucket,path){
+  return `${SUPA_URL}/storage/v1/object/public/${bucket}/${path}`;
+}
+async function storageRemove(bucket,path){
+  const res=await fetch(`${SUPA_URL}/storage/v1/object/${bucket}/${path}`,{
+    method:"DELETE",
+    headers:{apikey:SUPA_KEY,Authorization:`Bearer ${SUPA_KEY}`},
+  });
+  if(!res.ok&&res.status!==404)throw new Error((await res.text())||`Delete failed (${res.status})`);
+}
+
 const API={
+  drawings:{
+    forProject:(pid)=>sb(`/drawings?project_id=eq.${pid}&select=*&order=created_at.desc`),
+    create:(d)=>sb('/drawings',{method:'POST',body:d,prefer:'return=representation'}),
+    update:(id,d)=>sb(`/drawings?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),
+    remove:(id)=>sb(`/drawings?id=eq.${id}`,{method:'DELETE'}),
+  },
+  markups:{
+    forDrawing:(did)=>sb(`/drawing_markups?drawing_id=eq.${did}&select=*`),
+    create:(d)=>sb('/drawing_markups',{method:'POST',body:d,prefer:'return=representation'}),
+    update:(id,d)=>sb(`/drawing_markups?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),
+  },
   projects:{
     list:()=>sb("/projects?select=*&order=created_at.desc"),
     byDivision:(div)=>sb(`/projects?division=eq.${encodeURIComponent(div)}&select=*&order=created_at.desc`),
@@ -2915,6 +2948,284 @@ function PhotosTab({projectId,photos,onRefresh,onErr}){
   );
 }
 
+/* ── DRAWINGS: sheet list + upload ───────────────────────────── */
+function DrawingsTab({projectId,user,onErr}){
+  const canAdmin=user.role==="admin"||user.role==="pm";
+  const [drawings,setDrawings]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [uploading,setUploading]=useState(false);
+  const [progress,setProgress]=useState("");
+  const [viewing,setViewing]=useState(null);
+  const [q,setQ]=useState("");
+  const fileRef=useRef(null);
+
+  const DISCIPLINES=["Mechanical","Piping","Structural","Electrical","Civil","Architectural","P&ID","Isometric","Other"];
+
+  async function load(){
+    setLoading(true);
+    try{ setDrawings(await API.drawings.forProject(projectId)||[]); }
+    catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[projectId]);
+
+  async function handleFiles(files){
+    if(!files||!files.length)return;
+    setUploading(true);
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      setProgress(`Uploading ${i+1} of ${files.length}: ${file.name}`);
+      try{
+        if(file.type!=="application/pdf"){ onErr&&onErr(`${file.name} is not a PDF — skipped.`); continue; }
+        const clean=file.name.replace(/[^A-Za-z0-9._-]/g,"_");
+        const path=`${projectId}/${Date.now()}-${clean}`;
+        await storageUpload("drawings",path,file,"application/pdf");
+        await API.drawings.create({
+          project_id:projectId,
+          title:file.name.replace(/\.pdf$/i,""),
+          storage_path:path,
+          file_size:file.size,
+          uploaded_by:user.name,
+        });
+      }catch(e){ onErr&&onErr(`${file.name}: ${e.message}`); }
+    }
+    setProgress(""); setUploading(false);
+    if(fileRef.current)fileRef.current.value="";
+    await load();
+  }
+
+  async function del(d){
+    if(!window.confirm(`Delete "${d.title}"? This cannot be undone.`))return;
+    try{
+      await storageRemove("drawings",d.storage_path);
+      await API.drawings.remove(d.id);
+      await load();
+    }catch(e){ onErr&&onErr(e.message); }
+  }
+
+  const fmtSize=(b)=>!b?"":b<1048576?(b/1024).toFixed(0)+" KB":(b/1048576).toFixed(1)+" MB";
+  const filtered=drawings.filter(d=>{
+    if(!q.trim())return true;
+    const s=q.toLowerCase();
+    return (d.title||"").toLowerCase().includes(s)||(d.sheet_number||"").toLowerCase().includes(s)||(d.discipline||"").toLowerCase().includes(s);
+  });
+
+  if(viewing) return <DrawingViewer drawing={viewing} user={user} onBack={()=>{setViewing(null);load();}} onErr={onErr}/>;
+
+  return(
+    <div>
+      {canAdmin&&<>
+        <input ref={fileRef} type="file" accept="application/pdf" multiple style={{display:"none"}}
+          onChange={e=>handleFiles(Array.from(e.target.files||[]))}/>
+        <button onClick={()=>fileRef.current&&fileRef.current.click()} disabled={uploading}
+          style={{...primBtn,borderRadius:14,marginBottom:12,background:T.orange,color:"#000",opacity:uploading?0.6:1}}>
+          {uploading?"Uploading…":"📐 Upload Drawings (PDF)"}
+        </button>
+        {progress&&<div style={{fontSize:11,color:T.muted,textAlign:"center",marginBottom:10}}>{progress}</div>}
+      </>}
+
+      {drawings.length>3&&<input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search sheets…"
+        style={{...inp,marginBottom:12}}/>}
+
+      {loading?<div style={{textAlign:"center",color:T.muted,padding:24,fontSize:13}}>Loading drawings…</div>:
+       filtered.length===0?(
+        <div style={{...cardS,textAlign:"center",padding:28,color:T.muted}}>
+          <div style={{fontSize:32,marginBottom:8}}>📐</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>No Drawings</div>
+          <div style={{fontSize:12}}>{canAdmin?"Upload a PDF drawing set to get started.":"No drawings have been uploaded yet."}</div>
+        </div>
+      ):filtered.map(d=>(
+        <div key={d.id} style={{...cardS,marginBottom:10,display:"flex",alignItems:"center",gap:12}}>
+          <div onClick={()=>setViewing(d)} style={{flex:1,cursor:"pointer",minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:800,color:"#60A5FA",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              {d.sheet_number?`${d.sheet_number} · `:""}{d.title}
+            </div>
+            <div style={{fontSize:11,color:T.muted,marginTop:3}}>
+              {[d.discipline,d.revision?`Rev ${d.revision}`:null,d.page_count?`${d.page_count} sheet${d.page_count!==1?"s":""}`:null,fmtSize(d.file_size)]
+                .filter(Boolean).join(" · ")||"PDF"}
+            </div>
+            <div style={{fontSize:10,color:T.muted,marginTop:2}}>{d.uploaded_by||""}{d.created_at?` · ${new Date(d.created_at).toLocaleDateString()}`:""}</div>
+          </div>
+          <button onClick={()=>setViewing(d)} style={{...primBtn,padding:"8px 14px",fontSize:12,borderRadius:10,background:"#1f3864",flexShrink:0}}>Open</button>
+          {canAdmin&&<button onClick={()=>del(d)}
+            style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:18,padding:"0 4px",flexShrink:0}}>×</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── DRAWING VIEWER: PDF.js render + pinch zoom / pan ────────── */
+function DrawingViewer({drawing,user,onBack,onErr}){
+  const [pdf,setPdf]=useState(null);
+  const [page,setPage]=useState(1);
+  const [pages,setPages]=useState(0);
+  const [scale,setScale]=useState(1);
+  const [fitScale,setFitScale]=useState(1);
+  const [offset,setOffset]=useState({x:0,y:0});
+  const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState("");
+  const [rendering,setRendering]=useState(false);
+
+  const canvasRef=useRef(null);
+  const wrapRef=useRef(null);
+  const renderTaskRef=useRef(null);
+  const gesture=useRef({mode:null,startDist:0,startScale:1,startX:0,startY:0,startOff:{x:0,y:0}});
+
+  // Load PDF.js from CDN once, then open the document.
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        setLoading(true);setErr("");
+        const pdfjsLib=await loadPdfJs();
+        const publicUrl=storagePublicUrl("drawings",drawing.storage_path);
+        const task=pdfjsLib.getDocument({url:publicUrl});
+        const doc=await task.promise;
+        if(cancelled)return;
+        setPdf(doc);setPages(doc.numPages);setPage(1);
+        if(!drawing.page_count||drawing.page_count!==doc.numPages){
+          API.drawings.update(drawing.id,{page_count:doc.numPages}).catch(()=>{});
+        }
+      }catch(e){ if(!cancelled)setErr("Could not open drawing: "+e.message); }
+      if(!cancelled)setLoading(false);
+    })();
+    return()=>{cancelled=true;};
+  },[drawing.id]);
+
+  // Render current page at current scale.
+  useEffect(()=>{
+    if(!pdf)return;
+    let cancelled=false;
+    (async()=>{
+      try{
+        setRendering(true);
+        const pg=await pdf.getPage(page);
+        if(cancelled)return;
+        const wrap=wrapRef.current;
+        const baseVp=pg.getViewport({scale:1});
+        const avail=wrap?wrap.clientWidth-8:600;
+        const fit=avail/baseVp.width;
+        if(Math.abs(fit-fitScale)>0.001)setFitScale(fit);
+        const eff=fit*scale;
+        const vp=pg.getViewport({scale:eff*(window.devicePixelRatio||1)});
+        const canvas=canvasRef.current;
+        if(!canvas)return;
+        canvas.width=vp.width;canvas.height=vp.height;
+        canvas.style.width=(vp.width/(window.devicePixelRatio||1))+"px";
+        canvas.style.height=(vp.height/(window.devicePixelRatio||1))+"px";
+        if(renderTaskRef.current){try{renderTaskRef.current.cancel();}catch(e){}}
+        const task=pg.render({canvasContext:canvas.getContext("2d"),viewport:vp});
+        renderTaskRef.current=task;
+        await task.promise;
+      }catch(e){ if(e&&e.name!=="RenderingCancelledException"&&!cancelled)setErr(e.message); }
+      if(!cancelled)setRendering(false);
+    })();
+    return()=>{cancelled=true;};
+  },[pdf,page,scale]);
+
+  // Touch: two fingers = zoom, one finger = pan.
+  function onTouchStart(e){
+    if(e.touches.length===2){
+      const d=dist(e.touches[0],e.touches[1]);
+      gesture.current={mode:"zoom",startDist:d,startScale:scale,startOff:{...offset}};
+    }else if(e.touches.length===1){
+      gesture.current={mode:"pan",startX:e.touches[0].clientX,startY:e.touches[0].clientY,startOff:{...offset}};
+    }
+  }
+  function onTouchMove(e){
+    const g=gesture.current;
+    if(g.mode==="zoom"&&e.touches.length===2){
+      e.preventDefault();
+      const d=dist(e.touches[0],e.touches[1]);
+      setScale(clamp(g.startScale*(d/g.startDist),0.5,8));
+    }else if(g.mode==="pan"&&e.touches.length===1){
+      e.preventDefault();
+      setOffset({x:g.startOff.x+(e.touches[0].clientX-g.startX),y:g.startOff.y+(e.touches[0].clientY-g.startY)});
+    }
+  }
+  function onTouchEnd(){ gesture.current.mode=null; }
+  const dist=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+
+  // Mouse drag to pan on desktop.
+  function onMouseDown(e){ gesture.current={mode:"pan",startX:e.clientX,startY:e.clientY,startOff:{...offset}}; }
+  function onMouseMove(e){
+    const g=gesture.current;
+    if(g.mode!=="pan")return;
+    setOffset({x:g.startOff.x+(e.clientX-g.startX),y:g.startOff.y+(e.clientY-g.startY)});
+  }
+  function onMouseUp(){ gesture.current.mode=null; }
+  function onWheel(e){
+    if(!e.ctrlKey&&!e.metaKey)return;
+    e.preventDefault();
+    setScale(s=>clamp(s*(e.deltaY<0?1.1:0.9),0.5,8));
+  }
+
+  const resetView=()=>{setScale(1);setOffset({x:0,y:0});};
+  const btn={...primBtn,padding:"8px 10px",fontSize:12,borderRadius:10,background:T.surface,border:`1px solid ${T.border}`,color:T.text};
+
+  return(
+    <div style={{position:"fixed",inset:0,background:T.bg,zIndex:150,display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
+      {/* Header */}
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"10px 14px",flexShrink:0}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:4}}>← Back to Drawings</button>
+        <div style={{fontSize:14,fontWeight:800,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+          {drawing.sheet_number?`${drawing.sheet_number} · `:""}{drawing.title}
+        </div>
+      </div>
+
+      {/* Canvas area */}
+      <div ref={wrapRef}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+        onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
+        onWheel={onWheel}
+        style={{flex:1,overflow:"hidden",position:"relative",background:"#3a3a42",touchAction:"none",cursor:"grab"}}>
+        {loading&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:T.sub,fontSize:13}}>Loading drawing…</div>}
+        {err&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:16,color:T.red,fontSize:13,maxWidth:420,textAlign:"center"}}>{err}</div>
+        </div>}
+        <div style={{position:"absolute",left:"50%",top:0,transform:`translateX(-50%) translate(${offset.x}px, ${offset.y}px)`,padding:"4px 0"}}>
+          <canvas ref={canvasRef} style={{display:"block",background:"#fff",boxShadow:"0 4px 24px rgba(0,0,0,0.5)"}}/>
+        </div>
+        {rendering&&!loading&&<div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:10,padding:"4px 8px",borderRadius:6}}>rendering…</div>}
+      </div>
+
+      {/* Controls */}
+      <div style={{background:T.surface,borderTop:`1px solid ${T.border}`,padding:"8px 12px",display:"flex",alignItems:"center",gap:8,flexShrink:0,flexWrap:"wrap",justifyContent:"center"}}>
+        <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page<=1} style={{...btn,opacity:page<=1?0.4:1}}>‹ Prev</button>
+        <span style={{fontSize:12,color:T.sub,minWidth:78,textAlign:"center"}}>Sheet {page} / {pages||"…"}</span>
+        <button onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={page>=pages} style={{...btn,opacity:page>=pages?0.4:1}}>Next ›</button>
+        <div style={{width:1,height:22,background:T.border}}/>
+        <button onClick={()=>setScale(s=>clamp(s*0.8,0.5,8))} style={btn}>−</button>
+        <span style={{fontSize:12,color:T.sub,minWidth:46,textAlign:"center"}}>{Math.round(scale*100)}%</span>
+        <button onClick={()=>setScale(s=>clamp(s*1.25,0.5,8))} style={btn}>+</button>
+        <button onClick={resetView} style={btn}>Fit</button>
+      </div>
+    </div>
+  );
+}
+
+// PDF.js loaded from CDN at runtime so package.json and the Vite build stay untouched.
+let _pdfjsPromise=null;
+function loadPdfJs(){
+  if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
+  if(_pdfjsPromise)return _pdfjsPromise;
+  _pdfjsPromise=new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    s.onload=()=>{
+      const lib=window.pdfjsLib;
+      if(!lib){reject(new Error("PDF.js failed to load"));return;}
+      lib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      resolve(lib);
+    };
+    s.onerror=()=>reject(new Error("Could not load PDF.js from CDN"));
+    document.head.appendChild(s);
+  });
+  return _pdfjsPromise;
+}
+
 function WeatherTab({projectId,project,weather,onRefresh,onErr}){
   const [fetching,setFetching]=useState(false);const [liveWeather,setLiveWeather]=useState(null);const [manualNote,setManualNote]=useState("");const [saving,setSaving]=useState(false);
   async function autoFetch(){if(!project.location){onErr("Add a location to this job (Info tab).");return;}setFetching(true);setLiveWeather(null);try{setLiveWeather(await fetchWeather(project.location));}catch(e){onErr(e.message);}setFetching(false);}
@@ -2946,6 +3257,7 @@ const PTABS=[
   {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
   {id:"safety",icon:"⛑️",label:"Safety",perm:"safety"},
   {id:"docs",icon:"📁",label:"Docs",perm:"docs"},
+  {id:"drawings",icon:"📐",label:"Drawings",perm:"docs"},
   {id:"schedule",icon:"📅",label:"Schedule",perm:"schedule"},
   {id:"photos",icon:"📷",label:"Photos",perm:"photos"},
   {id:"weather",icon:"🌤️",label:"Weather",perm:"weather"},
@@ -3662,6 +3974,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
         {!loading&&tab==="co"&&<ChangeOrdersTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="rfi"&&<RFIsTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="docs"     &&can(user,"docs")        &&<DocsTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="drawings" &&can(user,"docs")        &&<DrawingsTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="schedule" &&can(user,"schedule")    &&<ScheduleTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="photos"   &&can(user,"photos")      &&<PhotosTab projectId={project.id} photos={photos} onRefresh={()=>load(true)} onErr={setErr}/>}
         {!loading&&tab==="weather"  &&can(user,"weather")     &&<WeatherTab projectId={project.id} project={project} weather={weather} onRefresh={()=>load(true)} onErr={setErr}/>}
