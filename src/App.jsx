@@ -4321,6 +4321,133 @@ function PublicInspectorForm({reportId}){
   );
 }
 
+function PublicTMSignForm({ticketId}){
+  const [ticket,setTicket]=useState(null);const [project,setProject]=useState(null);
+  const [loading,setLoading]=useState(true);const [saving,setSaving]=useState(false);
+  const [submitted,setSubmitted]=useState(false);const [err,setErr]=useState("");
+  const [cName,setCName]=useState("");const [cTitle,setCTitle]=useState("");
+  const [cCo,setCCo]=useState("");const [sigData,setSigData]=useState(null);
+  const [drawing,setDrawing]=useState(false);
+  const sigRef=React.useRef(null);
+
+  useEffect(()=>{(async()=>{try{
+    const d=await sb(`/tm_tickets?id=eq.${ticketId}&limit=1`);
+    const t=Array.isArray(d)?d[0]:d;
+    if(!t){setErr("Ticket not found.");setLoading(false);return;}
+    setTicket(t);
+    if(t.client_signature){setSubmitted(true);}
+    const pd=await sb(`/projects?id=eq.${t.project_id}&limit=1`);
+    setProject(Array.isArray(pd)?pd[0]:pd||{name:"Unknown"});
+  }catch(e){setErr(e.message);}setLoading(false);})();},[ticketId]);
+
+  function getPos(e,c){const r=c.getBoundingClientRect();const sx=c.width/r.width;const sy=c.height/r.height;if(e.touches)return{x:(e.touches[0].clientX-r.left)*sx,y:(e.touches[0].clientY-r.top)*sy};return{x:(e.clientX-r.left)*sx,y:(e.clientY-r.top)*sy};}
+  function startSig(e){e.preventDefault();const c=sigRef.current;if(!c)return;const p=getPos(e,c);c.getContext("2d").beginPath();c.getContext("2d").moveTo(p.x,p.y);setDrawing(true);}
+  function drawSig(e){e.preventDefault();if(!drawing)return;const c=sigRef.current;if(!c)return;const ctx=c.getContext("2d");const p=getPos(e,c);ctx.lineWidth=2.5;ctx.lineCap="round";ctx.strokeStyle="#1f3864";ctx.lineTo(p.x,p.y);ctx.stroke();ctx.beginPath();ctx.moveTo(p.x,p.y);}
+  function endSig(e){e.preventDefault();setDrawing(false);const c=sigRef.current;if(c)setSigData(c.toDataURL("image/jpeg",0.7));}
+  function clearSig(){const c=sigRef.current;if(c)c.getContext("2d").clearRect(0,0,c.width,c.height);setSigData(null);}
+
+  async function submit(){
+    if(!cName.trim()||!sigData){setErr("Please enter your name and sign.");return;}
+    setSaving(true);setErr("");
+    try{
+      const fullName=cName.trim()+(cTitle?` · ${cTitle}`:"")+(cCo?` · ${cCo}`:"");
+      await sb(`/tm_tickets?id=eq.${ticketId}`,{method:"PATCH",body:{
+        client_contact:fullName,
+        client_signature:sigData,
+        client_signed_at:new Date().toISOString(),
+      },prefer:"return=representation"});
+      setSubmitted(true);
+    }catch(e){setErr("Failed: "+e.message);}setSaving(false);
+  }
+
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const s={bg:"#0D0D0F",card:"#1A1A20",border:"#26262E",inp:{width:"100%",background:"#141418",border:"1px solid #26262E",borderRadius:10,color:"#F0F4FF",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#7080A0",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
+
+  if(loading)return<div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui"}}><div style={{color:"#F0F4FF"}}>Loading ticket...</div></div>;
+  if(err&&!ticket)return<div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui",padding:20}}><div style={{background:s.card,borderRadius:16,padding:32,maxWidth:400,textAlign:"center"}}><div style={{fontSize:40}}>⚠️</div><div style={{color:"#F0F4FF",fontWeight:700,margin:"8px 0"}}>{err}</div></div></div>;
+  if(submitted)return(
+    <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",padding:20}}>
+      <div style={{maxWidth:560,margin:"0 auto",background:s.card,borderRadius:16,padding:32,textAlign:"center",border:"1px solid #34D39940"}}>
+        <div style={{fontSize:48,marginBottom:12}}>✅</div>
+        <div style={{fontSize:20,fontWeight:800,color:"#34D399",marginBottom:8}}>Ticket Signed!</div>
+        <div style={{color:"#7080A0",marginBottom:16}}>T&M Ticket {ticket?.ticket_no} has been signed and saved.</div>
+        {ticket?.client_signature&&<div style={{background:"#fff",borderRadius:10,padding:8,marginTop:8}}><img src={ticket.client_signature} alt="sig" style={{maxHeight:80,width:"100%",objectFit:"contain"}}/></div>}
+        <div style={{fontSize:12,color:"#555",marginTop:12}}>You may close this window.</div>
+      </div>
+    </div>
+  );
+
+  const sec=(title,rows)=>rows&&rows.length?(
+    <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #26262E"}}>
+      <div style={{fontSize:10,color:"#7080A0",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>{title}</div>
+      {rows.map((r,i)=>(
+        <div key={i} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,color:"#C8D4F0",padding:"3px 0"}}>
+          <span>{r.label}</span><span style={{fontWeight:700,whiteSpace:"nowrap"}}>{r.amt}</span>
+        </div>
+      ))}
+    </div>
+  ):null;
+
+  return(
+    <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",color:"#F0F4FF",padding:"16px 16px 60px"}}>
+      <div style={{maxWidth:560,margin:"0 auto"}}>
+        <div style={{background:"#141418",borderRadius:16,padding:"16px 20px",marginBottom:16,border:"1px solid #26262E"}}>
+          <div style={{fontSize:20,fontWeight:900,color:"#60A5FA",marginBottom:2}}>AIME</div>
+          <div style={{fontSize:11,color:"#7080A0"}}>Atlantic Industrial Mechanical & Environmental Inc.</div>
+        </div>
+        <div style={{background:s.card,borderRadius:12,padding:"14px 16px",marginBottom:14,border:"1px solid #26262E"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#7080A0",textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Time &amp; Materials Ticket — Client Approval</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            {[["Project",project?.name||"—"],["T&M #",ticket?.ticket_no||"—"],["Date",ticket?.ticket_date||"—"],["Submitted By",ticket?.submitted_by||"—"]].map(([l,v])=>(
+              <div key={l}><div style={{fontSize:10,color:"#7080A0",fontWeight:700,textTransform:"uppercase"}}>{l}</div><div style={{fontSize:13,fontWeight:600,color:"#F0F4FF",marginTop:2}}>{v}</div></div>
+            ))}
+          </div>
+          {ticket?.description&&<div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #26262E"}}>
+            <div style={{fontSize:10,color:"#7080A0",fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Work Description</div>
+            <div style={{fontSize:12,color:"#C8D4F0",lineHeight:1.5}}>{ticket.description}</div>
+          </div>}
+
+          {sec("Labor",(ticket?.labor||[]).map(r=>({label:`${r.name||"—"} · ${r.classification||""} · ${r.hours||0} hr`,amt:money((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))})))}
+          {sec("Equipment",(ticket?.equipment||[]).map(r=>({label:`${r.description||"—"} · ${r.qty||0} ${r.unit||""}`,amt:money((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0))})))}
+          {sec("Materials",(ticket?.materials||[]).map(r=>({label:`${r.description||"—"} · ${r.qty||0}`,amt:money((parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0))})))}
+          {sec("Other",(ticket?.other_charges||[]).map(r=>({label:r.description||"—",amt:money(r.amount)})))}
+
+          <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid #26262E",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:13,fontWeight:800,color:"#F0F4FF"}}>Grand Total</span>
+            <span style={{fontSize:20,fontWeight:900,color:"#34D399"}}>{money(ticket?.grand_total)}</span>
+          </div>
+        </div>
+
+        {err&&<div style={{background:"#FC818120",border:"1px solid #FC8181",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#FC8181"}}>{err}</div>}
+
+        <div style={{background:s.card,borderRadius:16,padding:20,border:"1px solid #26262E"}}>
+          <div style={{fontSize:14,fontWeight:800,color:"#60A5FA",marginBottom:14}}>✍️ Client Approval</div>
+          <div style={{marginBottom:10}}><label style={s.lbl}>Your Name *</label><input value={cName} onChange={e=>setCName(e.target.value)} placeholder="Full name" style={s.inp}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+            <div><label style={s.lbl}>Title / Role</label><input value={cTitle} onChange={e=>setCTitle(e.target.value)} placeholder="e.g. Project Manager" style={s.inp}/></div>
+            <div><label style={s.lbl}>Company</label><input value={cCo} onChange={e=>setCCo(e.target.value)} placeholder="e.g. Colonial Pipeline" style={s.inp}/></div>
+          </div>
+          <div style={{marginBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><label style={s.lbl}>Signature *</label>{sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#FC8181",fontSize:12,cursor:"pointer"}}>Clear</button>}</div>
+            <div style={{background:"#fff",borderRadius:10,overflow:"hidden",border:"2px solid #60A5FA"}}>
+              <canvas ref={sigRef} width={600} height={160} style={{width:"100%",height:160,display:"block",touchAction:"none",cursor:"crosshair"}}
+                onMouseDown={startSig} onMouseMove={drawSig} onMouseUp={endSig} onMouseLeave={endSig}
+                onTouchStart={startSig} onTouchMove={drawSig} onTouchEnd={endSig}/>
+            </div>
+            {!sigData&&<div style={{textAlign:"center",fontSize:11,color:"#7080A0",marginTop:4}}>Draw your signature above</div>}
+            {sigData&&<div style={{textAlign:"center",fontSize:11,color:"#34D399",marginTop:4}}>✓ Signature captured</div>}
+          </div>
+          <button onClick={submit} disabled={saving||!cName.trim()||!sigData}
+            style={{width:"100%",background:saving||!cName.trim()||!sigData?"#26262E":"#34D399",color:saving||!cName.trim()||!sigData?"#7080A0":"#000",border:"none",borderRadius:12,padding:14,fontSize:16,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+            {saving?"Saving…":"✅ Approve T&M Ticket"}
+          </button>
+          <div style={{fontSize:11,color:"#555",textAlign:"center",marginTop:8}}>By signing you confirm the labor, equipment, and materials itemized above were furnished as described and are authorized for invoicing.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const MFG_STAGES=[
   {id:"mat_received",  label:"Material Received",   icon:"📦", color:"#60A5FA", desc:"Log GFM material receipt"},
   {id:"mat_inspection",label:"Material Inspection", icon:"🔍", color:"#FBBF24", desc:"Inspect received materials"},
@@ -6337,6 +6464,7 @@ function AppInner(){
   const [publicRfiId]            = useState(()=>new URLSearchParams(window.location.search).get("rfi"));
   const [publicCoId]             = useState(()=>new URLSearchParams(window.location.search).get("co"));
   const [publicInspId]           = useState(()=>new URLSearchParams(window.location.search).get("inspect"));
+  const [publicTMId]             = useState(()=>new URLSearchParams(window.location.search).get("tmsign"));
   const [user,setUser]           = useState(null);
   const [projects,setProjects]   = useState([]);
   const [screen,setScreen]       = useState("division");
@@ -6352,6 +6480,7 @@ function AppInner(){
   if(publicRfiId) return <PublicRFIForm rfiId={publicRfiId}/>;
   if(publicCoId) return <PublicCOForm coId={publicCoId}/>;
   if(publicInspId) return <PublicInspectorForm reportId={publicInspId}/>;
+  if(publicTMId) return <PublicTMSignForm ticketId={publicTMId}/>;
 
   useEffect(()=>{
     const onOnline=()=>{setIsOnline(true);syncQueue();}
@@ -6589,6 +6718,13 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const [bsSending,setBsSending]=useState(false);
   const [bsError,setBsError]=useState("");
   const [bsSent,setBsSent]=useState(ticket?.hellosign_status==="pending"||ticket?.hellosign_status==="signed");
+  // Client sign-off (mirrors Daily Report: Sign Here / Send Link / eSign)
+  const [clientSig,setClientSig]=useState(ticket?.client_signature||null);
+  const [clientSigAt,setClientSigAt]=useState(ticket?.client_signed_at||null);
+  const [clientName,setClientName]=useState(ticket?.client_contact||"");
+  const [showClientSigPad,setShowClientSigPad]=useState(false);
+  const [showTMShare,setShowTMShare]=useState(false);
+  const [tmLinkCopied,setTmLinkCopied]=useState(false);
 
   async function sendBoxSign(){
     if(!bsEmail.trim()||!bsName.trim()){setBsError("Please enter client name and email.");return;}
@@ -6710,13 +6846,15 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       status:newStatus||status,
       submitted_by:ticket?.submitted_by||user.name,
       labor,equipment,materials,other_charges:other,
-      client_email:bsEmail||null,client_contact:bsName||null,
+      client_email:bsEmail||null,client_contact:(clientName||bsName)||null,
       labor_total:laborTotal,equipment_total:equipTotal,
       materials_total:matsTotal,other_total:otherTotal,
       subtotal,markup_amount:markupAmt,grand_total:grandTotal,
       inspector_name:signerName||null,
       inspector_signature:sigData||null,
       inspector_signed_at:sigAt||null,
+      client_signature:clientSig||null,
+      client_signed_at:clientSigAt||null,
       customer:project.client||null,
       updated_at:new Date().toISOString(),
     };
@@ -6797,10 +6935,13 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
     <div style="font-size:7.5pt;color:#555">Date: ${ticketDate}</div>
   </div>
   <div><div style="font-size:7.5pt;font-weight:700;color:#555;margin-bottom:4px">CUSTOMER APPROVAL</div>
-    <div style="border-bottom:1px solid #000;height:36px;width:200px;margin-bottom:4px"></div>
+    ${clientSig?`<img src="${clientSig}" style="max-height:50px;max-width:180px;display:block;background:#fff;border:1px solid #ccc;border-radius:4px;padding:4px"/>
+    <div style="font-size:8.5pt;font-weight:700;margin-top:4px">${clientName||bsName||""}</div>
+    <div style="font-size:7.5pt;color:#555">Date: ${clientSigAt?new Date(clientSigAt).toLocaleDateString():ticketDate}</div>`:
+    `<div style="border-bottom:1px solid #000;height:36px;width:200px;margin-bottom:4px"></div>
     <div style="font-size:7.5pt;color:#555">Name / Signature</div>
     <div style="border-bottom:1px solid #000;width:200px;margin:8px 0 4px"></div>
-    <div style="font-size:7.5pt;color:#555">Date / Title</div>
+    <div style="font-size:7.5pt;color:#555">Date / Title</div>`}
   </div>
 </div>
 <div style="text-align:center;margin-top:8px;font-size:6.5pt;color:#999;border-top:1px solid #eee;padding-top:5px">AIME Field Pro · ${project.name} · T&M #${ticketNo} · Generated ${new Date().toLocaleString()}</div>
@@ -6813,6 +6954,48 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
 
   const ri={...inp,fontSize:13,padding:"7px 10px"};
   const fmt=n=>"$"+(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  if(showTMShare){
+    const link=`${window.location.origin}${window.location.pathname}?tmsign=${ticket?.id}`;
+    return(
+      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+        <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px"}}>
+          <button onClick={()=>setShowTMShare(false)} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",display:"block",marginBottom:4}}>← Back</button>
+          <div style={{fontSize:15,fontWeight:900,color:T.text}}>📤 Send Client Link</div>
+        </div>
+        <div style={{padding:"20px 16px"}}>
+          <div style={{...cardS,marginBottom:14,background:T.blueLow,border:`1px solid ${T.blue}40`}}>
+            <div style={{fontSize:14,fontWeight:800,color:T.blue,marginBottom:4}}>How it works</div>
+            <div style={{fontSize:12,color:T.sub,lineHeight:1.7}}>
+              1. Copy the link below and text or email it to the client<br/>
+              2. They open it on their phone — no login needed<br/>
+              3. They review the itemized charges and draw their signature<br/>
+              4. Saves directly to this ticket automatically
+            </div>
+          </div>
+          <div style={{...cardS,marginBottom:12,padding:"12px 14px"}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,marginBottom:6}}>SIGNING LINK</div>
+            <div style={{fontSize:12,color:T.sub,wordBreak:"break-all",lineHeight:1.6,background:T.surface,borderRadius:8,padding:"10px 12px"}}>{link}</div>
+          </div>
+          <button onClick={()=>{navigator.clipboard.writeText(link).then(()=>{setTmLinkCopied(true);setTimeout(()=>setTmLinkCopied(false),3000);}).catch(()=>{const el=document.createElement("textarea");el.value=link;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);setTmLinkCopied(true);setTimeout(()=>setTmLinkCopied(false),3000);});}}
+            style={{...primBtn,borderRadius:14,marginBottom:10,background:tmLinkCopied?T.green:T.orange,transition:"background 0.3s"}}>
+            {tmLinkCopied?"✅ Copied! Paste into a text or email":"📋 Copy Link to Clipboard"}
+          </button>
+          {tmLinkCopied&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px 14px",fontSize:13,color:T.green,textAlign:"center",marginBottom:10}}>✓ Link copied — paste it into a text or email to the client</div>}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <div style={{flex:1,height:1,background:T.border}}/><span style={{fontSize:11,color:T.muted}}>OR</span><div style={{flex:1,height:1,background:T.border}}/>
+          </div>
+          <button onClick={()=>{
+            const subj=`T&M Ticket ${ticketNo} — ${project.name} — Approval Requested`;
+            const body=`Please review and sign the Time & Materials ticket for ${project.name} dated ${ticketDate}.%0D%0A%0D%0AOpen this link — no login required:%0D%0A%0D%0A${link}%0D%0A%0D%0AThank you`;
+            window.location.href=`mailto:${bsEmail||""}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body).replace(/%250D%250A/g,'%0D%0A')}`;
+          }} style={{...ghostBtn,width:"100%",textAlign:"center",fontSize:14}}>
+            📧 Open Email Draft
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -7067,20 +7250,43 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
             </select>
           </div>}
 
-          {/* Box Sign client signature request */}
-          <div style={{...cardS,marginBottom:12,border:`1px solid ${"#1f3864"}40`}}>
-            <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:8}}>📦 Client Signature (Box Sign)</div>
-            {bsSent?(
-              <div style={{background:T.blueLow,border:`1px solid ${T.blue}30`,borderRadius:10,padding:"10px 14px",fontSize:12,color:T.blue,fontWeight:600}}>
-                ⏳ Box Sign request sent — awaiting client signature
+          {/* Client sign-off — same three options as the Daily Report */}
+          {clientSig?(
+            <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
+              <div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px"}}>✅ Client Sign-Off</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.orange,marginTop:2}}>{clientName||bsName||"Client"}</div>
+              {clientSigAt&&<div style={{fontSize:11,color:T.muted,marginTop:2}}>{new Date(clientSigAt).toLocaleString()}</div>}
+              <div style={{background:"#fff",borderRadius:10,padding:4,marginTop:8}}>
+                <img src={clientSig} alt="Client signature" style={{width:"100%",borderRadius:8,display:"block"}}/>
               </div>
-            ):(
-              <button onClick={()=>setShowBoxSignModal(true)}
-                style={{...primBtn,borderRadius:12,background:"#1f3864",fontSize:13}}>
-                📦 Request Client Signature via Box
-              </button>
-            )}
-          </div>
+              {canEdit&&<button onClick={()=>{if(window.confirm("Clear the client signature?")){setClientSig(null);setClientSigAt(null);}}}
+                style={{...ghostBtn,fontSize:11,color:T.red,border:`1px solid ${T.red}30`,marginTop:8}}>Clear</button>}
+            </div>
+          ):(
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>🔏 Client Sign-Off</div>
+              {bsSent&&<div style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"10px 14px",marginBottom:8,fontSize:12,color:T.blue,fontWeight:600}}>
+                📦 Box Sign request sent — waiting for client to sign
+              </div>}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                <button onClick={()=>setShowClientSigPad(true)}
+                  style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12,fontSize:12}}>
+                  ✍️ Sign Here
+                </button>
+                <button onClick={()=>{if(isNew){alert("Save the ticket first — the link needs a ticket ID.");return;}setShowTMShare(true);}}
+                  style={{...primBtn,background:T.blueLow,color:T.blue,border:`1px solid ${T.blue}40`,borderRadius:12,fontSize:12}}>
+                  🔗 Send Link
+                </button>
+                <button onClick={()=>setShowBoxSignModal(true)}
+                  style={{...primBtn,background:"#1e3a5f",color:"#60A5FA",border:"1px solid #2563EB40",borderRadius:12,fontSize:12}}>
+                  ✉️ eSign
+                </button>
+              </div>
+              <div style={{fontSize:10,color:T.muted,textAlign:"center",marginTop:5}}>
+                Sign Here = on this device · Send Link = client's phone · eSign = Box Sign email
+              </div>
+            </div>
+          )}
 
           <div style={{...cardS,marginBottom:12}}>
             <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:8}}>✍️ PM Sign-Off</div>
@@ -7117,6 +7323,10 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
       {showSigPad&&<SignaturePad reportName={`T&M #${ticketNo} · ${project.name}`}
         onSave={async(name,sig)=>{setSignerName(name);setSigData(sig);setSigAt(new Date().toISOString());setShowSigPad(false);}}
         onCancel={()=>setShowSigPad(false)}/>}
+
+      {showClientSigPad&&<SignaturePad reportName={`Client Sign-Off · T&M #${ticketNo} · ${project.name}`}
+        onSave={async(name,sig)=>{setClientName(name);setClientSig(sig);setClientSigAt(new Date().toISOString());setShowClientSigPad(false);}}
+        onCancel={()=>setShowClientSigPad(false)}/>}
 
       {showBoxSignModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16,fontFamily:"inherit"}}>
         <div style={{background:T.card,borderRadius:16,padding:24,width:"100%",maxWidth:400,border:"1px solid #1f386440"}}>
