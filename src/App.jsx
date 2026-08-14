@@ -3055,25 +3055,42 @@ function DrawingsTab({projectId,user,onErr}){
   );
 }
 
-/* ── DRAWING VIEWER: PDF.js render + pinch zoom / pan ────────── */
+/* ── DRAWING VIEWER: PDF render + redline markup ─────────────── */
 function DrawingViewer({drawing,user,onBack,onErr}){
   const [pdf,setPdf]=useState(null);
   const [page,setPage]=useState(1);
   const [pages,setPages]=useState(0);
   const [scale,setScale]=useState(1);
-  const [fitScale,setFitScale]=useState(1);
   const [offset,setOffset]=useState({x:0,y:0});
   const [loading,setLoading]=useState(true);
   const [err,setErr]=useState("");
   const [rendering,setRendering]=useState(false);
-
   const [barOpen,setBarOpen]=useState(true);
+
+  // Markup state
+  const [tool,setTool]=useState("pan");           // pan | pen | arrow | box | text | erase
+  const [color,setColor]=useState("#EF4444");
+  const [shapes,setShapes]=useState([]);          // current page, PDF user-space coords
+  const [markupId,setMarkupId]=useState(null);    // row id for this drawing+page
+  const [showMarkup,setShowMarkup]=useState(true);
+  const [toolsOpen,setToolsOpen]=useState(false);
+  const [dirty,setDirty]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [baseW,setBaseW]=useState(0);             // page width at scale 1 = the coord system
+
   const canvasRef=useRef(null);
+  const overlayRef=useRef(null);
   const wrapRef=useRef(null);
   const renderTaskRef=useRef(null);
-  const gesture=useRef({mode:null,startDist:0,startScale:1,startX:0,startY:0,startOff:{x:0,y:0}});
+  const gesture=useRef({mode:null});
+  const draftRef=useRef(null);
+  const fitRef=useRef(1);
 
-  // Load PDF.js from CDN once, then open the document.
+  const COLORS=["#EF4444","#FBBF24","#22C55E","#3B82F6","#111827"];
+  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+  const dist=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+
+  /* ── load PDF ── */
   useEffect(()=>{
     let cancelled=false;
     (async()=>{
@@ -3081,20 +3098,34 @@ function DrawingViewer({drawing,user,onBack,onErr}){
         setLoading(true);setErr("");
         const pdfjsLib=await loadPdfJs();
         const publicUrl=storagePublicUrl("drawings",drawing.storage_path);
-        const task=pdfjsLib.getDocument({url:publicUrl});
-        const doc=await task.promise;
+        const doc=await pdfjsLib.getDocument({url:publicUrl}).promise;
         if(cancelled)return;
         setPdf(doc);setPages(doc.numPages);setPage(1);
-        if(!drawing.page_count||drawing.page_count!==doc.numPages){
+        if(!drawing.page_count||drawing.page_count!==doc.numPages)
           API.drawings.update(drawing.id,{page_count:doc.numPages}).catch(()=>{});
-        }
       }catch(e){ if(!cancelled)setErr("Could not open drawing: "+e.message); }
       if(!cancelled)setLoading(false);
     })();
     return()=>{cancelled=true;};
   },[drawing.id]);
 
-  // Render current page at current scale.
+  /* ── load markup for the current page ── */
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        const rows=await API.markups.forDrawing(drawing.id);
+        if(cancelled)return;
+        const row=(rows||[]).find(r=>r.page===page);
+        setShapes(row&&Array.isArray(row.shapes)?row.shapes:[]);
+        setMarkupId(row?row.id:null);
+        setDirty(false);
+      }catch(e){ if(!cancelled){setShapes([]);setMarkupId(null);} }
+    })();
+    return()=>{cancelled=true;};
+  },[drawing.id,page]);
+
+  /* ── render PDF page ── */
   useEffect(()=>{
     if(!pdf)return;
     let cancelled=false;
@@ -3103,20 +3134,22 @@ function DrawingViewer({drawing,user,onBack,onErr}){
         setRendering(true);
         const pg=await pdf.getPage(page);
         if(cancelled)return;
-        const wrap=wrapRef.current;
-        const baseVp=pg.getViewport({scale:1});
-        const avail=wrap?wrap.clientWidth-8:600;
-        const fit=avail/baseVp.width;
-        if(Math.abs(fit-fitScale)>0.001)setFitScale(fit);
-        const eff=fit*scale;
-        const vp=pg.getViewport({scale:eff*(window.devicePixelRatio||1)});
-        const canvas=canvasRef.current;
-        if(!canvas)return;
-        canvas.width=vp.width;canvas.height=vp.height;
-        canvas.style.width=(vp.width/(window.devicePixelRatio||1))+"px";
-        canvas.style.height=(vp.height/(window.devicePixelRatio||1))+"px";
+        const dpr=window.devicePixelRatio||1;
+        const base=pg.getViewport({scale:1});
+        const avail=(wrapRef.current?wrapRef.current.clientWidth:600)-8;
+        const fit=avail/base.width;
+        fitRef.current=fit;
+        setBaseW(base.width);
+        const vp=pg.getViewport({scale:fit*scale*dpr});
+        const cv=canvasRef.current, ov=overlayRef.current;
+        if(!cv)return;
+        for(const c of [cv,ov]){
+          if(!c)continue;
+          c.width=vp.width;c.height=vp.height;
+          c.style.width=(vp.width/dpr)+"px";c.style.height=(vp.height/dpr)+"px";
+        }
         if(renderTaskRef.current){try{renderTaskRef.current.cancel();}catch(e){}}
-        const task=pg.render({canvasContext:canvas.getContext("2d"),viewport:vp});
+        const task=pg.render({canvasContext:cv.getContext("2d"),viewport:vp});
         renderTaskRef.current=task;
         await task.promise;
       }catch(e){ if(e&&e.name!=="RenderingCancelledException"&&!cancelled)setErr(e.message); }
@@ -3125,98 +3158,237 @@ function DrawingViewer({drawing,user,onBack,onErr}){
     return()=>{cancelled=true;};
   },[pdf,page,scale]);
 
-  // Touch: two fingers = zoom, one finger = pan.
+  /* ── draw markup overlay ── */
+  const paint=React.useCallback((extra)=>{
+    const ov=overlayRef.current;
+    if(!ov||!baseW)return;
+    const ctx=ov.getContext("2d");
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,ov.width,ov.height);
+    if(!showMarkup)return;
+    const k=ov.width/baseW;                 // user-space → device px
+    ctx.setTransform(k,0,0,k,0,0);
+    ctx.lineCap="round";ctx.lineJoin="round";
+    const all=extra?[...shapes,extra]:shapes;
+    for(const s of all){
+      ctx.strokeStyle=s.color||"#EF4444";
+      ctx.fillStyle=s.color||"#EF4444";
+      ctx.lineWidth=s.w||2;
+      const p=s.points||[];
+      if(s.type==="pen"&&p.length>1){
+        ctx.beginPath();ctx.moveTo(p[0][0],p[0][1]);
+        for(let i=1;i<p.length;i++)ctx.lineTo(p[i][0],p[i][1]);
+        ctx.stroke();
+      }else if(s.type==="box"&&p.length>1){
+        ctx.strokeRect(p[0][0],p[0][1],p[1][0]-p[0][0],p[1][1]-p[0][1]);
+      }else if(s.type==="arrow"&&p.length>1){
+        const[a,b]=[p[0],p[1]];
+        ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+        const ang=Math.atan2(b[1]-a[1],b[0]-a[0]),h=(s.w||2)*5;
+        ctx.beginPath();ctx.moveTo(b[0],b[1]);
+        ctx.lineTo(b[0]-h*Math.cos(ang-0.4),b[1]-h*Math.sin(ang-0.4));
+        ctx.lineTo(b[0]-h*Math.cos(ang+0.4),b[1]-h*Math.sin(ang+0.4));
+        ctx.closePath();ctx.fill();
+      }else if(s.type==="text"&&p.length){
+        ctx.font=`${s.size||14}px Arial,sans-serif`;
+        ctx.fillText(s.text||"",p[0][0],p[0][1]);
+      }
+    }
+  },[shapes,showMarkup,baseW]);
+
+  useEffect(()=>{paint();},[paint,rendering,scale,page]);
+
+  /* ── coordinate mapping: screen → PDF user space ── */
+  function toUser(clientX,clientY){
+    const ov=overlayRef.current;
+    if(!ov||!baseW)return[0,0];
+    const r=ov.getBoundingClientRect();
+    return[(clientX-r.left)/r.width*baseW,(clientY-r.top)/r.width*baseW];
+  }
+  // stroke weight stays visually consistent regardless of zoom
+  const strokeW=()=>Math.max(1.2,2/(fitRef.current*scale));
+
+  /* ── markup input ── */
+  function startDraw(cx,cy){
+    const pt=toUser(cx,cy);
+    if(tool==="erase"){ eraseAt(pt); return; }
+    if(tool==="text"){
+      const t=window.prompt("Text to place:");
+      if(t&&t.trim()){
+        const s={type:"text",color,text:t.trim(),size:Math.max(10,16/(fitRef.current*scale)),points:[pt],w:strokeW()};
+        setShapes(v=>[...v,s]);setDirty(true);
+      }
+      return;
+    }
+    draftRef.current={type:tool,color,w:strokeW(),points:[pt,pt]};
+    if(tool==="pen")draftRef.current.points=[pt];
+  }
+  function moveDraw(cx,cy){
+    const d=draftRef.current;
+    if(!d)return;
+    const pt=toUser(cx,cy);
+    if(d.type==="pen")d.points.push(pt); else d.points[1]=pt;
+    paint(d);
+  }
+  function endDraw(){
+    const d=draftRef.current;
+    draftRef.current=null;
+    if(!d)return;
+    if(d.type==="pen"&&d.points.length<2)return;
+    setShapes(v=>[...v,d]);setDirty(true);
+  }
+  function eraseAt(pt){
+    let best=-1,bestD=Infinity;
+    const tol=Math.max(6,10/(fitRef.current*scale));
+    shapes.forEach((s,i)=>{
+      for(const p of s.points||[]){
+        const dd=Math.hypot(p[0]-pt[0],p[1]-pt[1]);
+        if(dd<bestD){bestD=dd;best=i;}
+      }
+    });
+    if(best>=0&&bestD<tol*3){ setShapes(v=>v.filter((_,i)=>i!==best)); setDirty(true); }
+  }
+  const undo=()=>{setShapes(v=>v.slice(0,-1));setDirty(true);};
+
+  async function saveMarkup(){
+    setSaving(true);
+    try{
+      if(markupId) await API.markups.update(markupId,{shapes,author:user.name,updated_at:new Date().toISOString()});
+      else{
+        const r=await API.markups.create({drawing_id:drawing.id,page,shapes,author:user.name});
+        const row=Array.isArray(r)?r[0]:r;
+        if(row&&row.id)setMarkupId(row.id);
+      }
+      setDirty(false);
+    }catch(e){ onErr&&onErr("Markup save failed: "+e.message); }
+    setSaving(false);
+  }
+
+  /* ── gestures: pan/zoom always on two fingers; one finger draws in a tool mode ── */
+  const drawMode=tool!=="pan";
   function onTouchStart(e){
     if(e.touches.length===2){
-      const d=dist(e.touches[0],e.touches[1]);
-      gesture.current={mode:"zoom",startDist:d,startScale:scale,startOff:{...offset}};
+      gesture.current={mode:"zoom",startDist:dist(e.touches[0],e.touches[1]),startScale:scale};
+      draftRef.current=null;
     }else if(e.touches.length===1){
-      gesture.current={mode:"pan",startX:e.touches[0].clientX,startY:e.touches[0].clientY,startOff:{...offset}};
+      if(drawMode){ gesture.current={mode:"draw"}; startDraw(e.touches[0].clientX,e.touches[0].clientY); }
+      else gesture.current={mode:"pan",startX:e.touches[0].clientX,startY:e.touches[0].clientY,startOff:{...offset}};
     }
   }
   function onTouchMove(e){
     const g=gesture.current;
     if(g.mode==="zoom"&&e.touches.length===2){
       e.preventDefault();
-      const d=dist(e.touches[0],e.touches[1]);
-      setScale(clamp(g.startScale*(d/g.startDist),0.5,8));
+      setScale(clamp(g.startScale*(dist(e.touches[0],e.touches[1])/g.startDist),0.5,8));
+    }else if(g.mode==="draw"&&e.touches.length===1){
+      e.preventDefault();moveDraw(e.touches[0].clientX,e.touches[0].clientY);
     }else if(g.mode==="pan"&&e.touches.length===1){
       e.preventDefault();
       setOffset({x:g.startOff.x+(e.touches[0].clientX-g.startX),y:g.startOff.y+(e.touches[0].clientY-g.startY)});
     }
   }
-  function onTouchEnd(){ gesture.current.mode=null; }
-  const dist=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
-  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+  function onTouchEnd(){ if(gesture.current.mode==="draw")endDraw(); gesture.current={mode:null}; }
 
-  // Mouse drag to pan on desktop.
-  function onMouseDown(e){ gesture.current={mode:"pan",startX:e.clientX,startY:e.clientY,startOff:{...offset}}; }
+  function onMouseDown(e){
+    if(drawMode){ gesture.current={mode:"draw"}; startDraw(e.clientX,e.clientY); }
+    else gesture.current={mode:"pan",startX:e.clientX,startY:e.clientY,startOff:{...offset}};
+  }
   function onMouseMove(e){
     const g=gesture.current;
-    if(g.mode!=="pan")return;
-    setOffset({x:g.startOff.x+(e.clientX-g.startX),y:g.startOff.y+(e.clientY-g.startY)});
+    if(g.mode==="draw")moveDraw(e.clientX,e.clientY);
+    else if(g.mode==="pan")setOffset({x:g.startOff.x+(e.clientX-g.startX),y:g.startOff.y+(e.clientY-g.startY)});
   }
-  function onMouseUp(){ gesture.current.mode=null; }
-  function onWheel(e){
-    if(!e.ctrlKey&&!e.metaKey)return;
-    e.preventDefault();
-    setScale(s=>clamp(s*(e.deltaY<0?1.1:0.9),0.5,8));
-  }
+  function onMouseUp(){ if(gesture.current.mode==="draw")endDraw(); gesture.current={mode:null}; }
+  function onWheel(e){ if(!e.ctrlKey&&!e.metaKey)return; e.preventDefault(); setScale(s=>clamp(s*(e.deltaY<0?1.1:0.9),0.5,8)); }
 
-  const resetView=()=>{setScale(1);setOffset({x:0,y:0});};
+  async function changePage(n){ if(dirty)await saveMarkup(); setPage(n); }
+  async function goBack(){ if(dirty)await saveMarkup(); onBack(); }
+
   const btn={...primBtn,padding:"4px 9px",fontSize:11,fontWeight:700,borderRadius:8,background:T.surface,border:`1px solid ${T.border}`,color:T.text,lineHeight:1.4,minWidth:0};
   const pill={background:"rgba(20,20,24,0.92)",border:`1px solid ${T.border}`,borderRadius:20,backdropFilter:"blur(6px)"};
+  const tBtn=(id,label)=>(
+    <button key={id} onClick={()=>setTool(id)} title={id}
+      style={{...btn,background:tool===id?T.orange:T.surface,color:tool===id?"#000":T.text,padding:"4px 8px"}}>{label}</button>
+  );
 
   return(
     <div style={{position:"fixed",inset:0,background:T.bg,zIndex:150,display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
-      {/* Header */}
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"10px 14px",flexShrink:0}}>
-        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:4}}>← Back to Drawings</button>
-        <div style={{fontSize:14,fontWeight:800,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-          {drawing.sheet_number?`${drawing.sheet_number} · `:""}{drawing.title}
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"10px 14px",flexShrink:0,display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1,minWidth:0}}>
+          <button onClick={goBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:4,padding:0}}>← Back to Drawings</button>
+          <div style={{fontSize:14,fontWeight:800,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+            {drawing.sheet_number?`${drawing.sheet_number} · `:""}{drawing.title}
+          </div>
         </div>
+        {dirty&&<span style={{fontSize:10,color:T.orange,fontWeight:700,flexShrink:0}}>● unsaved</span>}
+        {saving&&<span style={{fontSize:10,color:T.muted,flexShrink:0}}>saving…</span>}
       </div>
 
-      {/* Canvas area */}
       <div ref={wrapRef}
         onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
         onWheel={onWheel}
-        style={{flex:1,overflow:"hidden",position:"relative",background:"#3a3a42",touchAction:"none",cursor:"grab"}}>
+        style={{flex:1,overflow:"hidden",position:"relative",background:"#3a3a42",touchAction:"none",cursor:drawMode?"crosshair":"grab"}}>
         {loading&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:T.sub,fontSize:13}}>Loading drawing…</div>}
         {err&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:16,color:T.red,fontSize:13,maxWidth:420,textAlign:"center"}}>{err}</div>
         </div>}
         <div style={{position:"absolute",left:"50%",top:0,transform:`translateX(-50%) translate(${offset.x}px, ${offset.y}px)`,padding:"4px 0"}}>
-          <canvas ref={canvasRef} style={{display:"block",background:"#fff",boxShadow:"0 4px 24px rgba(0,0,0,0.5)"}}/>
+          <div style={{position:"relative",display:"block"}}>
+            <canvas ref={canvasRef} style={{display:"block",background:"#fff",boxShadow:"0 4px 24px rgba(0,0,0,0.5)"}}/>
+            <canvas ref={overlayRef} style={{position:"absolute",left:0,top:0,pointerEvents:"none"}}/>
+          </div>
         </div>
         {rendering&&!loading&&<div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:10,padding:"4px 8px",borderRadius:6}}>rendering…</div>}
 
-      {/* Controls — collapsible, floats over the sheet so it costs no layout height */}
-      {barOpen?(
-        <div style={{...pill,position:"absolute",left:"50%",bottom:12,transform:"translateX(-50%)",
-          padding:"5px 8px",display:"flex",alignItems:"center",gap:5,zIndex:20,maxWidth:"96%",flexWrap:"nowrap"}}>
-          <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page<=1} style={{...btn,opacity:page<=1?0.35:1}}>‹</button>
-          <span style={{fontSize:11,color:T.sub,minWidth:52,textAlign:"center",whiteSpace:"nowrap"}}>{page}/{pages||"…"}</span>
-          <button onClick={()=>setPage(p=>Math.min(pages,p+1))} disabled={page>=pages} style={{...btn,opacity:page>=pages?0.35:1}}>›</button>
-          <div style={{width:1,height:18,background:T.border,flexShrink:0}}/>
-          <button onClick={()=>setScale(s=>clamp(s*0.8,0.5,8))} style={btn}>−</button>
-          <span style={{fontSize:11,color:T.sub,minWidth:38,textAlign:"center",whiteSpace:"nowrap"}}>{Math.round(scale*100)}%</span>
-          <button onClick={()=>setScale(s=>clamp(s*1.25,0.5,8))} style={btn}>+</button>
-          <button onClick={resetView} style={btn}>Fit</button>
-          <div style={{width:1,height:18,background:T.border,flexShrink:0}}/>
-          <button onClick={()=>setBarOpen(false)} title="Hide controls"
-            style={{...btn,background:"none",border:"none",color:T.muted,padding:"4px 6px",fontSize:13}}>⌄</button>
-        </div>
-      ):(
-        <button onClick={()=>setBarOpen(true)} title="Show controls"
-          style={{...pill,position:"absolute",left:"50%",bottom:12,transform:"translateX(-50%)",
-            padding:"5px 12px",display:"flex",alignItems:"center",gap:7,zIndex:20,cursor:"pointer",
-            color:T.sub,fontSize:11,fontWeight:700,fontFamily:"inherit"}}>
-          <span style={{whiteSpace:"nowrap"}}>{page}/{pages||"…"} · {Math.round(scale*100)}%</span>
-          <span style={{color:T.muted,fontSize:13}}>⌃</span>
-        </button>
-      )}
+        {/* Tool row */}
+        {toolsOpen&&barOpen&&(
+          <div style={{...pill,position:"absolute",left:"50%",bottom:56,transform:"translateX(-50%)",
+            padding:"5px 8px",display:"flex",alignItems:"center",gap:4,zIndex:21,maxWidth:"96%",flexWrap:"wrap",justifyContent:"center"}}>
+            {tBtn("pan","✋")}{tBtn("pen","✏️")}{tBtn("arrow","↗")}{tBtn("box","▭")}{tBtn("text","T")}{tBtn("erase","⌫")}
+            <div style={{width:1,height:18,background:T.border}}/>
+            {COLORS.map(c=>(
+              <button key={c} onClick={()=>setColor(c)}
+                style={{width:18,height:18,borderRadius:"50%",background:c,cursor:"pointer",flexShrink:0,
+                  border:color===c?"2px solid #fff":`1px solid ${T.border}`,padding:0}}/>
+            ))}
+            <div style={{width:1,height:18,background:T.border}}/>
+            <button onClick={undo} disabled={!shapes.length} style={{...btn,opacity:shapes.length?1:0.35}}>↶</button>
+            <button onClick={()=>setShowMarkup(v=>!v)} style={{...btn,background:showMarkup?T.surface:T.border}}>{showMarkup?"👁":"🚫"}</button>
+            <button onClick={saveMarkup} disabled={!dirty||saving}
+              style={{...btn,background:dirty?T.green:T.surface,color:dirty?"#000":T.muted,opacity:saving?0.6:1}}>
+              {saving?"…":"Save"}
+            </button>
+          </div>
+        )}
+
+        {/* Main bar */}
+        {barOpen?(
+          <div style={{...pill,position:"absolute",left:"50%",bottom:12,transform:"translateX(-50%)",
+            padding:"5px 8px",display:"flex",alignItems:"center",gap:5,zIndex:20,maxWidth:"96%",flexWrap:"nowrap"}}>
+            <button onClick={()=>changePage(Math.max(1,page-1))} disabled={page<=1} style={{...btn,opacity:page<=1?0.35:1}}>‹</button>
+            <span style={{fontSize:11,color:T.sub,minWidth:52,textAlign:"center",whiteSpace:"nowrap"}}>{page}/{pages||"…"}</span>
+            <button onClick={()=>changePage(Math.min(pages,page+1))} disabled={page>=pages} style={{...btn,opacity:page>=pages?0.35:1}}>›</button>
+            <div style={{width:1,height:18,background:T.border,flexShrink:0}}/>
+            <button onClick={()=>setScale(s=>clamp(s*0.8,0.5,8))} style={btn}>−</button>
+            <span style={{fontSize:11,color:T.sub,minWidth:38,textAlign:"center",whiteSpace:"nowrap"}}>{Math.round(scale*100)}%</span>
+            <button onClick={()=>setScale(s=>clamp(s*1.25,0.5,8))} style={btn}>+</button>
+            <button onClick={()=>{setScale(1);setOffset({x:0,y:0});}} style={btn}>Fit</button>
+            <div style={{width:1,height:18,background:T.border,flexShrink:0}}/>
+            <button onClick={()=>setToolsOpen(v=>!v)}
+              style={{...btn,background:toolsOpen?T.orange:T.surface,color:toolsOpen?"#000":T.text}}>✏️</button>
+            <button onClick={()=>setBarOpen(false)} title="Hide controls"
+              style={{...btn,background:"none",border:"none",color:T.muted,padding:"4px 6px",fontSize:13}}>⌄</button>
+          </div>
+        ):(
+          <button onClick={()=>setBarOpen(true)} title="Show controls"
+            style={{...pill,position:"absolute",left:"50%",bottom:12,transform:"translateX(-50%)",
+              padding:"5px 12px",display:"flex",alignItems:"center",gap:7,zIndex:20,cursor:"pointer",
+              color:T.sub,fontSize:11,fontWeight:700,fontFamily:"inherit"}}>
+            <span style={{whiteSpace:"nowrap"}}>{page}/{pages||"…"} · {Math.round(scale*100)}%</span>
+            <span style={{color:T.muted,fontSize:13}}>⌃</span>
+          </button>
+        )}
       </div>
     </div>
   );
