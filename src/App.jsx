@@ -6515,9 +6515,12 @@ function TMTicketList({project,user,onOpen,onNew}){
 /* ── T&M TICKET FORM ─────────────────────────────────────────── */
 function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const isNew=!ticket?.id;
-  const canEdit=user.role==="admin"||user.role==="pm";
+  const canEdit=user.role==="admin"||user.role==="pm"||user.role==="foreman";
+  const division=project.division||"Pipeline";
+  const positions=getPositions(division);
+  const equipList=getEquipList(division);
 
-  // Header fields
+  // Header
   const [ticketNo,setTicketNo]=useState(ticket?.ticket_no||"");
   const [ticketDate,setTicketDate]=useState(ticket?.ticket_date||today());
   const [description,setDescription]=useState(ticket?.description||"");
@@ -6525,7 +6528,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const [afeNumber,setAfeNumber]=useState(ticket?.afe_number||project.afe_number||"");
   const [workOrder,setWorkOrder]=useState(ticket?.work_order||"");
   const [location,setLocation]=useState(ticket?.location||"");
-  const [markupPct,setMarkupPct]=useState(ticket?.markup_pct||0);
+  const [markupPct,setMarkupPct]=useState(String(ticket?.markup_pct||"0"));
   const [notes,setNotes]=useState(ticket?.notes||"");
   const [status,setStatus]=useState(ticket?.status||"draft");
 
@@ -6541,17 +6544,27 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const [signerName,setSignerName]=useState(ticket?.inspector_name||"");
   const [sigData,setSigData]=useState(ticket?.inspector_signature||null);
   const [sigAt,setSigAt]=useState(ticket?.inspector_signed_at||null);
+  const [matUploading,setMatUploading]=useState(false);
+  const fileInputRef=useRef(null);
 
-  // Unique id helper
   const uid=()=>Math.random().toString(36).slice(2,10);
+
+  // Auto-number new tickets
+  useEffect(()=>{
+    if(isNew&&!ticketNo){
+      API.tmTickets.forProject(project.id).then(existing=>{
+        const count=(Array.isArray(existing)?existing:[]).length+1;
+        setTicketNo(`${project.name||project.job_number||"JOB"}-TM-${count}`);
+      }).catch(()=>{});
+    }
+  },[]);
 
   // Line item helpers
   const addRow=(setter,template)=>setter(rows=>[...rows,{id:uid(),...template}]);
   const updateRow=(setter,id,key,val)=>setter(rows=>rows.map(r=>r.id===id?{...r,[key]:val}:r));
   const removeRow=(setter,id)=>setter(rows=>rows.filter(r=>r.id!==id));
 
-  // Totals
-  const sumRows=(rows,key="total")=>rows.reduce((s,r)=>s+(parseFloat(r[key])||0),0);
+  // Live totals (computed from state every render)
   const laborTotal=labor.reduce((s,r)=>s+((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)),0);
   const equipTotal=equipment.reduce((s,r)=>s+((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)),0);
   const matsTotal=materials.reduce((s,r)=>s+((parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0)),0);
@@ -6559,6 +6572,20 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const subtotal=laborTotal+equipTotal+matsTotal+otherTotal;
   const markupAmt=subtotal*(parseFloat(markupPct)||0)/100;
   const grandTotal=subtotal+markupAmt;
+
+  async function uploadMaterialAttachment(file,matId){
+    setMatUploading(true);
+    try{
+      const ext=file.name.split(".").pop();
+      const path=`tm-materials/${project.id}/${matId}-${Date.now()}.${ext}`;
+      const {data,error}=await window._supabase.storage.from("documents").upload(path,file,{upsert:true});
+      if(error)throw error;
+      const {data:{publicUrl}}=window._supabase.storage.from("documents").getPublicUrl(path);
+      updateRow(setMaterials,matId,"attachment_url",publicUrl);
+      updateRow(setMaterials,matId,"attachment_name",file.name);
+    }catch(e){alert("Upload failed: "+e.message);}
+    setMatUploading(false);
+  }
 
   async function save(newStatus){
     setSaving(true);
@@ -6580,243 +6607,333 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       updated_at:new Date().toISOString(),
     };
     try{
-      if(isNew){await API.tmTickets.create(data);}
-      else{await API.tmTickets.update(ticket.id,data);}
+      if(isNew)await API.tmTickets.create(data);
+      else await API.tmTickets.update(ticket.id,data);
       onSaved&&onSaved();
     }catch(e){alert("Error saving: "+e.message);}
     setSaving(false);
   }
 
   function printTicket(){
-    const fmt=(n)=>"$"+(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-    const row=(cells,bold=false)=>`<tr style="border-bottom:1px solid #e5e7eb">${cells.map(c=>`<td style="padding:6px 8px;font-size:9pt;${bold?"font-weight:700;":""}text-align:${typeof c==="number"||String(c).startsWith("$")?"right":"left"}">${c??""}</td>`).join("")}</tr>`;
-    const section=(title,color,tableHead,rows)=>rows.length===0?"":
-      `<div style="margin-bottom:10px">
-        <div style="background:${color};color:#fff;font-size:8pt;font-weight:700;padding:4px 8px;text-transform:uppercase;letter-spacing:1px">${title}</div>
-        <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb">
-          <thead><tr style="background:#f3f4f6">${tableHead.map(h=>`<th style="padding:5px 8px;font-size:8pt;text-align:${h.right?"right":"left"}">${h.label}</th>`).join("")}</tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-
-    const laborRows=labor.map(r=>row([r.name,r.classification,r.hours,fmt(r.rate),fmt((r.hours||0)*(r.rate||0))])).join("");
-    const equipRows=equipment.map(r=>row([r.description,r.unit,r.qty,fmt(r.rate),fmt((r.qty||0)*(r.rate||0))])).join("");
-    const matsRows=materials.map(r=>row([r.description,r.qty,r.unit,fmt(r.unit_price),fmt((r.qty||0)*(r.unit_price||0))])).join("");
-    const otherRows=other.map(r=>row([r.description,"","","",fmt(r.amount)])).join("");
-
+    const fmt=n=>"$"+(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const thStyle=`padding:5px 8px;font-size:8pt;background:#1f3864;color:#fff;text-align:`;
+    const tdStyle=`padding:5px 8px;font-size:8.5pt;border-bottom:1px solid #e5e7eb;text-align:`;
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>T&M Ticket #${ticketNo}</title>
-<style>@page{size:letter portrait;margin:0.4in;}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}
-body{color:#111;font-size:9pt;}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
-</style></head><body>
-<!-- Header -->
-<div style="display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:12px;border-bottom:3px solid #1f3864;padding-bottom:10px">
-  <div><div style="font-size:24pt;font-weight:900;color:#1f3864">AIME</div>
-    <div style="font-size:8pt;color:#555">Atlantic Industrial Mechanical & Environmental Inc.</div></div>
-  <div style="text-align:right">
-    <div style="font-size:18pt;font-weight:700;color:#1f3864">Time & Materials Ticket</div>
-    <div style="font-size:10pt;font-weight:700">T&M #${ticketNo||"—"}</div>
-    <div style="font-size:9pt;color:#555">Date: ${ticketDate}</div>
-  </div>
+<title>T&M #${ticketNo}</title>
+<style>@page{size:letter portrait;margin:0.4in;}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
+</head><body style="color:#111;font-size:9pt;">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1f3864;padding-bottom:10px;margin-bottom:10px">
+  <div><div style="font-size:22pt;font-weight:900;color:#1f3864">AIME</div>
+    <div style="font-size:7.5pt;color:#555">Atlantic Industrial Mechanical &amp; Environmental Inc.</div></div>
+  <div style="text-align:right"><div style="font-size:16pt;font-weight:700;color:#1f3864">Time &amp; Materials Ticket</div>
+    <div style="font-size:9pt;font-weight:700">T&amp;M # ${ticketNo}</div><div style="font-size:8.5pt;color:#555">${ticketDate}</div></div>
 </div>
-<!-- Info grid -->
-<div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb;margin-bottom:10px">
-  ${[["Project",project.name||"—"],["Customer",project.client||"—"],["PO #",poNumber||"—"],["AFE / WO #",(afeNumber||workOrder||"—")],["Location",location||"—"],["Submitted By",user.name]].map(([l,v])=>`<div style="display:flex;border-bottom:1px solid #e5e7eb"><div style="background:#f3f4f6;padding:4px 8px;font-weight:700;font-size:8pt;width:110px;border-right:1px solid #e5e7eb">${l}</div><div style="padding:4px 8px;font-size:8.5pt">${v}</div></div>`).join("")}
+<div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb;margin-bottom:8px;">
+  ${[["Project",project.name||"—"],["Customer",project.client||"—"],["PO #",poNumber||"—"],["AFE/WO #",(afeNumber||workOrder||"—")],["Location",location||"—"],["Submitted By",user.name]].map(([l,v])=>`<div style="display:flex;border-bottom:1px solid #e5e7eb"><div style="background:#f3f4f6;padding:3px 8px;font-weight:700;font-size:7.5pt;width:100px;border-right:1px solid #e5e7eb;flex-shrink:0">${l}</div><div style="padding:3px 8px;font-size:8pt">${v}</div></div>`).join("")}
 </div>
-${description?`<div style="border:1px solid #e5e7eb;padding:6px 8px;margin-bottom:10px;font-size:9pt"><strong>Description:</strong> ${description}</div>`:""}
-${section("Labor","#1f3864",[{label:"Name"},{label:"Classification"},{label:"Hours"},{label:"Rate/Hr",right:true},{label:"Amount",right:true}],laborRows)}
-${section("Equipment","#374151",[{label:"Equipment"},{label:"Unit"},{label:"Qty"},{label:"Rate",right:true},{label:"Amount",right:true}],equipRows)}
-${section("Materials","#4B5563",[{label:"Description"},{label:"Qty"},{label:"Unit"},{label:"Unit Price",right:true},{label:"Amount",right:true}],matsRows)}
-${section("Other Charges","#6B7280",[{label:"Description"},{label:""},{label:""},{label:"",right:true},{label:"Amount",right:true}],otherRows)}
-<!-- Totals -->
-<table style="width:280px;margin-left:auto;border-collapse:collapse;border:1px solid #e5e7eb;margin-bottom:10px">
-  ${[["Labor",fmt(laborTotal)],["Equipment",fmt(equipTotal)],["Materials",fmt(matsTotal)],["Other",fmt(otherTotal)],["Subtotal",fmt(subtotal)],...(markupPct>0?[[`Markup (${markupPct}%)`,fmt(markupAmt)]]:[])].map(([l,v])=>`<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:5px 8px;font-size:9pt">${l}</td><td style="padding:5px 8px;font-size:9pt;text-align:right">${v}</td></tr>`).join("")}
+${description?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:8px;font-size:8.5pt"><b>Description:</b> ${description}</div>`:""}
+${labor.length?`<div style="margin-bottom:8px"><div style="background:#1f3864;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Labor</div>
+<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
+  <th style="${thStyle}left">Name</th><th style="${thStyle}left">Classification</th>
+  <th style="${thStyle}center">Hours</th><th style="${thStyle}right">Rate/Hr</th><th style="${thStyle}right">Amount</th>
+</tr></thead><tbody>
+${labor.map(r=>`<tr><td style="${tdStyle}left">${r.name||""}</td><td style="${tdStyle}left">${r.classification||""}</td><td style="${tdStyle}center">${r.hours||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td><td style="${tdStyle}right">${fmt((r.hours||0)*(r.rate||0))}</td></tr>`).join("")}
+<tr style="font-weight:700;background:#f9fafb"><td colspan="4" style="${tdStyle}right">Labor Total</td><td style="${tdStyle}right">${fmt(laborTotal)}</td></tr>
+</tbody></table></div>`:""}
+${equipment.length?`<div style="margin-bottom:8px"><div style="background:#374151;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Equipment</div>
+<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
+  <th style="${thStyle}left">Equipment</th><th style="${thStyle}center">Unit</th><th style="${thStyle}center">Qty</th><th style="${thStyle}right">Rate</th><th style="${thStyle}right">Amount</th>
+</tr></thead><tbody>
+${equipment.map(r=>`<tr><td style="${tdStyle}left">${r.description||""}</td><td style="${tdStyle}center">${r.unit||""}</td><td style="${tdStyle}center">${r.qty||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td><td style="${tdStyle}right">${fmt((r.qty||0)*(r.rate||0))}</td></tr>`).join("")}
+<tr style="font-weight:700;background:#f9fafb"><td colspan="4" style="${tdStyle}right">Equipment Total</td><td style="${tdStyle}right">${fmt(equipTotal)}</td></tr>
+</tbody></table></div>`:""}
+${materials.length?`<div style="margin-bottom:8px"><div style="background:#4B5563;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Materials</div>
+<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
+  <th style="${thStyle}left">Description</th><th style="${thStyle}center">Qty</th><th style="${thStyle}center">Unit</th><th style="${thStyle}right">Unit Price</th><th style="${thStyle}right">Amount</th>
+</tr></thead><tbody>
+${materials.map(r=>`<tr><td style="${tdStyle}left">${r.description||""}</td><td style="${tdStyle}center">${r.qty||0}</td><td style="${tdStyle}center">${r.unit||""}</td><td style="${tdStyle}right">${fmt(r.unit_price)}</td><td style="${tdStyle}right">${fmt((r.qty||0)*(r.unit_price||0))}</td></tr>`).join("")}
+<tr style="font-weight:700;background:#f9fafb"><td colspan="4" style="${tdStyle}right">Materials Total</td><td style="${tdStyle}right">${fmt(matsTotal)}</td></tr>
+</tbody></table></div>`:""}
+${other.length?`<div style="margin-bottom:8px"><div style="background:#6B7280;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Other</div>
+<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
+  <th style="${thStyle}left">Description</th><th style="${thStyle}right">Amount</th>
+</tr></thead><tbody>
+${other.map(r=>`<tr><td style="${tdStyle}left">${r.description||""}</td><td style="${tdStyle}right">${fmt(r.amount)}</td></tr>`).join("")}
+</tbody></table></div>`:""}
+<table style="width:260px;margin-left:auto;border-collapse:collapse;border:1px solid #e5e7eb;margin-bottom:10px">
+  ${[["Labor",fmt(laborTotal)],["Equipment",fmt(equipTotal)],["Materials",fmt(matsTotal)],["Other",fmt(otherTotal)],["Subtotal",fmt(subtotal)],...(parseFloat(markupPct)>0?[[`Markup (${markupPct}%)`,fmt(markupAmt)]]:[])].map(([l,v])=>`<tr><td style="padding:4px 8px;font-size:8.5pt;border-bottom:1px solid #e5e7eb">${l}</td><td style="padding:4px 8px;font-size:8.5pt;text-align:right;border-bottom:1px solid #e5e7eb">${v}</td></tr>`).join("")}
   <tr style="background:#1f3864;color:#fff"><td style="padding:6px 8px;font-size:10pt;font-weight:900">GRAND TOTAL</td><td style="padding:6px 8px;font-size:10pt;font-weight:900;text-align:right">${fmt(grandTotal)}</td></tr>
 </table>
-${notes?`<div style="border:1px solid #e5e7eb;padding:6px 8px;margin-bottom:10px;font-size:8.5pt"><strong>Notes:</strong> ${notes}</div>`:""}
-<!-- Signatures -->
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;border-top:2px solid #e5e7eb;padding-top:12px">
-  <div><div style="font-size:8pt;font-weight:700;color:#555;margin-bottom:4px">PREPARED BY / PM</div>
-    ${sigData?`<div style="background:#fff;border:1px solid #ccc;border-radius:4px;padding:4px;display:inline-block"><img src="${sigData}" style="max-height:50px;max-width:180px;display:block;background:#fff;"/></div>`:
-    `<div style="border-bottom:1px solid #000;width:200px;height:36px;margin-bottom:4px"></div>`}
-    <div style="font-size:9pt;font-weight:700;margin-top:4px">${signerName||user.name}</div>
-    <div style="font-size:8pt;color:#555">Date: ${ticketDate}</div>
+${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px;font-size:8.5pt"><b>Notes:</b> ${notes}</div>`:""}
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px;border-top:2px solid #e5e7eb;padding-top:10px">
+  <div><div style="font-size:7.5pt;font-weight:700;color:#555;margin-bottom:4px">PREPARED BY / PM</div>
+    ${sigData?`<img src="${sigData}" style="max-height:50px;max-width:180px;display:block;background:#fff;border:1px solid #ccc;border-radius:4px;padding:4px"/>`:
+    `<div style="border-bottom:1px solid #000;height:36px;width:200px;margin-bottom:4px"></div>`}
+    <div style="font-size:8.5pt;font-weight:700;margin-top:4px">${signerName||user.name}</div>
+    <div style="font-size:7.5pt;color:#555">Date: ${ticketDate}</div>
   </div>
-  <div><div style="font-size:8pt;font-weight:700;color:#555;margin-bottom:4px">CUSTOMER APPROVAL</div>
-    <div style="border-bottom:1px solid #000;width:200px;height:36px;margin-bottom:4px"></div>
-    <div style="font-size:8pt;color:#555">Name / Signature</div>
-    <div style="border-bottom:1px solid #000;width:200px;margin-top:8px;margin-bottom:4px"></div>
-    <div style="font-size:8pt;color:#555">Date / Title</div>
+  <div><div style="font-size:7.5pt;font-weight:700;color:#555;margin-bottom:4px">CUSTOMER APPROVAL</div>
+    <div style="border-bottom:1px solid #000;height:36px;width:200px;margin-bottom:4px"></div>
+    <div style="font-size:7.5pt;color:#555">Name / Signature</div>
+    <div style="border-bottom:1px solid #000;width:200px;margin:8px 0 4px"></div>
+    <div style="font-size:7.5pt;color:#555">Date / Title</div>
   </div>
 </div>
-<div style="text-align:center;margin-top:10px;font-size:7pt;color:#999;border-top:1px solid #eee;padding-top:6px">
-  AIME Field Pro · ${project.name} · T&M #${ticketNo} · Generated ${new Date().toLocaleString()}
-</div>
+<div style="text-align:center;margin-top:8px;font-size:6.5pt;color:#999;border-top:1px solid #eee;padding-top:5px">AIME Field Pro · ${project.name} · T&M #${ticketNo} · Generated ${new Date().toLocaleString()}</div>
 </body></html>`;
-
     const win=window.open("","_blank","width=950,height=800");
     if(!win){alert("Allow popups to print.");return;}
-    win.document.write(html);
-    win.document.close();
+    win.document.write(html);win.document.close();
     setTimeout(()=>{win.focus();win.print();},1200);
   }
 
-  // Row input style
-  const ri={...inp,fontSize:12,padding:"5px 8px"};
+  const ri={...inp,fontSize:13,padding:"7px 10px"};
+  const fmt=n=>"$"+(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      {/* Sticky header with live grand total */}
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",display:"block",marginBottom:4}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:15,fontWeight:900,color:T.orange}}>🧾 {isNew?"New T&M Ticket":"T&M #"+ticketNo}</div>
-          <div style={{fontSize:18,fontWeight:900,color:T.green}}>${grandTotal.toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+          <div>
+            <div style={{fontSize:13,fontWeight:900,color:T.orange}}>🧾 {isNew?"New T&M":"T&M #"+ticketNo}</div>
+            <div style={{fontSize:10,color:T.muted}}>{project.name}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:20,fontWeight:900,color:T.green}}>{fmt(grandTotal)}</div>
+            <div style={{fontSize:9,color:T.muted}}>Grand Total</div>
+          </div>
         </div>
       </div>
 
-      <div style={{padding:"14px 16px 100px"}}>
-        {/* Header info */}
+      <div style={{padding:"12px 16px 100px"}}>
+        {/* Header info card */}
         <div style={{...cardS,marginBottom:12}}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-            <div><label style={lbl}>Ticket #</label><input value={ticketNo} onChange={e=>setTicketNo(e.target.value)} placeholder="T&M-001" style={inp}/></div>
-            <div><label style={lbl}>Date</label><input type="date" value={ticketDate} onChange={e=>setTicketDate(e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>Ticket # (auto)</label><input value={ticketNo} onChange={e=>setTicketNo(e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>Date</label><input type="date" value={ticketDate} onChange={e=>setTicketDate(e.target.value)} style={ri}/></div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-            <div><label style={lbl}>PO #</label><input value={poNumber} onChange={e=>setPoNumber(e.target.value)} style={inp}/></div>
-            <div><label style={lbl}>AFE / WO #</label><input value={afeNumber} onChange={e=>setAfeNumber(e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>PO #</label><input value={poNumber} onChange={e=>setPoNumber(e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>AFE / WO #</label><input value={afeNumber} onChange={e=>setAfeNumber(e.target.value)} style={ri}/></div>
           </div>
-          <div style={{marginBottom:8}}><label style={lbl}>Location</label><input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Site location" style={inp}/></div>
-          <div><label style={lbl}>Description of Work</label><textarea value={description} onChange={e=>setDescription(e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/></div>
+          <div style={{marginBottom:8}}><label style={lbl}>Location</label><input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Site location" style={ri}/></div>
+          <div><label style={lbl}>Description of Work</label><textarea value={description} onChange={e=>setDescription(e.target.value)} rows={2} style={{...ri,resize:"vertical",width:"100%"}}/></div>
         </div>
 
-        {/* Tab selector */}
-        <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:12,gap:4}}>
-          {[["labor","👷 Labor"],["equipment","🚜 Equipment"],["materials","🔩 Materials"],["other","➕ Other"],["summary","📊 Summary"]].map(([id,label])=>(
-            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"8px 2px",background:tab===id?T.orange:"transparent",color:tab===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+        {/* Live mini totals bar */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:12}}>
+          {[["👷",laborTotal,"Labor"],["🚜",equipTotal,"Equip"],["🔩",matsTotal,"Matls"],["➕",otherTotal,"Other"]].map(([icon,val,lbl2])=>(
+            <div key={lbl2} style={{...cardS,textAlign:"center",padding:"8px 4px"}}>
+              <div style={{fontSize:10}}>{icon}</div>
+              <div style={{fontSize:13,fontWeight:900,color:val>0?T.green:T.muted}}>{fmt(val)}</div>
+              <div style={{fontSize:8,color:T.muted,textTransform:"uppercase"}}>{lbl2}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Tab bar */}
+        <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:12,gap:3,overflowX:"auto"}}>
+          {[["labor","👷 Labor"],["equipment","🚜 Equip"],["materials","🔩 Materials"],["other","➕ Other"],["summary","📊 Summary"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{flexShrink:0,padding:"8px 10px",background:tab===id?T.orange:"transparent",color:tab===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               {label}
             </button>
           ))}
         </div>
 
-        {/* LABOR TAB */}
+        {/* ── LABOR TAB ── */}
         {tab==="labor"&&<div>
-          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:""})} style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Worker</button>
+          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:""})}
+            style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Worker</button>
           {labor.map(r=>(
-            <div key={r.id} style={{...cardS,marginBottom:8}}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:6}}>
-                <div><label style={lbl}>Name</label><input value={r.name} onChange={e=>updateRow(setLabor,r.id,"name",e.target.value)} placeholder="Worker name" style={ri}/></div>
-                <div><label style={lbl}>Classification</label><input value={r.classification} onChange={e=>updateRow(setLabor,r.id,"classification",e.target.value)} placeholder="Foreman, Welder…" style={ri}/></div>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"flex-end"}}>
-                <div><label style={lbl}>Hours</label><input type="number" value={r.hours} onChange={e=>updateRow(setLabor,r.id,"hours",e.target.value)} placeholder="8" style={ri}/></div>
-                <div><label style={lbl}>Rate / Hr ($)</label><input type="number" value={r.rate} onChange={e=>updateRow(setLabor,r.id,"rate",e.target.value)} placeholder="0.00" style={ri}/></div>
-                <div style={{paddingBottom:2}}>
-                  <div style={{fontSize:14,fontWeight:900,color:T.green,textAlign:"right",marginBottom:2}}>${((r.hours||0)*(r.rate||0)).toFixed(2)}</div>
+            <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontSize:12,fontWeight:700,color:T.blue}}>{r.name||"New Worker"}</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:15,fontWeight:900,color:T.green}}>{fmt((r.hours||0)*(r.rate||0))}</span>
                   <button onClick={()=>removeRow(setLabor,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
                 </div>
               </div>
-            </div>
-          ))}
-          {labor.length===0&&<div style={{textAlign:"center",padding:"20px",color:T.muted,fontSize:12}}>No labor rows — tap + Add Worker</div>}
-          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:16,marginTop:8}}>Labor Total: ${laborTotal.toFixed(2)}</div>
-        </div>}
-
-        {/* EQUIPMENT TAB */}
-        {tab==="equipment"&&<div>
-          <button onClick={()=>addRow(setEquipment,{description:"",unit:"Hours",qty:"",rate:""})} style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Equipment</button>
-          {equipment.map(r=>(
-            <div key={r.id} style={{...cardS,marginBottom:8}}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:6}}>
-                <div><label style={lbl}>Equipment</label><input value={r.description} onChange={e=>updateRow(setEquipment,r.id,"description",e.target.value)} placeholder="Excavator, Truck…" style={ri}/></div>
-                <div><label style={lbl}>Unit</label>
-                  <select value={r.unit} onChange={e=>updateRow(setEquipment,r.id,"unit",e.target.value)} style={inpSel}>
-                    {["Hours","Days","Weeks","Miles","EA"].map(u=><option key={u}>{u}</option>)}
-                  </select>
+              <div style={{marginBottom:8}}>
+                <label style={lbl}>Name</label>
+                <select value={r.name} onChange={e=>updateRow(setLabor,r.id,"name",e.target.value)} style={{...ri,width:"100%"}}>
+                  <option value="">— Select Worker —</option>
+                  {NAMES.map(n=><option key={n} value={n}>{n}</option>)}
+                  <option value="__other">Other (type below)</option>
+                </select>
+                {r.name==="__other"&&<input value={r.customName||""} onChange={e=>updateRow(setLabor,r.id,"customName",e.target.value)} placeholder="Enter name" style={{...ri,marginTop:6}}/>}
+              </div>
+              <div style={{marginBottom:8}}>
+                <label style={lbl}>Classification</label>
+                <select value={r.classification} onChange={e=>updateRow(setLabor,r.id,"classification",e.target.value)} style={{...ri,width:"100%"}}>
+                  <option value="">— Select —</option>
+                  {positions.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
+                </select>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div><label style={lbl}>Hours</label>
+                  <input type="number" step="0.5" value={r.hours} onChange={e=>updateRow(setLabor,r.id,"hours",e.target.value)} placeholder="0" style={ri}/>
+                </div>
+                <div><label style={lbl}>Rate / Hr ($) — manual</label>
+                  <input type="number" step="0.01" value={r.rate} onChange={e=>updateRow(setLabor,r.id,"rate",e.target.value)} placeholder="0.00" style={ri}/>
                 </div>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"flex-end"}}>
-                <div><label style={lbl}>Qty</label><input type="number" value={r.qty} onChange={e=>updateRow(setEquipment,r.id,"qty",e.target.value)} placeholder="1" style={ri}/></div>
-                <div><label style={lbl}>Rate ($)</label><input type="number" value={r.rate} onChange={e=>updateRow(setEquipment,r.id,"rate",e.target.value)} placeholder="0.00" style={ri}/></div>
-                <div style={{paddingBottom:2}}>
-                  <div style={{fontSize:14,fontWeight:900,color:T.green,textAlign:"right",marginBottom:2}}>${((r.qty||0)*(r.rate||0)).toFixed(2)}</div>
+            </div>
+          ))}
+          {labor.length===0&&<div style={{textAlign:"center",padding:"24px",color:T.muted,fontSize:12}}>No workers added — tap + Add Worker</div>}
+          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:15,marginTop:6}}>Labor Total: {fmt(laborTotal)}</div>
+        </div>}
+
+        {/* ── EQUIPMENT TAB ── */}
+        {tab==="equipment"&&<div>
+          <button onClick={()=>addRow(setEquipment,{description:"",unit:"Hours",qty:"",rate:""})}
+            style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Equipment</button>
+          {equipment.map(r=>(
+            <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontSize:12,fontWeight:700,color:T.orange}}>{r.description||"New Equipment"}</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:15,fontWeight:900,color:T.green}}>{fmt((r.qty||0)*(r.rate||0))}</span>
                   <button onClick={()=>removeRow(setEquipment,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
                 </div>
               </div>
-            </div>
-          ))}
-          {equipment.length===0&&<div style={{textAlign:"center",padding:"20px",color:T.muted,fontSize:12}}>No equipment — tap + Add Equipment</div>}
-          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:16,marginTop:8}}>Equipment Total: ${equipTotal.toFixed(2)}</div>
-        </div>}
-
-        {/* MATERIALS TAB */}
-        {tab==="materials"&&<div>
-          <button onClick={()=>addRow(setMaterials,{description:"",qty:"",unit:"EA",unit_price:""})} style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Material</button>
-          {materials.map(r=>(
-            <div key={r.id} style={{...cardS,marginBottom:8}}>
-              <div style={{marginBottom:6}}><label style={lbl}>Description</label><input value={r.description} onChange={e=>updateRow(setMaterials,r.id,"description",e.target.value)} placeholder="Material description" style={ri}/></div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:8,alignItems:"flex-end"}}>
-                <div><label style={lbl}>Qty</label><input type="number" value={r.qty} onChange={e=>updateRow(setMaterials,r.id,"qty",e.target.value)} placeholder="1" style={ri}/></div>
-                <div><label style={lbl}>Unit</label><input value={r.unit} onChange={e=>updateRow(setMaterials,r.id,"unit",e.target.value)} placeholder="EA" style={ri}/></div>
-                <div><label style={lbl}>Unit Price ($)</label><input type="number" value={r.unit_price} onChange={e=>updateRow(setMaterials,r.id,"unit_price",e.target.value)} placeholder="0.00" style={ri}/></div>
-                <div style={{paddingBottom:2}}>
-                  <div style={{fontSize:13,fontWeight:900,color:T.green,textAlign:"right",marginBottom:2}}>${((r.qty||0)*(r.unit_price||0)).toFixed(2)}</div>
-                  <button onClick={()=>removeRow(setMaterials,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+              <div style={{marginBottom:8}}>
+                <label style={lbl}>Equipment</label>
+                <select value={r.description} onChange={e=>{
+                  const item=equipList.find(i=>i.name===e.target.value);
+                  updateRow(setEquipment,r.id,"description",e.target.value);
+                  if(item){updateRow(setEquipment,r.id,"unit",item.unit||"Hours");}
+                }} style={{...ri,width:"100%"}}>
+                  <option value="">— Select Equipment —</option>
+                  {equipList.filter(e=>e.name).map(e=><option key={e.name} value={e.name}>{e.name}</option>)}
+                  <option value="__other">Other (type below)</option>
+                </select>
+                {r.description==="__other"&&<input value={r.customDesc||""} onChange={e=>updateRow(setEquipment,r.id,"customDesc",e.target.value)} placeholder="Describe equipment" style={{...ri,marginTop:6}}/>}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                <div><label style={lbl}>Unit</label>
+                  <select value={r.unit} onChange={e=>updateRow(setEquipment,r.id,"unit",e.target.value)} style={{...ri,width:"100%"}}>
+                    {["Hours","Days","Weeks","Miles","EA"].map(u=><option key={u}>{u}</option>)}
+                  </select>
+                </div>
+                <div><label style={lbl}>Qty</label>
+                  <input type="number" step="0.5" value={r.qty} onChange={e=>updateRow(setEquipment,r.id,"qty",e.target.value)} placeholder="1" style={ri}/>
+                </div>
+                <div><label style={lbl}>Rate ($) — manual</label>
+                  <input type="number" step="0.01" value={r.rate} onChange={e=>updateRow(setEquipment,r.id,"rate",e.target.value)} placeholder="0.00" style={ri}/>
                 </div>
               </div>
             </div>
           ))}
-          {materials.length===0&&<div style={{textAlign:"center",padding:"20px",color:T.muted,fontSize:12}}>No materials — tap + Add Material</div>}
-          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:16,marginTop:8}}>Materials Total: ${matsTotal.toFixed(2)}</div>
+          {equipment.length===0&&<div style={{textAlign:"center",padding:"24px",color:T.muted,fontSize:12}}>No equipment — tap + Add Equipment</div>}
+          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:15,marginTop:6}}>Equipment Total: {fmt(equipTotal)}</div>
         </div>}
 
-        {/* OTHER TAB */}
+        {/* ── MATERIALS TAB ── */}
+        {tab==="materials"&&<div>
+          <button onClick={()=>addRow(setMaterials,{description:"",qty:"",unit:"EA",unit_price:"",attachment_url:null,attachment_name:null})}
+            style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Material</button>
+          {materials.map(r=>(
+            <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.green}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontSize:12,fontWeight:700,color:T.green}}>{r.description||"New Material"}</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:15,fontWeight:900,color:T.green}}>{fmt((r.qty||0)*(r.unit_price||0))}</span>
+                  <button onClick={()=>removeRow(setMaterials,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+                </div>
+              </div>
+              <div style={{marginBottom:8}}><label style={lbl}>Description</label>
+                <input value={r.description} onChange={e=>updateRow(setMaterials,r.id,"description",e.target.value)} placeholder="Material description" style={{...ri,width:"100%"}}/>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+                <div><label style={lbl}>Qty</label><input type="number" step="0.01" value={r.qty} onChange={e=>updateRow(setMaterials,r.id,"qty",e.target.value)} placeholder="1" style={ri}/></div>
+                <div><label style={lbl}>Unit</label><input value={r.unit} onChange={e=>updateRow(setMaterials,r.id,"unit",e.target.value)} placeholder="EA" style={ri}/></div>
+                <div><label style={lbl}>Unit Price ($)</label><input type="number" step="0.01" value={r.unit_price} onChange={e=>updateRow(setMaterials,r.id,"unit_price",e.target.value)} placeholder="0.00" style={ri}/></div>
+              </div>
+              {/* Attachment */}
+              <div style={{borderTop:`1px solid ${T.border}`,paddingTop:8,marginTop:4}}>
+                <label style={lbl}>📎 Attachment (receipt, photo, invoice)</label>
+                {r.attachment_url?(
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+                    <a href={r.attachment_url} target="_blank" rel="noreferrer"
+                      style={{fontSize:12,color:T.blue,textDecoration:"none",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      📎 {r.attachment_name||"Attachment"}
+                    </a>
+                    <button onClick={()=>{updateRow(setMaterials,r.id,"attachment_url",null);updateRow(setMaterials,r.id,"attachment_name",null);}}
+                      style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"2px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>Remove</button>
+                  </div>
+                ):(
+                  <div style={{marginTop:4}}>
+                    <input type="file" style={{display:"none"}} ref={el=>{if(el)el._matId=r.id;}}
+                      id={`file-${r.id}`}
+                      onChange={async e=>{if(e.target.files[0])await uploadMaterialAttachment(e.target.files[0],r.id);}}/>
+                    <label htmlFor={`file-${r.id}`}
+                      style={{display:"inline-block",background:T.blueLow,border:`1px dashed ${T.blue}`,borderRadius:8,padding:"6px 14px",fontSize:12,color:T.blue,cursor:"pointer",fontWeight:600}}>
+                      {matUploading?"Uploading…":"📎 Upload Receipt / Photo"}
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          {materials.length===0&&<div style={{textAlign:"center",padding:"24px",color:T.muted,fontSize:12}}>No materials — tap + Add Material</div>}
+          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:15,marginTop:6}}>Materials Total: {fmt(matsTotal)}</div>
+        </div>}
+
+        {/* ── OTHER TAB ── */}
         {tab==="other"&&<div>
-          <button onClick={()=>addRow(setOther,{description:"",amount:""})} style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Charge</button>
+          <button onClick={()=>addRow(setOther,{description:"",amount:""})}
+            style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Charge</button>
           {other.map(r=>(
             <div key={r.id} style={{...cardS,marginBottom:8,display:"flex",gap:10,alignItems:"flex-end"}}>
               <div style={{flex:2}}><label style={lbl}>Description</label><input value={r.description} onChange={e=>updateRow(setOther,r.id,"description",e.target.value)} placeholder="Misc charge" style={ri}/></div>
-              <div style={{flex:1}}><label style={lbl}>Amount ($)</label><input type="number" value={r.amount} onChange={e=>updateRow(setOther,r.id,"amount",e.target.value)} placeholder="0.00" style={ri}/></div>
-              <button onClick={()=>removeRow(setOther,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"6px 10px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit",marginBottom:2}}>🗑</button>
+              <div style={{flex:1}}><label style={lbl}>Amount ($)</label><input type="number" step="0.01" value={r.amount} onChange={e=>updateRow(setOther,r.id,"amount",e.target.value)} placeholder="0.00" style={ri}/></div>
+              <button onClick={()=>removeRow(setOther,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"8px 10px",color:T.red,fontSize:12,cursor:"pointer",fontFamily:"inherit",marginBottom:2}}>🗑</button>
             </div>
           ))}
-          {other.length===0&&<div style={{textAlign:"center",padding:"20px",color:T.muted,fontSize:12}}>No other charges</div>}
-          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:16,marginTop:8}}>Other Total: ${otherTotal.toFixed(2)}</div>
+          {other.length===0&&<div style={{textAlign:"center",padding:"24px",color:T.muted,fontSize:12}}>No other charges</div>}
+          <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:15,marginTop:6}}>Other Total: {fmt(otherTotal)}</div>
         </div>}
 
-        {/* SUMMARY TAB */}
+        {/* ── SUMMARY TAB ── */}
         {tab==="summary"&&<div>
-          {/* Totals breakdown */}
-          <div style={{...cardS,marginBottom:12}}>
-            <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:12}}>Totals</div>
-            {[["👷 Labor",laborTotal],["🚜 Equipment",equipTotal],["🔩 Materials",matsTotal],["➕ Other",otherTotal]].map(([l,v])=>(
-              <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}>
-                <span style={{fontSize:13,color:T.sub}}>{l}</span>
-                <span style={{fontSize:13,fontWeight:700,color:T.text}}>${v.toFixed(2)}</span>
+          {/* Full totals breakdown - always live */}
+          <div style={{...cardS,marginBottom:12,border:`1px solid ${T.green}30`}}>
+            <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:12}}>💰 Cost Summary</div>
+            {[["👷 Labor",laborTotal,labor.length+" worker"+(labor.length!==1?"s":"")],
+              ["🚜 Equipment",equipTotal,equipment.length+" item"+(equipment.length!==1?"s":"")],
+              ["🔩 Materials",matsTotal,materials.length+" item"+(materials.length!==1?"s":"")],
+              ["➕ Other",otherTotal,other.length+" charge"+(other.length!==1?"s":"")]
+            ].map(([l,v,sub])=>(
+              <div key={l} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+                <div><div style={{fontSize:13,color:T.sub}}>{l}</div><div style={{fontSize:10,color:T.muted}}>{sub}</div></div>
+                <span style={{fontSize:14,fontWeight:700,color:v>0?T.text:T.muted}}>{fmt(v)}</span>
               </div>
             ))}
-            <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}>
-              <span style={{fontSize:13,color:T.sub}}>Subtotal</span>
-              <span style={{fontSize:14,fontWeight:800,color:T.text}}>${subtotal.toFixed(2)}</span>
+            <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+              <span style={{fontSize:13,color:T.sub,fontWeight:700}}>Subtotal</span>
+              <span style={{fontSize:15,fontWeight:800}}>{fmt(subtotal)}</span>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:`1px solid ${T.border}`}}>
-              <span style={{fontSize:13,color:T.sub}}>Markup %</span>
-              <input type="number" value={markupPct} onChange={e=>setMarkupPct(e.target.value)} style={{...ri,width:70,textAlign:"center"}} placeholder="0"/>
-              <span style={{fontSize:13,fontWeight:700,color:T.text,marginLeft:"auto"}}>${markupAmt.toFixed(2)}</span>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:13,color:T.sub}}>Markup %</span>
+                <input type="number" step="0.5" value={markupPct} onChange={e=>setMarkupPct(e.target.value)}
+                  style={{...inp,width:65,textAlign:"center",fontSize:14}} placeholder="0"/>
+              </div>
+              <span style={{fontSize:13,fontWeight:700,color:T.orange}}>{fmt(markupAmt)}</span>
             </div>
-            <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",marginTop:4,borderTop:`2px solid ${T.border}`}}>
-              <span style={{fontSize:16,fontWeight:900,color:T.text}}>GRAND TOTAL</span>
-              <span style={{fontSize:22,fontWeight:900,color:T.green}}>${grandTotal.toFixed(2)}</span>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderTop:`2px solid ${T.border}`,marginTop:4}}>
+              <span style={{fontSize:17,fontWeight:900}}>GRAND TOTAL</span>
+              <span style={{fontSize:26,fontWeight:900,color:T.green}}>{fmt(grandTotal)}</span>
             </div>
           </div>
 
-          {/* Notes */}
           <div style={{...cardS,marginBottom:12}}>
-            <label style={lbl}>Notes</label>
-            <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={3} placeholder="Any notes or special conditions…" style={{...inp,resize:"vertical"}}/>
+            <label style={lbl}>Notes / Special Conditions</label>
+            <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={3} placeholder="Any notes…" style={{...inp,resize:"vertical"}}/>
           </div>
 
-          {/* Status */}
           {canEdit&&<div style={{...cardS,marginBottom:12}}>
             <label style={lbl}>Status</label>
             <select value={status} onChange={e=>setStatus(e.target.value)} style={inpSel}>
@@ -6826,16 +6943,15 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:6px 8px;margin-bottom:10px
             </select>
           </div>}
 
-          {/* Signature */}
           <div style={{...cardS,marginBottom:12}}>
             <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:8}}>✍️ PM Sign-Off</div>
             {sigData?(
               <div>
-                <div style={{background:"#fff",border:"1px solid #ccc",borderRadius:8,padding:8,display:"inline-block",marginBottom:8}}>
+                <div style={{background:"#fff",border:"1px solid #ccc",borderRadius:8,padding:8,display:"inline-block",marginBottom:6}}>
                   <img src={sigData} style={{maxHeight:60,maxWidth:200,display:"block"}}/>
                 </div>
-                <div style={{fontSize:12,color:T.sub,marginBottom:8}}>{signerName} · {sigAt?new Date(sigAt).toLocaleString():""}</div>
-                <button onClick={()=>{setSigData(null);setSigAt(null);}} style={{...ghostBtn,fontSize:11,color:T.red,border:`1px solid ${T.red}30`}}>Clear Signature</button>
+                <div style={{fontSize:12,color:T.sub,marginBottom:6}}>{signerName} · {sigAt?new Date(sigAt).toLocaleString():""}</div>
+                <button onClick={()=>{setSigData(null);setSigAt(null);}} style={{...ghostBtn,fontSize:11,color:T.red,border:`1px solid ${T.red}30`}}>Clear</button>
               </div>
             ):(
               <button onClick={()=>setShowSigPad(true)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>✍️ Sign Here</button>
@@ -6846,12 +6962,11 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:6px 8px;margin-bottom:10px
         {/* Action buttons */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:16}}>
           <button onClick={()=>save()} disabled={saving}
-            style={{...primBtn,borderRadius:14,background:T.orange,color:"#000",opacity:saving?0.5:1}}>
+            style={{...primBtn,borderRadius:14,background:T.orange,color:"#000",opacity:saving?0.5:1,fontSize:15}}>
             {saving?"Saving…":"💾 Save"}
           </button>
-          <button onClick={printTicket}
-            style={{...primBtn,borderRadius:14,background:"#1f3864"}}>
-            🖨️ Print T&M
+          <button onClick={printTicket} style={{...primBtn,borderRadius:14,background:"#1f3864",fontSize:15}}>
+            🖨️ Print
           </button>
         </div>
         {!isNew&&canEdit&&<button onClick={async()=>{if(window.confirm("Delete this ticket?"))try{await API.tmTickets.remove(ticket.id);onBack();}catch(e){}}}
@@ -6860,8 +6975,7 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:6px 8px;margin-bottom:10px
         </button>}
       </div>
 
-      {showSigPad&&<SignaturePad
-        reportName={`T&M #${ticketNo} · ${project.name}`}
+      {showSigPad&&<SignaturePad reportName={`T&M #${ticketNo} · ${project.name}`}
         onSave={async(name,sig)=>{setSignerName(name);setSigData(sig);setSigAt(new Date().toISOString());setShowSigPad(false);}}
         onCancel={()=>setShowSigPad(false)}/>}
     </div>
