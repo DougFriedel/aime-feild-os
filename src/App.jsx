@@ -2109,7 +2109,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
             </button>
           </div>
           <div style={{fontSize:10,color:T.muted,textAlign:"center",marginTop:5}}>
-            Sign Here = on this device · Send Link = inspector's phone · eSign = Dropbox Sign email
+            Sign Here = on this device · Send Link = inspector's phone · eSign = Box Sign email
           </div>
         </div>
       )}
@@ -2118,7 +2118,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       {showEsigModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16,fontFamily:"inherit"}}>
         <div style={{background:T.card,borderRadius:16,padding:24,width:"100%",maxWidth:400,border:`1px solid ${T.blue}40`}}>
           <div style={{fontSize:16,fontWeight:900,color:T.blue,marginBottom:4}}>📦 Send via Box Sign</div>
-          <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Inspector gets a Box Sign email and can sign on any device. Report updates automatically when signed.</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Inspector receives a Box Sign email and can sign on any device. Report auto-updates when signed.</div>
           {esigError&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:T.red}}>{esigError}</div>}
           <div style={{marginBottom:10}}><label style={lbl}>Inspector Name *</label><input value={esigName} onChange={e=>setEsigName(e.target.value)} placeholder="John Smith" style={inp} autoFocus/></div>
           <div style={{marginBottom:16}}><label style={lbl}>Inspector Email *</label><input type="email" value={esigEmail} onChange={e=>setEsigEmail(e.target.value)} placeholder="inspector@company.com" style={inp}/></div>
@@ -6546,6 +6546,43 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const [sigAt,setSigAt]=useState(ticket?.inspector_signed_at||null);
   const [matUploading,setMatUploading]=useState(false);
   const fileInputRef=useRef(null);
+  const [showBoxSignModal,setShowBoxSignModal]=useState(false);
+  const [bsEmail,setBsEmail]=useState(ticket?.client_email||project.client_email||"");
+  const [bsName,setBsName]=useState(ticket?.client_contact||"");
+  const [bsSending,setBsSending]=useState(false);
+  const [bsError,setBsError]=useState("");
+  const [bsSent,setBsSent]=useState(ticket?.hellosign_status==="pending"||ticket?.hellosign_status==="signed");
+
+  async function sendBoxSign(){
+    if(!bsEmail.trim()||!bsName.trim()){setBsError("Please enter client name and email.");return;}
+    setBsSending(true);setBsError("");
+    try{
+      // Save ticket first to get an ID
+      let ticketId=ticket?.id;
+      if(!ticketId){await save();return;} // prompt save first
+      const res=await fetch("/.netlify/functions/box-sign-create",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          reportId:ticketId,
+          inspectorEmail:bsEmail.trim(),
+          inspectorName:bsName.trim(),
+          projectName:project.name,
+          reportNo:ticketNo,
+          reportDate:ticketDate,
+          submittedBy:user.name,
+          laborTotal:fmt(laborTotal),
+          equipmentTotal:fmt(equipTotal),
+          grandTotal:fmt(grandTotal),
+        }),
+      });
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||"Failed to send");
+      await API.tmTickets.update(ticketId,{hellosign_request_id:data.requestId,hellosign_status:"pending",client_email:bsEmail.trim(),client_contact:bsName.trim()});
+      setBsSent(true);setShowBoxSignModal(false);
+    }catch(e){setBsError("Error: "+e.message);}
+    setBsSending(false);
+  }
 
   const uid=()=>Math.random().toString(36).slice(2,10);
 
@@ -6597,6 +6634,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       status:newStatus||status,
       submitted_by:ticket?.submitted_by||user.name,
       labor,equipment,materials,other_charges:other,
+      client_email:bsEmail||null,client_contact:bsName||null,
       labor_total:laborTotal,equipment_total:equipTotal,
       materials_total:matsTotal,other_total:otherTotal,
       subtotal,markup_amount:markupAmt,grand_total:grandTotal,
@@ -6623,10 +6661,20 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
 <style>@page{size:letter portrait;margin:0.4in;}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
 </head><body style="color:#111;font-size:9pt;">
 <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1f3864;padding-bottom:10px;margin-bottom:10px">
-  <div><div style="font-size:22pt;font-weight:900;color:#1f3864">AIME</div>
-    <div style="font-size:7.5pt;color:#555">Atlantic Industrial Mechanical &amp; Environmental Inc.</div></div>
-  <div style="text-align:right"><div style="font-size:16pt;font-weight:700;color:#1f3864">Time &amp; Materials Ticket</div>
-    <div style="font-size:9pt;font-weight:700">T&amp;M # ${ticketNo}</div><div style="font-size:8.5pt;color:#555">${ticketDate}</div></div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <div style="background:#1f3864;color:#fff;font-size:26pt;font-weight:900;letter-spacing:2px;padding:6px 14px;border-radius:6px;line-height:1;font-family:Arial Black,sans-serif">AIME</div>
+    <div>
+      <div style="font-size:8pt;font-weight:700;color:#1f3864;letter-spacing:1px;text-transform:uppercase">Atlantic Industrial Mechanical</div>
+      <div style="font-size:7.5pt;color:#555">&amp; Environmental Inc.</div>
+      <div style="font-size:7pt;color:#888">5730 Pennington Ave, Baltimore, MD 21226</div>
+    </div>
+  </div>
+  <div style="text-align:right">
+    <div style="font-size:16pt;font-weight:700;color:#1f3864">Time &amp; Materials Ticket</div>
+    <div style="font-size:9pt;font-weight:700;color:#333">T&amp;M # ${ticketNo}</div>
+    <div style="font-size:8.5pt;color:#555">Date: ${ticketDate}</div>
+    <div style="background:#1f3864;color:#fff;font-size:7pt;font-weight:700;padding:3px 10px;border-radius:4px;display:inline-block;margin-top:4px;text-transform:uppercase;letter-spacing:1px">${status}</div>
+  </div>
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb;margin-bottom:8px;">
   ${[["Project",project.name||"—"],["Customer",project.client||"—"],["PO #",poNumber||"—"],["AFE/WO #",(afeNumber||workOrder||"—")],["Location",location||"—"],["Submitted By",user.name]].map(([l,v])=>`<div style="display:flex;border-bottom:1px solid #e5e7eb"><div style="background:#f3f4f6;padding:3px 8px;font-weight:700;font-size:7.5pt;width:100px;border-right:1px solid #e5e7eb;flex-shrink:0">${l}</div><div style="padding:3px 8px;font-size:8pt">${v}</div></div>`).join("")}
@@ -6943,6 +6991,21 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
             </select>
           </div>}
 
+          {/* Box Sign client signature request */}
+          <div style={{...cardS,marginBottom:12,border:`1px solid ${"#1f3864"}40`}}>
+            <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:8}}>📦 Client Signature (Box Sign)</div>
+            {bsSent?(
+              <div style={{background:T.blueLow,border:`1px solid ${T.blue}30`,borderRadius:10,padding:"10px 14px",fontSize:12,color:T.blue,fontWeight:600}}>
+                ⏳ Box Sign request sent — awaiting client signature
+              </div>
+            ):(
+              <button onClick={()=>setShowBoxSignModal(true)}
+                style={{...primBtn,borderRadius:12,background:"#1f3864",fontSize:13}}>
+                📦 Request Client Signature via Box
+              </button>
+            )}
+          </div>
+
           <div style={{...cardS,marginBottom:12}}>
             <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:8}}>✍️ PM Sign-Off</div>
             {sigData?(
@@ -6978,6 +7041,25 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
       {showSigPad&&<SignaturePad reportName={`T&M #${ticketNo} · ${project.name}`}
         onSave={async(name,sig)=>{setSignerName(name);setSigData(sig);setSigAt(new Date().toISOString());setShowSigPad(false);}}
         onCancel={()=>setShowSigPad(false)}/>}
+
+      {showBoxSignModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16,fontFamily:"inherit"}}>
+        <div style={{background:T.card,borderRadius:16,padding:24,width:"100%",maxWidth:400,border:"1px solid #1f386440"}}>
+          <div style={{fontSize:16,fontWeight:900,color:"#60A5FA",marginBottom:4}}>📦 Send T&M for Client Signature</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Client receives a Box Sign email with the T&M ticket. You get notified when they sign.</div>
+          {bsError&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:T.red}}>{bsError}</div>}
+          {!ticket?.id&&<div style={{background:T.yellowLow||T.blueLow,border:`1px solid ${T.yellow}40`,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:T.yellow}}>💾 Save the ticket first before sending for signature.</div>}
+          <div style={{marginBottom:10}}><label style={lbl}>Client Contact Name *</label><input value={bsName} onChange={e=>setBsName(e.target.value)} placeholder="John Smith" style={inp} autoFocus/></div>
+          <div style={{marginBottom:16}}><label style={lbl}>Client Email *</label><input type="email" value={bsEmail} onChange={e=>setBsEmail(e.target.value)} placeholder="client@company.com" style={inp}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button onClick={sendBoxSign} disabled={bsSending||!bsEmail.trim()||!bsName.trim()||!ticket?.id}
+              style={{...primBtn,borderRadius:12,background:"#1f3864",opacity:bsSending||!bsEmail.trim()||!bsName.trim()||!ticket?.id?0.5:1}}>
+              {bsSending?"Sending…":"📤 Send"}
+            </button>
+            <button onClick={()=>{setShowBoxSignModal(false);setBsError("");}}
+              style={{...ghostBtn,textAlign:"center",borderRadius:12}}>Cancel</button>
+          </div>
+        </div>
+      </div>}
     </div>
   );
 }
