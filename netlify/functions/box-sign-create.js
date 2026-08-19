@@ -17,6 +17,7 @@ const DOC_TYPES = {
   daily: {
     label: 'Daily Report',
     title: 'Daily Field Report',
+    folder: 'Daily Reports',
     heading: 'AIME Field Pro — Daily Report Sign-Off',
     numberLabel: 'Report #',
     filePrefix: 'AIME-DailyReport',
@@ -32,6 +33,7 @@ const DOC_TYPES = {
   tm: {
     label: 'T&M Ticket',
     title: 'Time & Materials Ticket',
+    folder: 'T&M Tickets',
     heading: 'AIME Field Pro — Time & Materials Ticket',
     numberLabel: 'T&M #',
     filePrefix: 'AIME-TM',
@@ -471,7 +473,11 @@ export const handler = async (event) => {
       .replace(/[/\\<>:"|?*]/g, '-')
       .trim()
       .slice(0, 200) || 'Unassigned Job';
-    const signFolderId = await ensureFolder(token, jobFolderName, parentId);
+
+    // <parent>/<Job Name>/<Daily Reports | T&M Tickets>/
+    // Both levels are created on first use and reused thereafter.
+    const jobFolderId = await ensureFolder(token, jobFolderName, parentId);
+    const signFolderId = await ensureFolder(token, cfg.folder, jobFolderId);
 
     const fileId = await uploadReportToBox(token, docBuffer, filename, signFolderId);
 
