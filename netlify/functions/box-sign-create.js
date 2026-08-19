@@ -262,7 +262,7 @@ async function uploadReportToBox(token, content, filename, parentId) {
     Buffer.from(`${CRLF}--${boundary}--${CRLF}`, 'utf-8'),
   ]);
 
-  const res = await fetch('https://upload.box.com/api/2.0/files/content', {
+  let res = await fetch('https://upload.box.com/api/2.0/files/content', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -271,9 +271,49 @@ async function uploadReportToBox(token, content, filename, parentId) {
     body,
   });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error('Box upload failed: ' + JSON.stringify(data));
-  return data.entries[0].id;
+  if (res.ok) return (await res.json()).entries[0].id;
+
+  const data = await res.json().catch(() => ({}));
+
+  // Re-sending the same ticket hits an existing filename. Upload a new version
+  // of that file rather than failing — Box keeps the prior versions, and each
+  // signed document Box produces is stored separately either way.
+  const existingId = data?.context_info?.conflicts?.id;
+  if (res.status === 409 && existingId) {
+    const vBoundary = 'BoxV' + Date.now();
+    const vMeta = [
+      `--${vBoundary}`,
+      'Content-Disposition: form-data; name="attributes"',
+      'Content-Type: application/json',
+      '',
+      JSON.stringify({ name: filename }),
+    ].join(CRLF);
+    const vFile = [
+      `--${vBoundary}`,
+      `Content-Disposition: form-data; name="file"; filename="${filename}"`,
+      'Content-Type: text/plain',
+      '',
+      '',
+    ].join(CRLF);
+    const vBody = Buffer.concat([
+      Buffer.from(vMeta + CRLF + vFile, 'utf-8'),
+      Buffer.from(content, 'utf-8'),
+      Buffer.from(`${CRLF}--${vBoundary}--${CRLF}`, 'utf-8'),
+    ]);
+
+    res = await fetch(`https://upload.box.com/api/2.0/files/${existingId}/content`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': `multipart/form-data; boundary=${vBoundary}`,
+      },
+      body: vBody,
+    });
+    if (res.ok) return (await res.json()).entries[0].id;
+    throw new Error('Box new-version upload failed: ' + JSON.stringify(await res.json().catch(() => ({}))));
+  }
+
+  throw new Error('Box upload failed: ' + JSON.stringify(data));
 }
 
 /* ── handler ───────────────────────────────────────────────── */
