@@ -220,7 +220,23 @@ async function getBoxToken() {
   return data.access_token;
 }
 
-async function uploadReportToBox(token, content, filename) {
+// Box Sign refuses to use the root folder as a signature request's parent, so
+// make sure a real subfolder exists and use that. Idempotent: if it's already
+// there Box returns 409 with the existing id.
+async function ensureFolder(token, name, parentId) {
+  const res = await fetch('https://api.box.com/2.0/folders', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parent: { id: String(parentId) } }),
+  });
+  if (res.ok) return (await res.json()).id;
+  const err = await res.json().catch(() => ({}));
+  const existing = err?.context_info?.conflicts?.[0]?.id;
+  if (res.status === 409 && existing) return existing;
+  throw new Error(`Box folder "${name}": ${res.status} ${JSON.stringify(err)}`);
+}
+
+async function uploadReportToBox(token, content, filename, parentId) {
   const boundary = 'BoxBoundary' + Date.now();
   const CRLF = '\r\n';
 
@@ -229,7 +245,7 @@ async function uploadReportToBox(token, content, filename) {
     'Content-Disposition: form-data; name="attributes"',
     'Content-Type: application/json',
     '',
-    JSON.stringify({ name: filename, parent: { id: BOX_FOLDER_ID } }),
+    JSON.stringify({ name: filename, parent: { id: String(parentId) } }),
   ].join(CRLF);
 
   const filePart = [
@@ -296,7 +312,15 @@ export const handler = async (event) => {
     const filename = `${cfg.filePrefix}-${safeNo}-${reportDate || 'draft'}.txt`;
 
     const token = await getBoxToken();
-    const fileId = await uploadReportToBox(token, docText, filename);
+
+    // If BOX_FOLDER_ID is unset (or root), create/reuse a real subfolder —
+    // Box Sign rejects root as a parent folder.
+    let signFolderId = BOX_FOLDER_ID;
+    if (!signFolderId || signFolderId === '0') {
+      signFolderId = await ensureFolder(token, 'AIME Field Pro - Signatures', '0');
+    }
+
+    const fileId = await uploadReportToBox(token, docText, filename, signFolderId);
 
     // doc_type is passed through so box-sign-complete knows which table to update
     const redirectUrl =
@@ -314,7 +338,7 @@ export const handler = async (event) => {
       body: JSON.stringify({
         signers: [{ email: inspectorEmail, name: inspectorName || 'Signer', role: 'signer' }],
         source_files: [{ id: fileId, type: 'file' }],
-        parent_folder: { id: BOX_FOLDER_ID, type: 'folder' },
+        parent_folder: { id: String(signFolderId), type: 'folder' },
         redirect_url: redirectUrl,
         declined_redirect_url: NETLIFY_URL,
         email_subject: cfg.subject(reportNo, projectName),
