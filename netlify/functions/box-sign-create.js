@@ -5,6 +5,8 @@
 // Payload MUST include docType: "daily" | "tm".
 // Requests without docType are treated as "daily" for backward compatibility.
 
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+
 const NETLIFY_URL = 'https://bespoke-sawine-3a49c3.netlify.app';
 
 // Optional: set BOX_FOLDER_ID in Netlify env to keep signed docs out of the Box root.
@@ -14,6 +16,7 @@ const BOX_FOLDER_ID = process.env.BOX_FOLDER_ID || '0';
 const DOC_TYPES = {
   daily: {
     label: 'Daily Report',
+    title: 'Daily Field Report',
     heading: 'AIME Field Pro — Daily Report Sign-Off',
     numberLabel: 'Report #',
     filePrefix: 'AIME-DailyReport',
@@ -28,6 +31,7 @@ const DOC_TYPES = {
   },
   tm: {
     label: 'T&M Ticket',
+    title: 'Time & Materials Ticket',
     heading: 'AIME Field Pro — Time & Materials Ticket',
     numberLabel: 'T&M #',
     filePrefix: 'AIME-TM',
@@ -45,161 +49,255 @@ const DOC_TYPES = {
   },
 };
 
-/* ── plain-text table rendering ────────────────────────────── */
-const money = (n) =>
-  '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/* ── PDF rendering ─────────────────────────────────────────
+   Builds a print-quality PDF of a T&M ticket / daily report using pdf-lib.
+   Mirrors the layout of printTicket() in the app. */
 
-// Renders a fixed-width table. cols: [{ key, label, width, align }]
-function renderTable(title, cols, rows, totalLabel, totalValue) {
-  if (!rows || !rows.length) return [];
 
-  const pad = (s, w, align) => {
-    s = String(s == null ? '' : s);
-    if (s.length > w) s = s.slice(0, w - 1) + '…';
-    return align === 'right' ? s.padStart(w) : align === 'center'
-      ? s.padStart(Math.floor((w + s.length) / 2)).padEnd(w)
-      : s.padEnd(w);
+const NAVY = rgb(0.122, 0.220, 0.392);   // #1F3864
+const HEADROW = rgb(0.235, 0.353, 0.541); // column header blue
+const GREY = rgb(0.42, 0.45, 0.50);
+const LINE = rgb(0.78, 0.80, 0.84);
+const SOFT = rgb(0.929, 0.941, 0.961);
+const BLACK = rgb(0.1, 0.1, 0.12);
+const WHITE = rgb(1, 1, 1);
+
+const PW = 612, PH = 792, M = 36;
+const CW = PW - M * 2;
+
+const money = (n) => {
+  const v = typeof n === 'string' ? parseFloat(String(n).replace(/[^0-9.-]/g, '')) : n;
+  return '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+const asMoney = (s) => (typeof s === 'string' && s.trim().startsWith('$') ? s : money(s));
+
+async function buildTicketPdf(cfg, p) {
+  const doc = await PDFDocument.create();
+  const F = await doc.embedFont(StandardFonts.Helvetica);
+  const FB = await doc.embedFont(StandardFonts.HelveticaBold);
+  let page = doc.addPage([PW, PH]);
+  let y = PH - M;
+
+  const txt = (s, x, yy, size = 8, font = F, color = BLACK) =>
+    page.drawText(String(s == null ? '' : s), { x, y: yy, size, font, color });
+
+  const rightTxt = (s, xRight, yy, size = 8, font = F, color = BLACK) => {
+    const w = font.widthOfTextAtSize(String(s ?? ''), size);
+    txt(s, xRight - w, yy, size, font, color);
   };
 
-  const line = cols.map((c) => '-'.repeat(c.width)).join('-+-');
-  const header = cols.map((c) => pad(c.label, c.width, c.align)).join(' | ');
+  const clip = (s, font, size, maxW) => {
+    s = String(s == null ? '' : s);
+    if (font.widthOfTextAtSize(s, size) <= maxW) return s;
+    while (s.length > 1 && font.widthOfTextAtSize(s + '…', size) > maxW) s = s.slice(0, -1);
+    return s + '…';
+  };
 
-  const out = ['', title.toUpperCase(), header, line];
-  rows.forEach((r) => {
-    out.push(cols.map((c) => pad(r[c.key], c.width, c.align)).join(' | '));
+  const newPageIfNeeded = (need) => {
+    if (y - need > M + 30) return;
+    page = doc.addPage([PW, PH]);
+    y = PH - M;
+  };
+
+  /* ── header ── */
+  page.drawRectangle({ x: M, y: y - 26, width: 92, height: 26, color: NAVY });
+  txt('AIME', M + 12, y - 19, 17, FB, WHITE);
+  txt('ATLANTIC INDUSTRIAL MECHANICAL', M + 100, y - 9, 7.5, FB, NAVY);
+  txt('& Environmental Inc.', M + 100, y - 17, 6.5, F, rgb(0.33, 0.33, 0.33));
+  txt('5730 Pennington Ave, Baltimore, MD 21226', M + 100, y - 24, 6, F, GREY);
+
+  rightTxt(cfg.title, PW - M, y - 12, 15, FB, BLACK);
+  rightTxt(`${cfg.numberLabel} ${p.reportNo || '—'}`, PW - M, y - 24, 8, F, rgb(0.25, 0.25, 0.25));
+  rightTxt(`Date: ${p.reportDate || '—'}`, PW - M, y - 34, 8, F, rgb(0.25, 0.25, 0.25));
+
+  y -= 46;
+  page.drawLine({ start: { x: M, y }, end: { x: PW - M, y }, thickness: 1.4, color: NAVY });
+  y -= 12;
+
+  /* ── info grid ── */
+  const rows = [
+    [['Project', p.projectName], ['Customer', p.customer]],
+    [['PO #', p.poNumber], ['AFE/WO #', p.afeNumber]],
+    [['Location', p.location], ['Submitted By', p.submittedBy]],
+  ];
+  const half = CW / 2;
+  page.drawRectangle({ x: M, y: y - rows.length * 15, width: CW, height: rows.length * 15, borderColor: LINE, borderWidth: 0.7 });
+  rows.forEach((pair, i) => {
+    const ry = y - (i + 1) * 15 + 4;
+    pair.forEach(([label, val], c) => {
+      const x0 = M + c * half;
+      txt(label, x0 + 5, ry, 6.5, FB, GREY);
+      txt(clip(val || '—', F, 8, half - 78), x0 + 72, ry, 8, F, BLACK);
+    });
+    if (i < rows.length - 1)
+      page.drawLine({ start: { x: M, y: y - (i + 1) * 15 }, end: { x: PW - M, y: y - (i + 1) * 15 }, thickness: 0.5, color: LINE });
+  });
+  page.drawLine({ start: { x: M + half, y }, end: { x: M + half, y: y - rows.length * 15 }, thickness: 0.5, color: LINE });
+  y -= rows.length * 15 + 14;
+
+  /* ── description ── */
+  if (p.description) {
+    newPageIfNeeded(40);
+    txt('DESCRIPTION OF WORK', M, y, 6.5, FB, GREY);
+    y -= 10;
+    const words = String(p.description).split(/\s+/);
+    let line = '';
+    for (const w of words) {
+      if (F.widthOfTextAtSize(line + ' ' + w, 8) > CW - 4) { txt(line.trim(), M + 2, y, 8); y -= 10; line = w; newPageIfNeeded(20); }
+      else line += ' ' + w;
+    }
+    if (line.trim()) { txt(line.trim(), M + 2, y, 8); y -= 10; }
+    y -= 6;
+  }
+
+  /* ── tables ── */
+  const table = (title, cols, data, totalLabel, totalValue) => {
+    if (!data || !data.length) return;
+    newPageIfNeeded(28 + data.length * 13 + 16);
+
+    // section bar
+    page.drawRectangle({ x: M, y: y - 12, width: CW, height: 12, color: NAVY });
+    txt(title.toUpperCase(), M + 5, y - 9, 7, FB, WHITE);
+    y -= 12;
+
+    // column header
+    page.drawRectangle({ x: M, y: y - 12, width: CW, height: 12, color: HEADROW });
+    let x = M;
+    cols.forEach((c) => {
+      if (c.align === 'right') rightTxt(c.label, x + c.w - 5, y - 8.5, 6.5, FB, WHITE);
+      else if (c.align === 'center') {
+        const tw = FB.widthOfTextAtSize(c.label, 6.5);
+        txt(c.label, x + (c.w - tw) / 2, y - 8.5, 6.5, FB, WHITE);
+      } else txt(c.label, x + 5, y - 8.5, 6.5, FB, WHITE);
+      x += c.w;
+    });
+    y -= 12;
+
+    // rows
+    data.forEach((r) => {
+      newPageIfNeeded(26);
+      let cx = M;
+      cols.forEach((c) => {
+        const raw = r[c.key];
+        const val = c.money ? asMoney(raw) : (raw == null || raw === '' ? '' : String(raw));
+        if (c.align === 'right') rightTxt(clip(val, F, 7.5, c.w - 10), cx + c.w - 5, y - 9, 7.5);
+        else if (c.align === 'center') {
+          const tw = F.widthOfTextAtSize(clip(val, F, 7.5, c.w - 10), 7.5);
+          txt(clip(val, F, 7.5, c.w - 10), cx + (c.w - tw) / 2, y - 9, 7.5);
+        } else txt(clip(val, F, 7.5, c.w - 10), cx + 5, y - 9, 7.5);
+        cx += c.w;
+      });
+      page.drawLine({ start: { x: M, y: y - 13 }, end: { x: PW - M, y: y - 13 }, thickness: 0.4, color: LINE });
+      y -= 13;
+    });
+
+    // total strip
+    if (totalLabel) {
+      page.drawRectangle({ x: M, y: y - 13, width: CW, height: 13, color: SOFT });
+      rightTxt(totalLabel, PW - M - 78, y - 9.5, 7.5, FB, BLACK);
+      rightTxt(asMoney(totalValue), PW - M - 5, y - 9.5, 7.5, FB, BLACK);
+      y -= 13;
+    }
+    y -= 10;
+  };
+
+  const it = p.lineItems || {};
+
+  table('Labor',
+    [{ key: 'name', label: 'Name', w: 150 }, { key: 'classification', label: 'Classification', w: 130 },
+     { key: 'hours', label: 'Hours', w: 60, align: 'center' }, { key: 'rate', label: 'Rate/Hr', w: 110, align: 'right', money: true },
+     { key: 'amount', label: 'Amount', w: 90, align: 'right', money: true }],
+    it.labor, 'Labor Total', p.laborTotal);
+
+  table('Equipment',
+    [{ key: 'description', label: 'Equipment', w: 210 }, { key: 'unit', label: 'Unit', w: 80, align: 'center' },
+     { key: 'qty', label: 'Qty', w: 60, align: 'center' }, { key: 'rate', label: 'Rate', w: 100, align: 'right', money: true },
+     { key: 'amount', label: 'Amount', w: 90, align: 'right', money: true }],
+    it.equipment, 'Equipment Total', p.equipmentTotal);
+
+  table('Rental Equipment',
+    [{ key: 'description', label: 'Description', w: 250 }, { key: 'qty', label: 'Qty', w: 90, align: 'center' },
+     { key: 'rate', label: 'Rate', w: 100, align: 'right', money: true },
+     { key: 'amount', label: 'Amount', w: 100, align: 'right', money: true }],
+    it.rental, 'Rental Total', p.rentalTotal);
+
+  table('Materials',
+    [{ key: 'description', label: 'Description', w: 250 }, { key: 'qty', label: 'Qty', w: 70, align: 'center' },
+     { key: 'unit', label: 'Unit', w: 60, align: 'center' },
+     { key: 'unit_price', label: 'Unit Price', w: 90, align: 'right', money: true },
+     { key: 'amount', label: 'Amount', w: 70, align: 'right', money: true }],
+    it.materials, 'Materials Total', p.materialsTotal);
+
+  table('Other Charges',
+    [{ key: 'description', label: 'Description', w: 440 }, { key: 'amount', label: 'Amount', w: 100, align: 'right', money: true }],
+    it.other, 'Other Total', p.otherTotal);
+
+  /* ── summary box (right aligned, like the print layout) ── */
+  const sum = [];
+  if (p.laborTotal) sum.push(['Labor', p.laborTotal]);
+  if (p.equipmentTotal) sum.push(['Equipment', p.equipmentTotal]);
+  if (p.rentalTotal) sum.push(['Rental', p.rentalTotal]);
+  if (p.materialsTotal) sum.push(['Materials', p.materialsTotal]);
+  if (p.otherTotal) sum.push(['Other', p.otherTotal]);
+  if (p.subtotal) sum.push(['Subtotal', p.subtotal]);
+  if (p.markupAmount && parseFloat(p.markupPct) > 0) sum.push([`Markup (${p.markupPct}%)`, p.markupAmount]);
+
+  newPageIfNeeded(sum.length * 13 + 60);
+  const boxW = 220, boxX = PW - M - boxW;
+  sum.forEach(([l, v], i) => {
+    const ry = y - (i + 1) * 13;
+    page.drawRectangle({ x: boxX, y: ry, width: boxW, height: 13, borderColor: LINE, borderWidth: 0.5 });
+    txt(l, boxX + 6, ry + 3.5, 7.5);
+    rightTxt(asMoney(v), PW - M - 6, ry + 3.5, 7.5);
+  });
+  y -= sum.length * 13;
+  page.drawRectangle({ x: boxX, y: y - 18, width: boxW, height: 18, color: NAVY });
+  txt('GRAND TOTAL', boxX + 6, y - 12.5, 9, FB, WHITE);
+  rightTxt(asMoney(p.grandTotal), PW - M - 6, y - 12.5, 10, FB, WHITE);
+  y -= 18 + 26;
+
+  /* ── signature block ── */
+  newPageIfNeeded(80);
+  page.drawLine({ start: { x: M, y }, end: { x: PW - M, y }, thickness: 0.7, color: LINE });
+  y -= 12;
+  txt('PREPARED BY / PM', M, y, 6.5, FB, GREY);
+  txt('CUSTOMER APPROVAL', M + CW / 2, y, 6.5, FB, GREY);
+  y -= 8;
+
+  // PM signature image if the app supplied one
+  if (p.pmSignature && /^data:image\/(png|jpe?g);base64,/.test(p.pmSignature)) {
+    try {
+      const b64 = p.pmSignature.split(',')[1];
+      const bytes = Uint8Array.from(Buffer.from(b64, 'base64'));
+      const img = p.pmSignature.includes('image/png') ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+      const dims = img.scaleToFit(150, 34);
+      page.drawImage(img, { x: M, y: y - dims.height, width: dims.width, height: dims.height });
+    } catch (e) { /* fall through to a blank line */ }
+  }
+  page.drawLine({ start: { x: M, y: y - 38 }, end: { x: M + 170, y: y - 38 }, thickness: 0.7, color: BLACK });
+  txt(p.pmName || p.submittedBy || '', M, y - 48, 8, FB);
+  txt(`Date: ${p.reportDate || ''}`, M, y - 58, 7, F, GREY);
+
+  const cx2 = M + CW / 2;
+  page.drawLine({ start: { x: cx2, y: y - 38 }, end: { x: cx2 + 200, y: y - 38 }, thickness: 0.7, color: BLACK });
+  txt('Name / Signature', cx2, y - 48, 7, F, GREY);
+  page.drawLine({ start: { x: cx2, y: y - 66 }, end: { x: cx2 + 200, y: y - 66 }, thickness: 0.7, color: BLACK });
+  txt('Date / Title', cx2, y - 76, 7, F, GREY);
+  y -= 90;
+
+  /* ── attestation + footer ── */
+  newPageIfNeeded(40);
+  cfg.attestation.forEach((l) => { txt(l, M, y, 7, F, rgb(0.3, 0.3, 0.34)); y -= 9; });
+
+  const pages = doc.getPages();
+  pages.forEach((pg, i) => {
+    pg.drawText(
+      `AIME Field Pro  ·  ${p.projectName || ''}  ·  ${cfg.numberLabel} ${p.reportNo || ''}  ·  Page ${i + 1} of ${pages.length}`,
+      { x: M, y: 22, size: 6.5, font: F, color: GREY }
+    );
   });
 
-  if (totalLabel) {
-    out.push(line);
-    const totalWidth = cols.slice(0, -1).reduce((s, c) => s + c.width, 0) + (cols.length - 2) * 3;
-    const lastCol = cols[cols.length - 1];
-    out.push(pad(totalLabel, totalWidth, 'right') + ' | ' + pad(totalValue, lastCol.width, 'right'));
-  }
-  return out;
-}
-
-function buildDocument(cfg, p) {
-  const rule = '='.repeat(72);
-  const lines = [
-    cfg.heading,
-    rule,
-    '',
-    `Project:        ${p.projectName || '—'}`,
-    `Customer:       ${p.customer || '—'}`,
-    `${(cfg.numberLabel + ':').padEnd(16)}${p.reportNo || '—'}`,
-    `Date:           ${p.reportDate || '—'}`,
-    `Submitted By:   ${p.submittedBy || '—'}`,
-  ];
-
-  if (p.poNumber) lines.push(`PO #:           ${p.poNumber}`);
-  if (p.afeNumber) lines.push(`AFE / WO #:     ${p.afeNumber}`);
-  if (p.location) lines.push(`Location:       ${p.location}`);
-
-  if (p.description) {
-    lines.push('', 'DESCRIPTION OF WORK', '-'.repeat(72));
-    // wrap at 72 chars
-    String(p.description).split('\n').forEach((para) => {
-      let cur = '';
-      para.split(/\s+/).forEach((w) => {
-        if ((cur + ' ' + w).trim().length > 72) { lines.push(cur.trim()); cur = w; }
-        else cur += ' ' + w;
-      });
-      if (cur.trim()) lines.push(cur.trim());
-    });
-  }
-
-  const items = p.lineItems || {};
-
-  lines.push(
-    ...renderTable(
-      'Labor',
-      [
-        { key: 'name', label: 'Name', width: 20, align: 'left' },
-        { key: 'classification', label: 'Classification', width: 18, align: 'left' },
-        { key: 'hours', label: 'Hours', width: 7, align: 'center' },
-        { key: 'rate', label: 'Rate', width: 10, align: 'right' },
-        { key: 'amount', label: 'Amount', width: 11, align: 'right' },
-      ],
-      items.labor,
-      'Labor Total',
-      p.laborTotal
-    )
-  );
-
-  lines.push(
-    ...renderTable(
-      'Equipment',
-      [
-        { key: 'description', label: 'Equipment', width: 30, align: 'left' },
-        { key: 'unit', label: 'Unit', width: 8, align: 'center' },
-        { key: 'qty', label: 'Qty', width: 7, align: 'center' },
-        { key: 'rate', label: 'Rate', width: 10, align: 'right' },
-        { key: 'amount', label: 'Amount', width: 11, align: 'right' },
-      ],
-      items.equipment,
-      'Equipment Total',
-      p.equipmentTotal
-    )
-  );
-
-  lines.push(
-    ...renderTable(
-      'Rental Equipment',
-      [
-        { key: 'description', label: 'Description', width: 34, align: 'left' },
-        { key: 'qty', label: 'Qty', width: 8, align: 'center' },
-        { key: 'rate', label: 'Rate', width: 12, align: 'right' },
-        { key: 'amount', label: 'Amount', width: 12, align: 'right' },
-      ],
-      items.rental,
-      'Rental Total',
-      p.rentalTotal
-    )
-  );
-
-  lines.push(
-    ...renderTable(
-      'Materials',
-      [
-        { key: 'description', label: 'Description', width: 34, align: 'left' },
-        { key: 'qty', label: 'Qty', width: 8, align: 'center' },
-        { key: 'unit_price', label: 'Unit Price', width: 12, align: 'right' },
-        { key: 'amount', label: 'Amount', width: 12, align: 'right' },
-      ],
-      items.materials,
-      'Materials Total',
-      p.materialsTotal
-    )
-  );
-
-  lines.push(
-    ...renderTable(
-      'Other Charges',
-      [
-        { key: 'description', label: 'Description', width: 54, align: 'left' },
-        { key: 'amount', label: 'Amount', width: 12, align: 'right' },
-      ],
-      items.other,
-      'Other Total',
-      p.otherTotal
-    )
-  );
-
-  // Summary
-  lines.push('', 'SUMMARY', '-'.repeat(72));
-  const sum = (l, v) => lines.push(l.padEnd(56) + String(v).padStart(16));
-  if (p.laborTotal) sum('Labor', p.laborTotal);
-  if (p.equipmentTotal) sum('Equipment', p.equipmentTotal);
-  if (p.rentalTotal) sum('Rental Equipment', p.rentalTotal);
-  if (p.materialsTotal) sum('Materials', p.materialsTotal);
-  if (p.otherTotal) sum('Other', p.otherTotal);
-  if (p.subtotal) sum('Subtotal', p.subtotal);
-  if (p.markupAmount && parseFloat(p.markupPct) > 0) sum(`Markup (${p.markupPct}%)`, p.markupAmount);
-  lines.push('-'.repeat(72));
-  sum('GRAND TOTAL', p.grandTotal || money(0));
-
-  lines.push('', rule, '', ...cfg.attestation, '');
-  return lines.join('\n');
+  return await doc.save();
 }
 
 /* ── Box helpers ───────────────────────────────────────────── */
@@ -251,7 +349,7 @@ async function uploadReportToBox(token, content, filename, parentId) {
   const filePart = [
     `--${boundary}`,
     `Content-Disposition: form-data; name="file"; filename="${filename}"`,
-    'Content-Type: text/plain',
+    'Content-Type: application/pdf',
     '',
     '',
   ].join(CRLF);
@@ -291,13 +389,13 @@ async function uploadReportToBox(token, content, filename, parentId) {
     const vFile = [
       `--${vBoundary}`,
       `Content-Disposition: form-data; name="file"; filename="${filename}"`,
-      'Content-Type: text/plain',
+      'Content-Type: application/pdf',
       '',
       '',
     ].join(CRLF);
     const vBody = Buffer.concat([
       Buffer.from(vMeta + CRLF + vFile, 'utf-8'),
-      Buffer.from(content, 'utf-8'),
+      Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf-8'),
       Buffer.from(`${CRLF}--${vBoundary}--${CRLF}`, 'utf-8'),
     ]);
 
@@ -347,9 +445,10 @@ export const handler = async (event) => {
     if (!inspectorEmail) throw new Error('Signer email is required');
     if (!reportId) throw new Error('reportId is required');
 
-    const docText = buildDocument(cfg, p);
+    const pdfBytes = await buildTicketPdf(cfg, p);
+    const docBuffer = Buffer.from(pdfBytes);
     const safeNo = String(reportNo || reportId).replace(/[^A-Za-z0-9_-]/g, '');
-    const filename = `${cfg.filePrefix}-${safeNo}-${reportDate || 'draft'}.txt`;
+    const filename = `${cfg.filePrefix}-${safeNo}-${reportDate || 'draft'}.pdf`;
 
     const token = await getBoxToken();
 
@@ -374,7 +473,7 @@ export const handler = async (event) => {
       .slice(0, 200) || 'Unassigned Job';
     const signFolderId = await ensureFolder(token, jobFolderName, parentId);
 
-    const fileId = await uploadReportToBox(token, docText, filename, signFolderId);
+    const fileId = await uploadReportToBox(token, docBuffer, filename, signFolderId);
 
     // doc_type is passed through so box-sign-complete knows which table to update
     const redirectUrl =
