@@ -353,12 +353,26 @@ export const handler = async (event) => {
 
     const token = await getBoxToken();
 
-    // If BOX_FOLDER_ID is unset (or root), create/reuse a real subfolder —
-    // Box Sign rejects root as a parent folder.
-    let signFolderId = BOX_FOLDER_ID;
-    if (!signFolderId || signFolderId === '0') {
-      signFolderId = await ensureFolder(token, 'AIME Field Pro - Signatures', '0');
+    // Folder layout in Box:
+    //   <BOX_FOLDER_ID or 'AIME Field Pro - Signatures'>/
+    //       <Job Name>/
+    //           AIME-TM-...txt
+    //           AIME-DailyReport-...txt
+    //
+    // The job folder is created the first time anything is sent for that job
+    // and reused for every document afterwards. ensureFolder is idempotent:
+    // Box answers an existing folder with 409 + its id, which we reuse.
+    let parentId = BOX_FOLDER_ID;
+    if (!parentId || parentId === '0') {
+      // Box Sign refuses root as a signature request's parent folder.
+      parentId = await ensureFolder(token, 'AIME Field Pro - Signatures', '0');
     }
+
+    const jobFolderName = (projectName || 'Unassigned Job')
+      .replace(/[/\\<>:"|?*]/g, '-')
+      .trim()
+      .slice(0, 200) || 'Unassigned Job';
+    const signFolderId = await ensureFolder(token, jobFolderName, parentId);
 
     const fileId = await uploadReportToBox(token, docText, filename, signFolderId);
 
