@@ -324,7 +324,21 @@ function equipAmt(r,division){
   const usage=parseFloat(r.usage)||0;
   return qty*rate*(usage||1);
 }
-function reportTotals(r,division){const labor=(r.labor||[]).reduce((s,x)=>s+laborAmt(x,division),0);const equip=(r.equipment||[]).reduce((s,x)=>s+equipAmt(x,division),0);const rental=(r.rental_equipment||[]).reduce((s,x)=>s+(parseFloat(x.qty)||0)*(parseFloat(x.rate)||0)*(parseFloat(x.usage)||1),0);const mats=(r.materials||[]).reduce((s,x)=>s+(parseFloat(x.amount)||0),0);return{labor,equip,rental,mats,grand:labor+equip+rental+mats};}
+// Colonial-style billing: each material / rental line carries a manually entered
+// markup percentage and tax amount. Blank fields contribute nothing, so reports
+// created before these existed total exactly as they did before.
+function matLineTotal(x){
+  const base=parseFloat(x.amount)||0;
+  const mk=base*((parseFloat(x.markup_pct)||0)/100);
+  return base+mk+(parseFloat(x.tax_amount)||0);
+}
+function rentalLineTotal(x){
+  const base=(parseFloat(x.qty)||0)*(parseFloat(x.rate)||0)*(parseFloat(x.usage)||1);
+  const mk=base*((parseFloat(x.markup_pct)||0)/100);
+  return base+mk+(parseFloat(x.tax_amount)||0);
+}
+
+function reportTotals(r,division){const labor=(r.labor||[]).reduce((s,x)=>s+laborAmt(x,division),0);const equip=(r.equipment||[]).reduce((s,x)=>s+equipAmt(x,division),0);const rental=(r.rental_equipment||[]).reduce((s,x)=>s+rentalLineTotal(x),0);const mats=(r.materials||[]).reduce((s,x)=>s+matLineTotal(x),0);return{labor,equip,rental,mats,grand:labor+equip+rental+mats};}
 function calcHours(ci,co){if(!ci||!co)return 0;const[ih,im]=ci.split(":").map(Number);const[oh,om]=co.split(":").map(Number);const diff=(oh*60+om)-(ih*60+im);return diff>0?Math.round(diff/60*100)/100:0;}
 function getWeekStart(){const d=new Date();const day=d.getDay();d.setDate(d.getDate()-(day===0?6:day-1));return d.toISOString().split("T")[0];}
 async function compressImg(file,maxW=900,q=0.65){return new Promise(res=>{const rd=new FileReader();rd.onload=ev=>{const img=new Image();img.onload=()=>{const sc=Math.min(1,maxW/img.width);const c=document.createElement("canvas");c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);c.getContext("2d").drawImage(img,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",q));};img.src=ev.target.result;};rd.readAsDataURL(file);});}
@@ -365,10 +379,18 @@ function RentedEquipCard({row,onChange,onRemove}){
         <div><label style={lbl}>Rate / Unit</label>
           <input type="number" min="0" placeholder="0.00" value={row.rate||""} onChange={e=>set("rate",e.target.value)} style={inp}/></div>
       </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>Markup %</label>
+          <input type="number" min="0" step="0.1" placeholder="10" value={row.markup_pct||""} onChange={e=>set("markup_pct",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Tax ($)</label>
+          <input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>set("tax_amount",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Line Total</label>
+          <div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(rentalLineTotal(row))}</div></div>
+      </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}>
-        <span style={{fontSize:11,color:T.muted}}>Qty × Rate × Days/Hrs</span>
+        <span style={{fontSize:11,color:T.muted}}>Qty × Rate × Days/Hrs{(parseFloat(row.markup_pct)||0)>0?` + ${row.markup_pct}%`:""}{(parseFloat(row.tax_amount)||0)>0?" + tax":""}</span>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          {amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}
+          {rentalLineTotal(row)>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(rentalLineTotal(row))}</span>}
           <button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button>
         </div>
       </div>
@@ -376,7 +398,7 @@ function RentedEquipCard({row,onChange,onRemove}){
   );
 }
 
-function MatCard({row,onChange,onRemove}){const fileRef=useRef(null);const receipts=row.receipts||[];async function handleFiles(files){const n=[];for(const f of files){if(!f.type.startsWith("image/"))continue;const src=await compressImg(f,800,0.6);n.push({id:uid(),src});}onChange({...row,receipts:[...receipts,...n]});}return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}><div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}><img src={r.src} alt="" style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.blue}40`,display:"block"}}/><button onClick={()=>onChange({...row,receipts:receipts.filter(x=>x.id!==r.id)})} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>fileRef.current?.click()} style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>ADD</span></button><input ref={fileRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{row.amount>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(parseFloat(row.amount)||0)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
+function MatCard({row,onChange,onRemove}){const fileRef=useRef(null);const receipts=row.receipts||[];async function handleFiles(files){const n=[];for(const f of files){if(!f.type.startsWith("image/"))continue;const src=await compressImg(f,800,0.6);n.push({id:uid(),src});}onChange({...row,receipts:[...receipts,...n]});}return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}><div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}><div><label style={lbl}>Markup %</label><input type="number" min="0" step="0.1" placeholder="12" value={row.markup_pct||""} onChange={e=>onChange({...row,markup_pct:e.target.value})} style={inp}/></div><div><label style={lbl}>Tax ($)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>onChange({...row,tax_amount:e.target.value})} style={inp}/></div><div><label style={lbl}>Line Total</label><div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(matLineTotal(row))}</div></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}><img src={r.src} alt="" style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.blue}40`,display:"block"}}/><button onClick={()=>onChange({...row,receipts:receipts.filter(x=>x.id!==r.id)})} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>fileRef.current?.click()} style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>ADD</span></button><input ref={fileRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{matLineTotal(row)>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(matLineTotal(row))}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
 
 function LoginScreen({onLogin}){
   const [name,setName]=useState("");
@@ -2949,6 +2971,213 @@ function PhotosTab({projectId,photos,onRefresh,onErr}){
 }
 
 /* ── DRAWINGS: sheet list + upload ───────────────────────────── */
+/* ── SIGNATURE PACKAGE: batch several reports into one signature ── */
+function SignaturePackageScreen({project,user,onBack,onErr}){
+  const [dailies,setDailies]=useState([]);
+  const [tickets,setTickets]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [sel,setSel]=useState({});           // id -> {type,row}
+  const [name,setName]=useState("");
+  const [email,setEmail]=useState("");
+  const [sending,setSending]=useState(false);
+  const [sent,setSent]=useState(false);
+  const [err,setErr]=useState("");
+
+  const div=project.division;
+  const m=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  useEffect(()=>{(async()=>{
+    setLoading(true);
+    try{
+      const [d,t]=await Promise.all([
+        API.reports.forProject(project.id).catch(()=>[]),
+        API.tmTickets.forProject(project.id).catch(()=>[]),
+      ]);
+      setDailies((d||[]).filter(r=>r.status!=="draft"));
+      setTickets(t||[]);
+    }catch(e){onErr&&onErr(e.message);}
+    setLoading(false);
+  })();},[project.id]);
+
+  const toggle=(type,row)=>setSel(s=>{
+    const n={...s};
+    if(n[row.id])delete n[row.id]; else n[row.id]={type,row};
+    return n;
+  });
+
+  const chosen=Object.values(sel);
+  const total=chosen.reduce((s,{type,row})=>{
+    if(type==="tm")return s+(parseFloat(row.grand_total)||0);
+    const t=reportTotals(row,div);return s+(t.grand||0);
+  },0);
+
+  function buildItem({type,row}){
+    if(type==="tm"){
+      return {
+        docType:"tm",projectName:project.name,customer:project.client||"",
+        poNumber:project.work_order||"",afeNumber:project.afe||"",location:project.location||"",
+        description:row.description||"",reportNo:row.ticket_no||"",reportDate:row.ticket_date||"",
+        submittedBy:row.submitted_by||"",
+        lineItems:{
+          labor:(row.labor||[]).map(r=>({name:r.name||"",classification:r.classification||"",
+            hours:r.hours||0,rate:m(r.rate),amount:m((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))})),
+          equipment:(row.equipment||[]).map(r=>({description:r.description||"",unit:r.unit||"",
+            qty:r.qty||0,rate:m(r.rate),amount:m((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0))})),
+          rental:[],
+          materials:(row.materials||[]).map(r=>({description:r.description||"",qty:r.qty||0,
+            unit:r.unit||"",unit_price:m(r.unit_price),
+            amount:m((parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0))})),
+          other:(row.other_charges||[]).map(r=>({description:r.description||"",amount:m(r.amount)})),
+        },
+        grandTotal:m(row.grand_total),
+      };
+    }
+    const t=reportTotals(row,div);
+    return {
+      docType:"daily",projectName:project.name,customer:project.client||"",
+      poNumber:project.work_order||"",afeNumber:project.afe||"",location:project.location||"",
+      description:row.description||"",reportNo:row.report_no||"",reportDate:row.date||"",
+      submittedBy:row.submitted_by||"",
+      lineItems:{
+        labor:(row.labor||[]).map(l=>({name:l.name||"",classification:l.classification||"",
+          hours:((parseFloat(l.regHrs)||0)+(parseFloat(l.otHrs)||0)+(parseFloat(l.travelHrs)||0)).toFixed(1),
+          rate:"",amount:m(laborAmt(l,div))})),
+        equipment:(row.equipment||[]).map(e=>({description:e.description||"",unit:e.unit||"",
+          qty:e.qty||0,rate:e.rate?m(e.rate):"",amount:m(equipAmt(e,div))})),
+        rental:(row.rental_equipment||[]).map(r=>({description:r.description||"",qty:r.qty||0,
+          rate:m(r.rate),amount:m((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1))})),
+        materials:(row.materials||[]).map(x=>({description:x.description||"",qty:x.qty||"",
+          unit:"",unit_price:"",amount:m(x.amount)})),
+        other:[],
+      },
+      laborTotal:m(t.labor),equipmentTotal:m(t.equip),rentalTotal:m(t.rental),
+      materialsTotal:m(t.mats),grandTotal:m(t.grand),
+    };
+  }
+
+  async function send(){
+    if(!name.trim()||!email.trim()){setErr("Client name and email are required.");return;}
+    if(!chosen.length){setErr("Select at least one document.");return;}
+    setSending(true);setErr("");
+    try{
+      const items=chosen
+        .sort((a,b)=>String(a.row.date||a.row.ticket_date||"").localeCompare(String(b.row.date||b.row.ticket_date||"")))
+        .map(buildItem);
+      // receipts attached to T&M material rows ride along as extra pages
+      const attachments=chosen.flatMap(({type,row})=>
+        type==="tm"
+          ?(row.materials||[]).map(x=>x.attachment_url).filter(Boolean)
+          :(row.materials||[]).flatMap(x=>(x.receipts||[]).map(r=>r.src)).filter(Boolean));
+      const dates=items.map(i=>i.reportDate).filter(Boolean).sort();
+      const label=dates.length>1?`${dates[0]}_to_${dates[dates.length-1]}`:(dates[0]||"package");
+
+      const res=await fetch("/.netlify/functions/box-sign-create",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          docType:"package",reportId:project.id,
+          inspectorEmail:email.trim(),inspectorName:name.trim(),
+          projectName:project.name,customer:project.client||"",
+          reportNo:label,reportDate:dates[dates.length-1]||today(),
+          items,attachments,
+        }),
+      });
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.error||"Send failed");
+      setSent(true);
+    }catch(e){setErr(e.message);}
+    setSending(false);
+  }
+
+  const Row=({type,row,title,sub,amt})=>(
+    <div onClick={()=>toggle(type,row)} style={{...cardS,marginBottom:8,display:"flex",alignItems:"center",
+      gap:12,cursor:"pointer",border:sel[row.id]?`1px solid ${T.green}`:`1px solid ${T.border}`,
+      background:sel[row.id]?T.greenLow:T.card}}>
+      <div style={{width:20,height:20,borderRadius:6,flexShrink:0,display:"flex",alignItems:"center",
+        justifyContent:"center",fontSize:13,fontWeight:900,
+        background:sel[row.id]?T.green:"transparent",color:"#000",
+        border:sel[row.id]?"none":`1.5px solid ${T.border}`}}>{sel[row.id]?"✓":""}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.text}}>{title}</div>
+        <div style={{fontSize:11,color:T.muted,marginTop:2}}>{sub}</div>
+      </div>
+      <div style={{fontSize:13,fontWeight:800,color:T.green,flexShrink:0}}>{amt}</div>
+    </div>
+  );
+
+  if(sent)return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",padding:"20px 16px"}}>
+      <div style={{...cardS,textAlign:"center",padding:32,borderLeft:`3px solid ${T.green}`}}>
+        <div style={{fontSize:44,marginBottom:10}}>📦</div>
+        <div style={{fontSize:18,fontWeight:800,color:T.green,marginBottom:6}}>Package Sent</div>
+        <div style={{fontSize:13,color:T.sub,lineHeight:1.6}}>
+          {chosen.length} document{chosen.length!==1?"s":""} combined into one PDF and sent to {name} for signature.
+        </div>
+        <button onClick={onBack} style={{...primBtn,borderRadius:12,marginTop:18}}>Done</button>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:4,padding:0}}>← Back</button>
+        <div style={{fontSize:15,fontWeight:900,color:T.text}}>📦 Send Package for Signature</div>
+        <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+          Pick any reports and tickets — they go out as one PDF, signed once.
+        </div>
+      </div>
+
+      <div style={{padding:"16px 16px 90px"}}>
+        {err&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.red}}>{err}</div>}
+
+        {loading?<div style={{textAlign:"center",color:T.muted,padding:24,fontSize:13}}>Loading documents…</div>:<>
+          {dailies.length>0&&<>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"4px 0 8px"}}>Daily Reports</div>
+            {dailies.map(r=>(<Row key={r.id} type="daily" row={r}
+              title={`${r.date||"—"}${r.report_no?`  ·  #${r.report_no}`:""}`}
+              sub={r.submitted_by||""} amt={m(reportTotals(r,div).grand)}/>))}
+          </>}
+
+          {tickets.length>0&&<>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"16px 0 8px"}}>T&amp;M Tickets</div>
+            {tickets.map(t=>(<Row key={t.id} type="tm" row={t}
+              title={`${t.ticket_date||"—"}  ·  #${t.ticket_no||""}`}
+              sub={t.submitted_by||""} amt={m(t.grand_total)}/>))}
+          </>}
+
+          {!dailies.length&&!tickets.length&&(
+            <div style={{...cardS,textAlign:"center",padding:28,color:T.muted}}>
+              <div style={{fontSize:30,marginBottom:8}}>📭</div>
+              <div style={{fontSize:13}}>No submitted reports or tickets on this job yet.</div>
+            </div>
+          )}
+
+          <div style={{marginTop:20}}>
+            <label style={lbl}>Client Contact Name *</label>
+            <input value={name} onChange={e=>setName(e.target.value)} placeholder="Who signs this" style={{...inp,marginBottom:12}}/>
+            <label style={lbl}>Client Email *</label>
+            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="name@company.com" style={inp}/>
+          </div>
+        </>}
+      </div>
+
+      {!loading&&(dailies.length>0||tickets.length>0)&&(
+        <div style={{position:"fixed",left:0,right:0,bottom:0,background:T.surface,borderTop:`1px solid ${T.border}`,padding:"10px 16px",zIndex:60}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <span style={{fontSize:12,color:T.sub}}>{chosen.length} selected</span>
+            <span style={{fontSize:15,fontWeight:900,color:T.green}}>{m(total)}</span>
+          </div>
+          <button onClick={send} disabled={sending||!chosen.length}
+            style={{...primBtn,borderRadius:12,background:chosen.length?"#1f3864":T.border,
+              color:chosen.length?"#fff":T.muted,opacity:sending?0.6:1}}>
+            {sending?"Building package…":`📦 Send ${chosen.length||""} for Signature`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DrawingsTab({projectId,user,onErr}){
   const canAdmin=user.role==="admin"||user.role==="pm";
   const [drawings,setDrawings]=useState([]);
@@ -3452,6 +3681,7 @@ const PTABS=[
   {id:"safety",icon:"⛑️",label:"Safety",perm:"safety"},
   {id:"docs",icon:"📁",label:"Docs",perm:"docs"},
   {id:"drawings",icon:"📐",label:"Drawings",perm:"docs"},
+  {id:"package",icon:"📦",label:"Sign Pkg",perm:"docs"},
   {id:"schedule",icon:"📅",label:"Schedule",perm:"schedule"},
   {id:"photos",icon:"📷",label:"Photos",perm:"photos"},
   {id:"weather",icon:"🌤️",label:"Weather",perm:"weather"},
@@ -4098,7 +4328,10 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   async function updateProject(data){
     setProjSaving(true);setErr("");
     try{
-      const{_billed,_reports,_lastReport,...dbData}=data;
+      // Projects carry computed fields (_reports, _billed, _openRfis, _photos …)
+      // that have no database columns. Strip every underscore-prefixed key rather
+      // than naming them one by one, so adding a new one can't break saving again.
+      const dbData=Object.fromEntries(Object.entries(data).filter(([k])=>!k.startsWith("_")));
       const res=await API.projects.update(project.id,dbData);
       const u=Array.isArray(res)?res[0]:res;
       const merged=u||{...project,...dbData};
@@ -4169,6 +4402,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
         {!loading&&tab==="rfi"&&<RFIsTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="docs"     &&can(user,"docs")        &&<DocsTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="drawings" &&can(user,"docs")        &&<DrawingsTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="package"  &&can(user,"docs")        &&<SignaturePackageScreen project={project} user={user} onBack={()=>setTab("reports")} onErr={setErr}/>}
         {!loading&&tab==="schedule" &&can(user,"schedule")    &&<ScheduleTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="photos"   &&can(user,"photos")      &&<PhotosTab projectId={project.id} photos={photos} onRefresh={()=>load(true)} onErr={setErr}/>}
         {!loading&&tab==="weather"  &&can(user,"weather")     &&<WeatherTab projectId={project.id} project={project} weather={weather} onRefresh={()=>load(true)} onErr={setErr}/>}
@@ -7334,9 +7568,8 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
     try{
       const ext=file.name.split(".").pop();
       const path=`tm-materials/${project.id}/${matId}-${Date.now()}.${ext}`;
-      const {data,error}=await window._supabase.storage.from("documents").upload(path,file,{upsert:true});
-      if(error)throw error;
-      const {data:{publicUrl}}=window._supabase.storage.from("documents").getPublicUrl(path);
+      await storageUpload("documents",path,file,file.type||undefined);
+      const publicUrl=storagePublicUrl("documents",path);
       updateRow(setMaterials,matId,"attachment_url",publicUrl);
       updateRow(setMaterials,matId,"attachment_name",file.name);
     }catch(e){alert("Upload failed: "+e.message);}
