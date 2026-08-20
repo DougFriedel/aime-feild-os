@@ -3931,7 +3931,10 @@ function CrewDirectoryScreen({onBack,user}){
   );
 }
 
-function UserManagementScreen({onBack,currentUser}){
+function UserManagementScreen({onBack,currentUser,user}){
+  // Both call sites pass `user`; this component was written expecting
+  // `currentUser`. Accept either, and tolerate neither.
+  const me=currentUser||user||{};
   const [profiles,setProfiles]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
   const [mode,setMode]=useState("list");// list | edit
   const [active,setActive]=useState(null);const [saving,setSaving]=useState(false);
@@ -4024,7 +4027,7 @@ function UserManagementScreen({onBack,currentUser}){
                 </div>
                 <div style={{display:"flex",gap:6}}>
                   <button onClick={()=>{setActive(p);setF({name:p.name,role:p.role,division:p.division||null,pin:p.pin||"",active:p.active});setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"6px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
-                  {p.name!==currentUser.name&&<button onClick={()=>remove(p.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>}
+                  {p.name!==me.name&&<button onClick={()=>remove(p.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>}
                 </div>
               </div>
             </div>);
