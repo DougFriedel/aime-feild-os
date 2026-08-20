@@ -357,7 +357,7 @@ function rentalLineTotal(x){
   return base+mk+(parseFloat(x.tax_amount)||0);
 }
 
-function reportTotals(r,division){const labor=(r.labor||[]).reduce((s,x)=>s+laborAmt(x,division),0);const equip=(r.equipment||[]).reduce((s,x)=>s+equipAmt(x,division),0);const rental=(r.rental_equipment||[]).reduce((s,x)=>s+rentalLineTotal(x),0);const mats=(r.materials||[]).reduce((s,x)=>s+matLineTotal(x),0);return{labor,equip,rental,mats,grand:labor+equip+rental+mats};}
+function reportTotals(r,division){const labor=(r.labor||[]).reduce((s,x)=>s+laborAmt(x,division),0);const equip=(r.equipment||[]).reduce((s,x)=>s+equipAmt(x,division),0);const rental=(r.rental_equipment||[]).reduce((s,x)=>s+rentalLineTotal(x),0);const mats=(r.materials||[]).reduce((s,x)=>s+matLineTotal(x),0);const labor_hrs=(r.labor||[]).reduce((s,x)=>s+(parseFloat(x.regHrs)||0)+(parseFloat(x.otHrs)||0)+(parseFloat(x.travelHrs)||0),0);return{labor,equip,rental,mats,labor_hrs,grand:labor+equip+rental+mats};}
 function calcHours(ci,co){if(!ci||!co)return 0;const[ih,im]=ci.split(":").map(Number);const[oh,om]=co.split(":").map(Number);const diff=(oh*60+om)-(ih*60+im);return diff>0?Math.round(diff/60*100)/100:0;}
 function getWeekStart(){const d=new Date();const day=d.getDay();d.setDate(d.getDate()-(day===0?6:day-1));return d.toISOString().split("T")[0];}
 async function compressImg(file,maxW=900,q=0.65){return new Promise(res=>{const rd=new FileReader();rd.onload=ev=>{const img=new Image();img.onload=()=>{const sc=Math.min(1,maxW/img.width);const c=document.createElement("canvas");c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);c.getContext("2d").drawImage(img,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",q));};img.src=ev.target.result;};rd.readAsDataURL(file);});}
@@ -1447,8 +1447,9 @@ function printReport(report, project){
 }
 
 function printReportWithOptions(report, project, sections, photos, photoLayout){
-  const positions = getPositions(project.division);
-  const tot = reportTotals(report, project.division);
+  const division = project.division;
+  const positions = getPositions(division);
+  const tot = reportTotals(report, division);
   const [yr,mo,dy] = (report.date||'').split('-');
   const dateStr = `${mo}/${dy}/${yr}`;
   const fmt2 = n => (parseFloat(n)||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2});
@@ -1536,13 +1537,13 @@ ${sections.description&&report.description?`<div class="section"><h2>📝 Descri
 
 ${sections.labor&&(report.labor||[]).length>0?`<div class="section"><h2>👷 Labor — ${(report.labor||[]).length} Workers · ${fmtH(tot.labor_hrs||0)} Total Hrs${tot.labor>0?' · '+fmt2(tot.labor):''}</h2>
 <table><thead><tr><th>Name</th><th>Classification</th><th style="text-align:center">Reg Hrs</th><th style="text-align:center">OT Hrs</th><th style="text-align:center">Travel</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.labor||[]).map(l=>`<tr><td>${l.name||'—'}</td><td>${l.classification||'—'}</td><td style="text-align:center">${l.regHrs||0}</td><td style="text-align:center">${l.otHrs||0}</td><td style="text-align:center">${l.travelHrs||0}</td><td style="text-align:right">${fmt2(laborAmt(l))}</td></tr>`).join('')}
+<tbody>${(report.labor||[]).filter(l=>l.name||l.classification||parseFloat(l.regHrs)||parseFloat(l.otHrs)||parseFloat(l.travelHrs)).map(l=>`<tr><td>${l.name||'—'}</td><td>${l.classification||'—'}</td><td style="text-align:center">${l.regHrs||0}</td><td style="text-align:center">${l.otHrs||0}</td><td style="text-align:center">${l.travelHrs||0}</td><td style="text-align:right">${fmt2(laborAmt(l,division))}</td></tr>`).join('')}
 </tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL LABOR</strong></td><td style="text-align:right"><strong>${fmt2(tot.labor||0)}</strong></td></tr></tfoot></table></div>`:''}
 
 ${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>🚜 Equipment — ${(report.equipment||[]).length} Items${tot.equip>0?' · '+fmt2(tot.equip):''}</h2>
-<table><thead><tr><th>Equipment</th><th>Unit</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.equipment||[]).map(e=>`<tr><td>${e.name||'—'}</td><td>${e.unit||'—'}</td><td style="text-align:center">${e.qty||0}</td><td style="text-align:right">${fmt2((parseFloat(e.qty)||0)*(parseFloat(e.rate)||0))}</td></tr>`).join('')}
-</tbody></table></div>`:''}
+<table><thead><tr><th>Equipment</th><th>Unit</th><th style="text-align:center">Qty</th><th style="text-align:center">Hrs / Days</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${(report.equipment||[]).filter(e=>e.description||parseFloat(e.qty)).map(e=>{const rate=parseFloat(e.rate)||(getEquipList(division).find(x=>!x.section&&x.name===e.description)||{}).rate||0;return `<tr><td>${e.description||'—'}</td><td>${e.unit||'—'}</td><td style="text-align:center">${e.qty||0}</td><td style="text-align:center">${e.usage||'—'}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${fmt2(equipAmt(e,division))}</td></tr>`;}).join('')}
+</tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.equip||0)}</strong></td></tr></tfoot></table></div>`:''}
 
 ${sections.rental&&(report.rental_equipment||[]).length>0?`<div class="section"><h2>🔧 Rental Equipment</h2>
 <table><thead><tr><th>Description</th><th>Company</th><th style="text-align:center">Hours</th><th style="text-align:right">Amount</th></tr></thead>
