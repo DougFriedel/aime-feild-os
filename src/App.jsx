@@ -3986,7 +3986,19 @@ function UserManagementScreen({onBack,currentUser,user}){
           </div>
         </div>
 
-        {(f.role==="pm"||f.role==="admin")&&<div style={{marginBottom:14}}><label style={lbl}>{f.role==="admin"?"Admin PIN":"PM PIN"} (required)</label><input type="text" maxLength={6} placeholder="Set a PIN (numbers)" value={f.pin||""} onChange={e=>set("pin",e.target.value)} style={inp}/><div style={{fontSize:11,color:T.muted,marginTop:4}}>This person will need to enter this PIN to sign in.</div></div>}
+        {/* Every role needs a PIN — the login screen requires one regardless of
+            permission level, so gating this field by role locked crew out. */}
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>{(ROLE_META[f.role]||ROLE_META.crew).label} PIN (required)</label>
+          <input type="text" inputMode="numeric" maxLength={6} placeholder="Set a PIN (numbers)"
+            value={f.pin||""} onChange={e=>set("pin",e.target.value.replace(/[^0-9]/g,""))} style={inp}/>
+          <div style={{fontSize:11,color:T.muted,marginTop:4}}>
+            This person will need to enter this PIN to sign in.
+          </div>
+          {!f.pin&&<div style={{fontSize:11,color:T.yellow,marginTop:4}}>
+            ⚠️ Without a PIN this person cannot log in.
+          </div>}
+        </div>
 
         {active&&<div style={{marginBottom:14}}><label style={lbl}>Status</label><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>{[true,false].map(v=>(<button key={String(v)} onClick={()=>set("active",v)} style={{padding:"12px",borderRadius:12,border:`2px solid ${f.active===v?(v?T.green:T.red):T.border}`,background:f.active===v?(v?T.greenLow:T.redLow):T.surface,color:f.active===v?(v?T.green:T.red):T.sub,fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>{v?"✅ Active":"❌ Inactive"}</button>))}</div></div>}
 
@@ -4023,6 +4035,7 @@ function UserManagementScreen({onBack,currentUser,user}){
                     <span style={pill(m.color)}>{m.label}</span>
                     {p.division&&<span style={pill(DIV_META[p.division]?.color||T.muted)}>{DIV_META[p.division]?.icon} {p.division}</span>}
                     {!p.active&&<span style={pill(T.red)}>INACTIVE</span>}
+                    {!p.pin&&<span style={pill(T.yellow)}>NO PIN</span>}
                   </div>
                 </div>
                 <div style={{display:"flex",gap:6}}>
