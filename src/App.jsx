@@ -4836,6 +4836,78 @@ function BidOverviewTab({bid,onSave}){
 const TAKEOFF_COLORS=["#EF4444","#FBBF24","#34D399","#60A5FA","#A78BFA","#FB923C","#F472B6","#22D3EE","#A3E635","#94A3B8"];
 const DISCIPLINES=["Civil","Structural","Architectural","Mechanical","Piping","Electrical","Fire Protection","P&ID","Other"];
 
+// A PDF point is 1/72 inch, so for an architectural scale where `s` paper-inches
+// represent one foot, feet-per-point = 1 / (72 * s). Engineering scales are given
+// as feet per paper inch, so s = 1/feet.
+// This assumes the PDF page is true plot size — the dialog shows the page size so
+// it can be checked against the titleblock before the scale is trusted.
+const ARCH_SCALES=[
+  ['1/128" = 1\'',1/128],['1/64" = 1\'',1/64],['1/32" = 1\'',1/32],['1/16" = 1\'',1/16],
+  ['3/32" = 1\'',3/32],['1/8" = 1\'',1/8],['3/16" = 1\'',3/16],['1/4" = 1\'',1/4],
+  ['3/8" = 1\'',3/8],['1/2" = 1\'',1/2],['3/4" = 1\'',3/4],['1" = 1\'',1],
+  ['1 1/2" = 1\'',1.5],['3" = 1\'',3],
+];
+const ENG_SCALES=[10,20,30,40,50,60,80,100,200].map(ft=>[`1" = ${ft}'`,1/ft]);
+const uppFor=(paperInchesPerFoot)=>1/(72*paperInchesPerFoot);
+
+function ScaleModal({docTitle,page,pages,sheetIn,current,onApply,onCalibrate,onClose}){
+  const [mode,setMode]=useState("common");
+  const [label,setLabel]=useState(current&&current.label?current.label:'1/8" = 1\'');
+  const [allPages,setAllPages]=useState(false);
+  const all=[...ARCH_SCALES,...ENG_SCALES];
+  const chosen=all.find(([l])=>l===label)||all[5];
+
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:24,width:"100%",maxWidth:440,border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:16,fontWeight:900,color:T.text,marginBottom:4}}>Drawing Scale</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:16}}>
+          Sheet {page} of {pages}{sheetIn?`  ·  page is ${sheetIn}`:""}
+        </div>
+
+        <label style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,cursor:"pointer"}}>
+          <input type="radio" checked={mode==="common"} onChange={()=>setMode("common")}/>
+          <span style={{fontSize:13,fontWeight:700,color:T.text}}>Common Scales</span>
+        </label>
+        {mode==="common"&&(
+          <select value={label} onChange={e=>setLabel(e.target.value)} style={{...inp,marginBottom:14}}>
+            <optgroup label="Architectural">
+              {ARCH_SCALES.map(([l])=><option key={l} value={l}>{l}</option>)}
+            </optgroup>
+            <optgroup label="Engineering">
+              {ENG_SCALES.map(([l])=><option key={l} value={l}>{l}</option>)}
+            </optgroup>
+          </select>
+        )}
+
+        <label style={{display:"flex",alignItems:"center",gap:8,marginBottom:14,cursor:"pointer"}}>
+          <input type="radio" checked={mode==="calibrate"} onChange={()=>setMode("calibrate")}/>
+          <span style={{fontSize:13,fontWeight:700,color:T.text}}>Measure a known length instead</span>
+        </label>
+        {mode==="calibrate"&&(
+          <div style={{fontSize:11.5,color:T.muted,marginBottom:14,lineHeight:1.6,paddingLeft:24}}>
+            Use this when the sheet wasn\'t plotted full size. You\'ll draw a line along a
+            dimension you know, then type its length.
+          </div>
+        )}
+
+        <label style={{display:"flex",alignItems:"center",gap:8,marginBottom:18,cursor:"pointer"}}>
+          <input type="checkbox" checked={allPages} onChange={e=>setAllPages(e.target.checked)}/>
+          <span style={{fontSize:12.5,color:T.sub}}>Apply to all {pages} sheets in this drawing</span>
+        </label>
+
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={()=>{
+            if(mode==="calibrate"){onCalibrate();return;}
+            onApply({upp:uppFor(chosen[1]),label:chosen[0]},allPages);
+          }} style={{...primBtn,borderRadius:10,background:T.orange,color:"#000"}}>Apply</button>
+          <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TakeoffTab({bid,user,onErr}){
   const [docs,setDocs]=useState([]);
   const [docId,setDocId]=useState(null);
@@ -4848,6 +4920,8 @@ function TakeoffTab({bid,user,onErr}){
   const [scale,setScale]=useState(1);
   const [offset,setOffset]=useState({x:0,y:0});
   const [baseW,setBaseW]=useState(0);
+  const [sheetIn,setSheetIn]=useState("");
+  const [showScale,setShowScale]=useState(false);
   const [pdf,setPdf]=useState(null);
   const [rendering,setRendering]=useState(false);
 
@@ -4910,6 +4984,7 @@ function TakeoffTab({bid,user,onErr}){
         const base=pg.getViewport({scale:1});
         const avail=(wrapRef.current?wrapRef.current.clientWidth:800)-8;
         const fit=avail/base.width; fitRef.current=fit; setBaseW(base.width);
+        setSheetIn(`${(base.width/72).toFixed(1)}" × ${(base.height/72).toFixed(1)}"`);
         const vp=pg.getViewport({scale:fit*scale*dpr});
         const cv=canvasRef.current, ov=overlayRef.current;
         if(!cv)return;
@@ -4986,7 +5061,7 @@ function TakeoffTab({bid,user,onErr}){
       const ft=parseFloat(known);
       if(!ft||ft<=0)return;
       const upp=ft/polyLen(pts);
-      const next={...scales,[String(page)]:{upp,label:"ft"}};
+      const next={...scales,[String(page)]:{upp,label:`measured (${ft} ft)`}};
       try{
         await sb(`/estimate_documents?id=eq.${docId}`,{method:"PATCH",body:{scales:next}});
         setDocs(ds=>ds.map(d=>d.id===docId?{...d,scales:next}:d));
@@ -5145,11 +5220,14 @@ function TakeoffTab({bid,user,onErr}){
             </select>
           )}
           <div style={{flex:1}}/>
-          <span style={{fontSize:11.5,color:T.muted}}>Drawing Scale{" "}
+          <button onClick={()=>setShowScale(true)}
+            style={{background:"none",border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 12px",
+              cursor:"pointer",fontFamily:"inherit",fontSize:11.5,color:T.muted}}>
+            Drawing Scale{" "}
             <strong style={{color:pageScale?T.green:T.yellow}}>
-              {pageScale?`1 pt = ${pageScale.upp.toFixed(3)} ft`:"not defined yet"}
+              {pageScale?(pageScale.label||`${pageScale.upp.toFixed(3)} ft/pt`):"not defined yet"}
             </strong>
-          </span>
+          </button>
         </div>
 
         <div style={{padding:"8px 12px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
@@ -5190,6 +5268,22 @@ function TakeoffTab({bid,user,onErr}){
           </div>}
         </div>
       </div>
+
+      {showScale&&(
+        <ScaleModal docTitle={doc?doc.title:""} page={page} pages={pages} sheetIn={sheetIn} current={pageScale}
+          onClose={()=>setShowScale(false)}
+          onCalibrate={()=>{setShowScale(false);setTool("calibrate");setDraft(null);}}
+          onApply={async(s,allPages)=>{
+            const next={...scales};
+            if(allPages){ for(let p=1;p<=pages;p++)next[String(p)]=s; }
+            else next[String(page)]=s;
+            try{
+              await sb(`/estimate_documents?id=eq.${docId}`,{method:"PATCH",body:{scales:next}});
+              setDocs(ds=>ds.map(d=>d.id===docId?{...d,scales:next}:d));
+              setShowScale(false);
+            }catch(e){onErr&&onErr(e.message);}
+          }}/>
+      )}
 
       {adding&&<TakeoffItemModal estimateId={bid.id} existing={items}
         onClose={()=>setAdding(false)}
