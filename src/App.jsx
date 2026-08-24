@@ -5013,24 +5013,44 @@ function TakeoffTab({bid,user,onErr}){
     const w=2/(fitRef.current*scale);
     const r=4/(fitRef.current*scale);
 
-    const drawMark=(m,color)=>{
-      ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=w;
+    const drawMark=(m,color,live)=>{
+      ctx.strokeStyle=color; ctx.fillStyle=color;
       const p=m.points||[];
       if(m.kind==="count"&&p.length){
+        ctx.lineWidth=w;
         ctx.beginPath(); ctx.arc(p[0][0],p[0][1],r,0,Math.PI*2); ctx.fill();
         ctx.strokeStyle="#fff"; ctx.lineWidth=w*0.5; ctx.stroke();
       }else if(p.length>1){
+        // heavier than markup strokes so a takeoff run reads clearly over the sheet
+        ctx.lineWidth=w*1.8;
+        ctx.globalAlpha=live?0.75:1;
         ctx.beginPath(); ctx.moveTo(p[0][0],p[0][1]);
         for(let i=1;i<p.length;i++)ctx.lineTo(p[i][0],p[i][1]);
         ctx.stroke();
-        p.forEach(pt=>{ctx.beginPath();ctx.arc(pt[0],pt[1],r*0.7,0,Math.PI*2);ctx.fill();});
+        ctx.globalAlpha=1;
+        p.forEach(pt=>{ctx.beginPath();ctx.arc(pt[0],pt[1],r*0.8,0,Math.PI*2);ctx.fill();});
+
+        // length label at the midpoint of the run
+        if(!live&&m.value){
+          const mid=p[Math.floor(p.length/2)];
+          const size=11/(fitRef.current*scale);
+          const text=`${Number(m.value).toFixed(1)} ft`;
+          ctx.font=`700 ${size}px Arial,sans-serif`;
+          const tw=ctx.measureText(text).width, pad=size*0.35;
+          ctx.fillStyle="rgba(255,255,255,0.92)";
+          ctx.fillRect(mid[0]-tw/2-pad,mid[1]-size-pad,tw+pad*2,size+pad*2);
+          ctx.fillStyle=color;
+          ctx.textAlign="center"; ctx.textBaseline="middle";
+          ctx.fillText(text,mid[0],mid[1]-size/2);
+          ctx.textAlign="start"; ctx.textBaseline="alphabetic";
+        }
       }
     };
 
     marks.filter(m=>m.document_id===docId&&m.page===page&&visible.has(m.item_id))
       .forEach(m=>drawMark(m,(itemById[m.item_id]||{}).color||"#60A5FA"));
 
-    if(extra)drawMark(extra,tool==="calibrate"?"#FBBF24":(activeItem?activeItem.color:"#60A5FA"));
+    if(extra)drawMark(extra,tool==="calibrate"?"#FBBF24":(activeItem?activeItem.color:"#60A5FA"),true);
   },[marks,docId,page,visible,itemById,baseW,scale,activeItem,tool]);
 
   useEffect(()=>{paint(draft);},[paint,draft,rendering]);
@@ -5116,7 +5136,32 @@ function TakeoffTab({bid,user,onErr}){
       setOffset({x:g.off.x+(cx-g.x),y:g.off.y+(cy-g.y)}); }
   }
   function onUp(){ gesture.current={mode:null}; }
-  function onDouble(){ if(drawing&&draft){ finishLine(draft.points.slice(0,-1)); setDraft(null); } }
+  function commitDraft(){
+    if(!draft)return;
+    const pts=draft.points.slice(0,-1);      // drop the rubber-band point
+    setDraft(null);
+    if(pts.length>=2)finishLine(pts);
+  }
+  function onDouble(){ if(drawing&&draft)commitDraft(); }
+
+  // Enter finishes the run, Escape abandons it, Backspace undoes the last point.
+  useEffect(()=>{
+    if(!drawing)return;
+    const onKey=(e)=>{
+      if(e.key==="Enter"){ e.preventDefault(); commitDraft(); }
+      else if(e.key==="Escape"){ e.preventDefault(); setDraft(null); }
+      else if(e.key==="Backspace"&&draft){
+        e.preventDefault();
+        setDraft(d=>{
+          if(!d)return d;
+          if(d.points.length<=2)return null;
+          const p=[...d.points]; p.splice(p.length-2,1); return {...d,points:p};
+        });
+      }
+    };
+    window.addEventListener("keydown",onKey);
+    return()=>window.removeEventListener("keydown",onKey);
+  },[drawing,draft,activeItem,pageScale,tool,docId,page]);
   function onWheel(e){ if(!e.ctrlKey&&!e.metaKey)return; e.preventDefault();
     setScale(s=>Math.max(0.4,Math.min(10,s*(e.deltaY<0?1.1:0.9)))); }
 
@@ -5263,9 +5308,19 @@ function TakeoffTab({bid,user,onErr}){
             </div>
           </div>
           {rendering&&<div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.6)",color:"#fff",fontSize:10,padding:"4px 8px",borderRadius:6}}>rendering…</div>}
-          {drawing&&draft&&<div style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:"rgba(20,20,24,0.92)",border:`1px solid ${T.border}`,borderRadius:20,padding:"6px 14px",fontSize:11.5,color:T.sub}}>
-            Click to add points · double-click to finish
-          </div>}
+          {drawing&&draft&&(()=>{
+            const len=polyLen(draft.points);
+            const ft=pageScale?len*pageScale.upp:null;
+            return(
+              <div style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",
+                background:"rgba(20,20,24,0.94)",border:`1px solid ${T.border}`,borderRadius:20,
+                padding:"7px 16px",fontSize:12,color:T.sub,display:"flex",alignItems:"center",gap:12,whiteSpace:"nowrap"}}>
+                {ft!==null&&<strong style={{color:T.green,fontSize:14}}>{ft.toFixed(1)} ft</strong>}
+                <span>{draft.points.length-1} point{draft.points.length-1!==1?"s":""}</span>
+                <span style={{color:T.muted}}>Enter to finish · Backspace undo · Esc cancel</span>
+              </div>
+            );
+          })()}
         </div>
       </div>
 
