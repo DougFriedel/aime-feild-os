@@ -4624,6 +4624,7 @@ const BID_TABS=[
   {id:"documents",  label:"Documents"},
   {id:"takeoff",    label:"Takeoff"},
   {id:"estimating", label:"Estimating"},
+  {id:"scope",      label:"Scope & Notes"},
   {id:"proposal",   label:"Proposal"},
 ];
 
@@ -4698,7 +4699,8 @@ function BidDetail({bidId,user,onBack,onChanged}){
         {tab==="documents" &&<BidDocumentsTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="takeoff"   &&<TakeoffTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="estimating"&&<EstimatingTab bid={bid} user={user} onErr={setErr} onTotal={(t)=>{setBid(b=>({...b,total_sales:t}));onChanged&&onChanged();}}/>}
-        {tab==="proposal"  &&<BidComingSoon label="Proposal" note="Generate the client-facing proposal PDF."/>}
+        {tab==="scope"     &&<ScopeTab bid={bid} user={user} onErr={setErr}/>}
+        {tab==="proposal"  &&<BidComingSoon label="Proposal" note="Generate the client-facing proposal PDF from the scope, inclusions and exclusions."/>}
       </div>
     </div>
   );
@@ -4831,6 +4833,160 @@ function BidOverviewTab({bid,onSave}){
           style={{...primBtn,width:"auto",padding:"11px 24px",fontSize:13.5,borderRadius:10,
             background:dirty?T.green:T.border,color:dirty?"#000":T.muted,opacity:saving?0.6:1}}>
           {saving?"Saving…":"Save Changes"}
+        </button>
+        {dirty&&<span style={{fontSize:12,color:T.orange,fontWeight:700}}>● Unsaved changes</span>}
+      </div>
+    </>
+  );
+}
+
+/* ── ESTIMATING: Scope, inclusions, exclusions, notes ────────── */
+const COMMON_EXCLUSIONS=[
+  "Permits and permit fees","Engineering and design","Bonds","Overtime or premium time",
+  "Painting and coatings","Insulation","Electrical work","Concrete and foundations",
+  "Temporary heat or power","Removal of hazardous material","Third-party testing / X-ray",
+  "Work not shown on the drawings listed above",
+];
+
+function ScopeTab({bid,user,onErr}){
+  const asList=(v)=>{
+    if(Array.isArray(v))return v;
+    if(typeof v==="string"){ try{const p=JSON.parse(v);return Array.isArray(p)?p:[];}catch{return [];} }
+    return [];
+  };
+
+  const [f,setF]=useState({
+    scope_of_work:bid.scope_of_work||"",
+    inclusions:asList(bid.inclusions),
+    exclusions:asList(bid.exclusions),
+    clarifications:bid.clarifications||"",
+    notes:bid.notes||"",
+  });
+  const [dirty,setDirty]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [draft,setDraft]=useState({inclusions:"",exclusions:""});
+
+  const set=(k,v)=>{setF(s=>({...s,[k]:v}));setDirty(true);};
+
+  const addTo=(key,text)=>{
+    const t=(text||"").trim();
+    if(!t)return;
+    set(key,[...f[key],t]);
+    setDraft(d=>({...d,[key]:""}));
+  };
+  const removeFrom=(key,i)=>set(key,f[key].filter((_,n)=>n!==i));
+  const editIn=(key,i,text)=>set(key,f[key].map((x,n)=>n===i?text:x));
+
+  async function save(){
+    setSaving(true);
+    try{
+      await API.estimates.update(bid.id,{...f,updated_at:new Date().toISOString()});
+      setDirty(false);
+    }catch(e){onErr&&onErr(e.message);}
+    setSaving(false);
+  }
+
+  const card={...cardS,padding:20,marginBottom:16};
+
+  const ListEditor=({title,keyName,accent,placeholder,hint})=>(
+    <div style={{...cardS,padding:0,overflow:"hidden"}}>
+      <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8}}>
+        <span style={{width:8,height:8,borderRadius:"50%",background:accent,flexShrink:0}}/>
+        <span style={{fontSize:13,fontWeight:800,color:T.text,flex:1}}>{title}</span>
+        <span style={{fontSize:11,color:T.muted}}>{f[keyName].length}</span>
+      </div>
+
+      <div style={{padding:"10px 12px",display:"flex",gap:8}}>
+        <input value={draft[keyName]} onChange={e=>setDraft(d=>({...d,[keyName]:e.target.value}))}
+          onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTo(keyName,draft[keyName]);}}}
+          placeholder={placeholder} style={{...inp,padding:"8px 10px",fontSize:12.5}}/>
+        <button onClick={()=>addTo(keyName,draft[keyName])}
+          style={{...primBtn,width:"auto",padding:"8px 14px",fontSize:12,borderRadius:8,background:accent,color:"#000",flexShrink:0}}>Add</button>
+      </div>
+
+      {f[keyName].length===0?(
+        <div style={{padding:"20px 16px",textAlign:"center",color:T.muted,fontSize:12}}>{hint}</div>
+      ):(
+        <div style={{paddingBottom:8}}>
+          {f[keyName].map((line,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"7px 14px",borderTop:`1px solid ${T.border}`}}>
+              <span style={{color:accent,fontSize:13,lineHeight:1.5,flexShrink:0}}>•</span>
+              <textarea value={line} onChange={e=>editIn(keyName,i,e.target.value)} rows={1}
+                style={{flex:1,background:"transparent",border:"1px solid transparent",borderRadius:6,color:T.text,
+                  fontSize:12.5,lineHeight:1.5,padding:"2px 4px",fontFamily:"inherit",resize:"vertical",outline:"none"}}
+                onFocus={e=>{e.target.style.border=`1px solid ${T.border}`;e.target.style.background=T.surface;}}
+                onBlur={e=>{e.target.style.border="1px solid transparent";e.target.style.background="transparent";}}/>
+              <button onClick={()=>removeFrom(keyName,i)}
+                style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:14,padding:0,flexShrink:0}}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  return(
+    <>
+      <div style={card}>
+        <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:4}}>Scope of Work</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:12}}>
+          What AIME is proposing to do. This is the paragraph the client reads first.
+        </div>
+        <textarea value={f.scope_of_work} onChange={e=>set("scope_of_work",e.target.value)} rows={7}
+          placeholder="Furnish all labor, material, equipment and supervision necessary to…"
+          style={{...inp,resize:"vertical",lineHeight:1.7,fontSize:13}}/>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+        <ListEditor title="Inclusions" keyName="inclusions" accent={T.green}
+          placeholder="Add an inclusion and press Enter"
+          hint="Nothing listed yet. Spell out what the price covers."/>
+        <ListEditor title="Exclusions" keyName="exclusions" accent={T.red}
+          placeholder="Add an exclusion and press Enter"
+          hint="Nothing listed yet. Exclusions are what protect the number."/>
+      </div>
+
+      <div style={{...cardS,padding:"14px 16px",marginBottom:16}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:8}}>
+          Common exclusions — click to add
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
+          {COMMON_EXCLUSIONS.filter(x=>!f.exclusions.includes(x)).map(x=>(
+            <button key={x} onClick={()=>set("exclusions",[...f.exclusions,x])}
+              style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:"5px 11px",
+                color:T.sub,fontSize:11.5,cursor:"pointer",fontFamily:"inherit"}}>+ {x}</button>
+          ))}
+          {COMMON_EXCLUSIONS.every(x=>f.exclusions.includes(x))&&
+            <span style={{fontSize:11.5,color:T.muted}}>All of the common ones are already listed.</span>}
+        </div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+        <div style={card}>
+          <div style={{fontSize:14,fontWeight:800,color:T.text,marginBottom:4}}>Clarifications</div>
+          <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>
+            Assumptions the price depends on — access, schedule, working hours.
+          </div>
+          <textarea value={f.clarifications} onChange={e=>set("clarifications",e.target.value)} rows={6}
+            placeholder="Pricing assumes normal working hours, Monday to Friday…"
+            style={{...inp,resize:"vertical",lineHeight:1.7}}/>
+        </div>
+        <div style={card}>
+          <div style={{fontSize:14,fontWeight:800,color:T.text,marginBottom:4}}>Internal Notes</div>
+          <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>
+            For AIME only — never appears on the proposal.
+          </div>
+          <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={6}
+            placeholder="Who to follow up with, pricing we weren't sure about, competitors bidding…"
+            style={{...inp,resize:"vertical",lineHeight:1.7}}/>
+        </div>
+      </div>
+
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={save} disabled={!dirty||saving}
+          style={{...primBtn,width:"auto",padding:"11px 24px",fontSize:13.5,borderRadius:10,
+            background:dirty?T.green:T.border,color:dirty?"#000":T.muted,opacity:saving?0.6:1}}>
+          {saving?"Saving…":"Save Scope"}
         </button>
         {dirty&&<span style={{fontSize:12,color:T.orange,fontWeight:700}}>● Unsaved changes</span>}
       </div>
