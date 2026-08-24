@@ -126,7 +126,8 @@ const ESTIMATING_OWNER="Doug Friedel";
 const canEstimate=(u)=>!!u&&can(u,"estimating")&&(!ESTIMATING_OWNER||u.name===ESTIMATING_OWNER);
 
 const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs"]);
-const shellMax=(screen)=>WIDE_SCREENS.has(screen)?1180:480;
+const SCREEN_MAX={estimating:1700};
+const shellMax=(screen)=>SCREEN_MAX[screen]||(WIDE_SCREENS.has(screen)?1180:480);
 
 /* ── Session ────────────────────────────────────────────────
    Keeps you signed in across refreshes. Stores only the profile name and a
@@ -236,7 +237,7 @@ const API={
     remove:(id)=>sb(`/cost_catalog?id=eq.${id}`,{method:"PATCH",body:{active:false}}),
   },
   estimates:{
-    list:()=>sb("/estimates?order=created_at.desc"),
+    list:()=>sb("/estimates?select=*&order=due_date.asc.nullslast,created_at.desc"),
     create:(d)=>sb("/estimates",{method:"POST",body:d,prefer:"return=representation"}),
     update:(id,d)=>sb(`/estimates?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
     remove:(id)=>sb(`/estimates?id=eq.${id}`,{method:"DELETE"}),
@@ -4365,22 +4366,310 @@ function TimeCardsScreen({user,projects,onBack}){
   );
 }
 
-function EstimatingScreen({user,onBack}){
+/* ── ESTIMATING: Bid Board ───────────────────────────────────── */
+const BID_STAGES=[
+  {id:"invitations",  label:"Invitations",      color:"#94A3B8"},
+  {id:"estimating",   label:"Estimating",       color:"#FBBF24"},
+  {id:"ready_review", label:"Ready For Review",  color:"#38BDF8"},
+  {id:"bid_approved", label:"Bid Approved",     color:"#A78BFA"},
+  {id:"bid_submitted",label:"Bid Submitted",    color:"#60A5FA"},
+  {id:"negotiating",  label:"Negotiating",      color:"#FB923C"},
+  {id:"portfolio",    label:"Added to Portfolio",color:"#34D399"},
+  {id:"lost",         label:"Not Bidding / Lost",color:"#F87171"},
+  {id:"archived",     label:"Archived",         color:"#71717A"},
+];
+const stageOf=(id)=>BID_STAGES.find(s=>s.id===id)||BID_STAGES[1];
+
+function dueMeta(due){
+  if(!due)return{text:"To be determined",tone:"muted"};
+  const d=new Date(due+"T00:00:00");
+  const today=new Date();today.setHours(0,0,0,0);
+  const days=Math.round((d-today)/86400000);
+  const label=d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"});
+  if(days<0)  return{text:label,sub:"Past Due",tone:"red"};
+  if(days===0)return{text:label,sub:"Due today",tone:"red"};
+  if(days<=7) return{text:label,sub:`Due in ${days} day${days!==1?"s":""}`,tone:"amber"};
+  return{text:label,sub:"",tone:"muted"};
+}
+
+function BidBoard({user,onBack}){
+  const [bids,setBids]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [stage,setStage]=useState("estimating");
+  const [q,setQ]=useState("");
+  const [sortKey,setSortKey]=useState("due_date");
+  const [sortDir,setSortDir]=useState("asc");
+  const [editing,setEditing]=useState(null);   // bid object or "new"
+  const [err,setErr]=useState("");
+
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});
+  const moneyShort=(n)=>{
+    const v=Number(n||0);
+    if(v>=1e6)return"$"+(v/1e6).toFixed(2)+"M";
+    if(v>=1e3)return"$"+(v/1e3).toFixed(2)+"K";
+    return"$"+v.toFixed(0);
+  };
+
+  async function load(){
+    setLoading(true);
+    try{ setBids(await API.estimates.list()||[]); }
+    catch(e){ setErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[]);
+
+  async function setStatus(bid,status){
+    setBids(b=>b.map(x=>x.id===bid.id?{...x,status}:x));   // optimistic
+    try{ await API.estimates.update(bid.id,{status,updated_at:new Date().toISOString()}); }
+    catch(e){ setErr(e.message); load(); }
+  }
+
+  const counts={};BID_STAGES.forEach(s=>counts[s.id]={n:0,total:0});
+  bids.forEach(b=>{const k=counts[b.status]||counts.estimating;k.n++;k.total+=Number(b.total_sales)||0;});
+
+  const rows=bids
+    .filter(b=>(b.status||"estimating")===stage)
+    .filter(b=>{
+      if(!q.trim())return true;
+      const s=q.toLowerCase();
+      return [b.name,b.description,b.requester_company,b.requester_email,b.estimator,b.bid_number]
+        .some(v=>(v||"").toLowerCase().includes(s));
+    })
+    .sort((a,b)=>{
+      const dir=sortDir==="asc"?1:-1;
+      if(sortKey==="total_sales")return((Number(a.total_sales)||0)-(Number(b.total_sales)||0))*dir;
+      if(sortKey==="due_date"){
+        if(!a.due_date&&!b.due_date)return 0;
+        if(!a.due_date)return 1;               // undated always last
+        if(!b.due_date)return -1;
+        return(a.due_date<b.due_date?-1:1)*dir;
+      }
+      return String(a[sortKey]||"").localeCompare(String(b[sortKey]||""))*dir;
+    });
+
+  const toggleSort=(k)=>{ if(sortKey===k)setSortDir(d=>d==="asc"?"desc":"asc"); else{setSortKey(k);setSortDir("asc");} };
+
+  const th=(label,key,align)=>(
+    <th onClick={key?()=>toggleSort(key):undefined}
+      style={{textAlign:align||"left",padding:"10px 12px",fontSize:11,fontWeight:700,color:T.muted,
+        textTransform:"uppercase",letterSpacing:"0.5px",cursor:key?"pointer":"default",
+        borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap",userSelect:"none"}}>
+      {label}{key&&sortKey===key?<span style={{color:T.orange,marginLeft:4}}>{sortDir==="asc"?"▲":"▼"}</span>:null}
+    </th>
+  );
+
+  const initials=(n)=>(n||"?").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+  const avatarColor=(n)=>{const c=["#34D399","#60A5FA","#FBBF24","#F87171","#A78BFA","#FB923C"];
+    let h=0;for(const ch of(n||""))h=(h*31+ch.charCodeAt(0))%c.length;return c[h];};
+
   return(
-    <div style={{background:T.bg,minHeight:'100vh',fontFamily:'inherit'}}>
-      <TopBar title="📊 Estimating" onBack={onBack}/>
-      <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'60px 24px',textAlign:'center'}}>
-        <div style={{fontSize:64,marginBottom:20}}>🚧</div>
-        <div style={{fontSize:22,fontWeight:900,color:T.text,marginBottom:8}}>Under Maintenance</div>
-        <div style={{fontSize:14,color:T.muted,lineHeight:1.7,maxWidth:320}}>The Estimating platform is currently being updated. Check back soon.</div>
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      {/* Header */}
+      <div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:16}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:0}}>← Back</button>
+        <div style={{fontSize:20,fontWeight:900,color:T.text,flex:1}}>📊 Bid Board</div>
+        <button onClick={()=>setEditing("new")} style={{...primBtn,width:"auto",padding:"10px 18px",fontSize:13,borderRadius:10,background:T.orange,color:"#000"}}>+ New Bid</button>
+      </div>
+
+      {/* Stage tabs with counts and value */}
+      <div style={{display:"flex",gap:0,overflowX:"auto",borderBottom:`1px solid ${T.border}`,padding:"0 12px"}}>
+        {BID_STAGES.map(s=>{
+          const c=counts[s.id]||{n:0,total:0};
+          const on=stage===s.id;
+          return(
+            <button key={s.id} onClick={()=>setStage(s.id)}
+              style={{background:"none",border:"none",borderBottom:on?`2px solid ${s.color}`:"2px solid transparent",
+                padding:"12px 16px",cursor:"pointer",fontFamily:"inherit",textAlign:"left",whiteSpace:"nowrap",flexShrink:0}}>
+              <div style={{fontSize:12.5,fontWeight:on?800:600,color:on?T.text:T.sub}}>{s.label} ({c.n})</div>
+              <div style={{fontSize:11,color:on?s.color:T.muted,marginTop:2}}>{moneyShort(c.total)}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {err&&<div style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"8px 20px",fontSize:12,color:T.red,cursor:"pointer"}} onClick={()=>setErr("")}>{err} ✕</div>}
+
+      {/* Toolbar */}
+      <div style={{padding:"12px 20px",display:"flex",gap:10,alignItems:"center"}}>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search bids…"
+          style={{...inp,maxWidth:320,padding:"9px 12px",fontSize:13}}/>
+        <span style={{fontSize:12,color:T.muted}}>{rows.length} shown</span>
+      </div>
+
+      {/* Table */}
+      <div style={{padding:"0 20px 40px"}}>
+        {loading?<div style={{textAlign:"center",color:T.muted,padding:40,fontSize:13}}>Loading bids…</div>:
+         rows.length===0?(
+          <div style={{...cardS,textAlign:"center",padding:40,color:T.muted}}>
+            <div style={{fontSize:34,marginBottom:10}}>📋</div>
+            <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>Nothing in {stageOf(stage).label}</div>
+            <div style={{fontSize:12}}>{q?"No bids match your search.":"Add a bid or move one into this stage."}</div>
+          </div>
+        ):(
+          <div style={{border:`1px solid ${T.border}`,borderRadius:12,overflow:"hidden",background:T.card}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr style={{background:T.surface}}>
+                {th("Name","name")}
+                {th("Requester Company","requester_company")}
+                {th("Division","division")}
+                {th("Due Date","due_date")}
+                {th("Total Sales","total_sales","right")}
+                {th("Estimator","estimator")}
+                {th("Status")}
+              </tr></thead>
+              <tbody>
+                {rows.map(b=>{
+                  const dm=dueMeta(b.due_date);
+                  const st=stageOf(b.status);
+                  const toneColor=dm.tone==="red"?T.red:dm.tone==="amber"?T.yellow:T.muted;
+                  return(
+                    <tr key={b.id} style={{borderBottom:`1px solid ${T.border}`}}>
+                      <td style={{padding:"12px",verticalAlign:"top",minWidth:260}}>
+                        <div onClick={()=>setEditing(b)}
+                          style={{fontSize:13.5,fontWeight:700,color:"#60A5FA",cursor:"pointer",lineHeight:1.35}}>
+                          {b.name||"Untitled bid"}
+                        </div>
+                        {b.description&&<div style={{fontSize:11.5,color:T.muted,marginTop:3,lineHeight:1.45}}>{b.description}</div>}
+                      </td>
+                      <td style={{padding:"12px",verticalAlign:"top",minWidth:180}}>
+                        <div style={{fontSize:12.5,color:T.text}}>{b.requester_company||"—"}</div>
+                        {b.requester_email&&<div style={{fontSize:11,color:"#60A5FA",marginTop:2}}>{b.requester_email}</div>}
+                      </td>
+                      <td style={{padding:"12px",verticalAlign:"top",fontSize:12,color:T.sub,whiteSpace:"nowrap"}}>{b.division||"—"}</td>
+                      <td style={{padding:"12px",verticalAlign:"top",minWidth:150}}>
+                        <div style={{fontSize:12.5,color:dm.sub?T.text:T.muted}}>{dm.text}</div>
+                        {dm.sub&&<div style={{fontSize:11,color:toneColor,marginTop:2,fontWeight:600}}>{dm.sub}</div>}
+                      </td>
+                      <td style={{padding:"12px",verticalAlign:"top",textAlign:"right",fontSize:13,fontWeight:700,color:T.green,whiteSpace:"nowrap"}}>
+                        {money(b.total_sales)}
+                      </td>
+                      <td style={{padding:"12px",verticalAlign:"top",minWidth:150}}>
+                        {b.estimator?(
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <div style={{width:24,height:24,borderRadius:"50%",background:avatarColor(b.estimator),
+                              color:"#000",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                              {initials(b.estimator)}
+                            </div>
+                            <span style={{fontSize:12.5,color:T.text}}>{b.estimator}</span>
+                          </div>
+                        ):<span style={{fontSize:12,color:T.muted}}>Unassigned</span>}
+                      </td>
+                      <td style={{padding:"12px",verticalAlign:"top"}}>
+                        <select value={b.status||"estimating"} onChange={e=>setStatus(b,e.target.value)}
+                          style={{background:`${st.color}18`,border:`1px solid ${st.color}55`,color:st.color,
+                            borderRadius:8,padding:"6px 8px",fontSize:11,fontWeight:800,fontFamily:"inherit",
+                            cursor:"pointer",textTransform:"uppercase",letterSpacing:"0.4px",outline:"none"}}>
+                          {BID_STAGES.map(s=><option key={s.id} value={s.id} style={{background:T.card,color:T.text,textTransform:"none"}}>{s.label}</option>)}
+                        </select>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {editing&&<BidEditor bid={editing==="new"?null:editing} user={user}
+        onClose={()=>setEditing(null)} onSaved={()=>{setEditing(null);load();}} onErr={setErr}/>}
+    </div>
+  );
+}
+
+/* ── New / edit bid ─────────────────────────────────────────── */
+function BidEditor({bid,user,onClose,onSaved,onErr}){
+  const [f,setF]=useState({
+    name:bid?.name||"",description:bid?.description||"",
+    requester_company:bid?.requester_company||"",requester_contact:bid?.requester_contact||"",
+    requester_email:bid?.requester_email||"",division:bid?.division||"Mechanical",
+    due_date:bid?.due_date||"",total_sales:bid?.total_sales||"",
+    estimator:bid?.estimator||user.name,status:bid?.status||"estimating",
+    bid_number:bid?.bid_number||"",notes:bid?.notes||"",
+  });
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+
+  async function save(){
+    if(!f.name.trim()){onErr&&onErr("Bid name is required.");return;}
+    setSaving(true);
+    try{
+      const body={...f,
+        total_sales:parseFloat(f.total_sales)||0,
+        due_date:f.due_date||null,
+        updated_at:new Date().toISOString()};
+      if(bid) await API.estimates.update(bid.id,body);
+      else    await API.estimates.create(body);
+      onSaved();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  async function del(){
+    if(!window.confirm("Delete this bid permanently?"))return;
+    try{ await API.estimates.remove(bid.id); onSaved(); }
+    catch(e){ onErr&&onErr(e.message); }
+  }
+
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:200,
+      display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"40px 20px",overflowY:"auto"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:24,
+        width:"100%",maxWidth:640,border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:17,fontWeight:900,color:T.text,marginBottom:16}}>{bid?"Edit Bid":"New Bid"}</div>
+
+        <label style={lbl}>Bid Name *</label>
+        <input value={f.name} onChange={e=>set("name",e.target.value)} placeholder="e.g. Buckeye Richmond South Fire System Upgrades" style={{...inp,marginBottom:12}}/>
+
+        <label style={lbl}>Scope Description</label>
+        <textarea value={f.description} onChange={e=>set("description",e.target.value)} rows={2}
+          placeholder="One line describing the work" style={{...inp,marginBottom:12,resize:"vertical"}}/>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+          <div><label style={lbl}>Requester Company</label>
+            <input value={f.requester_company} onChange={e=>set("requester_company",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Contact Email</label>
+            <input type="email" value={f.requester_email} onChange={e=>set("requester_email",e.target.value)} style={inp}/></div>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
+          <div><label style={lbl}>Division</label>
+            <select value={f.division} onChange={e=>set("division",e.target.value)} style={inp}>
+              {["Mechanical","Pipeline","Structural","Manufacturing"].map(d=><option key={d} value={d}>{d}</option>)}
+            </select></div>
+          <div><label style={lbl}>Due Date</label>
+            <input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Total Sales ($)</label>
+            <input type="number" step="0.01" value={f.total_sales} onChange={e=>set("total_sales",e.target.value)} style={inp}/></div>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
+          <div><label style={lbl}>Estimator</label>
+            <input value={f.estimator} onChange={e=>set("estimator",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Bid #</label>
+            <input value={f.bid_number} onChange={e=>set("bid_number",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Stage</label>
+            <select value={f.status} onChange={e=>set("status",e.target.value)} style={inp}>
+              {BID_STAGES.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+            </select></div>
+        </div>
+
+        <label style={lbl}>Notes</label>
+        <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={3} style={{...inp,marginBottom:16,resize:"vertical"}}/>
+
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={save} disabled={saving} style={{...primBtn,borderRadius:10,opacity:saving?0.6:1}}>
+            {saving?"Saving…":bid?"Save Changes":"Create Bid"}
+          </button>
+          <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
+          {bid&&<button onClick={del} style={{...ghostBtn,color:T.red,border:`1px solid ${T.red}30`,flexShrink:0}}>Delete</button>}
+        </div>
       </div>
     </div>
   );
 }
 
-function EmployeeHistory({user,projects,onBack}){return <TimeCardsScreen user={user} projects={projects} onBack={onBack}/>;}
-function FinancialsScreen({user,projects,onBack,onErr}){return(<div style={{background:T.bg,minHeight:'100vh'}}><TopBar title="💵 Financials" onBack={onBack}/><div style={{padding:20,color:T.muted,textAlign:'center',marginTop:40}}>Financials coming soon</div></div>);}
-function TimecardReportScreen({user,projects,onBack}){return <TimeCardsScreen user={user} projects={projects} onBack={onBack}/>;}
+
 function EmailSummaryModal({user,projects,onClose}){return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:200}}><div style={{background:T.card,borderRadius:16,padding:24,maxWidth:400,width:'90%'}}><div style={{fontSize:16,fontWeight:800,color:T.text,marginBottom:12}}>📧 Email Summary</div><button onClick={onClose} style={{...primBtn,borderRadius:12}}>Close</button></div></div>);}
 
 function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true,onErr:onErrProp,onRefresh}){
@@ -7409,7 +7698,7 @@ function AppInner(){
           isOnline={isOnline} pendingCount={pendingCount} onSync={syncQueue}/>
       )}
       {user&&screen==="estimating"&&canEstimate(user)&&(
-        <EstimatingScreen user={user} onBack={()=>setScreen("division")}/>
+        <BidBoard user={user} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="jobs"&&selectedDiv==="Manufacturing"&&!selectedMfgJob&&(
         <ManufacturingJobBoard user={user} onBack={()=>setScreen("division")} onSelectJob={j=>{setSelectedMfgJob(j);setSelectedMfgPart(null);}}/>
