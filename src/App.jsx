@@ -4925,6 +4925,7 @@ function TakeoffTab({bid,user,onErr}){
   const [pdf,setPdf]=useState(null);
   const [rendering,setRendering]=useState(false);
 
+  const [repaint,setRepaint]=useState(0);      // bumped whenever marks change
   const [tool,setTool]=useState("pan");        // pan | count | line | calibrate
   const [activeItem,setActiveItem]=useState(null);
   const [draft,setDraft]=useState(null);       // in-progress polyline
@@ -5047,13 +5048,13 @@ function TakeoffTab({bid,user,onErr}){
       }
     };
 
-    marks.filter(m=>m.document_id===docId&&m.page===page&&visible.has(m.item_id))
+    marks.filter(m=>String(m.document_id)===String(docId)&&Number(m.page)===Number(page)&&visible.has(m.item_id))
       .forEach(m=>drawMark(m,(itemById[m.item_id]||{}).color||"#60A5FA"));
 
     if(extra)drawMark(extra,tool==="calibrate"?"#FBBF24":(activeItem?activeItem.color:"#60A5FA"),true);
   },[marks,docId,page,visible,itemById,baseW,scale,activeItem,tool]);
 
-  useEffect(()=>{paint(draft);},[paint,draft,rendering]);
+  useEffect(()=>{paint(draft);},[paint,draft,rendering,repaint,marks.length]);
 
   /* ── geometry ── */
   const toUser=(cx,cy)=>{
@@ -5068,10 +5069,11 @@ function TakeoffTab({bid,user,onErr}){
     if(!activeItem){onErr&&onErr("Pick a takeoff item on the left first.");return;}
     const body={estimate_id:bid.id,item_id:activeItem.id,document_id:docId,page,kind:"count",points:[pt],value:1};
     const tmp={...body,id:"tmp-"+Math.random()};
-    setMarks(m=>[...m,tmp]);
+    setMarks(m=>[...m,tmp]); setRepaint(n=>n+1);
     try{ const r=await API.takeoff.addMark(body); const row=Array.isArray(r)?r[0]:r;
-      setMarks(m=>m.map(x=>x.id===tmp.id?row:x)); }
+      setMarks(m=>m.map(x=>x.id===tmp.id?{...tmp,...row,points:(row&&row.points)||[pt],page,document_id:docId}:x)); }
     catch(e){ setMarks(m=>m.filter(x=>x.id!==tmp.id)); onErr&&onErr(e.message); }
+    setRepaint(n=>n+1);
   }
 
   async function finishLine(pts){
@@ -5090,11 +5092,21 @@ function TakeoffTab({bid,user,onErr}){
       return;
     }
     if(!activeItem){onErr&&onErr("Pick a takeoff item on the left first.");return;}
-    if(!pageScale){onErr&&onErr("Set the drawing scale first — use the Calibrate tool.");return;}
+    if(!pageScale){onErr&&onErr("Set the drawing scale first — click the Drawing Scale button.");return;}
     const value=polyLen(pts)*pageScale.upp;
     const body={estimate_id:bid.id,item_id:activeItem.id,document_id:docId,page,kind:"line",points:pts,value};
-    try{ const r=await API.takeoff.addMark(body); const row=Array.isArray(r)?r[0]:r; setMarks(m=>[...m,row]); }
-    catch(e){onErr&&onErr(e.message);}
+    // draw it straight away, then reconcile with the saved row
+    const tmp={...body,id:"tmp-"+Math.random()};
+    setMarks(m=>[...m,tmp]); setRepaint(n=>n+1);
+    try{
+      const r=await API.takeoff.addMark(body);
+      const row=Array.isArray(r)?r[0]:r;
+      setMarks(m=>m.map(x=>x.id===tmp.id?{...tmp,...row,points:(row&&row.points)||pts,page,document_id:docId}:x));
+    }catch(e){
+      setMarks(m=>m.filter(x=>x.id!==tmp.id));
+      onErr&&onErr(e.message);
+    }
+    setRepaint(n=>n+1);
   }
 
   async function undoLast(){
