@@ -119,6 +119,12 @@ async function storageRemove(bucket,path){
 // so phones (viewport under 480) are completely unaffected by these values.
 // Data-entry screens stay narrow — a form field stretched across a 27" monitor
 // is worse, not better.
+// Estimating is under construction — restricted to this account regardless of
+// role. Clear ESTIMATING_OWNER (set it to "") to open it up to the normal
+// `estimating` permission again.
+const ESTIMATING_OWNER="Doug Friedel";
+const canEstimate=(u)=>!!u&&can(u,"estimating")&&(!ESTIMATING_OWNER||u.name===ESTIMATING_OWNER);
+
 const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs"]);
 const shellMax=(screen)=>WIDE_SCREENS.has(screen)?1180:480;
 
@@ -578,7 +584,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
             {can(user,"view_dashboard")&&<button onClick={onDash} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
             {(user.role==="admin"||user.role==="pm")&&<button onClick={onTimeCards} style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",color:T.green,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⏱️</button>}
             {can(user,"crew_directory")&&<button onClick={onCrew} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"8px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>👥</button>}
-            {can(user,"estimating")&&<button onClick={onEstimating} style={{background:`${T.purple}15`,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"8px 12px",color:T.purple,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
+            {canEstimate(user)&&<button onClick={onEstimating} style={{background:`${T.purple}15`,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"8px 12px",color:T.purple,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
             <button onClick={onLogout} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>Out</button>
           </div>
         </div>
@@ -7384,7 +7390,7 @@ function AppInner(){
     </div>
   );
 
-  const canEst=can(user,"estimating");
+  const canEst=canEstimate(user);
 
   return(
     <div style={{maxWidth:shellMax(screen),margin:"0 auto",transition:"max-width 0.15s ease",fontFamily:"'DM Sans',system-ui,sans-serif",color:T.text,background:T.bg,minHeight:"100vh"}}>
@@ -7402,7 +7408,7 @@ function AppInner(){
           onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")}
           isOnline={isOnline} pendingCount={pendingCount} onSync={syncQueue}/>
       )}
-      {user&&screen==="estimating"&&can(user,"estimating")&&(
+      {user&&screen==="estimating"&&canEstimate(user)&&(
         <EstimatingScreen user={user} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="jobs"&&selectedDiv==="Manufacturing"&&!selectedMfgJob&&(
