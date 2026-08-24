@@ -236,7 +236,13 @@ const API={
     create:(d)=>sb("/cost_catalog",{method:"POST",body:d,prefer:"return=representation"}),
     remove:(id)=>sb(`/cost_catalog?id=eq.${id}`,{method:"PATCH",body:{active:false}}),
   },
+  estimateDocs:{
+    forEstimate:(eid)=>sb(`/estimate_documents?estimate_id=eq.${eid}&select=*&order=created_at.desc`),
+    create:(d)=>sb("/estimate_documents",{method:"POST",body:d,prefer:"return=representation"}),
+    remove:(id)=>sb(`/estimate_documents?id=eq.${id}`,{method:"DELETE"}),
+  },
   estimates:{
+    get:(id)=>sb(`/estimates?id=eq.${id}&select=*&limit=1`),
     list:()=>sb("/estimates?select=*&order=due_date.asc.nullslast,created_at.desc"),
     create:(d)=>sb("/estimates",{method:"POST",body:d,prefer:"return=representation"}),
     update:(id,d)=>sb(`/estimates?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
@@ -4399,7 +4405,8 @@ function BidBoard({user,onBack}){
   const [q,setQ]=useState("");
   const [sortKey,setSortKey]=useState("due_date");
   const [sortDir,setSortDir]=useState("asc");
-  const [editing,setEditing]=useState(null);   // bid object or "new"
+  const [openId,setOpenId]=useState(null);    // bid being viewed
+  const [creating,setCreating]=useState(false);
   const [err,setErr]=useState("");
 
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});
@@ -4422,6 +4429,22 @@ function BidBoard({user,onBack}){
     setBids(b=>b.map(x=>x.id===bid.id?{...x,status}:x));   // optimistic
     try{ await API.estimates.update(bid.id,{status,updated_at:new Date().toISOString()}); }
     catch(e){ setErr(e.message); load(); }
+  }
+
+  async function createBid(){
+    setCreating(true);
+    try{
+      const res=await API.estimates.create({
+        name:"New Bid",status:"estimating",estimator:user.name,
+        division:"Mechanical",total_sales:0,
+        office:"Atlantic Industrial Mechanical & Environmental",
+        measurement_system:"US",
+      });
+      const row=Array.isArray(res)?res[0]:res;
+      await load();
+      if(row&&row.id)setOpenId(row.id);
+    }catch(e){setErr(e.message);}
+    setCreating(false);
   }
 
   const counts={};BID_STAGES.forEach(s=>counts[s.id]={n:0,total:0});
@@ -4462,13 +4485,15 @@ function BidBoard({user,onBack}){
   const avatarColor=(n)=>{const c=["#34D399","#60A5FA","#FBBF24","#F87171","#A78BFA","#FB923C"];
     let h=0;for(const ch of(n||""))h=(h*31+ch.charCodeAt(0))%c.length;return c[h];};
 
+  if(openId) return <BidDetail bidId={openId} user={user} onBack={()=>{setOpenId(null);load();}} onChanged={load}/>;
+
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       {/* Header */}
       <div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:16}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:0}}>← Back</button>
         <div style={{fontSize:20,fontWeight:900,color:T.text,flex:1}}>📊 Bid Board</div>
-        <button onClick={()=>setEditing("new")} style={{...primBtn,width:"auto",padding:"10px 18px",fontSize:13,borderRadius:10,background:T.orange,color:"#000"}}>+ New Bid</button>
+        <button onClick={createBid} disabled={creating} style={{...primBtn,width:"auto",padding:"10px 18px",fontSize:13,borderRadius:10,background:T.orange,color:"#000",opacity:creating?0.6:1}}>{creating?"Creating…":"+ Create New Bid"}</button>
       </div>
 
       {/* Stage tabs with counts and value */}
@@ -4525,7 +4550,7 @@ function BidBoard({user,onBack}){
                   return(
                     <tr key={b.id} style={{borderBottom:`1px solid ${T.border}`}}>
                       <td style={{padding:"12px",verticalAlign:"top",minWidth:260}}>
-                        <div onClick={()=>setEditing(b)}
+                        <div onClick={()=>setOpenId(b.id)}
                           style={{fontSize:13.5,fontWeight:700,color:"#60A5FA",cursor:"pointer",lineHeight:1.35}}>
                           {b.name||"Untitled bid"}
                         </div>
@@ -4571,9 +4596,340 @@ function BidBoard({user,onBack}){
         )}
       </div>
 
-      {editing&&<BidEditor bid={editing==="new"?null:editing} user={user}
-        onClose={()=>setEditing(null)} onSaved={()=>{setEditing(null);load();}} onErr={setErr}/>}
     </div>
+  );
+}
+
+/* ── ESTIMATING: single bid, tabbed ──────────────────────────── */
+const BID_TABS=[
+  {id:"overview",   label:"Overview"},
+  {id:"documents",  label:"Documents"},
+  {id:"takeoff",    label:"Takeoff"},
+  {id:"estimating", label:"Estimating"},
+  {id:"proposal",   label:"Proposal"},
+];
+
+function BidDetail({bidId,user,onBack,onChanged}){
+  const [bid,setBid]=useState(null);
+  const [tab,setTab]=useState("overview");
+  const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState("");
+
+  async function load(){
+    setLoading(true);
+    try{
+      const rows=await API.estimates.get(bidId);
+      setBid(Array.isArray(rows)?rows[0]:rows);
+    }catch(e){setErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[bidId]);
+
+  async function patch(body){
+    try{
+      await API.estimates.update(bidId,{...body,updated_at:new Date().toISOString()});
+      setBid(b=>({...b,...body}));
+      onChanged&&onChanged();
+    }catch(e){setErr(e.message);}
+  }
+
+  if(loading)return <div style={{background:T.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><Spinner/></div>;
+  if(!bid)return(
+    <div style={{background:T.bg,minHeight:"100vh",padding:40,textAlign:"center",color:T.muted}}>
+      <div style={{fontSize:14,marginBottom:12}}>Bid not found.</div>
+      <button onClick={onBack} style={{...ghostBtn}}>← Back to Bid Board</button>
+    </div>
+  );
+
+  const st=stageOf(bid.status);
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      {/* Breadcrumb + title + stage */}
+      <div style={{padding:"14px 24px 0"}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit",padding:0}}>Bid Board ›</button>
+        <div style={{display:"flex",alignItems:"center",gap:14,marginTop:6}}>
+          <div style={{fontSize:22,fontWeight:900,color:T.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+            {bid.name||"Untitled bid"}
+          </div>
+          <select value={bid.status||"estimating"} onChange={e=>patch({status:e.target.value})}
+            style={{background:`${st.color}18`,border:`1px solid ${st.color}55`,color:st.color,borderRadius:8,
+              padding:"8px 10px",fontSize:11.5,fontWeight:800,fontFamily:"inherit",cursor:"pointer",
+              textTransform:"uppercase",letterSpacing:"0.4px",outline:"none",flexShrink:0}}>
+            {BID_STAGES.map(s=><option key={s.id} value={s.id} style={{background:T.card,color:T.text,textTransform:"none"}}>{s.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,padding:"0 24px",marginTop:10}}>
+        {BID_TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{background:"none",border:"none",borderBottom:tab===t.id?`2px solid ${T.orange}`:"2px solid transparent",
+              padding:"10px 16px",cursor:"pointer",fontFamily:"inherit",fontSize:13.5,
+              fontWeight:tab===t.id?800:600,color:tab===t.id?T.text:T.sub}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {err&&<div onClick={()=>setErr("")} style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"8px 24px",fontSize:12,color:T.red,cursor:"pointer"}}>{err} ✕</div>}
+
+      <div style={{padding:"20px 24px 60px"}}>
+        {tab==="overview"  &&<BidOverviewTab bid={bid} onSave={patch}/>}
+        {tab==="documents" &&<BidDocumentsTab bid={bid} user={user} onErr={setErr}/>}
+        {tab==="takeoff"   &&<BidComingSoon label="Takeoff" note="Measure quantities directly off the drawings you upload in Documents."/>}
+        {tab==="estimating"&&<BidComingSoon label="Estimating" note="Build the bid from labor, equipment and material line items."/>}
+        {tab==="proposal"  &&<BidComingSoon label="Proposal" note="Generate the client-facing proposal PDF."/>}
+      </div>
+    </div>
+  );
+}
+
+function BidComingSoon({label,note}){
+  return(
+    <div style={{...cardS,textAlign:"center",padding:"48px 24px",color:T.muted}}>
+      <div style={{fontSize:34,marginBottom:10}}>🚧</div>
+      <div style={{fontSize:15,fontWeight:800,color:T.sub,marginBottom:6}}>{label} — coming next</div>
+      <div style={{fontSize:12.5,maxWidth:420,margin:"0 auto",lineHeight:1.6}}>{note}</div>
+    </div>
+  );
+}
+
+/* ── Overview ────────────────────────────────────────────────── */
+function BidOverviewTab({bid,onSave}){
+  const [f,setF]=useState({
+    name:bid.name||"",project_number:bid.project_number||"",description:bid.description||"",
+    estimator:bid.estimator||"",office:bid.office||"Atlantic Industrial Mechanical & Environmental",
+    measurement_system:bid.measurement_system||"US",square_footage:bid.square_footage||"",
+    due_date:bid.due_date||"",due_time:bid.due_time||"",pricing_locked:!!bid.pricing_locked,
+    division:bid.division||"Mechanical",
+    requester_company:bid.requester_company||"",contact_name:bid.contact_name||"",
+    contact_phone:bid.contact_phone||"",requester_email:bid.requester_email||"",
+    contact_address:bid.contact_address||"",project_address:bid.project_address||"",
+    total_sales:bid.total_sales||"",
+  });
+  const [dirty,setDirty]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>{setF(s=>({...s,[k]:v}));setDirty(true);};
+
+  async function save(){
+    setSaving(true);
+    await onSave({...f,
+      square_footage:f.square_footage===""?null:parseFloat(f.square_footage),
+      total_sales:parseFloat(f.total_sales)||0,
+      due_date:f.due_date||null});
+    setDirty(false);setSaving(false);
+  }
+
+  const card={...cardS,padding:20,marginBottom:16};
+  const half={display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:14};
+  const third={display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16,marginBottom:14};
+
+  return(
+    <>
+      <div style={card}>
+        <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:16}}>Estimate Overview</div>
+
+        <div style={half}>
+          <div><label style={lbl}>Estimate Name</label>
+            <input value={f.name} onChange={e=>set("name",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Project Number</label>
+            <input value={f.project_number} onChange={e=>set("project_number",e.target.value)} style={inp}/></div>
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Project Description</label>
+          <textarea value={f.description} onChange={e=>set("description",e.target.value)} rows={3}
+            style={{...inp,resize:"vertical",lineHeight:1.6}}/>
+        </div>
+
+        <div style={half}>
+          <div><label style={lbl}>Estimator</label>
+            <input value={f.estimator} onChange={e=>set("estimator",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Office</label>
+            <input value={f.office} onChange={e=>set("office",e.target.value)} style={inp}/></div>
+        </div>
+
+        <div style={third}>
+          <div><label style={lbl}>Division</label>
+            <select value={f.division} onChange={e=>set("division",e.target.value)} style={inp}>
+              {["Mechanical","Pipeline","Structural","Manufacturing"].map(d=><option key={d} value={d}>{d}</option>)}
+            </select></div>
+          <div><label style={lbl}>Measurement System</label>
+            <select value={f.measurement_system} onChange={e=>set("measurement_system",e.target.value)} style={inp}>
+              <option value="US">US</option><option value="Metric">Metric</option>
+            </select></div>
+          <div><label style={lbl}>Square Footage</label>
+            <input type="number" value={f.square_footage} onChange={e=>set("square_footage",e.target.value)} style={inp}/></div>
+        </div>
+
+        <div style={third}>
+          <div><label style={lbl}>Due Date</label>
+            <input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Due Time</label>
+            <input type="time" value={f.due_time} onChange={e=>set("due_time",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Total Sales ($)</label>
+            <input type="number" step="0.01" value={f.total_sales} onChange={e=>set("total_sales",e.target.value)} style={inp}/></div>
+        </div>
+
+        <div style={{marginBottom:4}}>
+          <label style={lbl}>Estimate Pricing</label>
+          <select value={f.pricing_locked?"locked":"unlocked"} onChange={e=>set("pricing_locked",e.target.value==="locked")}
+            style={{...inp,color:f.pricing_locked?T.yellow:T.green}}>
+            <option value="unlocked">🔓 Unlocked</option>
+            <option value="locked">🔒 Locked</option>
+          </select>
+        </div>
+      </div>
+
+      <div style={card}>
+        <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:16}}>Customer Information</div>
+
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Customer Company</label>
+          <input value={f.requester_company} onChange={e=>set("requester_company",e.target.value)} style={inp}/>
+        </div>
+
+        <div style={third}>
+          <div><label style={lbl}>Primary Contact</label>
+            <input value={f.contact_name} onChange={e=>set("contact_name",e.target.value)} placeholder="Name" style={inp}/></div>
+          <div><label style={lbl}>Phone</label>
+            <input value={f.contact_phone} onChange={e=>set("contact_phone",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Email</label>
+            <input type="email" value={f.requester_email} onChange={e=>set("requester_email",e.target.value)} style={inp}/></div>
+        </div>
+
+        <div style={half}>
+          <div><label style={lbl}>Contact Address</label>
+            <input value={f.contact_address} onChange={e=>set("contact_address",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Project Address</label>
+            <input value={f.project_address} onChange={e=>set("project_address",e.target.value)} style={inp}/></div>
+        </div>
+      </div>
+
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={save} disabled={!dirty||saving}
+          style={{...primBtn,width:"auto",padding:"11px 24px",fontSize:13.5,borderRadius:10,
+            background:dirty?T.green:T.border,color:dirty?"#000":T.muted,opacity:saving?0.6:1}}>
+          {saving?"Saving…":"Save Changes"}
+        </button>
+        {dirty&&<span style={{fontSize:12,color:T.orange,fontWeight:700}}>● Unsaved changes</span>}
+      </div>
+    </>
+  );
+}
+
+/* ── Documents ───────────────────────────────────────────────── */
+function BidDocumentsTab({bid,user,onErr}){
+  const [docs,setDocs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [busy,setBusy]=useState("");
+  const drawingRef=useRef(null);
+  const docRef=useRef(null);
+
+  async function load(){
+    setLoading(true);
+    try{ setDocs(await API.estimateDocs.forEstimate(bid.id)||[]); }
+    catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[bid.id]);
+
+  async function upload(files,kind){
+    if(!files||!files.length)return;
+    const bucket=kind==="drawing"?"drawings":"documents";
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      setBusy(`Uploading ${i+1} of ${files.length} — ${file.name}`);
+      try{
+        const clean=file.name.replace(/[^A-Za-z0-9._-]/g,"_");
+        const path=`estimates/${bid.id}/${kind}/${Date.now()}-${clean}`;
+        await storageUpload(bucket,path,file,file.type||undefined);
+        await API.estimateDocs.create({
+          estimate_id:bid.id,kind,title:file.name,storage_path:path,bucket,
+          mime_type:file.type||null,file_size:file.size,uploaded_by:user.name,
+        });
+      }catch(e){ onErr&&onErr(`${file.name}: ${e.message}`); }
+    }
+    setBusy("");
+    if(drawingRef.current)drawingRef.current.value="";
+    if(docRef.current)docRef.current.value="";
+    await load();
+  }
+
+  async function del(d){
+    if(!window.confirm(`Delete "${d.title}"?`))return;
+    try{
+      await storageRemove(d.bucket||"documents",d.storage_path);
+      await API.estimateDocs.remove(d.id);
+      await load();
+    }catch(e){ onErr&&onErr(e.message); }
+  }
+
+  const fmtSize=(b)=>!b?"":b<1048576?(b/1024).toFixed(0)+" KB":(b/1048576).toFixed(1)+" MB";
+  const drawings=docs.filter(d=>d.kind==="drawing");
+  const others=docs.filter(d=>d.kind!=="drawing");
+
+  const List=({items,empty,icon})=>(
+    items.length===0?(
+      <div style={{padding:"26px 16px",textAlign:"center",color:T.muted,fontSize:12.5}}>{empty}</div>
+    ):items.map(d=>(
+      <div key={d.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderTop:`1px solid ${T.border}`}}>
+        <span style={{fontSize:18,flexShrink:0}}>{icon}</span>
+        <div style={{flex:1,minWidth:0}}>
+          <a href={storagePublicUrl(d.bucket||"documents",d.storage_path)} target="_blank" rel="noreferrer"
+            style={{fontSize:13,fontWeight:600,color:"#60A5FA",textDecoration:"none",wordBreak:"break-word"}}>{d.title}</a>
+          <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+            {[fmtSize(d.file_size),d.uploaded_by,d.created_at?new Date(d.created_at).toLocaleDateString():null].filter(Boolean).join("  ·  ")}
+          </div>
+        </div>
+        <button onClick={()=>del(d)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:16,flexShrink:0}}>×</button>
+      </div>
+    ))
+  );
+
+  return(
+    <>
+      <input ref={drawingRef} type="file" accept="application/pdf" multiple style={{display:"none"}}
+        onChange={e=>upload(Array.from(e.target.files||[]),"drawing")}/>
+      <input ref={docRef} type="file" multiple style={{display:"none"}}
+        onChange={e=>upload(Array.from(e.target.files||[]),"document")}/>
+
+      <div style={{display:"flex",gap:12,marginBottom:8}}>
+        <button onClick={()=>drawingRef.current&&drawingRef.current.click()} disabled={!!busy}
+          style={{...primBtn,width:"auto",flex:1,padding:"14px",fontSize:13.5,borderRadius:10,
+            background:"#1f3864",color:"#fff",opacity:busy?0.6:1}}>
+          📐 Upload Drawings
+        </button>
+        <button onClick={()=>docRef.current&&docRef.current.click()} disabled={!!busy}
+          style={{...primBtn,width:"auto",flex:1,padding:"14px",fontSize:13.5,borderRadius:10,
+            background:T.surface,color:T.text,border:`1px solid ${T.border}`,opacity:busy?0.6:1}}>
+          📄 Upload Documents
+        </button>
+      </div>
+      {busy&&<div style={{fontSize:12,color:T.orange,textAlign:"center",marginBottom:10}}>{busy}</div>}
+      <div style={{fontSize:11,color:T.muted,marginBottom:18}}>
+        Drawings must be PDF — they feed the Takeoff tab. Documents accept any file type (specs, scopes, RFQs, addenda).
+      </div>
+
+      {loading?<div style={{textAlign:"center",color:T.muted,padding:30,fontSize:13}}>Loading…</div>:(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          <div style={{...cardS,padding:0,overflow:"hidden"}}>
+            <div style={{padding:"12px 14px",fontSize:12,fontWeight:800,color:T.text,letterSpacing:"0.4px",textTransform:"uppercase"}}>
+              📐 Drawings ({drawings.length})
+            </div>
+            <List items={drawings} empty="No drawings uploaded yet." icon="📐"/>
+          </div>
+          <div style={{...cardS,padding:0,overflow:"hidden"}}>
+            <div style={{padding:"12px 14px",fontSize:12,fontWeight:800,color:T.text,letterSpacing:"0.4px",textTransform:"uppercase"}}>
+              📄 Documents ({others.length})
+            </div>
+            <List items={others} empty="No documents uploaded yet." icon="📄"/>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
