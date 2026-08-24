@@ -236,6 +236,12 @@ const API={
     create:(d)=>sb("/cost_catalog",{method:"POST",body:d,prefer:"return=representation"}),
     remove:(id)=>sb(`/cost_catalog?id=eq.${id}`,{method:"PATCH",body:{active:false}}),
   },
+  estimateLines:{
+    forEstimate:(eid)=>sb(`/estimate_lines?estimate_id=eq.${eid}&select=*&order=category.asc,sort_order.asc`),
+    create:(d)=>sb("/estimate_lines",{method:"POST",body:d,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/estimate_lines?id=eq.${id}`,{method:"PATCH",body:d}),
+    remove:(id)=>sb(`/estimate_lines?id=eq.${id}`,{method:"DELETE"}),
+  },
   takeoff:{
     items:(eid)=>sb(`/takeoff_items?estimate_id=eq.${eid}&select=*&order=category.asc,sort_order.asc`),
     addItem:(d)=>sb("/takeoff_items",{method:"POST",body:d,prefer:"return=representation"}),
@@ -4691,7 +4697,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
         {tab==="overview"  &&<BidOverviewTab bid={bid} onSave={patch}/>}
         {tab==="documents" &&<BidDocumentsTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="takeoff"   &&<TakeoffTab bid={bid} user={user} onErr={setErr}/>}
-        {tab==="estimating"&&<BidComingSoon label="Estimating" note="Build the bid from labor, equipment and material line items."/>}
+        {tab==="estimating"&&<EstimatingTab bid={bid} user={user} onErr={setErr} onTotal={(t)=>{setBid(b=>({...b,total_sales:t}));onChanged&&onChanged();}}/>}
         {tab==="proposal"  &&<BidComingSoon label="Proposal" note="Generate the client-facing proposal PDF."/>}
       </div>
     </div>
@@ -4829,6 +4835,386 @@ function BidOverviewTab({bid,onSave}){
         {dirty&&<span style={{fontSize:12,color:T.orange,fontWeight:700}}>● Unsaved changes</span>}
       </div>
     </>
+  );
+}
+
+/* ── ESTIMATING: priced line items ───────────────────────────── */
+const EST_CATEGORIES=["Materials","Equipment","Labor","Subcontractor","Paint","Detailing","Other"];
+const MARKUP_KEY={Materials:"markup_materials",Equipment:"markup_equipment",Labor:"markup_labor",Subcontractor:"markup_sub"};
+
+function EstimatingTab({bid,user,onErr,onTotal}){
+  const [lines,setLines]=useState([]);
+  const [items,setItems]=useState([]);
+  const [marks,setMarks]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [collapsed,setCollapsed]=useState({});
+  const [adding,setAdding]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [rates,setRates]=useState({
+    labor_cost_rate:bid.labor_cost_rate??102,
+    labor_sales_rate:bid.labor_sales_rate??102,
+    markup_materials:bid.markup_materials??12,
+    markup_equipment:bid.markup_equipment??12,
+    markup_labor:bid.markup_labor??0,
+    markup_sub:bid.markup_sub??10,
+    overhead_pct:bid.overhead_pct??5,
+    discount_pct:bid.discount_pct??0,
+  });
+  const [ratesDirty,setRatesDirty]=useState(false);
+
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const num=(n,d=2)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+
+  async function load(){
+    setLoading(true);
+    try{
+      const [ll,ii,mm]=await Promise.all([
+        API.estimateLines.forEstimate(bid.id),
+        API.takeoff.items(bid.id),
+        API.takeoff.marks(bid.id),
+      ]);
+      setLines(ll||[]);setItems(ii||[]);setMarks(mm||[]);
+    }catch(e){onErr&&onErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[bid.id]);
+
+  /* quantity for a takeoff-linked line comes from the marks, live */
+  const takeoffQty=(itemId)=>marks.filter(m=>m.item_id===itemId).reduce((s,m)=>s+(Number(m.value)||0),0);
+  const qtyOf=(l)=>l.takeoff_item_id?takeoffQty(l.takeoff_item_id):(Number(l.quantity)||0);
+
+  /* pull in any takeoff item that doesn't have a priced line yet */
+  const unsynced=items.filter(i=>!lines.some(l=>l.takeoff_item_id===i.id));
+  async function syncTakeoff(){
+    if(!unsynced.length)return;
+    setSaving(true);
+    try{
+      for(const [n,i] of unsynced.entries()){
+        await API.estimateLines.create({
+          estimate_id:bid.id,takeoff_item_id:i.id,category:i.category||"Materials",
+          name:i.name,color:i.color,unit:i.unit,unit_cost:i.unit_cost||0,
+          sort_order:lines.length+n,
+        });
+      }
+      await load();
+    }catch(e){onErr&&onErr(e.message);}
+    setSaving(false);
+  }
+
+  async function patchLine(l,body){
+    setLines(ls=>ls.map(x=>x.id===l.id?{...x,...body}:x));
+    try{ await API.estimateLines.update(l.id,body); }
+    catch(e){ onErr&&onErr(e.message); load(); }
+  }
+  async function delLine(l){
+    if(!window.confirm(`Remove "${l.name}" from the estimate?`))return;
+    setLines(ls=>ls.filter(x=>x.id!==l.id));
+    try{ await API.estimateLines.remove(l.id); }catch(e){onErr&&onErr(e.message);load();}
+  }
+
+  /* ── maths ── */
+  const calc=(l)=>{
+    const qty=qtyOf(l);
+    const waste=1+(Number(l.waste_pct)||0)/100;
+    const matCost=qty*(Number(l.unit_cost)||0)*waste;
+    const hrs=qty*(Number(l.labor_hours)||0);
+    const rate=l.labor_rate!=null&&l.labor_rate!==""?Number(l.labor_rate):Number(rates.labor_cost_rate)||0;
+    const laborCost=hrs*rate;
+    return {qty,matCost,hrs,rate,laborCost,total:matCost+laborCost};
+  };
+
+  const byCat={};
+  lines.forEach(l=>{(byCat[l.category||"Other"] ||= []).push(l);});
+
+  const catTotals={};
+  Object.entries(byCat).forEach(([cat,ls])=>{
+    const t={cost:0,hrs:0};
+    ls.forEach(l=>{const c=calc(l);t.cost+=c.total;t.hrs+=c.hrs;});
+    const mk=Number(rates[MARKUP_KEY[cat]]??0)||0;
+    t.markup=mk; t.marked=t.cost*(1+mk/100);
+    catTotals[cat]=t;
+  });
+
+  const directCost=Object.values(catTotals).reduce((s,t)=>s+t.cost,0);
+  const afterMarkup=Object.values(catTotals).reduce((s,t)=>s+t.marked,0);
+  const totalHrs=Object.values(catTotals).reduce((s,t)=>s+t.hrs,0);
+  const overhead=afterMarkup*((Number(rates.overhead_pct)||0)/100);
+  const discount=(afterMarkup+overhead)*((Number(rates.discount_pct)||0)/100);
+  const estimateTotal=afterMarkup+overhead-discount;
+
+  async function saveRates(){
+    setSaving(true);
+    try{ await API.estimates.update(bid.id,{...rates,updated_at:new Date().toISOString()}); setRatesDirty(false); }
+    catch(e){onErr&&onErr(e.message);}
+    setSaving(false);
+  }
+  async function pushTotalToBid(){
+    setSaving(true);
+    try{
+      await API.estimates.update(bid.id,{total_sales:estimateTotal,updated_at:new Date().toISOString()});
+      onTotal&&onTotal(estimateTotal);
+    }catch(e){onErr&&onErr(e.message);}
+    setSaving(false);
+  }
+
+  const cellInput=(value,onCommit,opts={})=>(
+    <input defaultValue={value??""} type={opts.type||"number"} step={opts.step||"0.01"}
+      onBlur={e=>{const v=e.target.value;if(String(value??"")!==v)onCommit(v);}}
+      onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+      style={{width:"100%",background:"transparent",border:"1px solid transparent",borderRadius:6,
+        color:T.text,fontSize:12,padding:"4px 6px",fontFamily:"inherit",textAlign:opts.align||"right",outline:"none"}}
+      onFocus={e=>{e.target.style.border=`1px solid ${T.orange}`;e.target.style.background=T.surface;}}
+      onBlurCapture={e=>{e.target.style.border="1px solid transparent";e.target.style.background="transparent";}}/>
+  );
+
+  const th=(label,align)=>(
+    <th style={{textAlign:align||"left",padding:"9px 10px",fontSize:10.5,fontWeight:700,color:T.muted,
+      textTransform:"uppercase",letterSpacing:"0.4px",borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{label}</th>
+  );
+  const td={padding:"6px 10px",fontSize:12,color:T.text,borderBottom:`1px solid ${T.border}`,verticalAlign:"middle"};
+
+  if(loading)return <div style={{padding:40,textAlign:"center"}}><Spinner/></div>;
+
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"1fr 380px",gap:16,alignItems:"start"}}>
+      {/* Line items */}
+      <div style={{...cardS,padding:0,overflow:"hidden"}}>
+        <div style={{padding:"11px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:10}}>
+          <div style={{fontSize:13,fontWeight:800,color:T.text,flex:1}}>Cost Items ({lines.length})</div>
+          {unsynced.length>0&&(
+            <button onClick={syncTakeoff} disabled={saving}
+              style={{...primBtn,width:"auto",padding:"7px 12px",fontSize:11.5,borderRadius:8,background:T.green,color:"#000"}}>
+              ↓ Pull {unsynced.length} from Takeoff
+            </button>
+          )}
+          <button onClick={()=>setAdding(true)}
+            style={{...primBtn,width:"auto",padding:"7px 12px",fontSize:11.5,borderRadius:8,background:T.orange,color:"#000"}}>+ Add Item</button>
+        </div>
+
+        {lines.length===0?(
+          <div style={{padding:"44px 20px",textAlign:"center",color:T.muted}}>
+            <div style={{fontSize:30,marginBottom:10}}>🧮</div>
+            <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>No cost items yet</div>
+            <div style={{fontSize:12}}>Pull your takeoff quantities in, or add items by hand.</div>
+          </div>
+        ):(
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",minWidth:900}}>
+              <thead><tr style={{background:T.surface}}>
+                {th("Cost Item")}{th("Description")}{th("Qty","right")}{th("UoM","center")}
+                {th("Unit Cost","right")}{th("Material Cost","right")}{th("Hrs/Unit","right")}
+                {th("Labor Rate","right")}{th("Labor Cost","right")}{th("Total","right")}{th("")}
+              </tr></thead>
+              <tbody>
+                {Object.keys(byCat).sort().map(cat=>{
+                  const t=catTotals[cat];
+                  return(
+                    <React.Fragment key={cat}>
+                      <tr onClick={()=>setCollapsed(c=>({...c,[cat]:!c[cat]}))}
+                        style={{background:T.surface,cursor:"pointer"}}>
+                        <td style={{...td,fontWeight:800,fontSize:12}} colSpan={5}>
+                          <span style={{fontSize:9,marginRight:6}}>{collapsed[cat]?"▶":"▼"}</span>{cat} ({byCat[cat].length})
+                        </td>
+                        <td style={{...td,textAlign:"right",fontWeight:700,color:T.sub}}>—</td>
+                        <td style={{...td}}/>
+                        <td style={{...td}}/>
+                        <td style={{...td,textAlign:"right",fontWeight:700,color:T.sub}}>{num(t.hrs,1)} hrs</td>
+                        <td style={{...td,textAlign:"right",fontWeight:800,color:T.green}}>{money(t.cost)}</td>
+                        <td style={{...td}}/>
+                      </tr>
+                      {!collapsed[cat]&&byCat[cat].map(l=>{
+                        const c=calc(l);
+                        return(
+                          <tr key={l.id}>
+                            <td style={{...td,minWidth:190}}>
+                              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                                <span style={{width:9,height:9,borderRadius:"50%",background:l.color||"#60A5FA",flexShrink:0}}/>
+                                <span style={{fontWeight:600}}>{l.name}</span>
+                                {l.takeoff_item_id&&<span title="Quantity comes from the takeoff"
+                                  style={{fontSize:9,background:T.blueLow,color:T.blue,borderRadius:4,padding:"1px 5px",fontWeight:800}}>TO</span>}
+                              </div>
+                            </td>
+                            <td style={{...td,minWidth:150}}>
+                              {cellInput(l.description,v=>patchLine(l,{description:v}),{type:"text",align:"left"})}
+                            </td>
+                            <td style={{...td,textAlign:"right",minWidth:80}}>
+                              {l.takeoff_item_id
+                                ?<span style={{color:T.blue,fontWeight:700}}>{num(c.qty,1)}</span>
+                                :cellInput(l.quantity,v=>patchLine(l,{quantity:parseFloat(v)||0}))}
+                            </td>
+                            <td style={{...td,textAlign:"center",color:T.muted,fontSize:11}}>{l.unit}</td>
+                            <td style={{...td,minWidth:90}}>{cellInput(l.unit_cost,v=>patchLine(l,{unit_cost:parseFloat(v)||0}))}</td>
+                            <td style={{...td,textAlign:"right",color:T.sub}}>{money(c.matCost)}</td>
+                            <td style={{...td,minWidth:80}}>{cellInput(l.labor_hours,v=>patchLine(l,{labor_hours:parseFloat(v)||0}))}</td>
+                            <td style={{...td,minWidth:90}}>
+                              {cellInput(l.labor_rate,v=>patchLine(l,{labor_rate:v===""?null:parseFloat(v)||0}))}
+                            </td>
+                            <td style={{...td,textAlign:"right",color:T.sub}}>{money(c.laborCost)}</td>
+                            <td style={{...td,textAlign:"right",fontWeight:700,color:T.green}}>{money(c.total)}</td>
+                            <td style={{...td,textAlign:"center"}}>
+                              <button onClick={()=>delLine(l)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:14}}>×</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+              <tfoot><tr style={{background:T.surface}}>
+                <td style={{...td,fontWeight:800}} colSpan={8}>Direct Cost</td>
+                <td style={{...td,textAlign:"right",fontWeight:700,color:T.sub}}>{num(totalHrs,1)} hrs</td>
+                <td style={{...td,textAlign:"right",fontWeight:900,color:T.green,fontSize:13}}>{money(directCost)}</td>
+                <td style={td}/>
+              </tr></tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Summary */}
+      <div style={{...cardS,padding:16,position:"sticky",top:12}}>
+        <div style={{fontSize:14,fontWeight:800,color:T.text,marginBottom:14}}>Summary</div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          <div><label style={{...lbl,fontSize:10}}>Labor Cost $/hr</label>
+            <input type="number" value={rates.labor_cost_rate}
+              onChange={e=>{setRates(r=>({...r,labor_cost_rate:e.target.value}));setRatesDirty(true);}}
+              style={{...inp,padding:"7px 9px",fontSize:12}}/></div>
+          <div><label style={{...lbl,fontSize:10}}>Labor Sales $/hr</label>
+            <input type="number" value={rates.labor_sales_rate}
+              onChange={e=>{setRates(r=>({...r,labor_sales_rate:e.target.value}));setRatesDirty(true);}}
+              style={{...inp,padding:"7px 9px",fontSize:12}}/></div>
+        </div>
+
+        <table style={{width:"100%",borderCollapse:"collapse",marginBottom:14}}>
+          <thead><tr>
+            <th style={{textAlign:"left",fontSize:10,color:T.muted,padding:"6px 4px",textTransform:"uppercase"}}>Type</th>
+            <th style={{textAlign:"right",fontSize:10,color:T.muted,padding:"6px 4px",textTransform:"uppercase"}}>Cost</th>
+            <th style={{textAlign:"right",fontSize:10,color:T.muted,padding:"6px 4px",textTransform:"uppercase"}}>Markup</th>
+            <th style={{textAlign:"right",fontSize:10,color:T.muted,padding:"6px 4px",textTransform:"uppercase"}}>Total</th>
+          </tr></thead>
+          <tbody>
+            {Object.keys(catTotals).sort().map(cat=>{
+              const t=catTotals[cat], key=MARKUP_KEY[cat];
+              return(
+                <tr key={cat} style={{borderTop:`1px solid ${T.border}`}}>
+                  <td style={{padding:"7px 4px",fontSize:12,color:T.text}}>{cat}</td>
+                  <td style={{padding:"7px 4px",fontSize:12,textAlign:"right",color:T.sub}}>{money(t.cost)}</td>
+                  <td style={{padding:"7px 4px",textAlign:"right"}}>
+                    {key?(
+                      <input type="number" value={rates[key]}
+                        onChange={e=>{setRates(r=>({...r,[key]:e.target.value}));setRatesDirty(true);}}
+                        style={{width:52,background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,
+                          color:T.text,fontSize:11,padding:"3px 5px",textAlign:"right",fontFamily:"inherit"}}/>
+                    ):<span style={{fontSize:11,color:T.muted}}>—</span>}
+                  </td>
+                  <td style={{padding:"7px 4px",fontSize:12,textAlign:"right",fontWeight:700,color:T.text}}>{money(t.marked)}</td>
+                </tr>
+              );
+            })}
+            <tr style={{borderTop:`1.5px solid ${T.border}`}}>
+              <td style={{padding:"8px 4px",fontSize:12,fontWeight:800,color:T.text}}>Subtotal</td>
+              <td style={{padding:"8px 4px",fontSize:12,textAlign:"right",color:T.sub}}>{money(directCost)}</td>
+              <td/>
+              <td style={{padding:"8px 4px",fontSize:12.5,textAlign:"right",fontWeight:800,color:T.text}}>{money(afterMarkup)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:8}}>Pre-Tax Markups</div>
+        {[["Overhead","overhead_pct",overhead],["Discount","discount_pct",-discount]].map(([label,key,amt])=>(
+          <div key={key} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:`1px solid ${T.border}`}}>
+            <span style={{flex:1,fontSize:12,color:T.text}}>{label}</span>
+            <input type="number" value={rates[key]}
+              onChange={e=>{setRates(r=>({...r,[key]:e.target.value}));setRatesDirty(true);}}
+              style={{width:52,background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,color:T.text,
+                fontSize:11,padding:"3px 5px",textAlign:"right",fontFamily:"inherit"}}/>
+            <span style={{fontSize:11,color:T.muted}}>%</span>
+            <span style={{width:96,textAlign:"right",fontSize:12,color:amt<0?T.red:T.sub}}>{money(amt)}</span>
+          </div>
+        ))}
+
+        <div style={{border:`1px solid ${T.green}55`,background:T.greenLow,borderRadius:12,padding:"14px 16px",textAlign:"center",marginTop:16}}>
+          <div style={{fontSize:11,color:T.sub,textTransform:"uppercase",letterSpacing:"1px",marginBottom:4}}>Estimate Total</div>
+          <div style={{fontSize:24,fontWeight:900,color:T.green}}>{money(estimateTotal)}</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:3}}>{num(totalHrs,1)} labor hrs</div>
+        </div>
+
+        <div style={{display:"flex",gap:8,marginTop:12}}>
+          {ratesDirty&&<button onClick={saveRates} disabled={saving}
+            style={{...primBtn,width:"auto",flex:1,padding:"10px",fontSize:12,borderRadius:9,background:T.green,color:"#000"}}>Save Rates</button>}
+          <button onClick={pushTotalToBid} disabled={saving}
+            style={{...primBtn,width:"auto",flex:1,padding:"10px",fontSize:12,borderRadius:9,background:"#1f3864",color:"#fff"}}>
+            Push Total to Bid
+          </button>
+        </div>
+      </div>
+
+      {adding&&<EstimateLineModal estimateId={bid.id} count={lines.length}
+        onClose={()=>setAdding(false)} onSaved={()=>{setAdding(false);load();}} onErr={onErr}/>}
+    </div>
+  );
+}
+
+function EstimateLineModal({estimateId,count,onClose,onSaved,onErr}){
+  const [f,setF]=useState({name:"",description:"",category:"Materials",unit:"EA",
+    quantity:"",unit_cost:"",labor_hours:"",budget_code:""});
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+
+  async function save(){
+    if(!f.name.trim()){onErr&&onErr("Name is required.");return;}
+    setSaving(true);
+    try{
+      await API.estimateLines.create({estimate_id:estimateId,name:f.name.trim(),description:f.description||null,
+        category:f.category,unit:f.unit,quantity:parseFloat(f.quantity)||0,
+        unit_cost:parseFloat(f.unit_cost)||0,labor_hours:parseFloat(f.labor_hours)||0,
+        budget_code:f.budget_code||null,sort_order:count});
+      onSaved();
+    }catch(e){onErr&&onErr(e.message);}
+    setSaving(false);
+  }
+
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:24,width:"100%",maxWidth:520,border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:16,fontWeight:900,color:T.text,marginBottom:16}}>Add Cost Item</div>
+
+        <label style={lbl}>Name *</label>
+        <input value={f.name} onChange={e=>set("name",e.target.value)} placeholder="e.g. Crane Rental with Operator" style={{...inp,marginBottom:12}}/>
+
+        <label style={lbl}>Description</label>
+        <input value={f.description} onChange={e=>set("description",e.target.value)} style={{...inp,marginBottom:12}}/>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
+          <div><label style={lbl}>Category</label>
+            <select value={f.category} onChange={e=>set("category",e.target.value)} style={inp}>
+              {EST_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+            </select></div>
+          <div><label style={lbl}>Unit</label>
+            <select value={f.unit} onChange={e=>set("unit",e.target.value)} style={inp}>
+              {["EA","LF","SF","HRS","DAY","LS","TON"].map(u=><option key={u} value={u}>{u}</option>)}
+            </select></div>
+          <div><label style={lbl}>Budget Code</label>
+            <input value={f.budget_code} onChange={e=>set("budget_code",e.target.value)} style={inp}/></div>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:18}}>
+          <div><label style={lbl}>Quantity</label>
+            <input type="number" step="0.01" value={f.quantity} onChange={e=>set("quantity",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Unit Cost ($)</label>
+            <input type="number" step="0.01" value={f.unit_cost} onChange={e=>set("unit_cost",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Labor Hrs / Unit</label>
+            <input type="number" step="0.01" value={f.labor_hours} onChange={e=>set("labor_hours",e.target.value)} style={inp}/></div>
+        </div>
+
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={save} disabled={saving} style={{...primBtn,borderRadius:10,opacity:saving?0.6:1}}>{saving?"Adding…":"Add Item"}</button>
+          <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
