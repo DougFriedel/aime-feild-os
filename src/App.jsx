@@ -4890,7 +4890,15 @@ function EstimatingTab({bid,user,onErr,onTotal}){
 
   /* quantity for a takeoff-linked line comes from the marks, live */
   const takeoffQty=(itemId)=>marks.filter(m=>m.item_id===itemId).reduce((s,m)=>s+(Number(m.value)||0),0);
+  const itemById=useMemo(()=>{const m={};items.forEach(i=>m[i.id]=i);return m;},[items]);
   const linked=(l)=>!!l.takeoff_item_id&&!l.use_manual_qty;
+  // Weight follows the takeoff item, so setting it there shows up here without
+  // re-pulling. Falls back to whatever was stored on the line.
+  const weightOf=(l)=>{
+    const it=l.takeoff_item_id?itemById[l.takeoff_item_id]:null;
+    if(it&&it.use_weight&&Number(it.weight_per_unit)>0)return Number(it.weight_per_unit);
+    return Number(l.weight_per_unit)||0;
+  };
   const qtyOf=(l)=>linked(l)?takeoffQty(l.takeoff_item_id):(Number(l.quantity)||0);
 
   /* pull in any takeoff item that doesn't have a priced line yet */
@@ -4927,7 +4935,7 @@ function EstimatingTab({bid,user,onErr,onTotal}){
   const calc=(l)=>{
     const qty=qtyOf(l);
     const waste=1+(Number(l.waste_pct)||0)/100;
-    const wpu=Number(l.weight_per_unit)||0;
+    const wpu=weightOf(l);
     const byWeight=l.pricing_basis==="weight"&&wpu>0;
     // Priced per pound, the quantity becomes weight: 1,936.57 ft × 22 lb/ft
     // at $0.90/lb is the same money as 1,936.57 ft at $19.80/ft.
@@ -5055,9 +5063,9 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                                      style={{fontSize:9,background:T.orangeLow,color:T.orange,borderRadius:4,padding:"1px 5px",fontWeight:800,cursor:"pointer"}}>MANUAL</span>
                                 )}
                               </div>
-                              {Number(l.weight_per_unit)>0&&(
+                              {weightOf(l)>0&&(
                                 <div style={{fontSize:10,color:T.muted,marginLeft:17,marginTop:2}}>
-                                  {l.name} — Weight · {num(l.weight_per_unit,2)} lb/{(l.unit||"ft").toLowerCase()}
+                                  {l.name} — Weight · {num(weightOf(l),2)} lb/{(l.unit||"ft").toLowerCase()}
                                 </div>
                               )}
                             </td>
@@ -5073,22 +5081,37 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                                 </span>
                               ):cellInput(l.quantity,v=>patchLine(l,{quantity:parseFloat(v)||0,use_manual_qty:true}))}
                             </td>
-                            <td style={{...td,textAlign:"center",color:T.muted,fontSize:11}}>{l.unit}</td>
-                            <td style={{...td,minWidth:130}}>
-                              {Number(l.weight_per_unit)>0?(
-                                <div style={{display:"flex",alignItems:"center",gap:4}}>
-                                  <select value={l.pricing_basis||"unit"}
-                                    onChange={e=>patchLine(l,{pricing_basis:e.target.value})}
-                                    style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,
-                                      color:T.sub,fontSize:10,padding:"3px 4px",fontFamily:"inherit",cursor:"pointer"}}>
-                                    <option value="unit">$/{(l.unit||"EA").toLowerCase()}</option>
-                                    <option value="weight">$/lb</option>
-                                  </select>
-                                  {c.byWeight
-                                    ?cellInput(l.price_per_weight,v=>patchLine(l,{price_per_weight:parseFloat(v)||0}))
-                                    :cellInput(l.unit_cost,v=>patchLine(l,{unit_cost:parseFloat(v)||0}))}
+                            <td style={{...td,textAlign:"center",fontSize:11,minWidth:96}}>
+                              {c.weight>0?(
+                                <div style={{display:"inline-flex",border:`1px solid ${T.border}`,borderRadius:7,overflow:"hidden"}}>
+                                  {[["unit",l.unit],["weight","lb"]].map(([basis,label])=>{
+                                    const on=(l.pricing_basis||"unit")===basis;
+                                    return(
+                                      <button key={basis} onClick={()=>patchLine(l,{pricing_basis:basis})}
+                                        title={basis==="weight"?`Total by weight — ${num(c.weight,0)} lb`:`Total by ${l.unit}`}
+                                        style={{background:on?T.orange:"transparent",color:on?"#000":T.sub,
+                                          border:"none",padding:"3px 8px",fontSize:10.5,fontWeight:on?800:600,
+                                          cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
+                                    );
+                                  })}
                                 </div>
-                              ):cellInput(l.unit_cost,v=>patchLine(l,{unit_cost:parseFloat(v)||0}))}
+                              ):<span style={{color:T.muted}}>{l.unit}</span>}
+                              {c.weight>0&&(
+                                <div style={{color:c.byWeight?T.blue:T.muted,marginTop:3,fontWeight:c.byWeight?800:400}}>
+                                  {num(c.weight,0)} lb
+                                </div>
+                              )}
+                            </td>
+                            <td style={{...td,minWidth:110}}>
+                              {c.byWeight
+                                ?cellInput(l.price_per_weight,v=>patchLine(l,{price_per_weight:parseFloat(v)||0}))
+                                :cellInput(l.unit_cost,v=>patchLine(l,{unit_cost:parseFloat(v)||0}))}
+                              {c.weight>0&&(
+                                <div style={{fontSize:9.5,color:T.muted,textAlign:"right",paddingRight:6,marginTop:1}}>
+                                  $/{c.byWeight?"lb":(l.unit||"ea").toLowerCase()}
+                                  {c.byWeight&&<span style={{color:T.sub}}> · {money(c.effUnitCost)}/{(l.unit||"ft").toLowerCase()}</span>}
+                                </div>
+                              )}
                             </td>
                             <td style={{...td,textAlign:"right",color:T.sub}}>
                               {money(c.matCost)}
