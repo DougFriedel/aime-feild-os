@@ -115,6 +115,40 @@ async function storageRemove(bucket,path){
   if(!res.ok&&res.status!==404)throw new Error((await res.text())||`Delete failed (${res.status})`);
 }
 
+// Wider shell on desktop for list and dashboard screens only. maxWidth is a cap,
+// so phones (viewport under 480) are completely unaffected by these values.
+// Data-entry screens stay narrow — a form field stretched across a 27" monitor
+// is worse, not better.
+const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs"]);
+const shellMax=(screen)=>WIDE_SCREENS.has(screen)?1180:480;
+
+/* ── Session ────────────────────────────────────────────────
+   Keeps you signed in across refreshes. Stores only the profile name and a
+   timestamp — never the PIN — and re-reads the profile from the database on
+   restore, so a role change or deactivation takes effect immediately. */
+const SESSION_KEY="aime_session";
+const SESSION_MAX_AGE=1000*60*60*24*7; // 7 days
+
+function saveSession(profile){
+  try{localStorage.setItem(SESSION_KEY,JSON.stringify({name:profile.name,at:Date.now()}));}catch{}
+}
+function clearSession(){
+  try{localStorage.removeItem(SESSION_KEY);}catch{}
+}
+async function restoreSession(){
+  let s;
+  try{s=JSON.parse(localStorage.getItem(SESSION_KEY)||"null");}catch{return null;}
+  if(!s||!s.name)return null;
+  if(Date.now()-(s.at||0)>SESSION_MAX_AGE){clearSession();return null;}
+  try{
+    const rows=await API.userProfiles.getByName(s.name);
+    const p=rows&&rows.length>0?rows[0]:null;
+    if(!p||p.active===false){clearSession();return null;}
+    saveSession(p);            // slide the window forward on each use
+    return p;
+  }catch{ return null; }       // offline: don't wipe the session, just stay logged out this load
+}
+
 const API={
   drawings:{
     forProject:(pid)=>sb(`/drawings?project_id=eq.${pid}&select=*&order=created_at.desc`),
@@ -7243,6 +7277,7 @@ function AppInner(){
   const [publicInspId]           = useState(()=>new URLSearchParams(window.location.search).get("inspect"));
   const [publicTMId]             = useState(()=>new URLSearchParams(window.location.search).get("tmsign"));
   const [user,setUser]           = useState(null);
+  const [restoring,setRestoring] = useState(true);   // checking for a saved session
   const [projects,setProjects]   = useState([]);
   const [screen,setScreen]       = useState("division");
   const [selectedDiv,setSelectedDiv] = useState(null);
@@ -7253,6 +7288,17 @@ function AppInner(){
   const [pendingCount,setPendingCount] = useState(0);
   const [syncMsg,setSyncMsg]     = useState("");
   const [err,setErr]             = useState("");
+
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      const p=await restoreSession();
+      if(cancelled)return;
+      if(p)setUser(p);
+      setRestoring(false);
+    })();
+    return()=>{cancelled=true;};
+  },[]);
 
   if(publicRfiId) return <PublicRFIForm rfiId={publicRfiId}/>;
   if(publicCoId) return <PublicCOForm coId={publicCoId}/>;
@@ -7327,8 +7373,8 @@ function AppInner(){
     setPendingCount(getQueue().length);
   }
 
-  function handleLogin(profile){setUser(profile);}
-  function handleLogout(){setUser(null);setScreen("division");setSelectedDiv(null);setSelectedProject(null);}
+  function handleLogin(profile){saveSession(profile);setUser(profile);}
+  function handleLogout(){clearSession();setUser(null);setScreen("division");setSelectedDiv(null);setSelectedProject(null);}
   function handleDivisionSelect(div){setSelectedDiv(div);setSelectedMfgJob(null);setSelectedMfgPart(null);setScreen("jobs");}
   function handleSelectProject(p){setSelectedProject(p);setScreen("detail");}
 
@@ -7341,10 +7387,15 @@ function AppInner(){
   const canEst=can(user,"estimating");
 
   return(
-    <div style={{maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',system-ui,sans-serif",color:T.text,background:T.bg,minHeight:"100vh"}}>
+    <div style={{maxWidth:shellMax(screen),margin:"0 auto",transition:"max-width 0.15s ease",fontFamily:"'DM Sans',system-ui,sans-serif",color:T.text,background:T.bg,minHeight:"100vh"}}>
       {syncMsg&&<div style={{background:T.green,color:"#000",padding:"10px 16px",fontSize:13,fontWeight:700,textAlign:"center"}}>{syncMsg}</div>}
       {err&&<div style={{background:T.red,color:"#fff",padding:"8px 16px",fontSize:12,cursor:"pointer"}} onClick={()=>setErr("")}>{err} ✕</div>}
-      {!user&&<LoginScreen onLogin={handleLogin}/>}
+      {!user&&restoring&&(
+        <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <Spinner/>
+        </div>
+      )}
+      {!user&&!restoring&&<LoginScreen onLogin={handleLogin}/>}
       {user&&screen==="division"&&(
         <DivisionScreen user={user} projects={projects} onSelect={handleDivisionSelect} onLogout={handleLogout}
           onCrew={()=>setScreen("crewDirectory")} onDash={()=>setScreen("pmDashboard")}
