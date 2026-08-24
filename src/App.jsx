@@ -4893,7 +4893,8 @@ function EstimatingTab({bid,user,onErr,onTotal}){
         await API.estimateLines.create({
           estimate_id:bid.id,takeoff_item_id:i.id,category:i.category||"Materials",
           name:i.name,color:i.color,unit:i.unit,unit_cost:i.unit_cost||0,
-          sort_order:lines.length+n,
+          weight_per_unit:i.use_weight?i.weight_per_unit:null,
+          pricing_basis:"unit",sort_order:lines.length+n,
         });
       }
       await load();
@@ -4916,11 +4917,17 @@ function EstimatingTab({bid,user,onErr,onTotal}){
   const calc=(l)=>{
     const qty=qtyOf(l);
     const waste=1+(Number(l.waste_pct)||0)/100;
-    const matCost=qty*(Number(l.unit_cost)||0)*waste;
+    const wpu=Number(l.weight_per_unit)||0;
+    const byWeight=l.pricing_basis==="weight"&&wpu>0;
+    // Priced per pound, the quantity becomes weight: 1,936.57 ft × 22 lb/ft
+    // at $0.90/lb is the same money as 1,936.57 ft at $19.80/ft.
+    const weight=qty*wpu;
+    const effUnitCost=byWeight?(Number(l.price_per_weight)||0)*wpu:(Number(l.unit_cost)||0);
+    const matCost=qty*effUnitCost*waste;
     const hrs=qty*(Number(l.labor_hours)||0);
     const rate=l.labor_rate!=null&&l.labor_rate!==""?Number(l.labor_rate):Number(rates.labor_cost_rate)||0;
     const laborCost=hrs*rate;
-    return {qty,matCost,hrs,rate,laborCost,total:matCost+laborCost};
+    return {qty,weight,byWeight,effUnitCost,matCost,hrs,rate,laborCost,total:matCost+laborCost};
   };
 
   const byCat={};
@@ -5033,6 +5040,11 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                                 {l.takeoff_item_id&&<span title="Quantity comes from the takeoff"
                                   style={{fontSize:9,background:T.blueLow,color:T.blue,borderRadius:4,padding:"1px 5px",fontWeight:800}}>TO</span>}
                               </div>
+                              {Number(l.weight_per_unit)>0&&(
+                                <div style={{fontSize:10,color:T.muted,marginLeft:17,marginTop:2}}>
+                                  {l.name} — Weight · {num(l.weight_per_unit,2)} lb/{(l.unit||"ft").toLowerCase()}
+                                </div>
+                              )}
                             </td>
                             <td style={{...td,minWidth:150}}>
                               {cellInput(l.description,v=>patchLine(l,{description:v}),{type:"text",align:"left"})}
@@ -5043,8 +5055,28 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                                 :cellInput(l.quantity,v=>patchLine(l,{quantity:parseFloat(v)||0}))}
                             </td>
                             <td style={{...td,textAlign:"center",color:T.muted,fontSize:11}}>{l.unit}</td>
-                            <td style={{...td,minWidth:90}}>{cellInput(l.unit_cost,v=>patchLine(l,{unit_cost:parseFloat(v)||0}))}</td>
-                            <td style={{...td,textAlign:"right",color:T.sub}}>{money(c.matCost)}</td>
+                            <td style={{...td,minWidth:130}}>
+                              {Number(l.weight_per_unit)>0?(
+                                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                                  <select value={l.pricing_basis||"unit"}
+                                    onChange={e=>patchLine(l,{pricing_basis:e.target.value})}
+                                    style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,
+                                      color:T.sub,fontSize:10,padding:"3px 4px",fontFamily:"inherit",cursor:"pointer"}}>
+                                    <option value="unit">$/{(l.unit||"EA").toLowerCase()}</option>
+                                    <option value="weight">$/lb</option>
+                                  </select>
+                                  {c.byWeight
+                                    ?cellInput(l.price_per_weight,v=>patchLine(l,{price_per_weight:parseFloat(v)||0}))
+                                    :cellInput(l.unit_cost,v=>patchLine(l,{unit_cost:parseFloat(v)||0}))}
+                                </div>
+                              ):cellInput(l.unit_cost,v=>patchLine(l,{unit_cost:parseFloat(v)||0}))}
+                            </td>
+                            <td style={{...td,textAlign:"right",color:T.sub}}>
+                              {money(c.matCost)}
+                              {c.byWeight&&<div style={{fontSize:9.5,color:T.blue}}>
+                                {num(c.weight,0)} lb @ {money(l.price_per_weight)}/lb
+                              </div>}
+                            </td>
                             <td style={{...td,minWidth:80}}>{cellInput(l.labor_hours,v=>patchLine(l,{labor_hours:parseFloat(v)||0}))}</td>
                             <td style={{...td,minWidth:90}}>
                               {cellInput(l.labor_rate,v=>patchLine(l,{labor_rate:v===""?null:parseFloat(v)||0}))}
@@ -5330,6 +5362,7 @@ function TakeoffTab({bid,user,onErr}){
   const [draft,setDraft]=useState(null);       // in-progress polyline
   const [q,setQ]=useState("");
   const [adding,setAdding]=useState(false);
+  const [editItem,setEditItem]=useState(null);
   const [collapsed,setCollapsed]=useState({});
 
   const canvasRef=useRef(null), overlayRef=useRef(null), wrapRef=useRef(null);
@@ -5663,9 +5696,16 @@ function TakeoffTab({bid,user,onErr}){
                         textDecoration:it.visible===false?"line-through":"none"}}>{it.name}</div>
                       <div style={{fontSize:11,color:T.muted,marginTop:1}}>
                         {qtyFor(it.id).toFixed(it.unit==="EA"?0:1)} {it.unit}
+                        {it.use_weight&&it.weight_per_unit>0&&(
+                          <span style={{color:T.blue,marginLeft:6}}>
+                            · {(qtyFor(it.id)*Number(it.weight_per_unit)).toLocaleString("en-US",{maximumFractionDigits:0})} lb
+                          </span>
+                        )}
                         {it.visible===false&&<span style={{color:T.yellow,marginLeft:6,fontWeight:700}}>· hidden</span>}
                       </div>
                     </div>
+                    <button onClick={e=>{e.stopPropagation();setEditItem(it);}} title="Edit item"
+                      style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:12,padding:0,flexShrink:0}}>✎</button>
                     <button onClick={e=>{e.stopPropagation();delItem(it);}}
                       style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:14,padding:0,flexShrink:0}}>×</button>
                   </div>
@@ -5771,26 +5811,37 @@ function TakeoffTab({bid,user,onErr}){
           }}/>
       )}
 
-      {adding&&<TakeoffItemModal estimateId={bid.id} existing={items}
-        onClose={()=>setAdding(false)}
-        onSaved={()=>{setAdding(false);loadAll();}} onErr={onErr}/>}
+      {(adding||editItem)&&<TakeoffItemModal estimateId={bid.id} existing={items} item={editItem}
+        onClose={()=>{setAdding(false);setEditItem(null);}}
+        onSaved={()=>{setAdding(false);setEditItem(null);loadAll();}} onErr={onErr}/>}
     </div>
   );
 }
 
-function TakeoffItemModal({estimateId,existing,onClose,onSaved,onErr}){
+function TakeoffItemModal({estimateId,existing,item,onClose,onSaved,onErr}){
   const cats=[...new Set(["Materials","Labor","Equipment",...existing.map(i=>i.category).filter(Boolean)])];
-  const [f,setF]=useState({name:"",category:cats[0]||"Materials",unit:"EA",
-    color:TAKEOFF_COLORS[existing.length%TAKEOFF_COLORS.length],unit_cost:""});
+  const [tab,setTab]=useState("main");
+  const [f,setF]=useState({
+    name:item?.name||"",category:item?.category||cats[0]||"Materials",unit:item?.unit||"EA",
+    color:item?.color||TAKEOFF_COLORS[existing.length%TAKEOFF_COLORS.length],
+    unit_cost:item?.unit_cost??"",
+    use_weight:!!item?.use_weight,
+    weight_per_unit:item?.weight_per_unit??"",
+    weight_unit:item?.weight_unit||"lb / ft",
+  });
   const [saving,setSaving]=useState(false);
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
 
   async function save(){
     if(!f.name.trim()){onErr&&onErr("Name is required.");return;}
     setSaving(true);
+    const body={name:f.name.trim(),category:f.category,unit:f.unit,color:f.color,
+      unit_cost:parseFloat(f.unit_cost)||0,use_weight:!!f.use_weight,
+      weight_per_unit:f.weight_per_unit===""?null:parseFloat(f.weight_per_unit),
+      weight_unit:f.weight_unit};
     try{
-      await API.takeoff.addItem({estimate_id:estimateId,name:f.name.trim(),category:f.category,
-        unit:f.unit,color:f.color,unit_cost:parseFloat(f.unit_cost)||0,sort_order:existing.length});
+      if(item) await API.takeoff.updateItem(item.id,body);
+      else     await API.takeoff.addItem({estimate_id:estimateId,...body,sort_order:existing.length});
       onSaved();
     }catch(e){onErr&&onErr(e.message);}
     setSaving(false);
@@ -5799,8 +5850,53 @@ function TakeoffItemModal({estimateId,existing,onClose,onSaved,onErr}){
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:24,width:"100%",maxWidth:460,border:`1px solid ${T.border}`}}>
-        <div style={{fontSize:16,fontWeight:900,color:T.text,marginBottom:16}}>Add Takeoff Item</div>
+        <div style={{fontSize:16,fontWeight:900,color:T.text,marginBottom:12}}>{item?"Edit Takeoff Item":"Add Takeoff Item"}</div>
 
+        <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,marginBottom:16}}>
+          {[["main","Main Details"],["params","Additional Parameters"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setTab(id)}
+              style={{background:"none",border:"none",borderBottom:tab===id?`2px solid ${T.orange}`:"2px solid transparent",
+                padding:"8px 14px",cursor:"pointer",fontFamily:"inherit",fontSize:12.5,
+                fontWeight:tab===id?800:600,color:tab===id?T.text:T.sub}}>{label}</button>
+          ))}
+        </div>
+
+        {tab==="params"&&(
+          <div>
+            <div style={{fontSize:12,color:T.muted,lineHeight:1.6,marginBottom:16}}>
+              Additional parameters let the estimate price this takeoff more than one way.
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+              <button onClick={()=>set("use_weight",!f.use_weight)}
+                style={{width:42,height:23,borderRadius:12,border:"none",cursor:"pointer",padding:0,
+                  background:f.use_weight?T.blue:T.border,position:"relative",flexShrink:0}}>
+                <span style={{position:"absolute",top:3,left:f.use_weight?22:3,width:17,height:17,
+                  borderRadius:"50%",background:"#fff",transition:"left 0.15s"}}/>
+              </button>
+              <span style={{fontSize:13.5,fontWeight:700,color:T.text}}>Weight</span>
+            </div>
+            {f.use_weight&&(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <div><label style={lbl}>Weight</label>
+                  <input type="number" step="0.01" value={f.weight_per_unit}
+                    onChange={e=>set("weight_per_unit",e.target.value)} placeholder="22" style={inp}/></div>
+                <div><label style={lbl}>Unit</label>
+                  <select value={f.weight_unit} onChange={e=>set("weight_unit",e.target.value)} style={inp}>
+                    {["lb / ft","lb / ea","lb / sf","ton / ft"].map(u=><option key={u} value={u}>{u}</option>)}
+                  </select></div>
+                <div style={{gridColumn:"1 / -1",fontSize:11.5,color:T.muted,lineHeight:1.6}}>
+                  Take off in {f.unit}. On the Estimating tab you can then price per {f.unit.toLowerCase()} or per pound.
+                </div>
+              </div>
+            )}
+            <div style={{display:"flex",gap:10,marginTop:20}}>
+              <button onClick={save} disabled={saving} style={{...primBtn,borderRadius:10,opacity:saving?0.6:1}}>{saving?"Saving…":"Save"}</button>
+              <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {tab==="main"&&<>
         <label style={lbl}>Name *</label>
         <input value={f.name} onChange={e=>set("name",e.target.value)} placeholder='e.g. 6" SCH 40 Pipe' style={{...inp,marginBottom:12}}/>
 
@@ -5828,9 +5924,10 @@ function TakeoffItemModal({estimateId,existing,onClose,onSaved,onErr}){
         </div>
 
         <div style={{display:"flex",gap:10}}>
-          <button onClick={save} disabled={saving} style={{...primBtn,borderRadius:10,opacity:saving?0.6:1}}>{saving?"Adding…":"Add Item"}</button>
+          <button onClick={save} disabled={saving} style={{...primBtn,borderRadius:10,opacity:saving?0.6:1}}>{saving?"Saving…":(item?"Save":"Add Item")}</button>
           <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
         </div>
+        </>}
       </div>
     </div>
   );
