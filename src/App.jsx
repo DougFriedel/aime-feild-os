@@ -4890,7 +4890,8 @@ function EstimatingTab({bid,user,onErr,onTotal}){
 
   /* quantity for a takeoff-linked line comes from the marks, live */
   const takeoffQty=(itemId)=>marks.filter(m=>m.item_id===itemId).reduce((s,m)=>s+(Number(m.value)||0),0);
-  const qtyOf=(l)=>l.takeoff_item_id?takeoffQty(l.takeoff_item_id):(Number(l.quantity)||0);
+  const linked=(l)=>!!l.takeoff_item_id&&!l.use_manual_qty;
+  const qtyOf=(l)=>linked(l)?takeoffQty(l.takeoff_item_id):(Number(l.quantity)||0);
 
   /* pull in any takeoff item that doesn't have a priced line yet */
   const unsynced=items.filter(i=>!lines.some(l=>l.takeoff_item_id===i.id));
@@ -5046,8 +5047,13 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                               <div style={{display:"flex",alignItems:"center",gap:8}}>
                                 <span style={{width:9,height:9,borderRadius:"50%",background:l.color||"#60A5FA",flexShrink:0}}/>
                                 <span style={{fontWeight:600}}>{l.name}</span>
-                                {l.takeoff_item_id&&<span title="Quantity comes from the takeoff"
-                                  style={{fontSize:9,background:T.blueLow,color:T.blue,borderRadius:4,padding:"1px 5px",fontWeight:800}}>TO</span>}
+                                {l.takeoff_item_id&&(linked(l)
+                                  ?<span title="Quantity comes from the takeoff"
+                                     style={{fontSize:9,background:T.blueLow,color:T.blue,borderRadius:4,padding:"1px 5px",fontWeight:800}}>TO</span>
+                                  :<span onClick={()=>patchLine(l,{use_manual_qty:false})}
+                                     title="Manual quantity — click to go back to the takeoff"
+                                     style={{fontSize:9,background:T.orangeLow,color:T.orange,borderRadius:4,padding:"1px 5px",fontWeight:800,cursor:"pointer"}}>MANUAL</span>
+                                )}
                               </div>
                               {Number(l.weight_per_unit)>0&&(
                                 <div style={{fontSize:10,color:T.muted,marginLeft:17,marginTop:2}}>
@@ -5058,10 +5064,14 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                             <td style={{...td,minWidth:150}}>
                               {cellInput(l.description,v=>patchLine(l,{description:v}),{type:"text",align:"left"})}
                             </td>
-                            <td style={{...td,textAlign:"right",minWidth:80}}>
-                              {l.takeoff_item_id
-                                ?<span style={{color:T.blue,fontWeight:700}}>{num(c.qty,1)}</span>
-                                :cellInput(l.quantity,v=>patchLine(l,{quantity:parseFloat(v)||0}))}
+                            <td style={{...td,textAlign:"right",minWidth:90}}>
+                              {linked(l)?(
+                                <span onClick={()=>patchLine(l,{use_manual_qty:true,quantity:c.qty})}
+                                  title="From the takeoff — click to enter a quantity by hand"
+                                  style={{color:T.blue,fontWeight:700,cursor:"pointer",borderBottom:`1px dotted ${T.blue}66`}}>
+                                  {num(c.qty,1)}
+                                </span>
+                              ):cellInput(l.quantity,v=>patchLine(l,{quantity:parseFloat(v)||0,use_manual_qty:true}))}
                             </td>
                             <td style={{...td,textAlign:"center",color:T.muted,fontSize:11}}>{l.unit}</td>
                             <td style={{...td,minWidth:130}}>
