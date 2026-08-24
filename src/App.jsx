@@ -4908,6 +4908,19 @@ function ScaleModal({docTitle,page,pages,sheetIn,current,onApply,onCalibrate,onC
   );
 }
 
+// A jsonb column can come back as a parsed array or, depending on the column
+// type and client, as a JSON string. A string still passes an Array-ish length
+// check, so the canvas draws nothing and fails silently — normalise on the way in.
+function normalizeMark(m){
+  if(!m)return m;
+  let pts=m.points;
+  if(typeof pts==="string"){ try{ pts=JSON.parse(pts); }catch{ pts=[]; } }
+  if(!Array.isArray(pts))pts=[];
+  pts=pts.filter(p=>Array.isArray(p)&&Number.isFinite(Number(p[0]))&&Number.isFinite(Number(p[1])))
+         .map(p=>[Number(p[0]),Number(p[1])]);
+  return {...m,points:pts,page:Number(m.page)||1,value:Number(m.value)||0};
+}
+
 function TakeoffTab({bid,user,onErr}){
   const [docs,setDocs]=useState([]);
   const [docId,setDocId]=useState(null);
@@ -4950,7 +4963,7 @@ function TakeoffTab({bid,user,onErr}){
         API.takeoff.marks(bid.id),
       ]);
       const drawings=(dd||[]).filter(d=>d.kind==="drawing");
-      setDocs(drawings);setItems(ii||[]);setMarks(mm||[]);
+      setDocs(drawings);setItems(ii||[]);setMarks((mm||[]).map(normalizeMark));
       if(!docId&&drawings.length)setDocId(drawings[0].id);
     }catch(e){onErr&&onErr(e.message);}
     setLoading(false);
@@ -5016,7 +5029,8 @@ function TakeoffTab({bid,user,onErr}){
 
     const drawMark=(m,color,live)=>{
       ctx.strokeStyle=color; ctx.fillStyle=color;
-      const p=m.points||[];
+      const p=Array.isArray(m.points)?m.points.filter(q=>Array.isArray(q)&&Number.isFinite(q[0])&&Number.isFinite(q[1])):[];
+      if(!p.length)return;
       if(m.kind==="count"&&p.length){
         ctx.lineWidth=w;
         ctx.beginPath(); ctx.arc(p[0][0],p[0][1],r,0,Math.PI*2); ctx.fill();
@@ -5071,7 +5085,7 @@ function TakeoffTab({bid,user,onErr}){
     const tmp={...body,id:"tmp-"+Math.random()};
     setMarks(m=>[...m,tmp]); setRepaint(n=>n+1);
     try{ const r=await API.takeoff.addMark(body); const row=Array.isArray(r)?r[0]:r;
-      setMarks(m=>m.map(x=>x.id===tmp.id?{...tmp,...row,points:(row&&row.points)||[pt],page,document_id:docId}:x)); }
+      setMarks(m=>m.map(x=>x.id===tmp.id?normalizeMark({...tmp,...row,points:[pt],page,document_id:docId}):x)); }
     catch(e){ setMarks(m=>m.filter(x=>x.id!==tmp.id)); onErr&&onErr(e.message); }
     setRepaint(n=>n+1);
   }
@@ -5101,7 +5115,7 @@ function TakeoffTab({bid,user,onErr}){
     try{
       const r=await API.takeoff.addMark(body);
       const row=Array.isArray(r)?r[0]:r;
-      setMarks(m=>m.map(x=>x.id===tmp.id?{...tmp,...row,points:(row&&row.points)||pts,page,document_id:docId}:x));
+      setMarks(m=>m.map(x=>x.id===tmp.id?normalizeMark({...tmp,...row,points:pts,page,document_id:docId}):x));
     }catch(e){
       setMarks(m=>m.filter(x=>x.id!==tmp.id));
       onErr&&onErr(e.message);
@@ -5216,6 +5230,16 @@ function TakeoffTab({bid,user,onErr}){
       <div style={{...cardS,padding:0,overflow:"hidden",position:"sticky",top:12}}>
         <div style={{padding:"12px 14px",display:"flex",alignItems:"center",gap:8,borderBottom:`1px solid ${T.border}`}}>
           <div style={{fontSize:13,fontWeight:800,color:T.text,flex:1}}>Takeoffs ({items.length})</div>
+          {items.some(i=>i.visible===false)&&(
+            <button onClick={async()=>{
+              const hidden=items.filter(i=>i.visible===false);
+              setItems(is=>is.map(x=>({...x,visible:true})));
+              try{ await Promise.all(hidden.map(i=>API.takeoff.updateItem(i.id,{visible:true}))); }
+              catch(e){onErr&&onErr(e.message);}
+            }} title="Show all marks"
+              style={{background:T.yellow,color:"#000",border:"none",borderRadius:6,padding:"4px 8px",
+                fontSize:10.5,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>Show all</button>
+          )}
           <button onClick={()=>setAdding(true)} title="Add item"
             style={{background:T.orange,color:"#000",border:"none",borderRadius:7,width:26,height:26,cursor:"pointer",fontSize:16,fontWeight:800,fontFamily:"inherit"}}>+</button>
         </div>
@@ -5239,12 +5263,21 @@ function TakeoffTab({bid,user,onErr}){
                       borderLeft:on?`3px solid ${T.orange}`:"3px solid transparent",
                       background:on?T.orangeLow:"transparent",borderBottom:`1px solid ${T.border}`}}>
                     <button onClick={e=>{e.stopPropagation();toggleVisible(it);}}
-                      style={{background:"none",border:"none",cursor:"pointer",fontSize:12,padding:0,opacity:it.visible===false?0.3:1}}>👁</button>
+                      title={it.visible===false?"Marks hidden — click to show":"Marks visible — click to hide"}
+                      style={{background:it.visible===false?"transparent":"#FFFFFF18",
+                        border:`1px solid ${it.visible===false?T.border:"#FFFFFF55"}`,
+                        borderRadius:6,cursor:"pointer",fontSize:12,lineHeight:1,padding:"3px 5px",
+                        color:it.visible===false?T.muted:"#FFFFFF",flexShrink:0,fontFamily:"inherit"}}>
+                      {it.visible===false?"🚫":"👁"}
+                    </button>
                     <span style={{width:10,height:10,borderRadius:"50%",background:it.color,flexShrink:0}}/>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12.5,color:T.text,fontWeight:on?700:500,wordBreak:"break-word"}}>{it.name}</div>
+                      <div style={{fontSize:12.5,color:it.visible===false?T.muted:T.text,
+                        fontWeight:on?700:500,wordBreak:"break-word",
+                        textDecoration:it.visible===false?"line-through":"none"}}>{it.name}</div>
                       <div style={{fontSize:11,color:T.muted,marginTop:1}}>
                         {qtyFor(it.id).toFixed(it.unit==="EA"?0:1)} {it.unit}
+                        {it.visible===false&&<span style={{color:T.yellow,marginLeft:6,fontWeight:700}}>· hidden</span>}
                       </div>
                     </div>
                     <button onClick={e=>{e.stopPropagation();delItem(it);}}
