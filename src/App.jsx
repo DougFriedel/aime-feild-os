@@ -4839,8 +4839,15 @@ function BidOverviewTab({bid,onSave}){
 }
 
 /* ── ESTIMATING: priced line items ───────────────────────────── */
-const EST_CATEGORIES=["Materials","Equipment","Labor","Subcontractor","Paint","Detailing","Other"];
-const MARKUP_KEY={Materials:"markup_materials",Equipment:"markup_equipment",Labor:"markup_labor",Subcontractor:"markup_sub"};
+const EST_CATEGORIES=["Materials","Equipment — Owned","Equipment — Rented","Labor","Subcontractor","Paint","Detailing","Other"];
+const MARKUP_KEY={
+  Materials:"markup_materials",
+  "Equipment — Owned":"markup_equip_owned",
+  "Equipment — Rented":"markup_equip_rented",
+  Equipment:"markup_equipment",          // legacy rows created before the split
+  Labor:"markup_labor",
+  Subcontractor:"markup_sub",
+};
 
 function EstimatingTab({bid,user,onErr,onTotal}){
   const [lines,setLines]=useState([]);
@@ -4855,6 +4862,8 @@ function EstimatingTab({bid,user,onErr,onTotal}){
     labor_sales_rate:bid.labor_sales_rate??102,
     markup_materials:bid.markup_materials??12,
     markup_equipment:bid.markup_equipment??12,
+    markup_equip_owned:bid.markup_equip_owned??12,
+    markup_equip_rented:bid.markup_equip_rented??12,
     markup_labor:bid.markup_labor??0,
     markup_sub:bid.markup_sub??10,
     overhead_pct:bid.overhead_pct??5,
@@ -5819,10 +5828,10 @@ function TakeoffTab({bid,user,onErr}){
 }
 
 function TakeoffItemModal({estimateId,existing,item,onClose,onSaved,onErr}){
-  const cats=[...new Set(["Materials","Labor","Equipment",...existing.map(i=>i.category).filter(Boolean)])];
+  const cats=[...new Set([...EST_CATEGORIES,...existing.map(i=>i.category).filter(Boolean)])];
   const [tab,setTab]=useState("main");
   const [f,setF]=useState({
-    name:item?.name||"",category:item?.category||cats[0]||"Materials",unit:item?.unit||"EA",
+    name:item?.name||"",category:item?.category||"Materials",unit:item?.unit||"EA",
     color:item?.color||TAKEOFF_COLORS[existing.length%TAKEOFF_COLORS.length],
     unit_cost:item?.unit_cost??"",
     use_weight:!!item?.use_weight,
@@ -5902,12 +5911,16 @@ function TakeoffItemModal({estimateId,existing,item,onClose,onSaved,onErr}){
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
           <div><label style={lbl}>Category</label>
-            <input list="tk-cats" value={f.category} onChange={e=>set("category",e.target.value)} style={inp}/>
-            <datalist id="tk-cats">{cats.map(c=><option key={c} value={c}/>)}</datalist></div>
+            <select value={f.category} onChange={e=>set("category",e.target.value)} style={inp}>
+              {cats.map(c=><option key={c} value={c}>{c}</option>)}
+            </select></div>
           <div><label style={lbl}>Unit</label>
             <select value={f.unit} onChange={e=>set("unit",e.target.value)} style={inp}>
               <option value="EA">EA — counted</option>
               <option value="LF">LF — linear feet</option>
+              <option value="DAY">DAY — not marked on drawing</option>
+              <option value="HRS">HRS — not marked on drawing</option>
+              <option value="LS">LS — lump sum</option>
             </select></div>
         </div>
 
