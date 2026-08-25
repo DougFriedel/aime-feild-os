@@ -194,6 +194,8 @@ const API={
   tmTickets:{
     forProject:(pid)=>sb(`/tm_tickets?project_id=eq.${pid}&order=created_at.desc`),
     byId:(id)=>sb(`/tm_tickets?id=eq.${id}&limit=1`),
+    // Awaiting PM approval across every job — used by the dashboard snapshot.
+    pending:()=>sb("/tm_tickets?status=eq.submitted&select=*,projects(id,name,division)&order=ticket_date.desc&limit=500"),
     create:(d)=>sb('/tm_tickets',{method:'POST',body:d,prefer:'return=representation'}),
     update:(id,d)=>sb(`/tm_tickets?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),
     remove:(id)=>sb(`/tm_tickets?id=eq.${id}`,{method:'DELETE'}),
@@ -3909,12 +3911,17 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const [unread,setUnread]=useState(0);
   const [building,setBuilding]=useState(false);
   const [showNotifs,setShowNotifs]=useState(false);
+  const [tmPending,setTmPending]=useState([]);
+  const [pmDiv,setPmDiv]=useState(null);        // null = division picker
 
   async function load(){
     setLoading(true);setErr("");
     try{
-      const[projs,reps,pend]=await Promise.all([API.projects.list(),API.reports.all(),API.reports.pending()]);
-      setProjects(projs||[]);setReports(reps||[]);setPending(pend||[]);
+      const[projs,reps,pend,tmPend]=await Promise.all([
+        API.projects.list(),API.reports.all(),API.reports.pending(),
+        API.tmTickets.pending().catch(()=>[]),
+      ]);
+      setProjects(projs||[]);setReports(reps||[]);setPending(pend||[]);setTmPending(tmPend||[]);
     }catch(e){setErr(e.message);}
     setLoading(false);
   }
@@ -3926,7 +3933,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:0});
 
   if(building)return(
-    <ReportBuilder projects={projects} user={user}
+    <ReportBuilder projects={pmDiv?projects.filter(p=>p.division===pmDiv):projects} user={user}
       onBack={()=>setBuilding(false)}
       onOpenReport={(r,p)=>{setActiveReport(r);setActiveProject(p);}}/>
   );
@@ -3936,22 +3943,105 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   if(activeReport&&activeProject)return(<ReportDetail report={activeReport} project={activeProject} user={user} onBack={()=>{setActiveReport(null);setActiveProject(null);load();}} onDelete={async(id)=>{await API.reports.remove(id);setActiveReport(null);setActiveProject(null);load();}} onApprove={approve} onFlag={flag}
     onArchive={async(id,archived)=>{await API.reports.update(id,{archived});setActiveReport(null);setActiveProject(null);load();}}/>);
 
-  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${pending.length>0?" ("+pending.length+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
+  /* ── Division picker: the dashboard opens here ── */
+  const divOfProj=(p)=>p.division;
+  const divStats=(d)=>{
+    const jobs=projects.filter(p=>divOfProj(p)===d);
+    const active=jobs.filter(p=>p.status==="active").length;
+    const ids=new Set(jobs.map(p=>p.id));
+    return {
+      jobs:jobs.length,
+      active,
+      daily:pending.filter(r=>ids.has(r.project_id)).length,
+      tm:tmPending.filter(t=>ids.has(t.project_id)).length,
+    };
+  };
+
+  if(!pmDiv&&!loading){
+    const totalWaiting=pending.length+tmPending.length;
+    return(
+      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+        <TopBar title="📊 PM Dashboard" onBack={onBack}/>
+        <div style={{padding:"18px 16px 60px"}}>
+          <div style={{fontSize:22,fontWeight:900,color:T.text}}>Select Division</div>
+          <div style={{fontSize:13,color:T.muted,marginTop:3,marginBottom:18}}>
+            {totalWaiting>0
+              ? `${totalWaiting} item${totalWaiting!==1?"s":""} waiting on your approval`
+              : "Nothing waiting on approval right now"}
+          </div>
+
+          {err&&<div onClick={()=>setErr("")} style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.red,cursor:"pointer"}}>{err} ✕</div>}
+
+          {DIVISIONS.map(d=>{
+            const m=DIV_META[d]||{}, s=divStats(d);
+            const waiting=s.daily+s.tm;
+            return(
+              <div key={d} onClick={()=>{setPmDiv(d);setPmTab("overview");}}
+                style={{background:T.card,borderRadius:16,marginBottom:14,cursor:"pointer",
+                  border:`1px solid ${T.border}`,borderTop:`3px solid ${m.color}`,overflow:"hidden"}}>
+                <div style={{display:"flex",alignItems:"center",gap:14,padding:"16px 18px 12px"}}>
+                  <div style={{width:52,height:52,borderRadius:14,background:`${m.color}18`,
+                    border:`1px solid ${m.color}40`,display:"flex",alignItems:"center",
+                    justifyContent:"center",fontSize:24,flexShrink:0}}>{m.icon}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:20,fontWeight:900,color:T.text}}>{d}</div>
+                    <div style={{fontSize:12.5,color:T.muted,marginTop:2}}>{m.desc}</div>
+                  </div>
+                  {waiting>0
+                    ?<span style={{background:`${T.yellow}20`,color:T.yellow,border:`1px solid ${T.yellow}50`,
+                        borderRadius:14,padding:"4px 11px",fontSize:11,fontWeight:800,flexShrink:0}}>
+                        {waiting} to approve
+                      </span>
+                    :<span style={{color:m.color,fontSize:20,flexShrink:0}}>→</span>}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",
+                  borderTop:`1px solid ${T.border}`,padding:"12px 8px"}}>
+                  {[["ACTIVE JOBS",s.active,m.color],
+                    ["DAILY TO APPROVE",s.daily,s.daily>0?T.yellow:T.muted],
+                    ["T&M TO APPROVE",s.tm,s.tm>0?T.orange:T.muted]].map(([label,val,col])=>(
+                    <div key={label} style={{textAlign:"center"}}>
+                      <div style={{fontSize:20,fontWeight:900,color:col}}>{val}</div>
+                      <div style={{fontSize:9.5,color:T.muted,letterSpacing:"0.5px",marginTop:2}}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
+
+  // Everything below the picker is scoped to the chosen division.
+  const allProjects=projects;
+  const divIds=new Set(allProjects.filter(p=>!pmDiv||p.division===pmDiv).map(p=>p.id));
+  const scopedProjects=allProjects.filter(p=>divIds.has(p.id));
+  const scopedReports=reports.filter(r=>divIds.has(r.project_id));
+  const scopedPending=pending.filter(r=>divIds.has(r.project_id));
+  const scopedTmPending=tmPending.filter(t=>divIds.has(t.project_id));
 
   const divOf=(r)=>(projects.find(p=>p.id===r.project_id)||r.projects||{}).division;
-  const allTot=reports.reduce((s,r)=>{const t=reportTotals(r,divOf(r));return{l:s.l+t.labor,e:s.e+t.equip,g:s.g+t.grand};},{l:0,e:0,g:0});
-  const projMap={};projects.forEach(p=>{projMap[p.id]={...p,grand:0,count:0};});
-  reports.forEach(r=>{if(!projMap[r.project_id])return;const t=reportTotals(r,projMap[r.project_id].division);projMap[r.project_id].grand+=t.grand;projMap[r.project_id].count++;});
+  const allTot=scopedReports.reduce((s,r)=>{const t=reportTotals(r,divOf(r));return{l:s.l+t.labor,e:s.e+t.equip,g:s.g+t.grand};},{l:0,e:0,g:0});
+  const projMap={};scopedProjects.forEach(p=>{projMap[p.id]={...p,grand:0,count:0};});
+  scopedReports.forEach(r=>{if(!projMap[r.project_id])return;const t=reportTotals(r,projMap[r.project_id].division);projMap[r.project_id].grand+=t.grand;projMap[r.project_id].count++;});
   const projRows=Object.values(projMap).filter(p=>p.status==="active").sort((a,b)=>b.grand-a.grand);
   const workerHours={};
-  reports.forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!workerHours[l.name])workerHours[l.name]={name:l.name,reg:0,ot:0,pay:0};workerHours[l.name].reg+=parseFloat(l.regHrs)||0;workerHours[l.name].ot+=parseFloat(l.otHrs)||0;workerHours[l.name].pay+=laborAmt(l);}));
+  scopedReports.forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!workerHours[l.name])workerHours[l.name]={name:l.name,reg:0,ot:0,pay:0};workerHours[l.name].reg+=parseFloat(l.regHrs)||0;workerHours[l.name].ot+=parseFloat(l.otHrs)||0;workerHours[l.name].pay+=laborAmt(l);}));
   const workerRows=Object.values(workerHours).sort((a,b)=>b.pay-a.pay);
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
-        <div style={{fontSize:16,fontWeight:900,color:T.orange}}>PM Dashboard</div>
+        <button onClick={()=>setPmDiv(null)} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Divisions</button>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:15,fontWeight:900,color:(DIV_META[pmDiv]||{}).color||T.orange}}>
+            {(DIV_META[pmDiv]||{}).icon} {pmDiv||"All"}
+          </div>
+          <div style={{fontSize:10,color:T.muted,letterSpacing:"0.5px"}}>PM DASHBOARD</div>
+        </div>
         <button onClick={()=>setShowNotifs(true)} style={{background:"none",border:"none",color:T.muted,fontSize:20,cursor:"pointer"}}>{unread>0?"🔔":"🔕"}</button>
       </div>
       <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
@@ -3983,8 +4073,8 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
         {/* APPROVALS */}
         {pmTab==="approvals"&&!loading&&<div>
-          {pending.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32}}>✅</div><div style={{marginTop:8}}>All reports approved</div></div>}
-          {pending.map(r=>{
+          {scopedPending.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32}}>✅</div><div style={{marginTop:8}}>All reports approved</div></div>}
+          {scopedPending.map(r=>{
             const proj=projects.find(p=>p.id===r.project_id)||r.projects||{name:"Unknown"};
             const tot=reportTotals(r,proj.division);
             return(<div key={r.id} style={{...cardS,marginBottom:10}}>
@@ -4028,7 +4118,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
           <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
             Recent activity
           </div>
-          {reports.slice(0,50).map(r=>{
+          {scopedReports.slice(0,50).map(r=>{
             const proj=projects.find(p=>p.id===r.project_id)||r.projects||{name:"Unknown"};
             const tot=reportTotals(r,proj.division);
             const statusColor={approved:T.green,flagged:T.red,submitted:T.yellow}[r.status]||T.muted;
