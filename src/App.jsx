@@ -4985,7 +4985,6 @@ function ProposalTab({bid,user,onErr,onSaved}){
     prepared_email:bid.prepared_email||"",
     customer_address:bid.customer_address||"",
     general_notes:bid.general_notes||DEFAULT_GENERAL_NOTES,
-    valid_days:bid.valid_days??30,
   });
   const [dirty,setDirty]=useState(false);
   const [saving,setSaving]=useState(false);
@@ -5091,11 +5090,6 @@ function ProposalTab({bid,user,onErr,onSaved}){
   .siglabel{color:#666;font-size:8.5pt;margin-bottom:15px}
   .page{page-break-after:always}
   .page:last-child{page-break-after:auto}
-  .cond h1{text-align:center;font-size:16pt;margin:0 0 4px}
-  .cond h2{text-align:center;font-size:15pt;margin:0 0 28px;font-weight:700}
-  .cond u{font-weight:700}
-  .cond p{margin:8px 0;font-size:10pt;line-height:1.5}
-  .cond ol{font-size:10pt}
 </style></head><body>
 
 <div class="page">
@@ -5147,41 +5141,6 @@ function ProposalTab({bid,user,onErr,onSaved}){
       </div>
     </div>
   </div>
-</div>
-
-<div class="page cond">
-  <h1>Atlantic Industrial Mechanical &amp; Electrical</h1>
-  <h2>Proposal Conditions</h2>
-  <p><strong>PROPOSAL CONDITIONS</strong></p>
-  <p><u>Validity</u></p>
-  <p>This proposal is valid for a period of ${esc(f.valid_days)} days from date of submittal.</p>
-  <p><u>Payment Terms</u></p>
-  <p>Progress payments will be made by Owner on a monthly basis for all materials on hand; stored or delivered to the
-  job site and/or labor performed. Payment not made in full by the 10th day of the month following will be subject to
-  additional finance charges of 1 ½% per calendar month or fraction thereof until paid. In no event shall any payment
-  exceed sixty (60) days from date of submittal.</p>
-  <p><u>Insurance</u></p>
-  <p>Our standard insurance coverage is as follows:</p>
-  <ol type="a">
-    <li>$1,000,000 General Liability (General aggregate and each occurrence).</li>
-    <li>$1,000,000 Automobile Liability.</li>
-    <li>$10,000,000 Excess Liability – Umbrella</li>
-    <li>$1,000,000 Workers Compensation per State.<br/>Any insurance coverage above the foregoing will be at an additional cost.</li>
-  </ol>
-  <p><u>Plans and Specifications</u></p>
-  <p>Unless otherwise stated herein, Owner/General Contractor is solely responsible for preparation of plans and
-  specifications relating to the work to be performed hereunder, and AIME makes no representations or warranties
-  regarding those documents. Changed conditions will be negotiated as a change order prior to the performance of the work.</p>
-  <p>Delays not the fault of AIME will be billed as extra work. There will be an additional charge for premature
-  mobilization unless requested by AIME. Additional move-in or set-up time caused by working out of sequence at the
-  request of others will be billed as extra work. Back charges will not be excepted unless we have prior written
-  description of the problem faxed to our attention within 24 hours of occurrence of error for our review. This entire
-  proposal should be incorporated into Subcontract Agreement upon award.</p>
-  <p>Upon award of subcontract, please forward subcontract agreement to:</p>
-  <p style="margin-top:26px">I hope our proposal meets with your satisfaction. I look forward to a mutually beneficial relationship. Please call me
-  directly at (410) 355-1869 if I can be of further assistance.</p>
-  <p style="margin-top:26px">Sincerely,</p>
-  <p style="margin-top:34px">AIME<br/>${esc(f.prepared_by||"Gordon &quot;Clay&quot; Lau")}</p>
 </div>
 
 </body></html>`;
@@ -5242,12 +5201,7 @@ function ProposalTab({bid,user,onErr,onSaved}){
         <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Printed under "Notes" on page 2. Edit for this bid, or leave the standard terms.</div>
         <textarea value={f.general_notes} onChange={e=>set("general_notes",e.target.value)} rows={8}
           style={{...inp,resize:"vertical",lineHeight:1.7,fontSize:12.5}}/>
-        <div style={{marginTop:10,display:"flex",alignItems:"center",gap:10}}>
-          <label style={{...lbl,marginBottom:0}}>Valid for</label>
-          <input type="number" value={f.valid_days} onChange={e=>set("valid_days",e.target.value)}
-            style={{...inp,width:80,padding:"7px 9px"}}/>
-          <span style={{fontSize:12,color:T.sub}}>days</span>
-        </div>
+
       </div>
 
       <div style={{...card,borderLeft:`3px solid ${T.green}`}}>
