@@ -196,6 +196,8 @@ const API={
     byId:(id)=>sb(`/tm_tickets?id=eq.${id}&limit=1`),
     // Awaiting PM approval across every job — used by the dashboard snapshot.
     pending:()=>sb("/tm_tickets?status=eq.submitted&select=*,projects(id,name,division)&order=ticket_date.desc&limit=500"),
+    // Ranged pull for the T&M report builder.
+    inRange:(from,to)=>sb(`/tm_tickets?select=*,projects(id,name,division)&ticket_date=gte.${from}&ticket_date=lte.${to}&order=ticket_date.asc&limit=2000`),
     create:(d)=>sb('/tm_tickets',{method:'POST',body:d,prefer:'return=representation'}),
     update:(id,d)=>sb(`/tm_tickets?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),
     remove:(id)=>sb(`/tm_tickets?id=eq.${id}`,{method:'DELETE'}),
@@ -3910,6 +3912,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const [activeProject,setActiveProject]=useState(null);
   const [unread,setUnread]=useState(0);
   const [building,setBuilding]=useState(false);
+  const [buildingTM,setBuildingTM]=useState(false);
   const [showNotifs,setShowNotifs]=useState(false);
   const [tmPending,setTmPending]=useState([]);
   const [pmDiv,setPmDiv]=useState(null);        // null = division picker
@@ -3936,6 +3939,12 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const fmtH=n=>Number(n||0).toLocaleString("en-US",{maximumFractionDigits:1});
   const monthLabel=new Date().toLocaleDateString("en-US",{month:"long",year:"numeric"});
   const monthKey=new Date().toISOString().slice(0,7);
+
+  if(buildingTM)return(
+    <TMReportBuilder projects={pmDiv?projects.filter(p=>p.division===pmDiv):projects} user={user}
+      onBack={()=>setBuildingTM(false)}
+      onOpenTicket={()=>{}}/>
+  );
 
   if(building)return(
     <ReportBuilder projects={pmDiv?projects.filter(p=>p.division===pmDiv):projects} user={user}
@@ -4274,10 +4283,16 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
         {/* REPORTS */}
         {pmTab==="reports"&&!loading&&<div>
           {can(user,"custom_reports")&&(
-            <button onClick={()=>setBuilding(true)}
-              style={{...primBtn,borderRadius:12,marginBottom:14,background:T.orange,color:"#000"}}>
-              📊 Pull Reports by Job &amp; Date
-            </button>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+              <button onClick={()=>setBuilding(true)}
+                style={{...primBtn,borderRadius:12,background:T.orange,color:"#000",fontSize:13}}>
+                📊 Daily Reports
+              </button>
+              <button onClick={()=>setBuildingTM(true)}
+                style={{...primBtn,borderRadius:12,background:T.blue,color:"#000",fontSize:13}}>
+                🧾 T&amp;M Tickets
+              </button>
+            </div>
           )}
           <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
             Recent activity
@@ -4764,6 +4779,272 @@ tfoot td{background:#1F3864;color:#fff;font-weight:700}
                     <div style={{textAlign:"right"}}>
                       <div style={{fontSize:13,fontWeight:800,color:T.green}}>{money(r._tot.grand)}</div>
                       <span style={pill({approved:T.green,flagged:T.red,submitted:T.yellow}[r.status]||T.muted)}>{r.status}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </>)
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── PM Dashboard: pull T&M tickets across jobs and dates ── */
+function TMReportBuilder({projects,user,onBack,onOpenTicket}){
+  const iso=(d)=>d.toISOString().slice(0,10);
+  const monthAgo=()=>{const d=new Date();d.setDate(d.getDate()-30);return iso(d);};
+
+  const [from,setFrom]=useState(monthAgo());
+  const [to,setTo]=useState(iso(new Date()));
+  const [jobIds,setJobIds]=useState([]);          // empty = every job
+  const [statuses,setStatuses]=useState(["draft","submitted","approved"]);
+  const [division,setDivision]=useState("");
+  const [signedOnly,setSignedOnly]=useState(false);
+  const [rows,setRows]=useState(null);
+  const [running,setRunning]=useState(false);
+  const [err,setErr]=useState("");
+  const [q,setQ]=useState("");
+
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  const visibleJobs=projects
+    .filter(p=>!division||p.division===division)
+    .filter(p=>!q.trim()||[p.name,p.client,p.job_number].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase())))
+    .sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),undefined,{numeric:true}));
+
+  const toggleJob=(id)=>setJobIds(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+  const toggleStatus=(s)=>setStatuses(v=>v.includes(s)?v.filter(x=>x!==s):[...v,s]);
+
+  const quick=(days)=>{const d=new Date();d.setDate(d.getDate()-days);setFrom(iso(d));setTo(iso(new Date()));};
+  const thisMonth=()=>{const n=new Date();setFrom(iso(new Date(n.getFullYear(),n.getMonth(),1)));setTo(iso(n));};
+  const lastMonth=()=>{const n=new Date();
+    setFrom(iso(new Date(n.getFullYear(),n.getMonth()-1,1)));
+    setTo(iso(new Date(n.getFullYear(),n.getMonth(),0)));};
+
+  async function run(){
+    if(!from||!to){setErr("Pick a start and end date.");return;}
+    if(from>to){setErr("The start date is after the end date.");return;}
+    setRunning(true);setErr("");
+    try{
+      const all=await API.tmTickets.inRange(from,to)||[];
+      const projById={};projects.forEach(p=>projById[p.id]=p);
+      const filtered=all
+        .filter(t=>!jobIds.length||jobIds.includes(t.project_id))
+        .filter(t=>!statuses.length||statuses.includes(t.status))
+        .filter(t=>!signedOnly||!!t.client_signature)
+        .filter(t=>{
+          if(!division)return true;
+          const p=projById[t.project_id]||t.projects||{};
+          return p.division===division;
+        })
+        .map(t=>{
+          const p=projById[t.project_id]||t.projects||{name:"Unknown"};
+          const hrs=(t.labor||[]).reduce((s,l)=>s+(parseFloat(l.hours)||0),0);
+          return {...t,_proj:p,_hrs:hrs};
+        });
+      setRows(filtered);
+    }catch(e){setErr(e.message);}
+    setRunning(false);
+  }
+
+  const totals=(rows||[]).reduce((s,t)=>({
+    labor:s.labor+(parseFloat(t.labor_total)||0),
+    equip:s.equip+(parseFloat(t.equipment_total)||0),
+    mats:s.mats+(parseFloat(t.materials_total)||0),
+    other:s.other+(parseFloat(t.other_total)||0),
+    markup:s.markup+(parseFloat(t.markup_amount)||0),
+    grand:s.grand+(parseFloat(t.grand_total)||0),
+    hrs:s.hrs+t._hrs,
+  }),{labor:0,equip:0,mats:0,other:0,markup:0,grand:0,hrs:0});
+
+  const signedCount=(rows||[]).filter(t=>t.client_signature).length;
+
+  const byJob={};
+  (rows||[]).forEach(t=>{(byJob[t._proj.name||"Unknown"] ||= []).push(t);});
+
+  function exportXlsx(){
+    try{
+      const out=[["AIME Field Pro — T&M Ticket Summary"],
+        ["Date range",from+" to "+to],
+        ["Jobs",jobIds.length?jobIds.length+" selected":"All"],
+        ["Statuses",statuses.join(", ")||"All"],
+        ["Signed only",signedOnly?"Yes":"No"],[],
+        ["Job","Date","T&M #","Submitted By","Status","Client Signed","Labor Hrs",
+         "Labor","Equipment","Materials","Other","Markup","Grand Total"]];
+      Object.keys(byJob).sort().forEach(job=>{
+        byJob[job].forEach(t=>out.push([job,t.ticket_date||"",t.ticket_no||"",t.submitted_by||"",
+          t.status||"",t.client_signature?"Yes":"No",t._hrs,
+          parseFloat(t.labor_total)||0,parseFloat(t.equipment_total)||0,
+          parseFloat(t.materials_total)||0,parseFloat(t.other_total)||0,
+          parseFloat(t.markup_amount)||0,parseFloat(t.grand_total)||0]));
+      });
+      out.push([]);
+      out.push(["TOTAL","","","","","",totals.hrs,totals.labor,totals.equip,
+        totals.mats,totals.other,totals.markup,totals.grand]);
+      const ws=XLSX.utils.aoa_to_sheet(out);
+      ws["!cols"]=[{wch:26},{wch:12},{wch:16},{wch:20},{wch:11},{wch:13},{wch:10},
+        {wch:13},{wch:13},{wch:13},{wch:12},{wch:12},{wch:14}];
+      const wb=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb,ws,"T&M Tickets");
+      XLSX.writeFile(wb,`AIME_TM_Tickets_${from}_to_${to}.xlsx`);
+    }catch(e){setErr("Excel export failed: "+e.message);}
+  }
+
+  function printSummary(){
+    const w=window.open("","_blank");
+    if(!w){setErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const num=(n)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:1,maximumFractionDigits:1});
+    const body=Object.keys(byJob).sort().map(job=>`
+      <tr class="jobrow"><td colspan="6"><strong>${esc(job)}</strong> — ${byJob[job].length} ticket${byJob[job].length!==1?"s":""}</td>
+        <td style="text-align:right"><strong>${money(byJob[job].reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0))}</strong></td></tr>
+      ${byJob[job].map(t=>`<tr><td></td><td>${esc(t.ticket_date)}</td><td>${esc(t.ticket_no||"")}</td>
+        <td>${esc(t.submitted_by||"")}</td><td>${esc(t.status||"")}</td>
+        <td style="text-align:center">${t.client_signature?"✓":"—"}</td>
+        <td style="text-align:right">${money(t.grand_total)}</td></tr>`).join("")}`).join("");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>AIME T&amp;M Ticket Summary</title><style>
+@page{size:letter landscape;margin:0.5in}
+body{font-family:Arial,sans-serif;font-size:9pt;color:#111}
+h1{font-size:15pt;margin:0 0 2px}.sub{color:#555;font-size:9pt;margin-bottom:14px}
+table{width:100%;border-collapse:collapse}
+th{background:#1F3864;color:#fff;text-align:left;padding:6px 8px;font-size:8pt;text-transform:uppercase}
+td{padding:5px 8px;border-bottom:1px solid #ddd}
+.jobrow td{background:#EDF1F8;border-top:1px solid #99a}
+tfoot td{background:#1F3864;color:#fff;font-weight:700}
+</style></head><body>
+<h1>T&amp;M Ticket Summary</h1>
+<div class="sub">${esc(from)} to ${esc(to)} · ${(rows||[]).length} tickets · ${num(totals.hrs)} labor hrs · ${signedCount} client-signed</div>
+<table><thead><tr><th></th><th>Date</th><th>T&amp;M #</th><th>Submitted By</th><th>Status</th>
+<th style="text-align:center">Signed</th><th style="text-align:right">Grand Total</th></tr></thead>
+<tbody>${body}</tbody>
+<tfoot><tr><td colspan="6">TOTAL</td><td style="text-align:right">${money(totals.grand)}</td></tr></tfoot></table>
+</body></html>`);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},350);
+  }
+
+  const chip=(on)=>({padding:"6px 12px",borderRadius:16,cursor:"pointer",fontSize:12,fontFamily:"inherit",
+    fontWeight:on?800:600,background:on?T.orange:T.surface,color:on?"#000":T.sub,
+    border:`1px solid ${on?T.orange:T.border}`});
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title="🧾 Pull T&M Tickets" onBack={onBack}/>
+      <div style={{padding:"16px 16px 60px"}}>
+        {err&&<div onClick={()=>setErr("")} style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.red,cursor:"pointer"}}>{err} ✕</div>}
+
+        <div style={{...cardS,marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10}}>Date Range</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:10}}>
+            <div><label style={lbl}>From</label><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>To</label><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={inp}/></div>
+          </div>
+          <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+            <button onClick={()=>quick(7)} style={chip(false)}>Last 7 days</button>
+            <button onClick={()=>quick(30)} style={chip(false)}>Last 30 days</button>
+            <button onClick={thisMonth} style={chip(false)}>This month</button>
+            <button onClick={lastMonth} style={chip(false)}>Last month</button>
+          </div>
+        </div>
+
+        <div style={{...cardS,marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <div style={{fontSize:12,fontWeight:800,color:T.text,flex:1}}>
+              Jobs {jobIds.length?`(${jobIds.length} selected)`:"(all)"}
+            </div>
+            {jobIds.length>0&&<button onClick={()=>setJobIds([])} style={{background:"none",border:"none",color:T.orange,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+            <select value={division} onChange={e=>setDivision(e.target.value)} style={{...inp,width:"auto",padding:"8px 10px",fontSize:12}}>
+              <option value="">All divisions</option>
+              {["Mechanical","Pipeline","Structural","Manufacturing"].map(d=><option key={d} value={d}>{d}</option>)}
+            </select>
+            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search jobs…" style={{...inp,flex:1,minWidth:140,padding:"8px 10px",fontSize:12}}/>
+          </div>
+          <div style={{maxHeight:200,overflowY:"auto",display:"flex",flexWrap:"wrap",gap:7}}>
+            {visibleJobs.map(p=>(
+              <button key={p.id} onClick={()=>toggleJob(p.id)} style={chip(jobIds.includes(p.id))}>
+                {p.name}{p.client?` · ${p.client}`:""}
+              </button>
+            ))}
+            {visibleJobs.length===0&&<div style={{fontSize:12,color:T.muted}}>No jobs match.</div>}
+          </div>
+        </div>
+
+        <div style={{...cardS,marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10}}>Status</div>
+          <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:12}}>
+            {["draft","submitted","approved"].map(s=>(
+              <button key={s} onClick={()=>toggleStatus(s)} style={chip(statuses.includes(s))}>{s}</button>
+            ))}
+          </div>
+          <button onClick={()=>setSignedOnly(v=>!v)} style={chip(signedOnly)}>
+            ✍️ Client-signed only
+          </button>
+        </div>
+
+        <button onClick={run} disabled={running}
+          style={{...primBtn,borderRadius:12,marginBottom:16,background:T.orange,color:"#000",opacity:running?0.6:1}}>
+          {running?"Pulling…":"🧾 Pull T&M Tickets"}
+        </button>
+
+        {rows!==null&&(
+          rows.length===0?(
+            <div style={{...cardS,textAlign:"center",padding:34,color:T.muted}}>
+              <div style={{fontSize:32,marginBottom:8}}>🔍</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>No tickets found</div>
+              <div style={{fontSize:12}}>Nothing matches that range and filter.</div>
+            </div>
+          ):(<>
+            <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
+              <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+                {rows.length} ticket{rows.length!==1?"s":""} · {Object.keys(byJob).length} job{Object.keys(byJob).length!==1?"s":""} · {signedCount} signed
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:10}}>
+                {[["Labor Hrs",Number(totals.hrs).toFixed(1),T.blue],
+                  ["Labor",money(totals.labor),T.green],
+                  ["Equipment",money(totals.equip),T.yellow],
+                  ["Materials",money(totals.mats),T.orange],
+                  ["Other",money(totals.other),T.purple],
+                  ["Markup",money(totals.markup),T.sub],
+                  ["Total",money(totals.grand),T.green]].map(([l,v,c])=>(
+                  <div key={l}>
+                    <div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>{l}</div>
+                    <div style={{fontSize:15,fontWeight:800,color:c,marginTop:2}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:8,marginTop:14}}>
+                <button onClick={printSummary} style={{...primBtn,width:"auto",flex:1,padding:"10px",fontSize:12.5,borderRadius:9,background:"#1f3864"}}>🖨️ Print</button>
+                <button onClick={exportXlsx} style={{...primBtn,width:"auto",flex:1,padding:"10px",fontSize:12.5,borderRadius:9,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`}}>📥 Excel</button>
+              </div>
+            </div>
+
+            {Object.keys(byJob).sort().map(job=>(
+              <div key={job} style={{marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 2px",marginBottom:6}}>
+                  <div style={{fontSize:13,fontWeight:800,color:T.orange}}>{job}</div>
+                  <div style={{fontSize:12,fontWeight:800,color:T.green}}>
+                    {money(byJob[job].reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0))}
+                  </div>
+                </div>
+                {byJob[job].map(t=>(
+                  <div key={t.id} onClick={()=>onOpenTicket&&onOpenTicket(t,t._proj)}
+                    style={{...cardS,marginBottom:6,padding:"10px 12px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>
+                        {t.ticket_date}{t.ticket_no?`  ·  #${t.ticket_no}`:""}
+                        {t.client_signature&&<span style={{color:T.green,marginLeft:6}}>✍️</span>}
+                      </div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                        {t.submitted_by||""} · {Number(t._hrs).toFixed(1)} hrs
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:13,fontWeight:800,color:T.green}}>{money(t.grand_total)}</div>
+                      <span style={pill({approved:T.green,submitted:T.yellow,draft:T.muted}[t.status]||T.muted)}>{t.status}</span>
                     </div>
                   </div>
                 ))}
@@ -10672,7 +10953,10 @@ function TMTicketList({project,user,onOpen,onNew}){
   const [tickets,setTickets]=useState([]);
   const [tmView,setTmView]=useState("active");
   const [loading,setLoading]=useState(true);
-  const canCreate=user.role==="admin"||user.role==="pm";
+  // Matches TMTicketForm's canEdit and the estimator/foreman job permissions —
+  // the form already allowed foremen to edit, but the list never gave them a
+  // way in, so a foreman on a phone saw the tab with no create button.
+  const canCreate=can(user,"create_job")||user.role==="admin"||user.role==="pm";
 
   useEffect(()=>{load();},[project.id]);
   async function load(){
@@ -10730,7 +11014,7 @@ function TMTicketList({project,user,onOpen,onNew}){
           {tmView==="archived"?"Nothing archived":"No T&M Tickets"}
         </div>
         <div style={{fontSize:12}}>
-          {tmView==="archived"?"Archived tickets are hidden here but never deleted.":"Create your first Time & Materials ticket above."}
+          {tmView==="archived"?"Archived tickets are hidden here but never deleted.":canCreate?"Create your first Time & Materials ticket above.":"No T&M tickets have been created for this job yet."}
         </div>
       </div>}
       {shownTix.map(t=>(
