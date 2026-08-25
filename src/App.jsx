@@ -4818,7 +4818,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
         {tab==="takeoff"   &&<TakeoffTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="estimating"&&<EstimatingTab bid={bid} user={user} onErr={setErr} onTotal={(t)=>{setBid(b=>({...b,total_sales:t}));onChanged&&onChanged();}}/>}
         {tab==="scope"     &&<ScopeTab bid={bid} user={user} onErr={setErr}/>}
-        {tab==="proposal"  &&<BidComingSoon label="Proposal" note="Generate the client-facing proposal PDF from the scope, inclusions and exclusions."/>}
+        {tab==="proposal"  &&<ProposalTab bid={bid} user={user} onErr={setErr} onSaved={load}/>}
       </div>
     </div>
   );
@@ -4951,6 +4951,335 @@ function BidOverviewTab({bid,onSave}){
           style={{...primBtn,width:"auto",padding:"11px 24px",fontSize:13.5,borderRadius:10,
             background:dirty?T.green:T.border,color:dirty?"#000":T.muted,opacity:saving?0.6:1}}>
           {saving?"Saving…":"Save Changes"}
+        </button>
+        {dirty&&<span style={{fontSize:12,color:T.orange,fontWeight:700}}>● Unsaved changes</span>}
+      </div>
+    </>
+  );
+}
+
+/* ── ESTIMATING: Proposal ────────────────────────────────────── */
+const AIME_ADDRESS=["Atlantic Industrial Mechanical & Environmental","5730 Pennington Ave","Baltimore, MD","21226, US","(410) 355-1869"];
+
+const DEFAULT_GENERAL_NOTES=[
+  "-Due to current supply chain disruptions, materials are subject to pricing at time of release",
+  "-Material availability and timeliness of shipments cannot be guaranteed",
+  "-These terms supersede all other contractual provisions",
+  "-All pricing and quotes are valid for 30 days from the date issued",
+  "-Additionally, quotes are subject to change if any tariff, duty, or government intervention relating to the cost or availability of material is imposed",
+  "-The increase related to any government action will be added to the cost of materials",
+].join("\n");
+
+function ProposalTab({bid,user,onErr,onSaved}){
+  const asList=(v)=>{
+    if(Array.isArray(v))return v;
+    if(typeof v==="string"){try{const p=JSON.parse(v);return Array.isArray(p)?p:[];}catch{return [];}}
+    return [];
+  };
+
+  const [f,setF]=useState({
+    quote_number:bid.quote_number||"",
+    quote_date:bid.quote_date||today(),
+    prepared_by:bid.prepared_by||user.name||"",
+    prepared_phone:bid.prepared_phone||"",
+    prepared_email:bid.prepared_email||"",
+    customer_address:bid.customer_address||"",
+    general_notes:bid.general_notes||DEFAULT_GENERAL_NOTES,
+    valid_days:bid.valid_days??30,
+  });
+  const [dirty,setDirty]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [total,setTotal]=useState(Number(bid.total_sales)||0);
+  const set=(k,v)=>{setF(s=>({...s,[k]:v}));setDirty(true);};
+
+  // Price comes from the Estimating tab's line items so the proposal can't
+  // quietly disagree with the estimate behind it.
+  useEffect(()=>{(async()=>{
+    try{
+      const [lines,items,marks]=await Promise.all([
+        API.estimateLines.forEstimate(bid.id),
+        API.takeoff.items(bid.id),
+        API.takeoff.marks(bid.id),
+      ]);
+      const itemById={};(items||[]).forEach(i=>itemById[i.id]=i);
+      const qtyFor=(l)=>{
+        if(l.takeoff_item_id&&!l.use_manual_qty)
+          return (marks||[]).filter(m=>m.item_id===l.takeoff_item_id).reduce((s,m)=>s+(Number(m.value)||0),0);
+        return Number(l.quantity)||0;
+      };
+      const weightOf=(l)=>{
+        const it=l.takeoff_item_id?itemById[l.takeoff_item_id]:null;
+        if(it&&it.use_weight&&Number(it.weight_per_unit)>0)return Number(it.weight_per_unit);
+        return Number(l.weight_per_unit)||0;
+      };
+      const rates={markup_materials:bid.markup_materials??12,markup_equip_owned:bid.markup_equip_owned??12,
+        markup_equip_rented:bid.markup_equip_rented??12,markup_equipment:bid.markup_equipment??12,
+        markup_labor:bid.markup_labor??0,markup_sub:bid.markup_sub??10};
+      const cat={};
+      (lines||[]).forEach(l=>{
+        const qty=qtyFor(l), wpu=weightOf(l);
+        const byWeight=l.pricing_basis==="weight"&&wpu>0;
+        const eff=byWeight?(Number(l.price_per_weight)||0)*wpu:(Number(l.unit_cost)||0);
+        const mat=qty*eff*(1+(Number(l.waste_pct)||0)/100);
+        const rate=l.labor_rate!=null&&l.labor_rate!==""?Number(l.labor_rate):Number(bid.labor_cost_rate)||102;
+        const cost=mat+qty*(Number(l.labor_hours)||0)*rate;
+        cat[l.category||"Other"]=(cat[l.category||"Other"]||0)+cost;
+      });
+      const marked=Object.entries(cat).reduce((s,[c,v])=>{
+        const key=MARKUP_KEY[c];
+        return s+v*(1+(key?Number(rates[key])||0:0)/100);
+      },0);
+      const overhead=marked*((Number(bid.overhead_pct)||0)/100);
+      const discount=(marked+overhead)*((Number(bid.discount_pct)||0)/100);
+      const t=marked+overhead-discount;
+      if(t>0)setTotal(t);
+    }catch(e){ /* fall back to the figure stored on the bid */ }
+  })();},[bid.id]);
+
+  async function save(){
+    setSaving(true);
+    try{ await API.estimates.update(bid.id,{...f,updated_at:new Date().toISOString()}); setDirty(false); onSaved&&onSaved(); }
+    catch(e){onErr&&onErr(e.message);}
+    setSaving(false);
+  }
+
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const lines=(s)=>esc(s).split("\n").map(l=>l.trim()).filter(Boolean);
+
+  function buildHtml(){
+    const inc=asList(bid.inclusions), exc=asList(bid.exclusions);
+    const dateStr=f.quote_date?new Date(f.quote_date+"T00:00:00").toLocaleDateString("en-US"):"";
+    const running=`Quote: ${esc(f.quote_number||"—")} / Date: ${esc(dateStr)}`;
+
+    const bulletBlock=(arr)=>arr.length
+      ? `<ol class="numlist"><li>${arr.map(x=>esc(x)).join("<br/>")}</li></ol>`
+      : `<div class="muted">None listed.</div>`;
+
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Proposal ${esc(f.quote_number)} — ${esc(bid.name||"")}</title>
+<style>
+  @page{size:letter;margin:0.6in 0.65in 0.7in;}
+  *{box-sizing:border-box}
+  body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:10pt;line-height:1.45;margin:0}
+  .run{position:running(head)}
+  .quoteline{text-align:right;font-size:9pt;color:#222;margin-bottom:6px}
+  .brand{font-family:Arial Black,Arial,sans-serif;font-size:30pt;font-weight:900;color:#1F3864;letter-spacing:1px;line-height:1}
+  .brandsub{font-size:6.5pt;font-weight:700;color:#1F3864;letter-spacing:0.5px;margin-top:2px}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:26px}
+  .custlabel{text-align:right;color:#666;font-size:10pt;margin-bottom:6px}
+  .custbox{background:#EDEDED;padding:16px 18px;text-align:right;font-weight:700;min-width:280px}
+  .cols{display:flex;justify-content:space-between;gap:30px;margin-bottom:8px}
+  .from{font-size:10pt;line-height:1.5}
+  hr.rule{border:none;border-top:2px solid #000;margin:16px 0 12px}
+  .proj{font-size:11pt;margin:2px 0 18px}
+  .proj span{color:#555}
+  h2{font-size:11pt;margin:18px 0 8px}
+  h3{font-size:9pt;margin:22px 0 4px}
+  .numlist{margin:0;padding-left:22px;font-size:9pt;line-height:1.5}
+  .muted{color:#777;font-size:9pt}
+  ul.scope{margin:8px 0 0;padding-left:22px}
+  ul.scope li{margin-bottom:2px}
+  .notes{font-size:10pt;font-weight:700;line-height:1.6;white-space:pre-wrap}
+  .sumwrap{margin-top:34px}
+  .sumrow{display:flex;justify-content:space-between;max-width:330px;border-bottom:1px solid #bbb;padding:4px 0;font-size:10pt}
+  .totalbox{border:2px solid #000;padding:18px 26px;font-size:20pt;text-align:center;min-width:330px}
+  .accept{display:flex;gap:60px;align-items:flex-end}
+  .sigline{border-bottom:2px dotted #000;min-width:190px;height:26px}
+  .siglabel{color:#666;font-size:9.5pt;margin-bottom:26px}
+  .page{page-break-after:always}
+  .page:last-child{page-break-after:auto}
+  .cond h1{text-align:center;font-size:16pt;margin:0 0 4px}
+  .cond h2{text-align:center;font-size:15pt;margin:0 0 28px;font-weight:700}
+  .cond u{font-weight:700}
+  .cond p{margin:8px 0;font-size:10pt;line-height:1.5}
+  .cond ol{font-size:10pt}
+</style></head><body>
+
+<div class="page">
+  <div class="quoteline">${running}</div>
+  <div class="top">
+    <div><div class="brand">AIME</div><div class="brandsub">ATLANTIC INDUSTRIAL MECHANICAL &amp; ENVIRONMENTAL</div></div>
+  </div>
+
+  <div class="cols">
+    <div class="from">
+      ${AIME_ADDRESS.map(l=>esc(l)).join("<br/>")}
+      <br/><br/>Prepared By:<br/>
+      ${esc(f.prepared_by)}<br/>${esc(f.prepared_phone)}<br/>${esc(f.prepared_email)}
+    </div>
+    <div>
+      <div class="custlabel">Customer</div>
+      <div class="custbox">
+        ${esc(bid.requester_company||"")}<br/>
+        ${lines(f.customer_address).join("<br/>")}
+        ${bid.contact_name||bid.contact_phone||bid.requester_email?`<br/><br/>${esc(bid.contact_name||"")}<br/>${esc(bid.contact_phone||"")}<br/>${esc(bid.requester_email||"")}`:""}
+      </div>
+    </div>
+  </div>
+
+  <hr class="rule"/>
+  <div class="proj"><span>Project:</span> <strong>${esc(bid.name||"")}</strong></div>
+
+  <h2>Scope of Work</h2>
+  ${bid.scope_of_work?`<div>${lines(bid.scope_of_work).map(l=>l.startsWith("-")||l.startsWith("•")?`<ul class="scope"><li>${l.replace(/^[-•]\s*/,"")}</li></ul>`:`<div>${l}</div>`).join("")}</div>`:'<div class="muted">No scope entered.</div>'}
+
+  <h3>Included (+)</h3>
+  ${bulletBlock(inc)}
+
+  <h3>Excluded (-)</h3>
+  ${bulletBlock(exc)}
+</div>
+
+<div class="page">
+  <div class="quoteline">${running}</div>
+  <div class="brand" style="font-size:22pt">AIME</div>
+  <div class="brandsub" style="margin-bottom:30px">ATLANTIC INDUSTRIAL MECHANICAL &amp; ENVIRONMENTAL</div>
+
+  ${bid.clarifications?`<h3>Clarifications</h3><div class="notes">${esc(bid.clarifications)}</div>`:""}
+
+  <h2 style="margin-top:26px">Notes</h2>
+  <div class="notes">${esc(f.general_notes)}</div>
+
+  <hr class="rule" style="margin-top:44px"/>
+  <div class="sumwrap">
+    <h2 style="margin-top:0">Summary</h2>
+    <div class="sumrow"><span>Subtotal</span><span>${money(total)}</span></div>
+    <div style="display:flex;gap:44px;align-items:flex-end;margin-top:22px">
+      <div class="totalbox">${money(total)}</div>
+      <div class="accept">
+        <div><div class="siglabel">Accepted By</div><div class="sigline"></div></div>
+        <div><div class="siglabel">Date</div><div class="sigline"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="page cond">
+  <h1>Atlantic Industrial Mechanical &amp; Electrical</h1>
+  <h2>Proposal Conditions</h2>
+  <p><strong>PROPOSAL CONDITIONS</strong></p>
+  <p><u>Validity</u></p>
+  <p>This proposal is valid for a period of ${esc(f.valid_days)} days from date of submittal.</p>
+  <p><u>Payment Terms</u></p>
+  <p>Progress payments will be made by Owner on a monthly basis for all materials on hand; stored or delivered to the
+  job site and/or labor performed. Payment not made in full by the 10th day of the month following will be subject to
+  additional finance charges of 1 ½% per calendar month or fraction thereof until paid. In no event shall any payment
+  exceed sixty (60) days from date of submittal.</p>
+  <p><u>Insurance</u></p>
+  <p>Our standard insurance coverage is as follows:</p>
+  <ol type="a">
+    <li>$1,000,000 General Liability (General aggregate and each occurrence).</li>
+    <li>$1,000,000 Automobile Liability.</li>
+    <li>$10,000,000 Excess Liability – Umbrella</li>
+    <li>$1,000,000 Workers Compensation per State.<br/>Any insurance coverage above the foregoing will be at an additional cost.</li>
+  </ol>
+  <p><u>Plans and Specifications</u></p>
+  <p>Unless otherwise stated herein, Owner/General Contractor is solely responsible for preparation of plans and
+  specifications relating to the work to be performed hereunder, and AIME makes no representations or warranties
+  regarding those documents. Changed conditions will be negotiated as a change order prior to the performance of the work.</p>
+  <p>Delays not the fault of AIME will be billed as extra work. There will be an additional charge for premature
+  mobilization unless requested by AIME. Additional move-in or set-up time caused by working out of sequence at the
+  request of others will be billed as extra work. Back charges will not be excepted unless we have prior written
+  description of the problem faxed to our attention within 24 hours of occurrence of error for our review. This entire
+  proposal should be incorporated into Subcontract Agreement upon award.</p>
+  <p>Upon award of subcontract, please forward subcontract agreement to:</p>
+  <p style="margin-top:26px">I hope our proposal meets with your satisfaction. I look forward to a mutually beneficial relationship. Please call me
+  directly at (410) 355-1869 if I can be of further assistance.</p>
+  <p style="margin-top:26px">Sincerely,</p>
+  <p style="margin-top:34px">AIME<br/>${esc(f.prepared_by||"Gordon &quot;Clay&quot; Lau")}</p>
+</div>
+
+</body></html>`;
+  }
+
+  function printProposal(){
+    const w=window.open("","_blank");
+    if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups for this site to print.");return;}
+    w.document.write(buildHtml());
+    w.document.close();
+    setTimeout(()=>{w.focus();w.print();},400);
+  }
+
+  const card={...cardS,padding:20,marginBottom:16};
+  const inc=asList(bid.inclusions), exc=asList(bid.exclusions);
+  const missing=[];
+  if(!bid.scope_of_work)missing.push("Scope of Work");
+  if(!inc.length)missing.push("Inclusions");
+  if(!exc.length)missing.push("Exclusions");
+  if(!bid.requester_company)missing.push("Customer company");
+
+  return(
+    <>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
+        <div style={card}>
+          <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:14}}>Quote Header</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+            <div><label style={lbl}>Quote #</label>
+              <input value={f.quote_number} onChange={e=>set("quote_number",e.target.value)} placeholder="2741" style={inp}/></div>
+            <div><label style={lbl}>Quote Date</label>
+              <input type="date" value={f.quote_date} onChange={e=>set("quote_date",e.target.value)} style={inp}/></div>
+          </div>
+          <label style={lbl}>Prepared By</label>
+          <input value={f.prepared_by} onChange={e=>set("prepared_by",e.target.value)} style={{...inp,marginBottom:12}}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div><label style={lbl}>Phone</label>
+              <input value={f.prepared_phone} onChange={e=>set("prepared_phone",e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>Email</label>
+              <input value={f.prepared_email} onChange={e=>set("prepared_email",e.target.value)} style={inp}/></div>
+          </div>
+        </div>
+
+        <div style={card}>
+          <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:14}}>Customer Block</div>
+          <div style={{fontSize:12,color:T.muted,marginBottom:8}}>
+            Company and contact come from the Overview tab. Add the mailing address here — one line each.
+          </div>
+          <div style={{fontSize:13,fontWeight:700,color:T.orange,marginBottom:8}}>{bid.requester_company||"— no company set —"}</div>
+          <label style={lbl}>Address</label>
+          <textarea value={f.customer_address} onChange={e=>set("customer_address",e.target.value)} rows={4}
+            placeholder={"10330 Old Columbia Rd Ste 102\nColumbia, Maryland\n21046, United States"}
+            style={{...inp,resize:"vertical",lineHeight:1.6}}/>
+        </div>
+      </div>
+
+      <div style={card}>
+        <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:4}}>General Notes</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:10}}>Printed under "Notes" on page 2. Edit for this bid, or leave the standard terms.</div>
+        <textarea value={f.general_notes} onChange={e=>set("general_notes",e.target.value)} rows={8}
+          style={{...inp,resize:"vertical",lineHeight:1.7,fontSize:12.5}}/>
+        <div style={{marginTop:10,display:"flex",alignItems:"center",gap:10}}>
+          <label style={{...lbl,marginBottom:0}}>Valid for</label>
+          <input type="number" value={f.valid_days} onChange={e=>set("valid_days",e.target.value)}
+            style={{...inp,width:80,padding:"7px 9px"}}/>
+          <span style={{fontSize:12,color:T.sub}}>days</span>
+        </div>
+      </div>
+
+      <div style={{...card,borderLeft:`3px solid ${T.green}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Proposal Total</div>
+            <div style={{fontSize:26,fontWeight:900,color:T.green,marginTop:2}}>{money(total)}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:2}}>Calculated from the Estimating tab</div>
+          </div>
+          <button onClick={printProposal}
+            style={{...primBtn,width:"auto",padding:"14px 26px",fontSize:14,borderRadius:12,background:"#1f3864",color:"#fff"}}>
+            🖨️ Print / Save as PDF
+          </button>
+        </div>
+        {missing.length>0&&(
+          <div style={{marginTop:14,background:T.yellowLow||T.surface,border:`1px solid ${T.yellow}40`,borderRadius:10,padding:"10px 14px",fontSize:12,color:T.yellow}}>
+            Not filled in yet: {missing.join(", ")}. The proposal will print without {missing.length>1?"them":"it"}.
+          </div>
+        )}
+      </div>
+
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={save} disabled={!dirty||saving}
+          style={{...primBtn,width:"auto",padding:"11px 24px",fontSize:13.5,borderRadius:10,
+            background:dirty?T.green:T.border,color:dirty?"#000":T.muted,opacity:saving?0.6:1}}>
+          {saving?"Saving…":"Save Proposal Details"}
         </button>
         {dirty&&<span style={{fontSize:12,color:T.orange,fontWeight:700}}>● Unsaved changes</span>}
       </div>
