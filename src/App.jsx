@@ -483,6 +483,38 @@ function RentedEquipCard({row,onChange,onRemove}){
   );
 }
 
+function SubCard({row,onChange,onRemove}){
+  return(
+    <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}>
+      <div style={{marginBottom:10}}>
+        <label style={lbl}>Subcontractor</label>
+        <input type="text" placeholder="Company name" value={row.company||""}
+          onChange={e=>onChange({...row,company:e.target.value})} style={inp}/>
+      </div>
+      <div style={{marginBottom:10}}>
+        <label style={lbl}>Work Performed</label>
+        <input type="text" placeholder="What they did on site today" value={row.description||""}
+          onChange={e=>onChange({...row,description:e.target.value})} style={inp}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+        <div><label style={lbl}>Workers</label>
+          <input type="number" min="0" placeholder="0" value={row.workers||""}
+            onChange={e=>onChange({...row,workers:e.target.value})} style={inp}/></div>
+        <div><label style={lbl}>Hours</label>
+          <input type="number" min="0" step="0.5" placeholder="0" value={row.hours||""}
+            onChange={e=>onChange({...row,hours:e.target.value})} style={inp}/></div>
+        <div><label style={lbl}>Amount ($)</label>
+          <input type="number" min="0" step="0.01" placeholder="0.00" value={row.amount||""}
+            onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10,paddingTop:8,borderTop:`1px solid ${T.border}`}}>
+        <span style={{fontSize:11,color:T.muted}}>Leave amount blank if it isn't billable to this job</span>
+        <button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>Remove</button>
+      </div>
+    </div>
+  );
+}
+
 function MatCard({row,onChange,onRemove}){const fileRef=useRef(null);const camRef=useRef(null);const receipts=row.receipts||[];async function handleFiles(files){const n=[];for(const f of files){if(!f.type.startsWith("image/"))continue;const src=await compressImg(f,800,0.6);n.push({id:uid(),src});}onChange({...row,receipts:[...receipts,...n]});}return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}><div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}><div><label style={lbl}>Markup %</label><input type="number" min="0" step="0.1" placeholder="12" value={row.markup_pct||""} onChange={e=>onChange({...row,markup_pct:e.target.value})} style={inp}/></div><div><label style={lbl}>Tax ($)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>onChange({...row,tax_amount:e.target.value})} style={inp}/></div><div><label style={lbl}>Line Total</label><div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(matLineTotal(row))}</div></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}><img src={r.src} alt="" style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.blue}40`,display:"block"}}/><button onClick={()=>onChange({...row,receipts:receipts.filter(x=>x.id!==r.id)})} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>camRef.current?.click()} title="Take a photo" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>CAMERA</span></button><button onClick={()=>fileRef.current?.click()} title="Choose from your photos or files" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.green}40`,background:T.greenLow,color:T.green,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>🖼️</span><span style={{fontSize:9,fontWeight:700}}>UPLOAD</span></button><input ref={camRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /><input ref={fileRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{matLineTotal(row)>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(matLineTotal(row))}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
 
 function LoginScreen({onLogin}){
@@ -1046,7 +1078,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
   const [step,setStep]=useState(1);const [saving,setSaving]=useState(false);
   const [draftSaved,setDraftSaved]=useState(false);
   const [showDraftBanner,setShowDraftBanner]=useState(!!existingDraft);
-  const [rpt,setRpt]=useState(existingDraft?.data||{date:today(),description:"",report_no:"",labor:[],equipment:[],rental_equipment:[],materials:[],visitor_log:[],delays:[],site_conditions:""});
+  const [rpt,setRpt]=useState(existingDraft?.data||{date:today(),description:"",report_no:"",labor:[],equipment:[],rental_equipment:[],materials:[],subcontractors:[],visitor_log:[],delays:[],site_conditions:""});
   const topRef=useRef(null);
   const setR=(k,v)=>setRpt(r=>({...r,[k]:v}));
   function add(key,item){setR(key,[...rpt[key],item]);}
@@ -1227,7 +1259,11 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
           {(rpt.rental_equipment||[]).map((row,i)=><RentedEquipCard key={row.id} row={row} onChange={r=>upd("rental_equipment",i,r)} onRemove={()=>del("rental_equipment",i)}/>)}
           <DashedAdd label="+ Add Rented Equipment" onClick={()=>add("rental_equipment",{id:uid(),description:"",qty:"",usage:"",rate:""})} color={T.purple}/>
         </div>)}
-        {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/></div>)}
+        {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/>
+          <div style={{fontSize:17,fontWeight:800,margin:"24px 0 12px"}}>🏢 Subcontractors</div>
+          {(rpt.subcontractors||[]).map((row,i)=><SubCard key={row.id} row={row} onChange={r=>upd("subcontractors",i,r)} onRemove={()=>del("subcontractors",i)}/>)}
+          <DashedAdd label="+ Add Subcontractor" onClick={()=>add("subcontractors",{id:uid(),company:"",description:"",workers:"",hours:"",amount:""})} color={T.orange}/>
+        </div>)}
         {step===5&&(<div>
           <div style={{fontSize:17,fontWeight:800,marginBottom:16}}>📋 Site Notes</div>
           <div style={{...cardS,marginBottom:12,background:T.blueLow,border:`1px solid ${T.blue}30`}}>
@@ -1630,6 +1666,11 @@ ${sections.rental&&(report.rental_equipment||[]).length>0?`<div class="section">
 ${sections.materials&&(report.materials||[]).length>0?`<div class="section"><h2>📦 Materials & Misc.</h2>
 <table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th></tr></thead>
 <tbody>${(report.materials||[]).map(m=>`<tr><td>${m.description||'—'}</td><td style="text-align:center">${m.qty||'—'}</td><td style="text-align:right">${m.amount?fmt2(m.amount):'—'}</td></tr>`).join('')}
+</tbody></table></div>`:''}
+
+${(report.subcontractors||[]).length>0?`<div class="section"><h2>🏢 Subcontractors</h2>
+<table><thead><tr><th>Subcontractor</th><th>Work Performed</th><th style="text-align:center">Workers</th><th style="text-align:center">Hours</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${(report.subcontractors||[]).filter(s=>s.company||s.description).map(s=>`<tr><td>${s.company||'—'}</td><td>${s.description||'—'}</td><td style="text-align:center">${s.workers||'—'}</td><td style="text-align:center">${s.hours||'—'}</td><td style="text-align:right">${s.amount?fmt2(s.amount):'—'}</td></tr>`).join('')}
 </tbody></table></div>`:''}
 
 ${sections.visitors&&visitors.length>0?`<div class="section"><h2>🏗️ Visitor Log — ${visitors.length} Visitor${visitors.length!==1?'s':''}</h2>
@@ -2258,6 +2299,23 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       {report.description&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Work Done</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{report.description}</div></div>}
       {(report.labor||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Labor{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.labor)}</span>}</div>{report.labor.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.labor.length-1?`1px solid ${T.border}`:"none"}}><div><div style={{fontSize:14,fontWeight:600,color:T.text}}>{r.name||"—"}</div><div style={{fontSize:11,color:T.muted}}>{r.classification} · {r.regHrs||0}reg {r.otHrs||0}OT {r.travelHrs||0}tr</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(laborAmt(r))}</div>}</div>))}</div>}
       {(report.equipment||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.equip)}</span>}</div>{report.equipment.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty} x {r.usage} {r.unit}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(equipAmt(r,project.division))}</div>}</div>))}</div>}
+      {(report.subcontractors||[]).filter(s=>s.company||s.description).length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.orange}`}}>
+        <div style={{fontSize:12,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🏢 Subcontractors</div>
+        {(report.subcontractors||[]).filter(s=>s.company||s.description).map((s,i)=>(
+          <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+            <div style={{flex:1,paddingRight:10}}>
+              <div style={{fontSize:13,fontWeight:600,color:T.text}}>{s.company||"—"}</div>
+              {s.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:2}}>{s.description}</div>}
+              {(s.workers||s.hours)&&<div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                {s.workers?`${s.workers} worker${Number(s.workers)!==1?"s":""}`:""}{s.workers&&s.hours?" · ":""}{s.hours?`${s.hours} hrs`:""}
+              </div>}
+            </div>
+            {can(user,"view_dashboard")&&parseFloat(s.amount)>0&&
+              <div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(s.amount)}</div>}
+          </div>
+        ))}
+      </div>}
+
       {(report.rental_equipment||[]).length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`}}><div style={{fontSize:12,color:T.purple,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🔑 Rented Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt((report.rental_equipment||[]).reduce((s,r)=>s+(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1),0))}</span>}</div>{(report.rental_equipment||[]).map((r,i)=>{const amt=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);return(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.rental_equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty||0} × {r.usage||0} days/hrs @ ${r.rate||0}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(amt)}</div>}</div>);})}</div>}
       {(report.materials||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Materials{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.mats)}</span>}</div>{report.materials.map((r,i)=>(<div key={i} style={{padding:"8px 0",borderBottom:i<report.materials.length-1?`1px solid ${T.border}`:"none"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:r.receipts?.length>0?8:0}}><span style={{fontSize:13}}>{r.qty?`${r.qty}x `:""}{r.description}</span>{can(user,"view_dashboard")&&<span style={{fontSize:13,fontWeight:700,color:T.green}}>${fmt(parseFloat(r.amount)||0)}</span>}</div>{r.receipts?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{r.receipts.map(rc=><img key={rc.id} src={rc.src} alt="" onClick={()=>setLb(rc.src)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer"}}/>)}</div>}</div>))}</div>}
       {can(user,"view_dashboard")&&<div style={{...cardS,background:divColor+"12",border:`1px solid ${divColor}40`,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:15,fontWeight:800}}>Grand Total</span><span style={{fontSize:26,fontWeight:900,color:divColor,letterSpacing:"-1px"}}>${fmt(tot.grand)}</span></div>}
@@ -6395,6 +6453,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   const [project,setProject]=useState(initP);
   const [reports,setReports]=useState([]);const [safety,setSafety]=useState([]);const [photos,setPhotos]=useState([]);const [weather,setWeather]=useState([]);
   const [tab,setTab]=useState("reports");
+  const [reportView,setReportView]=useState("daily");  // daily | completed
   const [showTMForm,setShowTMForm]=useState(false);
   const [editingTicket,setEditingTicket]=useState(null);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
   const [screen,setScreen]=useState("detail");const [activeReport,setActiveReport]=useState(null);const [editProject,setEditProject]=useState(false);
@@ -6466,8 +6525,40 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
             onNew={()=>{setEditingTicket(null);setShowTMForm(true);}}
             onOpen={(t)=>{setEditingTicket(t);setShowTMForm(true);}}/>
         ))}
-        {!loading&&tab==="reports"&&(<div>
-          {can(user,"submit_report")&&<button onClick={()=>setScreen("newReport")} style={{...primBtn,marginBottom:16,borderRadius:14,padding:"18px",fontSize:17,background:divMeta.color}}>📋 + New Daily Report</button>}
+        {!loading&&tab==="reports"&&(()=>{
+          // Approved reports move out of the working list into Completed, so the
+          // Daily tab only shows what still needs attention.
+          const done=reports.filter(r=>r.status==="approved");
+          const open=reports.filter(r=>r.status!=="approved");
+          const shown=reportView==="completed"?done:open;
+          return(<div>
+          {can(user,"submit_report")&&<button onClick={()=>setScreen("newReport")} style={{...primBtn,marginBottom:12,borderRadius:14,padding:"18px",fontSize:17,background:divMeta.color}}>📋 + New Daily Report</button>}
+
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
+            {[["daily","📋 Daily",open.length],["completed","✅ Completed",done.length]].map(([id,label,n])=>{
+              const on=reportView===id;
+              return(
+                <button key={id} onClick={()=>setReportView(id)}
+                  style={{flex:1,padding:"11px 10px",borderRadius:12,cursor:"pointer",fontFamily:"inherit",
+                    background:on?(id==="completed"?T.greenLow:T.orangeLow):T.surface,
+                    border:`1px solid ${on?(id==="completed"?T.green:T.orange)+"55":T.border}`,
+                    color:on?(id==="completed"?T.green:T.orange):T.sub,
+                    fontSize:13.5,fontWeight:on?800:600}}>
+                  {label} <span style={{opacity:0.75}}>({n})</span>
+                </button>
+              );
+            })}
+          </div>
+          {shown.length===0&&reportView==="completed"&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+              <div style={{fontSize:40,marginBottom:10}}>✅</div>
+              <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>Nothing completed yet</div>
+              <div style={{fontSize:12.5,lineHeight:1.6}}>Reports move here once a PM approves them.</div>
+            </div>}
+          {shown.length===0&&reportView==="daily"&&reports.length>0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+              <div style={{fontSize:40,marginBottom:10}}>🎉</div>
+              <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>All caught up</div>
+              <div style={{fontSize:12.5,lineHeight:1.6}}>Every report on this job has been approved.</div>
+            </div>}
           {reports.length===0&&<div style={{textAlign:"center",padding:"32px 16px",color:T.muted}}>
               <div style={{fontSize:44,marginBottom:12}}>📋</div>
               <div style={{fontSize:16,fontWeight:700,color:T.sub,marginBottom:6}}>No Daily Reports Yet</div>
@@ -6476,8 +6567,8 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
                 💡 Reports track labor, equipment, materials and site conditions — and automatically generate time cards for payroll.
               </div>
             </div>}
-          {reports.map(r=>{const t=reportTotals(r);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
-        </div>)}
+          {shown.map(r=>{const t=reportTotals(r);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
+         </div>);})()}
         {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="subs"     &&can(user,"subs")        &&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
