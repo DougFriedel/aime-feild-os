@@ -2010,8 +2010,10 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       setReport(r=>({...r,inspector_name:inspectorName,inspector_signature:compressedSig,inspector_signed_at:new Date().toISOString(),status:"signed"}));
       setShowSigPad(false);
     }catch(e){
+      // ReportDetail has no setErr — surfacing it here used to throw a second,
+      // more confusing error on top of the real one.
       const msg=e.message||"Could not save signature.";
-      setErr("Signature save failed: "+msg);
+      alert("Signature save failed: "+msg);
       throw new Error(msg);
     }finally{
       setSigSaving(false);
@@ -3919,7 +3921,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
   const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:0});
 
-  if(showNotifs)return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}><TopBar title="🔔 Notifications" onBack={()=>{setShowNotifs(false);load();}}/><NotificationsPanel onClose={()=>{setShowNotifs(false);load();}}/></div>);
+  if(showNotifs)return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}><TopBar title="🔔 Notifications" onBack={()=>{setShowNotifs(false);load();}}/><NotificationsPanel onCountChange={setUnread} onClose={()=>{setShowNotifs(false);load();}}/></div>);
 
   if(activeReport&&activeProject)return(<ReportDetail report={activeReport} project={activeProject} user={user} onBack={()=>{setActiveReport(null);setActiveProject(null);load();}} onDelete={async(id)=>{await API.reports.remove(id);setActiveReport(null);setActiveProject(null);load();}} onApprove={approve} onFlag={flag}
     onArchive={async(id,archived)=>{await API.reports.update(id,{archived});setActiveReport(null);setActiveProject(null);load();}}/>);
@@ -4254,16 +4256,25 @@ function UserManagementScreen({onBack,currentUser,user}){
   );
 }
 
-function NotificationsPanel(){
+function NotificationsPanel({onCountChange}){
     const [notifs,setNotifs]=useState([]);const [nl,setNl]=useState(true);
-    async function loadN(){setNl(true);try{setNotifs(await API.notifications.list()||[]);}catch{}setNl(false);}
+    async function loadN(){
+      setNl(true);
+      try{
+        const rows=await API.notifications.list()||[];
+        setNotifs(rows);
+        onCountChange&&onCountChange(rows.filter(n=>!n.read).length);
+      }catch{}
+      setNl(false);
+    }
     useEffect(()=>{loadN();},[]);
-    const typeIcon={report_submitted:"📋",report_flagged:"🚩",report_approved:"✅"};
+    const unread=notifs.filter(n=>!n.read).length;
+    const typeIcon={report_submitted:"📋",report_flagged:"🚩",report_approved:"✅",bid_review:"📊"};
     return(<div style={{padding:"14px 16px 80px"}}>
-      {unread>0&&<button onClick={async()=>{await API.notifications.markAllRead();setUnread(0);await loadN();}} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:14}}>Mark all read</button>}
+      {unread>0&&<button onClick={async()=>{await API.notifications.markAllRead();await loadN();}} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:14}}>Mark all read</button>}
       {nl&&<Spinner/>}
       {!nl&&notifs.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>🔔</div><div>No notifications yet.</div></div>}
-      {!nl&&notifs.map(n=>(<div key={n.id} onClick={async()=>{if(!n.read){await API.notifications.markRead(n.id);setUnread(u=>Math.max(0,u-1));await loadN();}}} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${n.read?T.border:T.orange}`,opacity:n.read?0.6:1,cursor:n.read?"default":"pointer"}}><div style={{display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:18,flexShrink:0}}>{typeIcon[n.type]||"📬"}</span><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700}}>{n.title}</div>{n.body&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{n.body}</div>}<div style={{fontSize:11,color:T.muted,marginTop:4}}>{n.created_at?new Date(n.created_at).toLocaleString():""}</div></div>{!n.read&&<div style={{width:8,height:8,borderRadius:"50%",background:T.orange,flexShrink:0,marginTop:4}}/>}</div></div>))}
+      {!nl&&notifs.map(n=>(<div key={n.id} onClick={async()=>{if(!n.read){await API.notifications.markRead(n.id);await loadN();}}} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${n.read?T.border:T.orange}`,opacity:n.read?0.6:1,cursor:n.read?"default":"pointer"}}><div style={{display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:18,flexShrink:0}}>{typeIcon[n.type]||"📬"}</span><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700}}>{n.title}</div>{n.body&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{n.body}</div>}<div style={{fontSize:11,color:T.muted,marginTop:4}}>{n.created_at?new Date(n.created_at).toLocaleString():""}</div></div>{!n.read&&<div style={{width:8,height:8,borderRadius:"50%",background:T.orange,flexShrink:0,marginTop:4}}/>}</div></div>))}
     </div>);
   }
 
