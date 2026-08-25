@@ -3930,7 +3930,12 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   async function approve(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});await load();}catch(e){setErr(e.message);}}
   async function flag(id,notes){try{await API.reports.update(id,{status:"flagged",pm_notes:notes});await load();}catch(e){setErr(e.message);}}
 
-  const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:0});
+  // maximumFractionDigits defaults to 3, so minimumFractionDigits:0 alone
+  // rendered $12,551.375 instead of $12,551.
+  const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});
+  const fmtH=n=>Number(n||0).toLocaleString("en-US",{maximumFractionDigits:1});
+  const monthLabel=new Date().toLocaleDateString("en-US",{month:"long",year:"numeric"});
+  const monthKey=new Date().toISOString().slice(0,7);
 
   if(building)return(
     <ReportBuilder projects={pmDiv?projects.filter(p=>p.division===pmDiv):projects} user={user}
@@ -4032,6 +4037,21 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   scopedReports.forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!workerHours[l.name])workerHours[l.name]={name:l.name,reg:0,ot:0,pay:0};workerHours[l.name].reg+=parseFloat(l.regHrs)||0;workerHours[l.name].ot+=parseFloat(l.otHrs)||0;workerHours[l.name].pay+=laborAmt(l);}));
   const workerRows=Object.values(workerHours).sort((a,b)=>b.pay-a.pay);
 
+  // Month to date, scoped to the selected division
+  const monthReports=scopedReports.filter(r=>(r.date||"").slice(0,7)===monthKey);
+  const monthTot=monthReports.reduce((s,r)=>{
+    const t=reportTotals(r,divOf(r));
+    return{labor:s.labor+t.labor,equip:s.equip+t.equip,hrs:s.hrs+t.labor_hrs};
+  },{labor:0,equip:0,hrs:0});
+  const hoursByJob={};
+  monthReports.forEach(r=>{
+    const p=projects.find(x=>x.id===r.project_id)||r.projects||{};
+    const t=reportTotals(r,p.division);
+    const name=p.name||"Unknown";
+    hoursByJob[name]=(hoursByJob[name]||0)+t.labor_hrs;
+  });
+  const topJob=Object.entries(hoursByJob).sort((a,b)=>b[1]-a[1])[0]||null;
+
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -4059,11 +4079,59 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
         {/* OVERVIEW */}
         {pmTab==="overview"&&!loading&&<div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-            {[[`${reports.length}`,"Total Reports",T.blue],[`${pending.length}`,"Pending Approval",T.yellow],[fmt(allTot.l),"Total Labor",T.green],[fmt(allTot.g),"Total Billed",T.orange]].map(([v,l,c])=>(
-              <div key={l} style={{...cardS,textAlign:"center"}}><div style={{fontSize:22,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginTop:2}}>{l}</div></div>
+
+          {/* Waiting on approval */}
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Waiting on Approval</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+            {[["📋",scopedPending.length,"Daily Reports",T.yellow],
+              ["🧾",scopedTmPending.length,"T&M Tickets",T.orange]].map(([icon,v,l,c])=>(
+              <div key={l} onClick={()=>setPmTab("approvals")}
+                style={{...cardS,textAlign:"center",cursor:"pointer",
+                  border:`1px solid ${v>0?c+"55":T.border}`,
+                  background:v>0?c+"10":T.card}}>
+                <div style={{fontSize:16,marginBottom:2}}>{icon}</div>
+                <div style={{fontSize:30,fontWeight:900,color:v>0?c:T.muted,lineHeight:1}}>{v}</div>
+                <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",marginTop:4}}>{l}</div>
+              </div>
             ))}
           </div>
+
+          {/* Month to date */}
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+            {monthLabel} — Month to Date
+          </div>
+          <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Man Hours</div>
+                <div style={{fontSize:32,fontWeight:900,color:T.blue,lineHeight:1.1}}>{fmtH(monthTot.hrs)}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Reports</div>
+                <div style={{fontSize:18,fontWeight:800,color:T.sub}}>{monthReports.length}</div>
+              </div>
+            </div>
+            {topJob&&<div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+              <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:3}}>Most Hours This Month</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:15,fontWeight:800,color:T.orange}}>{topJob[0]}</span>
+                <span style={{fontSize:15,fontWeight:900,color:T.blue}}>{fmtH(topJob[1])} hrs</span>
+              </div>
+            </div>}
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+            {[["Labor",monthTot.labor,T.green],
+              ["Equipment",monthTot.equip,T.yellow],
+              ["Combined",monthTot.labor+monthTot.equip,T.text]].map(([l,v,c])=>(
+              <div key={l} style={{...cardS,textAlign:"center",padding:"12px 6px"}}>
+                <div style={{fontSize:17,fontWeight:900,color:c}}>{fmt(v)}</div>
+                <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.6px",marginTop:3}}>{l}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* All-time by job */}
           <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Active Jobs by Billings</div>
           {projRows.slice(0,5).map(p=><div key={p.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div><div style={{fontSize:13,fontWeight:700,color:T.orange}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.count} reports</div></div>
@@ -4073,7 +4141,9 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
         {/* APPROVALS */}
         {pmTab==="approvals"&&!loading&&<div>
-          {scopedPending.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32}}>✅</div><div style={{marginTop:8}}>All reports approved</div></div>}
+          {scopedPending.length===0&&scopedTmPending.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32}}>✅</div><div style={{marginTop:8}}>Nothing waiting on approval</div></div>}
+
+          {scopedPending.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>📋 Daily Reports ({scopedPending.length})</div>}
           {scopedPending.map(r=>{
             const proj=projects.find(p=>p.id===r.project_id)||r.projects||{name:"Unknown"};
             const tot=reportTotals(r,proj.division);
@@ -4084,6 +4154,19 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
                 <button onClick={()=>{setActiveReport(r);setActiveProject(proj);}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>👁 View</button>
                 <button onClick={()=>approve(r.id)} style={{...primBtn,flex:1,fontSize:13,borderRadius:10,background:T.green}}>✓ Approve</button>
               </div>
+            </div>);
+          })}
+
+          {scopedTmPending.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"18px 0 8px"}}>🧾 T&M Tickets ({scopedTmPending.length})</div>}
+          {scopedTmPending.map(t=>{
+            const proj=projects.find(p=>p.id===t.project_id)||t.projects||{name:"Unknown"};
+            return(<div key={t.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}>
+              <div style={{fontSize:14,fontWeight:700,color:T.orange}}>{proj.name}</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:8}}>T&M #{t.ticket_no||"—"} · {t.ticket_date} · {t.submitted_by||"—"} · {fmt(t.grand_total)}</div>
+              <button onClick={async()=>{
+                try{await API.tmTickets.update(t.id,{status:"approved"});await load();}
+                catch(e){setErr(e.message);}
+              }} style={{...primBtn,fontSize:13,borderRadius:10,background:T.green}}>✓ Approve Ticket</button>
             </div>);
           })}
         </div>}
