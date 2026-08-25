@@ -2013,143 +2013,93 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     }
   }
 
+  // Builds the workbook from the report itself. The previous version read a
+  // base64 Excel template that was never defined in this file, so the button
+  // threw a ReferenceError and appeared to do nothing.
   function exportXLSX(){
-    const wb = XLSX.read(DAILY_REPORT_TEMPLATE_B64, {type:'base64', cellStyles:true, cellFormula:true});
-    const ws = wb.Sheets['3-24-2026'];
+    try{
+      const money=(n)=>Number(n||0);
+      const tot=reportTotals(report,project.division);
+      const subs=(report.subcontractors||[]).filter(s=>s.company||s.description);
+      const subsTotal=subs.reduce((s,x)=>s+subLineTotal(x),0);
+      const rows=[];
+      const blank=()=>rows.push([]);
+      const head=(t)=>rows.push([t]);
 
-    Object.keys(ws).forEach(addr=>{
-      if(addr.startsWith('!'))return;
-      const cell=ws[addr];
-      if(cell&&cell.f){delete cell.f; cell.v=cell.v||0;}
-    });
+      rows.push(["AIME — Daily Field Report"]);
+      rows.push(["Atlantic Industrial Mechanical & Environmental Inc."]);
+      blank();
+      rows.push(["Project",project.name||"","Client",project.client||""]);
+      rows.push(["Report #",report.report_no||"","Date",report.date||""]);
+      rows.push(["Division",project.division||"","Submitted By",report.submitted_by||""]);
+      rows.push(["AFE / PO",[project.afe,project.work_order].filter(Boolean).join(" / ")||"—",
+                 "Status",(report.status||"").toUpperCase()]);
+      blank();
+      if(report.description){ head("Description of Work"); rows.push([report.description]); blank(); }
 
-    function sc(addr, val){
-      const existing=ws[addr]||{};
-      const s=existing.s||{};
-      if(typeof val==='number'){
-        ws[addr]={...existing, s, t:'n', v:val, w:undefined, f:undefined};
-      } else {
-        ws[addr]={...existing, s, t:'s', v:val==null?'':String(val), w:undefined, f:undefined};
+      const labor=(report.labor||[]).filter(l=>l.name||l.classification||parseFloat(l.regHrs)||parseFloat(l.otHrs)||parseFloat(l.travelHrs));
+      if(labor.length){
+        head("LABOR");
+        rows.push(["Name","Classification","Reg Hrs","OT Hrs","Travel Hrs","Amount"]);
+        labor.forEach(l=>rows.push([l.name||"",l.classification||"",
+          money(l.regHrs),money(l.otHrs),money(l.travelHrs),money(laborAmt(l,project.division))]));
+        rows.push(["","","","","TOTAL LABOR",money(tot.labor)]);
+        blank();
       }
-    }
-    function scn(addr, val){
-      const existing=ws[addr]||{};
-      const s=existing.s||{};
-      const n=parseFloat(val)||0;
-      ws[addr]={...existing, s, t:'n', v:n, z:'"$"#,##0.00', w:undefined, f:undefined};
-    }
-    function scn0(addr){
-      const existing=ws[addr]||{};
-      if(!existing.v) scn(addr,0);
-    }
 
-    const positions=getPositions(project.division);
-    const[yr,mo,dy]=(report.date||'').split('-');
-    const dateStr=`${mo}/${dy}/${yr}`;
-    const tot=reportTotals(report,project.division);
-
-    sc('D3', project.client||'');
-    sc('H3', project.work_order||'');
-    sc('J3', dateStr);
-    sc('D4', project.location||'');
-    sc('C5', project.name||'');
-    sc('F5', report.report_no||'');
-    sc('B7', report.description||'');
-
-    const laborRows=[...(report.labor||[]).filter(l=>l.classification!=='Per Diem')];
-    while(laborRows.length<14) laborRows.push(null);
-    laborRows.slice(0,14).forEach((lr,i)=>{
-      const row=10+i;
-      if(lr){
-        const pos=positions.find(p=>p.name===lr.classification);
-        sc(`B${row}`, lr.name||'');
-        sc(`D${row}`, lr.classification||'');
-        if(pos&&!pos.flat){
-          sc(`F${row}`, parseFloat(lr.regHrs)||0);
-          sc(`G${row}`, parseFloat(lr.otHrs)||0);
-          sc(`H${row}`, parseFloat(lr.travelHrs)||0);
-        } else {
-          sc(`F${row}`, 0); sc(`G${row}`, 0); sc(`H${row}`, 0);
-        }
-        sc(`I${row}`, pos?pos.rate:0);
-        scn(`J${row}`, laborAmt(lr,project.division));
-      } else {
-        sc(`B${row}`,''); sc(`D${row}`,'');
-        sc(`F${row}`,0); sc(`G${row}`,0); sc(`H${row}`,0);
-        sc(`I${row}`,0); scn(`J${row}`,0);
+      const equip=(report.equipment||[]).filter(e=>e.description||parseFloat(e.qty));
+      if(equip.length){
+        head("EQUIPMENT");
+        rows.push(["Equipment","Unit","Qty","Hrs / Days","Rate","Amount"]);
+        equip.forEach(e=>rows.push([e.description||"",e.unit||"",money(e.qty),money(e.usage),
+          money(e.rate),money(equipAmt(e,project.division))]));
+        rows.push(["","","","","TOTAL EQUIPMENT",money(tot.equip)]);
+        blank();
       }
-    });
 
-    const perDiemEntry=(report.labor||[]).find(l=>l.classification==='Per Diem');
-    scn('J24', perDiemEntry?laborAmt(perDiemEntry,project.division):0);
-
-    scn('J25', tot.labor);
-
-    const equipRows=[...(report.equipment||[])];
-    while(equipRows.length<15) equipRows.push(null);
-    equipRows.slice(0,15).forEach((er,i)=>{
-      const row=29+i;
-      if(er){
-        sc(`B${row}`, er.description||'');
-        sc(`G${row}`, parseFloat(er.qty)||0);
-        sc(`H${row}`, parseFloat(er.usage)||0);
-        sc(`I${row}`, parseFloat(er.rate)||0);
-        scn(`J${row}`, equipAmt(er));
-      } else {
-        sc(`B${row}`,'');
-        sc(`G${row}`,0); sc(`H${row}`,0); sc(`I${row}`,0);
-        scn(`J${row}`,0);
+      const rental=(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty));
+      if(rental.length){
+        head("RENTAL EQUIPMENT");
+        rows.push(["Description","Qty","Days/Hrs","Rate","Subtotal","Markup %","Tax","Total"]);
+        rental.forEach(r=>{
+          const base=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);
+          rows.push([r.description||"",money(r.qty),money(r.usage),money(r.rate),base,
+            money(r.markup_pct),money(r.tax_amount),rentalLineTotal(r)]);
+        });
+        rows.push(["","","","","","","TOTAL RENTAL",money(tot.rental)]);
+        blank();
       }
-    });
 
-    scn('J44', tot.equip);
+      const mats=(report.materials||[]).filter(m=>m.description||parseFloat(m.amount));
+      if(mats.length){
+        head("MATERIALS & MISC.");
+        rows.push(["Description","Qty","Amount","Markup %","Tax","Total"]);
+        mats.forEach(m=>rows.push([m.description||"",money(m.qty),money(m.amount),
+          money(m.markup_pct),money(m.tax_amount),matLineTotal(m)]));
+        rows.push(["","","","","TOTAL MATERIALS",money(tot.mats)]);
+        blank();
+      }
 
-    const mats=report.materials||[];
-    const m0=mats[0]||null;const m1=mats[1]||null;
-    sc('B49',m0?m0.qty||'':''); sc('C49',m0?m0.description||'':'');
-    scn('F49',m0?parseFloat(m0.amount)||0:0); scn('F52',m0?parseFloat(m0.amount)||0:0);
-    sc('G49',m1?m1.qty||'':''); sc('H49',m1?m1.description||'':'');
-    scn('J49',m1?parseFloat(m1.amount)||0:0); scn('J52',m1?parseFloat(m1.amount)||0:0);
-    scn0('F50'); scn0('J50');
-    const m2=mats[2]||null;const m3=mats[3]||null;
-    sc('B53',m2?m2.qty||'':''); sc('C53',m2?m2.description||'':'');
-    scn('F54',m2?parseFloat(m2.amount)||0:0); scn('F56',m2?parseFloat(m2.amount)||0:0);
-    sc('G53',m3?m3.qty||'':''); sc('H53',m3?m3.description||'':'');
-    scn('J54',m3?parseFloat(m3.amount)||0:0); scn('J56',m3?parseFloat(m3.amount)||0:0);
-    scn0('F53'); scn0('J53');
-    const m4=mats[4]||null;const m5=mats[5]||null;
-    sc('B57',m4?m4.qty||'':''); sc('C57',m4?m4.description||'':'');
-    scn('F58',m4?parseFloat(m4.amount)||0:0); scn('F60',m4?parseFloat(m4.amount)||0:0);
-    sc('G57',m5?m5.qty||'':''); sc('H57',m5?m5.description||'':'');
-    scn('J58',m5?parseFloat(m5.amount)||0:0); scn('J60',m5?parseFloat(m5.amount)||0:0);
-    scn0('F57'); scn0('J57');
+      if(subs.length){
+        head("SUBCONTRACTORS");
+        rows.push(["Subcontractor","Work Performed","Workers","Hours","Amount","Markup %","Tax","Total"]);
+        subs.forEach(s=>rows.push([s.company||"",s.description||"",money(s.workers),money(s.hours),
+          money(s.amount),money(s.markup_pct),money(s.tax_amount),subLineTotal(s)]));
+        rows.push(["","","","","","","TOTAL SUBS",subsTotal]);
+        blank();
+      }
 
-    scn('J61', tot.mats);
-    scn('J62', tot.grand);
+      rows.push(["","","","","GRAND TOTAL",(tot.grand||0)+subsTotal]);
 
-    sc('D64', dateStr);
-    if(report.inspector_name){
-      sc('B64', report.inspector_name);
-      sc('G64', report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleDateString():'');
+      const ws=XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"]=[{wch:30},{wch:22},{wch:11},{wch:11},{wch:13},{wch:11},{wch:11},{wch:13}];
+      const wb=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb,ws,"Daily Report");
+      const safe=(s)=>String(s||"").replace(/[^A-Za-z0-9_-]+/g,"_");
+      XLSX.writeFile(wb,`AIME_${safe(project.name)}_${safe(report.report_no||report.date)}.xlsx`);
+    }catch(e){
+      alert("Excel export failed: "+e.message);
     }
-
-    const shIdx=wb.SheetNames.indexOf('3-24-2026');
-    if(shIdx>=0){wb.SheetNames[shIdx]='Daily Report';wb.Sheets['Daily Report']=ws;delete wb.Sheets['3-24-2026'];}
-
-    if(ws['!pageSetup']){
-      ws['!pageSetup'].fitToPage=true;
-      ws['!pageSetup'].fitToWidth=1;
-      ws['!pageSetup'].fitToHeight=1;
-      ws['!pageSetup'].scale=undefined;
-      ws['!pageSetup'].orientation='portrait';
-      ws['!pageSetup'].paperSize=1;
-    } else {
-      ws['!pageSetup']={fitToPage:true,fitToWidth:1,fitToHeight:1,orientation:'portrait',paperSize:1};
-    }
-    ws['!sheetPr']={...(ws['!sheetPr']||{}),pageSetUpPr:{fitToPage:true}};
-    ws['!margins']={left:0.25,right:0.25,top:0.5,bottom:0.5,header:0.3,footer:0.3};
-    XLSX.writeFile(wb, `AIME_${(project.name||'').replace(/\s+/g,'_')}_${(report.date||'').replace(/-/g,'')}.xlsx`,
-      {cellStyles:true, bookSST:false});
   }
   if(editing&&editData){
     return(
