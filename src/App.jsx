@@ -1563,6 +1563,7 @@ function printReportWithOptions(report, project, sections, photos, photoLayout){
   const division = project.division;
   const positions = getPositions(division);
   const tot = reportTotals(report, division);
+  const subsTotal = (report.subcontractors||[]).reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
   const [yr,mo,dy] = (report.date||'').split('-');
   const dateStr = `${mo}/${dy}/${yr}`;
   const fmt2 = n => (parseFloat(n)||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2});
@@ -1658,20 +1659,27 @@ ${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>
 <tbody>${(report.equipment||[]).filter(e=>e.description||parseFloat(e.qty)).map(e=>{const rate=parseFloat(e.rate)||(getEquipList(division).find(x=>!x.section&&x.name===e.description)||{}).rate||0;return `<tr><td>${e.description||'—'}</td><td>${e.unit||'—'}</td><td style="text-align:center">${e.qty||0}</td><td style="text-align:center">${e.usage||'—'}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${fmt2(equipAmt(e,division))}</td></tr>`;}).join('')}
 </tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.equip||0)}</strong></td></tr></tfoot></table></div>`:''}
 
-${sections.rental&&(report.rental_equipment||[]).length>0?`<div class="section"><h2>🔧 Rental Equipment</h2>
-<table><thead><tr><th>Description</th><th>Company</th><th style="text-align:center">Hours</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.rental_equipment||[]).map(r=>`<tr><td>${r.description||'—'}</td><td>${r.vendor||'—'}</td><td style="text-align:center">${r.hours||'—'}</td><td style="text-align:right">${r.amount?fmt2(r.amount):'—'}</td></tr>`).join('')}
-</tbody></table></div>`:''}
+${sections.rental&&(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).length>0?`<div class="section"><h2>🔧 Rental Equipment${tot.rental>0?' · '+fmt2(tot.rental):''}</h2>
+<table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:center">Days/Hrs</th><th style="text-align:right">Rate</th><th style="text-align:right">Subtotal</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
+<tbody>${(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).map(r=>{
+  const base=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);
+  const mk=parseFloat(r.markup_pct)||0, tax=parseFloat(r.tax_amount)||0;
+  return `<tr><td>${r.description||'—'}</td><td style="text-align:center">${r.qty||'—'}</td><td style="text-align:center">${r.usage||'—'}</td><td style="text-align:right">${r.rate?fmt2(r.rate):'—'}</td><td style="text-align:right">${fmt2(base)}</td><td style="text-align:center">${mk?mk+'%':'—'}</td><td style="text-align:right">${tax?fmt2(tax):'—'}</td><td style="text-align:right">${fmt2(rentalLineTotal(r))}</td></tr>`;
+}).join('')}
+</tbody><tfoot><tr class="total-row"><td colspan="7"><strong>TOTAL RENTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.rental||0)}</strong></td></tr></tfoot></table></div>`:''}
 
-${sections.materials&&(report.materials||[]).length>0?`<div class="section"><h2>📦 Materials & Misc.</h2>
-<table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.materials||[]).map(m=>`<tr><td>${m.description||'—'}</td><td style="text-align:center">${m.qty||'—'}</td><td style="text-align:right">${m.amount?fmt2(m.amount):'—'}</td></tr>`).join('')}
-</tbody></table></div>`:''}
+${sections.materials&&(report.materials||[]).filter(m=>m.description||parseFloat(m.amount)).length>0?`<div class="section"><h2>📦 Materials & Misc.${tot.mats>0?' · '+fmt2(tot.mats):''}</h2>
+<table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
+<tbody>${(report.materials||[]).filter(m=>m.description||parseFloat(m.amount)).map(m=>{
+  const mk=parseFloat(m.markup_pct)||0, tax=parseFloat(m.tax_amount)||0;
+  return `<tr><td>${m.description||'—'}</td><td style="text-align:center">${m.qty||'—'}</td><td style="text-align:right">${m.amount?fmt2(m.amount):'—'}</td><td style="text-align:center">${mk?mk+'%':'—'}</td><td style="text-align:right">${tax?fmt2(tax):'—'}</td><td style="text-align:right">${fmt2(matLineTotal(m))}</td></tr>`;
+}).join('')}
+</tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL MATERIALS</strong></td><td style="text-align:right"><strong>${fmt2(tot.mats||0)}</strong></td></tr></tfoot></table></div>`:''}
 
 ${(report.subcontractors||[]).length>0?`<div class="section"><h2>🏢 Subcontractors</h2>
 <table><thead><tr><th>Subcontractor</th><th>Work Performed</th><th style="text-align:center">Workers</th><th style="text-align:center">Hours</th><th style="text-align:right">Amount</th></tr></thead>
 <tbody>${(report.subcontractors||[]).filter(s=>s.company||s.description).map(s=>`<tr><td>${s.company||'—'}</td><td>${s.description||'—'}</td><td style="text-align:center">${s.workers||'—'}</td><td style="text-align:center">${s.hours||'—'}</td><td style="text-align:right">${s.amount?fmt2(s.amount):'—'}</td></tr>`).join('')}
-</tbody></table></div>`:''}
+</tbody><tfoot><tr class="total-row"><td colspan="4"><strong>TOTAL SUBCONTRACTORS</strong></td><td style="text-align:right"><strong>${fmt2((report.subcontractors||[]).reduce((s,x)=>s+(parseFloat(x.amount)||0),0))}</strong></td></tr></tfoot></table></div>`:''}
 
 ${sections.visitors&&visitors.length>0?`<div class="section"><h2>🏗️ Visitor Log — ${visitors.length} Visitor${visitors.length!==1?'s':''}</h2>
 ${visitors.map(v=>`<div class="visitor-row"><div style="flex:1"><strong>${v.name||'—'}</strong>${v.company?' · '+v.company:''}</div><div style="font-size:8pt;color:#555">${v.type||''}</div>${v.notes?`<div style="font-size:8pt;color:#6b7280;font-style:italic">${v.notes}</div>`:''}</div>`).join('')}</div>`:''}
@@ -1686,6 +1694,18 @@ ${sections.signature&&report.inspector_signature?`<div class="section"><h2>✍�
 </div>
 <div><div style="font-weight:700">${report.inspector_name||'Inspector'}</div><div style="font-size:9pt;color:#555">${report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleString():''}</div></div>
 </div></div>`:''}
+
+${(tot.grand>0||subsTotal>0)?`<div class="section" style="page-break-inside:avoid">
+<table style="width:60%;margin-left:auto">
+<tbody>
+${tot.labor>0?`<tr><td>Labor</td><td style="text-align:right">${fmt2(tot.labor)}</td></tr>`:''}
+${tot.equip>0?`<tr><td>Equipment</td><td style="text-align:right">${fmt2(tot.equip)}</td></tr>`:''}
+${tot.rental>0?`<tr><td>Rental Equipment</td><td style="text-align:right">${fmt2(tot.rental)}</td></tr>`:''}
+${tot.mats>0?`<tr><td>Materials &amp; Misc.</td><td style="text-align:right">${fmt2(tot.mats)}</td></tr>`:''}
+${subsTotal>0?`<tr><td>Subcontractors</td><td style="text-align:right">${fmt2(subsTotal)}</td></tr>`:''}
+</tbody>
+<tfoot><tr class="total-row"><td><strong>GRAND TOTAL</strong></td><td style="text-align:right"><strong>${fmt2((tot.grand||0)+subsTotal)}</strong></td></tr></tfoot>
+</table></div>`:''}
 
 <div class="sig-section">
   <div class="sig-box"><div style="height:50px"></div><div class="sig-label">Foreman / Submitted By</div><div style="font-weight:700;margin-top:4px">${report.submitted_by||''}</div></div>
