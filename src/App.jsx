@@ -417,6 +417,11 @@ function matLineTotal(x){
   const mk=base*((parseFloat(x.markup_pct)||0)/100);
   return base+mk+(parseFloat(x.tax_amount)||0);
 }
+function subLineTotal(x){
+  const base=parseFloat(x.amount)||0;
+  const mk=base*((parseFloat(x.markup_pct)||0)/100);
+  return base+mk+(parseFloat(x.tax_amount)||0);
+}
 function rentalLineTotal(x){
   const base=(parseFloat(x.qty)||0)*(parseFloat(x.rate)||0)*(parseFloat(x.usage)||1);
   const mk=base*((parseFloat(x.markup_pct)||0)/100);
@@ -496,7 +501,7 @@ function SubCard({row,onChange,onRemove}){
         <input type="text" placeholder="What they did on site today" value={row.description||""}
           onChange={e=>onChange({...row,description:e.target.value})} style={inp}/>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
         <div><label style={lbl}>Workers</label>
           <input type="number" min="0" placeholder="0" value={row.workers||""}
             onChange={e=>onChange({...row,workers:e.target.value})} style={inp}/></div>
@@ -506,6 +511,16 @@ function SubCard({row,onChange,onRemove}){
         <div><label style={lbl}>Amount ($)</label>
           <input type="number" min="0" step="0.01" placeholder="0.00" value={row.amount||""}
             onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+        <div><label style={lbl}>Markup %</label>
+          <input type="number" min="0" step="0.1" placeholder="10" value={row.markup_pct||""}
+            onChange={e=>onChange({...row,markup_pct:e.target.value})} style={inp}/></div>
+        <div><label style={lbl}>Tax ($)</label>
+          <input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""}
+            onChange={e=>onChange({...row,tax_amount:e.target.value})} style={inp}/></div>
+        <div><label style={lbl}>Line Total</label>
+          <div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(subLineTotal(row))}</div></div>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10,paddingTop:8,borderTop:`1px solid ${T.border}`}}>
         <span style={{fontSize:11,color:T.muted}}>Leave amount blank if it isn't billable to this job</span>
@@ -1262,7 +1277,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
         {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/>
           <div style={{fontSize:17,fontWeight:800,margin:"24px 0 12px"}}>🏢 Subcontractors</div>
           {(rpt.subcontractors||[]).map((row,i)=><SubCard key={row.id} row={row} onChange={r=>upd("subcontractors",i,r)} onRemove={()=>del("subcontractors",i)}/>)}
-          <DashedAdd label="+ Add Subcontractor" onClick={()=>add("subcontractors",{id:uid(),company:"",description:"",workers:"",hours:"",amount:""})} color={T.orange}/>
+          <DashedAdd label="+ Add Subcontractor" onClick={()=>add("subcontractors",{id:uid(),company:"",description:"",workers:"",hours:"",amount:"",markup_pct:"",tax_amount:""})} color={T.orange}/>
         </div>)}
         {step===5&&(<div>
           <div style={{fontSize:17,fontWeight:800,marginBottom:16}}>📋 Site Notes</div>
@@ -1563,7 +1578,7 @@ function printReportWithOptions(report, project, sections, photos, photoLayout){
   const division = project.division;
   const positions = getPositions(division);
   const tot = reportTotals(report, division);
-  const subsTotal = (report.subcontractors||[]).reduce((s,x)=>s+(parseFloat(x.amount)||0),0);
+  const subsTotal = (report.subcontractors||[]).reduce((s,x)=>s+subLineTotal(x),0);
   const [yr,mo,dy] = (report.date||'').split('-');
   const dateStr = `${mo}/${dy}/${yr}`;
   const fmt2 = n => (parseFloat(n)||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2});
@@ -1645,21 +1660,21 @@ tr:nth-child(even) td{background:#f9fafb;}
   <div><div class="fl">Status</div><div class="fv"><span class="badge ${report.status==='approved'?'badge-blue':report.status==='flagged'?'badge-red':'badge-yellow'}">${(report.status||'submitted').toUpperCase()}</span></div></div>
 </div>
 
-${sections.weather&&report.site_conditions?`<div class="section"><h2>🌤️ Site Conditions / Weather</h2><div class="desc-box">${report.site_conditions}</div></div>`:''}
+${sections.weather&&report.site_conditions?`<div class="section"><h2>Site Conditions / Weather</h2><div class="desc-box">${report.site_conditions}</div></div>`:''}
 
-${sections.description&&report.description?`<div class="section"><h2>📝 Description of Work</h2><div class="desc-box">${report.description.replace(/\n/g,'<br/>')}</div></div>`:''}
+${sections.description&&report.description?`<div class="section"><h2>Description of Work</h2><div class="desc-box">${report.description.replace(/\n/g,'<br/>')}</div></div>`:''}
 
-${sections.labor&&(report.labor||[]).length>0?`<div class="section"><h2>👷 Labor — ${(report.labor||[]).length} Workers · ${fmtH(tot.labor_hrs||0)} Total Hrs${tot.labor>0?' · '+fmt2(tot.labor):''}</h2>
+${sections.labor&&(report.labor||[]).length>0?`<div class="section"><h2>Labor — ${(report.labor||[]).length} Workers · ${fmtH(tot.labor_hrs||0)} Total Hrs${tot.labor>0?' · '+fmt2(tot.labor):''}</h2>
 <table><thead><tr><th>Name</th><th>Classification</th><th style="text-align:center">Reg Hrs</th><th style="text-align:center">OT Hrs</th><th style="text-align:center">Travel</th><th style="text-align:right">Amount</th></tr></thead>
 <tbody>${(report.labor||[]).filter(l=>l.name||l.classification||parseFloat(l.regHrs)||parseFloat(l.otHrs)||parseFloat(l.travelHrs)).map(l=>`<tr><td>${l.name||'—'}</td><td>${l.classification||'—'}</td><td style="text-align:center">${l.regHrs||0}</td><td style="text-align:center">${l.otHrs||0}</td><td style="text-align:center">${l.travelHrs||0}</td><td style="text-align:right">${fmt2(laborAmt(l,division))}</td></tr>`).join('')}
 </tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL LABOR</strong></td><td style="text-align:right"><strong>${fmt2(tot.labor||0)}</strong></td></tr></tfoot></table></div>`:''}
 
-${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>🚜 Equipment — ${(report.equipment||[]).length} Items${tot.equip>0?' · '+fmt2(tot.equip):''}</h2>
+${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>Equipment — ${(report.equipment||[]).length} Items${tot.equip>0?' · '+fmt2(tot.equip):''}</h2>
 <table><thead><tr><th>Equipment</th><th>Unit</th><th style="text-align:center">Qty</th><th style="text-align:center">Hrs / Days</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
 <tbody>${(report.equipment||[]).filter(e=>e.description||parseFloat(e.qty)).map(e=>{const rate=parseFloat(e.rate)||(getEquipList(division).find(x=>!x.section&&x.name===e.description)||{}).rate||0;return `<tr><td>${e.description||'—'}</td><td>${e.unit||'—'}</td><td style="text-align:center">${e.qty||0}</td><td style="text-align:center">${e.usage||'—'}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${fmt2(equipAmt(e,division))}</td></tr>`;}).join('')}
 </tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.equip||0)}</strong></td></tr></tfoot></table></div>`:''}
 
-${sections.rental&&(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).length>0?`<div class="section"><h2>🔧 Rental Equipment${tot.rental>0?' · '+fmt2(tot.rental):''}</h2>
+${sections.rental&&(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).length>0?`<div class="section"><h2>Rental Equipment${tot.rental>0?' · '+fmt2(tot.rental):''}</h2>
 <table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:center">Days/Hrs</th><th style="text-align:right">Rate</th><th style="text-align:right">Subtotal</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
 <tbody>${(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).map(r=>{
   const base=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);
@@ -1668,7 +1683,7 @@ ${sections.rental&&(report.rental_equipment||[]).filter(r=>r.description||parseF
 }).join('')}
 </tbody><tfoot><tr class="total-row"><td colspan="7"><strong>TOTAL RENTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.rental||0)}</strong></td></tr></tfoot></table></div>`:''}
 
-${sections.materials&&(report.materials||[]).filter(m=>m.description||parseFloat(m.amount)).length>0?`<div class="section"><h2>📦 Materials & Misc.${tot.mats>0?' · '+fmt2(tot.mats):''}</h2>
+${sections.materials&&(report.materials||[]).filter(m=>m.description||parseFloat(m.amount)).length>0?`<div class="section"><h2>Materials & Misc.${tot.mats>0?' · '+fmt2(tot.mats):''}</h2>
 <table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
 <tbody>${(report.materials||[]).filter(m=>m.description||parseFloat(m.amount)).map(m=>{
   const mk=parseFloat(m.markup_pct)||0, tax=parseFloat(m.tax_amount)||0;
@@ -1676,18 +1691,21 @@ ${sections.materials&&(report.materials||[]).filter(m=>m.description||parseFloat
 }).join('')}
 </tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL MATERIALS</strong></td><td style="text-align:right"><strong>${fmt2(tot.mats||0)}</strong></td></tr></tfoot></table></div>`:''}
 
-${(report.subcontractors||[]).length>0?`<div class="section"><h2>🏢 Subcontractors</h2>
-<table><thead><tr><th>Subcontractor</th><th>Work Performed</th><th style="text-align:center">Workers</th><th style="text-align:center">Hours</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.subcontractors||[]).filter(s=>s.company||s.description).map(s=>`<tr><td>${s.company||'—'}</td><td>${s.description||'—'}</td><td style="text-align:center">${s.workers||'—'}</td><td style="text-align:center">${s.hours||'—'}</td><td style="text-align:right">${s.amount?fmt2(s.amount):'—'}</td></tr>`).join('')}
-</tbody><tfoot><tr class="total-row"><td colspan="4"><strong>TOTAL SUBCONTRACTORS</strong></td><td style="text-align:right"><strong>${fmt2((report.subcontractors||[]).reduce((s,x)=>s+(parseFloat(x.amount)||0),0))}</strong></td></tr></tfoot></table></div>`:''}
+${(report.subcontractors||[]).length>0?`<div class="section"><h2>Subcontractors</h2>
+<table><thead><tr><th>Subcontractor</th><th>Work Performed</th><th style="text-align:center">Workers</th><th style="text-align:center">Hours</th><th style="text-align:right">Amount</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
+<tbody>${(report.subcontractors||[]).filter(s=>s.company||s.description).map(s=>{
+  const mk=parseFloat(s.markup_pct)||0, tax=parseFloat(s.tax_amount)||0;
+  return `<tr><td>${s.company||'—'}</td><td>${s.description||'—'}</td><td style="text-align:center">${s.workers||'—'}</td><td style="text-align:center">${s.hours||'—'}</td><td style="text-align:right">${s.amount?fmt2(s.amount):'—'}</td><td style="text-align:center">${mk?mk+'%':'—'}</td><td style="text-align:right">${tax?fmt2(tax):'—'}</td><td style="text-align:right">${fmt2(subLineTotal(s))}</td></tr>`;
+}).join('')}
+</tbody><tfoot><tr class="total-row"><td colspan="7"><strong>TOTAL SUBCONTRACTORS</strong></td><td style="text-align:right"><strong>${fmt2(subsTotal)}</strong></td></tr></tfoot></table></div>`:''}
 
-${sections.visitors&&visitors.length>0?`<div class="section"><h2>🏗️ Visitor Log — ${visitors.length} Visitor${visitors.length!==1?'s':''}</h2>
+${sections.visitors&&visitors.length>0?`<div class="section"><h2>Visitor Log — ${visitors.length} Visitor${visitors.length!==1?'s':''}</h2>
 ${visitors.map(v=>`<div class="visitor-row"><div style="flex:1"><strong>${v.name||'—'}</strong>${v.company?' · '+v.company:''}</div><div style="font-size:8pt;color:#555">${v.type||''}</div>${v.notes?`<div style="font-size:8pt;color:#6b7280;font-style:italic">${v.notes}</div>`:''}</div>`).join('')}</div>`:''}
 
-${sections.delays&&delays.length>0?`<div class="section"><h2>⚠️ Delays & Issues — ${delays.length} Item${delays.length!==1?'s':''}</h2>
+${sections.delays&&delays.length>0?`<div class="section"><h2>Delays & Issues — ${delays.length} Item${delays.length!==1?'s':''}</h2>
 ${delays.map(d=>`<div class="delay-row"><div style="display:flex;gap:10px;align-items:center;margin-bottom:3px"><strong>${d.cause||'—'}</strong>${d.hours>0?`<span style="font-size:8pt;color:#ef4444">${d.hours}h delay</span>`:''}</div><div>${d.description||''}</div>${d.impact?`<div style="font-size:8pt;color:#555">Impact: ${d.impact}</div>`:''}</div>`).join('')}</div>`:''}
 
-${sections.signature&&report.inspector_signature?`<div class="section"><h2>✍️ Inspector Sign-Off</h2>
+${sections.signature&&report.inspector_signature?`<div class="section"><h2>Inspector Sign-Off</h2>
 <div style="background:#fff;border:1px solid #86efac;border-radius:6px;padding:10px;display:flex;align-items:center;gap:16px">
 <div style="background:#ffffff;border:1px solid #ccc;border-radius:4px;padding:6px;display:inline-block;overflow:hidden;">
 <img src="${report.inspector_signature}" style="max-height:70px;max-width:240px;object-fit:contain;display:block;filter:none;"/>
@@ -2330,8 +2348,14 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
                 {s.workers?`${s.workers} worker${Number(s.workers)!==1?"s":""}`:""}{s.workers&&s.hours?" · ":""}{s.hours?`${s.hours} hrs`:""}
               </div>}
             </div>
-            {can(user,"view_dashboard")&&parseFloat(s.amount)>0&&
-              <div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(s.amount)}</div>}
+            {can(user,"view_dashboard")&&subLineTotal(s)>0&&
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(subLineTotal(s))}</div>
+                {(parseFloat(s.markup_pct)>0||parseFloat(s.tax_amount)>0)&&
+                  <div style={{fontSize:10,color:T.muted,marginTop:1}}>
+                    ${fmt(s.amount)}{parseFloat(s.markup_pct)>0?` +${s.markup_pct}%`:""}{parseFloat(s.tax_amount)>0?" +tax":""}
+                  </div>}
+              </div>}
           </div>
         ))}
       </div>}
