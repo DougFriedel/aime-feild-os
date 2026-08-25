@@ -4013,8 +4013,6 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
     );
   }
 
-  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
-
   // Everything below the picker is scoped to the chosen division.
   const allProjects=projects;
   const divIds=new Set(allProjects.filter(p=>!pmDiv||p.division===pmDiv).map(p=>p.id));
@@ -4022,6 +4020,8 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const scopedReports=reports.filter(r=>divIds.has(r.project_id));
   const scopedPending=pending.filter(r=>divIds.has(r.project_id));
   const scopedTmPending=tmPending.filter(t=>divIds.has(t.project_id));
+
+  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
   const divOf=(r)=>(projects.find(p=>p.id===r.project_id)||r.projects||{}).division;
   const allTot=scopedReports.reduce((s,r)=>{const t=reportTotals(r,divOf(r));return{l:s.l+t.labor,e:s.e+t.equip,g:s.g+t.grand};},{l:0,e:0,g:0});
