@@ -183,6 +183,9 @@ const API={
   reports:{
     forProject:(pid)=>sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`),
     all:()=>sb("/daily_reports?select=*,projects(id,name,division)&order=date.desc&limit=300"),
+    // Ranged pull for the report builder. all() caps at 300 rows, which would
+    // silently drop older reports from a wide date range.
+    inRange:(from,to)=>sb(`/daily_reports?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`),
     pending:()=>sb("/daily_reports?status=eq.submitted&select=*,projects(id,name,division)&order=created_at.desc"),
     create:(d)=>sb("/daily_reports",{method:"POST",body:d,prefer:"return=representation"}),
     update:(id,d)=>sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
@@ -3904,6 +3907,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const [activeReport,setActiveReport]=useState(null);
   const [activeProject,setActiveProject]=useState(null);
   const [unread,setUnread]=useState(0);
+  const [building,setBuilding]=useState(false);
   const [showNotifs,setShowNotifs]=useState(false);
 
   async function load(){
@@ -3921,6 +3925,12 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
   const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:0});
 
+  if(building)return(
+    <ReportBuilder projects={projects} user={user}
+      onBack={()=>setBuilding(false)}
+      onOpenReport={(r,p)=>{setActiveReport(r);setActiveProject(p);}}/>
+  );
+
   if(showNotifs)return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}><TopBar title="🔔 Notifications" onBack={()=>{setShowNotifs(false);load();}}/><NotificationsPanel onCountChange={setUnread} onClose={()=>{setShowNotifs(false);load();}}/></div>);
 
   if(activeReport&&activeProject)return(<ReportDetail report={activeReport} project={activeProject} user={user} onBack={()=>{setActiveReport(null);setActiveProject(null);load();}} onDelete={async(id)=>{await API.reports.remove(id);setActiveReport(null);setActiveProject(null);load();}} onApprove={approve} onFlag={flag}
@@ -3928,9 +3938,10 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
   const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${pending.length>0?" ("+pending.length+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
-  const allTot=reports.reduce((s,r)=>{const t=reportTotals(r);return{l:s.l+t.labor,e:s.e+t.equip,g:s.g+t.grand};},{l:0,e:0,g:0});
+  const divOf=(r)=>(projects.find(p=>p.id===r.project_id)||r.projects||{}).division;
+  const allTot=reports.reduce((s,r)=>{const t=reportTotals(r,divOf(r));return{l:s.l+t.labor,e:s.e+t.equip,g:s.g+t.grand};},{l:0,e:0,g:0});
   const projMap={};projects.forEach(p=>{projMap[p.id]={...p,grand:0,count:0};});
-  reports.forEach(r=>{if(!projMap[r.project_id])return;const t=reportTotals(r);projMap[r.project_id].grand+=t.grand;projMap[r.project_id].count++;});
+  reports.forEach(r=>{if(!projMap[r.project_id])return;const t=reportTotals(r,projMap[r.project_id].division);projMap[r.project_id].grand+=t.grand;projMap[r.project_id].count++;});
   const projRows=Object.values(projMap).filter(p=>p.status==="active").sort((a,b)=>b.grand-a.grand);
   const workerHours={};
   reports.forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!workerHours[l.name])workerHours[l.name]={name:l.name,reg:0,ot:0,pay:0};workerHours[l.name].reg+=parseFloat(l.regHrs)||0;workerHours[l.name].ot+=parseFloat(l.otHrs)||0;workerHours[l.name].pay+=laborAmt(l);}));
@@ -3974,8 +3985,8 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
         {pmTab==="approvals"&&!loading&&<div>
           {pending.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32}}>✅</div><div style={{marginTop:8}}>All reports approved</div></div>}
           {pending.map(r=>{
-            const proj=projects.find(p=>p.id===r.project_id)||{name:"Unknown"};
-            const tot=reportTotals(r);
+            const proj=projects.find(p=>p.id===r.project_id)||r.projects||{name:"Unknown"};
+            const tot=reportTotals(r,proj.division);
             return(<div key={r.id} style={{...cardS,marginBottom:10}}>
               <div style={{fontSize:14,fontWeight:700,color:T.orange}}>{proj.name}</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:8}}>{r.date} · {r.submitted_by} · {fmt(tot.grand)}</div>
@@ -4008,9 +4019,18 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
         {/* REPORTS */}
         {pmTab==="reports"&&!loading&&<div>
+          {can(user,"custom_reports")&&(
+            <button onClick={()=>setBuilding(true)}
+              style={{...primBtn,borderRadius:12,marginBottom:14,background:T.orange,color:"#000"}}>
+              📊 Pull Reports by Job &amp; Date
+            </button>
+          )}
+          <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+            Recent activity
+          </div>
           {reports.slice(0,50).map(r=>{
-            const proj=projects.find(p=>p.id===r.project_id)||{name:"Unknown"};
-            const tot=reportTotals(r);
+            const proj=projects.find(p=>p.id===r.project_id)||r.projects||{name:"Unknown"};
+            const tot=reportTotals(r,proj.division);
             const statusColor={approved:T.green,flagged:T.red,submitted:T.yellow}[r.status]||T.muted;
             return(<div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${statusColor}`,cursor:"pointer"}} onClick={()=>{setActiveReport(r);setActiveProject(proj);}}>
               <div style={{display:"flex",justifyContent:"space-between"}}>
@@ -4251,6 +4271,252 @@ function UserManagementScreen({onBack,currentUser,user}){
           ))}
           {NAMES.filter(n=>!profileMap[n]).length>15&&<div style={{fontSize:12,color:T.muted,textAlign:"center",padding:"8px 0"}}>+ {NAMES.filter(n=>!profileMap[n]).length-15} more (tap + Add to configure)</div>}
         </>}
+      </div>
+    </div>
+  );
+}
+
+/* ── PM Dashboard: pull a daily report across jobs and dates ── */
+function ReportBuilder({projects,user,onBack,onOpenReport}){
+  const iso=(d)=>d.toISOString().slice(0,10);
+  const monthAgo=()=>{const d=new Date();d.setDate(d.getDate()-30);return iso(d);};
+
+  const [from,setFrom]=useState(monthAgo());
+  const [to,setTo]=useState(iso(new Date()));
+  const [jobIds,setJobIds]=useState([]);          // empty = every job
+  const [statuses,setStatuses]=useState(["submitted","approved","flagged"]);
+  const [division,setDivision]=useState("");
+  const [rows,setRows]=useState(null);
+  const [running,setRunning]=useState(false);
+  const [err,setErr]=useState("");
+  const [q,setQ]=useState("");
+
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const num=(n,d=1)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+
+  const visibleJobs=projects
+    .filter(p=>!division||p.division===division)
+    .filter(p=>!q.trim()||[p.name,p.client,p.job_number].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase())))
+    .sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),undefined,{numeric:true}));
+
+  const toggleJob=(id)=>setJobIds(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+  const toggleStatus=(s)=>setStatuses(v=>v.includes(s)?v.filter(x=>x!==s):[...v,s]);
+
+  const quick=(days)=>{const d=new Date();d.setDate(d.getDate()-days);setFrom(iso(d));setTo(iso(new Date()));};
+  const thisMonth=()=>{const n=new Date();setFrom(iso(new Date(n.getFullYear(),n.getMonth(),1)));setTo(iso(n));};
+  const lastMonth=()=>{const n=new Date();
+    setFrom(iso(new Date(n.getFullYear(),n.getMonth()-1,1)));
+    setTo(iso(new Date(n.getFullYear(),n.getMonth(),0)));};
+
+  async function run(){
+    if(!from||!to){setErr("Pick a start and end date.");return;}
+    if(from>to){setErr("The start date is after the end date.");return;}
+    setRunning(true);setErr("");
+    try{
+      const all=await API.reports.inRange(from,to)||[];
+      const projById={};projects.forEach(p=>projById[p.id]=p);
+      const filtered=all
+        .filter(r=>!jobIds.length||jobIds.includes(r.project_id))
+        .filter(r=>!statuses.length||statuses.includes(r.status))
+        .filter(r=>{
+          if(!division)return true;
+          const p=projById[r.project_id]||r.projects||{};
+          return p.division===division;
+        })
+        .map(r=>{
+          const p=projById[r.project_id]||r.projects||{name:"Unknown"};
+          // totals must use the job's own division or the rates are wrong
+          const t=reportTotals(r,p.division);
+          const hrs=(r.labor||[]).reduce((s,l)=>s+(parseFloat(l.regHrs)||0)+(parseFloat(l.otHrs)||0)+(parseFloat(l.travelHrs)||0),0);
+          return {...r,_proj:p,_tot:t,_hrs:hrs};
+        });
+      setRows(filtered);
+    }catch(e){setErr(e.message);}
+    setRunning(false);
+  }
+
+  const totals=(rows||[]).reduce((s,r)=>({
+    labor:s.labor+(r._tot.labor||0),equip:s.equip+(r._tot.equip||0),
+    rental:s.rental+(r._tot.rental||0),mats:s.mats+(r._tot.mats||0),
+    grand:s.grand+(r._tot.grand||0),hrs:s.hrs+r._hrs,
+  }),{labor:0,equip:0,rental:0,mats:0,grand:0,hrs:0});
+
+  const byJob={};
+  (rows||[]).forEach(r=>{(byJob[r._proj.name||"Unknown"] ||= []).push(r);});
+
+  function exportXlsx(){
+    try{
+      const out=[["AIME Field Pro — Daily Report Summary"],
+        ["Date range",from+" to "+to],
+        ["Jobs",jobIds.length?jobIds.length+" selected":"All"],
+        ["Statuses",statuses.join(", ")||"All"],[],
+        ["Job","Date","Report #","Submitted By","Status","Labor Hrs","Labor","Equipment","Rental","Materials","Total"]];
+      Object.keys(byJob).sort().forEach(job=>{
+        byJob[job].forEach(r=>out.push([job,r.date||"",r.report_no||"",r.submitted_by||"",r.status||"",
+          r._hrs,r._tot.labor||0,r._tot.equip||0,r._tot.rental||0,r._tot.mats||0,r._tot.grand||0]));
+      });
+      out.push([]);
+      out.push(["TOTAL","","","","",totals.hrs,totals.labor,totals.equip,totals.rental,totals.mats,totals.grand]);
+      const ws=XLSX.utils.aoa_to_sheet(out);
+      ws["!cols"]=[{wch:26},{wch:12},{wch:11},{wch:20},{wch:11},{wch:11},{wch:13},{wch:13},{wch:13},{wch:13},{wch:14}];
+      const wb=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb,ws,"Daily Reports");
+      XLSX.writeFile(wb,`AIME_Reports_${from}_to_${to}.xlsx`);
+    }catch(e){setErr("Excel export failed: "+e.message);}
+  }
+
+  function printSummary(){
+    const w=window.open("","_blank");
+    if(!w){setErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const body=Object.keys(byJob).sort().map(job=>`
+      <tr class="jobrow"><td colspan="6"><strong>${esc(job)}</strong> — ${byJob[job].length} report${byJob[job].length!==1?"s":""}</td>
+        <td style="text-align:right"><strong>${money(byJob[job].reduce((s,r)=>s+(r._tot.grand||0),0))}</strong></td></tr>
+      ${byJob[job].map(r=>`<tr><td></td><td>${esc(r.date)}</td><td>${esc(r.report_no||"")}</td>
+        <td>${esc(r.submitted_by||"")}</td><td>${esc(r.status||"")}</td>
+        <td style="text-align:right">${num(r._hrs)}</td>
+        <td style="text-align:right">${money(r._tot.grand)}</td></tr>`).join("")}`).join("");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>AIME Daily Report Summary</title><style>
+@page{size:letter landscape;margin:0.5in}
+body{font-family:Arial,sans-serif;font-size:9pt;color:#111}
+h1{font-size:15pt;margin:0 0 2px}.sub{color:#555;font-size:9pt;margin-bottom:14px}
+table{width:100%;border-collapse:collapse}
+th{background:#1F3864;color:#fff;text-align:left;padding:6px 8px;font-size:8pt;text-transform:uppercase}
+td{padding:5px 8px;border-bottom:1px solid #ddd}
+.jobrow td{background:#EDF1F8;border-top:1px solid #99a}
+tfoot td{background:#1F3864;color:#fff;font-weight:700}
+</style></head><body>
+<h1>Daily Report Summary</h1>
+<div class="sub">${esc(from)} to ${esc(to)} · ${(rows||[]).length} reports · ${jobIds.length?jobIds.length+" job(s)":"all jobs"}</div>
+<table><thead><tr><th></th><th>Date</th><th>Report #</th><th>Submitted By</th><th>Status</th>
+<th style="text-align:right">Hours</th><th style="text-align:right">Total</th></tr></thead>
+<tbody>${body}</tbody>
+<tfoot><tr><td colspan="5">TOTAL</td><td style="text-align:right">${num(totals.hrs)}</td>
+<td style="text-align:right">${money(totals.grand)}</td></tr></tfoot></table>
+</body></html>`);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},350);
+  }
+
+  const chip=(on)=>({padding:"6px 12px",borderRadius:16,cursor:"pointer",fontSize:12,fontFamily:"inherit",
+    fontWeight:on?800:600,background:on?T.orange:T.surface,color:on?"#000":T.sub,
+    border:`1px solid ${on?T.orange:T.border}`});
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      <TopBar title="📊 Pull Daily Reports" onBack={onBack}/>
+      <div style={{padding:"16px 16px 60px"}}>
+        {err&&<div onClick={()=>setErr("")} style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.red,cursor:"pointer"}}>{err} ✕</div>}
+
+        <div style={{...cardS,marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10}}>Date Range</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:10}}>
+            <div><label style={lbl}>From</label><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>To</label><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={inp}/></div>
+          </div>
+          <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+            <button onClick={()=>quick(7)} style={chip(false)}>Last 7 days</button>
+            <button onClick={()=>quick(30)} style={chip(false)}>Last 30 days</button>
+            <button onClick={thisMonth} style={chip(false)}>This month</button>
+            <button onClick={lastMonth} style={chip(false)}>Last month</button>
+          </div>
+        </div>
+
+        <div style={{...cardS,marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <div style={{fontSize:12,fontWeight:800,color:T.text,flex:1}}>
+              Jobs {jobIds.length?`(${jobIds.length} selected)`:"(all)"}
+            </div>
+            {jobIds.length>0&&<button onClick={()=>setJobIds([])} style={{background:"none",border:"none",color:T.orange,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+            <select value={division} onChange={e=>setDivision(e.target.value)} style={{...inp,width:"auto",padding:"8px 10px",fontSize:12}}>
+              <option value="">All divisions</option>
+              {["Mechanical","Pipeline","Structural","Manufacturing"].map(d=><option key={d} value={d}>{d}</option>)}
+            </select>
+            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search jobs…" style={{...inp,flex:1,minWidth:140,padding:"8px 10px",fontSize:12}}/>
+          </div>
+          <div style={{maxHeight:200,overflowY:"auto",display:"flex",flexWrap:"wrap",gap:7}}>
+            {visibleJobs.map(p=>(
+              <button key={p.id} onClick={()=>toggleJob(p.id)} style={chip(jobIds.includes(p.id))}>
+                {p.name}{p.client?` · ${p.client}`:""}
+              </button>
+            ))}
+            {visibleJobs.length===0&&<div style={{fontSize:12,color:T.muted}}>No jobs match.</div>}
+          </div>
+        </div>
+
+        <div style={{...cardS,marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10}}>Status</div>
+          <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+            {["draft","submitted","approved","flagged"].map(s=>(
+              <button key={s} onClick={()=>toggleStatus(s)} style={chip(statuses.includes(s))}>{s}</button>
+            ))}
+          </div>
+        </div>
+
+        <button onClick={run} disabled={running}
+          style={{...primBtn,borderRadius:12,marginBottom:16,background:T.orange,color:"#000",opacity:running?0.6:1}}>
+          {running?"Pulling…":"📊 Pull Reports"}
+        </button>
+
+        {rows!==null&&(
+          rows.length===0?(
+            <div style={{...cardS,textAlign:"center",padding:34,color:T.muted}}>
+              <div style={{fontSize:32,marginBottom:8}}>🔍</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>No reports found</div>
+              <div style={{fontSize:12}}>Nothing matches that range and filter.</div>
+            </div>
+          ):(<>
+            <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
+              <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+                {rows.length} report{rows.length!==1?"s":""} · {Object.keys(byJob).length} job{Object.keys(byJob).length!==1?"s":""}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:10}}>
+                {[["Hours",num(totals.hrs),T.blue],["Labor",money(totals.labor),T.green],
+                  ["Equipment",money(totals.equip),T.yellow],["Rental",money(totals.rental),T.purple],
+                  ["Materials",money(totals.mats),T.orange],["Total",money(totals.grand),T.green]].map(([l,v,c])=>(
+                  <div key={l}>
+                    <div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>{l}</div>
+                    <div style={{fontSize:15,fontWeight:800,color:c,marginTop:2}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:8,marginTop:14}}>
+                <button onClick={printSummary} style={{...primBtn,width:"auto",flex:1,padding:"10px",fontSize:12.5,borderRadius:9,background:"#1f3864"}}>🖨️ Print</button>
+                <button onClick={exportXlsx} style={{...primBtn,width:"auto",flex:1,padding:"10px",fontSize:12.5,borderRadius:9,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`}}>📥 Excel</button>
+              </div>
+            </div>
+
+            {Object.keys(byJob).sort().map(job=>(
+              <div key={job} style={{marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 2px",marginBottom:6}}>
+                  <div style={{fontSize:13,fontWeight:800,color:T.orange}}>{job}</div>
+                  <div style={{fontSize:12,fontWeight:800,color:T.green}}>
+                    {money(byJob[job].reduce((s,r)=>s+(r._tot.grand||0),0))}
+                  </div>
+                </div>
+                {byJob[job].map(r=>(
+                  <div key={r.id} onClick={()=>onOpenReport&&onOpenReport(r,r._proj)}
+                    style={{...cardS,marginBottom:6,padding:"10px 12px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div style={{fontSize:12.5,fontWeight:600,color:T.text}}>
+                        {r.date}{r.report_no?`  ·  #${r.report_no}`:""}
+                      </div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                        {r.submitted_by||""} · {num(r._hrs)} hrs
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:13,fontWeight:800,color:T.green}}>{money(r._tot.grand)}</div>
+                      <span style={pill({approved:T.green,flagged:T.red,submitted:T.yellow}[r.status]||T.muted)}>{r.status}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </>)
+        )}
       </div>
     </div>
   );
@@ -7067,7 +7333,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   async function archiveProject(){if(!window.confirm(project.status==="active"?"Archive this job?":"Restore?"))return;await updateProject({status:project.status==="active"?"archived":"active"});onBack();}
   async function deleteProject(){if(!window.confirm("Permanently delete this job and ALL its data? This cannot be undone."))return;if(!window.confirm("Are you sure? All reports, photos, time cards and safety logs will be deleted."))return;try{await API.projects.remove(project.id);onBack();}catch(e){setErr(e.message);}}
 
-  const tot=reports.reduce((s,r)=>{const t=reportTotals(r);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
+  const tot=reports.reduce((s,r)=>{const t=reportTotals(r,project.division);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
 
   if(screen==="newReport"&&can(user,"submit_report")) return <DailyReportForm user={user} project={project} onSave={saveReport} onCancel={()=>setScreen("detail")} isOnline={isOnline}/>;
   if(screen==="reportDetail"&&activeReport) return <ReportDetail report={activeReport} project={project} user={user} onBack={()=>setScreen("detail")} onDelete={deleteReport} onApprove={approveReport} onFlag={flagReport}
@@ -7156,7 +7422,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
                 💡 Reports track labor, equipment, materials and site conditions — and automatically generate time cards for payroll.
               </div>
             </div>}
-          {shown.map(r=>{const t=reportTotals(r);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
+          {shown.map(r=>{const t=reportTotals(r,project.division);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
          </div>);})()}
         {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
