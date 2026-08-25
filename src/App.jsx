@@ -3917,6 +3917,41 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const [tmPending,setTmPending]=useState([]);
   const [pmDiv,setPmDiv]=useState(null);        // null = division picker
 
+  /* ── Billing tab: fetches its own data for the chosen period ──
+     reports.all() caps at 300 rows and reportTotals.grand omits
+     subcontractors, so neither is safe to bill from. */
+  const [billPeriod,setBillPeriod]=useState("month");
+  const [billFrom,setBillFrom]=useState("");
+  const [billTo,setBillTo]=useState("");
+  const [billReports,setBillReports]=useState([]);
+  const [billTickets,setBillTickets]=useState([]);
+  const [billLoading,setBillLoading]=useState(false);
+  const [showZeros,setShowZeros]=useState(false);
+
+  const isoD=(d)=>d.toISOString().slice(0,10);
+  function periodRange(key){
+    const n=new Date();
+    if(key==="month")    return[isoD(new Date(n.getFullYear(),n.getMonth(),1)),isoD(n)];
+    if(key==="last")     return[isoD(new Date(n.getFullYear(),n.getMonth()-1,1)),isoD(new Date(n.getFullYear(),n.getMonth(),0))];
+    if(key==="quarter"){ const q=Math.floor(n.getMonth()/3)*3; return[isoD(new Date(n.getFullYear(),q,1)),isoD(n)]; }
+    if(key==="ytd")      return[isoD(new Date(n.getFullYear(),0,1)),isoD(n)];
+    return["2000-01-01",isoD(n)];               // all time
+  }
+  const periodLabel={month:"This Month",last:"Last Month",quarter:"This Quarter",ytd:"Year to Date",all:"All Time"};
+
+  useEffect(()=>{
+    if(pmTab!=="billing")return;
+    const[f,t]=periodRange(billPeriod);
+    setBillFrom(f);setBillTo(t);setBillLoading(true);
+    Promise.all([
+      API.reports.inRange(f,t).catch(()=>[]),
+      API.tmTickets.inRange(f,t).catch(()=>[]),
+    ]).then(([reps,tix])=>{
+      setBillReports(Array.isArray(reps)?reps:[]);
+      setBillTickets(Array.isArray(tix)?tix:[]);
+    }).finally(()=>setBillLoading(false));
+  },[pmTab,billPeriod]);
+
   async function load(){
     setLoading(true);setErr("");
     try{
@@ -4088,6 +4123,60 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
   // Flagged reports — sent back to the crew and never tracked anywhere else
   const flagged=scopedReports.filter(r=>r.status==="flagged");
+
+  /* ── Billing roll-up for the selected period ── */
+  const billScoped=billReports.filter(r=>divIds.has(r.project_id));
+  const tixScoped=billTickets.filter(t=>divIds.has(t.project_id));
+  const billCats=billScoped.reduce((s,r)=>{
+    const p=projects.find(x=>x.id===r.project_id)||r.projects||{};
+    const t=reportTotals(r,p.division);
+    const subs=(r.subcontractors||[]).reduce((a,x)=>a+subLineTotal(x),0);
+    return{labor:s.labor+t.labor,equip:s.equip+t.equip,rental:s.rental+t.rental,
+      mats:s.mats+t.mats,subs:s.subs+subs,hrs:s.hrs+t.labor_hrs};
+  },{labor:0,equip:0,rental:0,mats:0,subs:0,hrs:0});
+  const billDaily=billCats.labor+billCats.equip+billCats.rental+billCats.mats+billCats.subs;
+  const billTM=tixScoped.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
+  const billGrand=billDaily+billTM;
+
+  const billRows=scopedProjects.map(p=>{
+    const reps=billScoped.filter(r=>r.project_id===p.id);
+    const tix=tixScoped.filter(t=>t.project_id===p.id);
+    const period=reps.reduce((s,r)=>{
+      const t=reportTotals(r,p.division);
+      return s+t.grand+(r.subcontractors||[]).reduce((a,x)=>a+subLineTotal(x),0);
+    },0)+tix.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
+    const hrs=reps.reduce((s,r)=>s+reportTotals(r,p.division).labor_hrs,0);
+    const budget=parseFloat(p.contract_value)||parseFloat(p.estimated_budget)||0;
+    const toDate=(projMap[p.id]||{}).grand||0;   // all-time, from the dashboard load
+    return{...p,period,hrs,reps:reps.length,tix:tix.length,budget,toDate,
+      burn:budget>0?(toDate/budget)*100:null};
+  }).sort((a,b)=>b.period-a.period||b.toDate-a.toDate);
+
+  const activeBillRows=billRows.filter(p=>p.status==="active");
+  const shownBillRows=showZeros?activeBillRows:activeBillRows.filter(p=>p.period>0);
+  const overBudget=activeBillRows.filter(p=>p.burn!==null&&p.burn>=90);
+
+  function exportBilling(){
+    try{
+      const out=[["AIME Field Pro — Billing Summary"],
+        ["Division",pmDiv||"All"],["Period",periodLabel[billPeriod]],
+        ["Range",billFrom+" to "+billTo],[],
+        ["Job","Client","Reports","T&M","Labor Hrs","Billed This Period",
+         "Billed To Date","Budget / Contract","% Used"]];
+      shownBillRows.forEach(p=>out.push([p.name,p.client||"",p.reps,p.tix,p.hrs,
+        p.period,p.toDate,p.budget||"",p.burn===null?"":Math.round(p.burn)+"%"]));
+      out.push([]);
+      out.push(["Labor",billCats.labor],["Equipment",billCats.equip],
+        ["Rental",billCats.rental],["Materials",billCats.mats],
+        ["Subcontractors",billCats.subs],["T&M Tickets",billTM],
+        ["TOTAL",billGrand]);
+      const ws=XLSX.utils.aoa_to_sheet(out);
+      ws["!cols"]=[{wch:26},{wch:22},{wch:9},{wch:7},{wch:10},{wch:18},{wch:16},{wch:18},{wch:9}];
+      const wb=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb,ws,"Billing");
+      XLSX.writeFile(wb,`AIME_Billing_${pmDiv||"All"}_${billFrom}_to_${billTo}.xlsx`);
+    }catch(e){setErr("Excel export failed: "+e.message);}
+  }
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -4272,12 +4361,129 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
         {/* BILLING */}
         {pmTab==="billing"&&!loading&&<div>
-          {projRows.map(p=><div key={p.id} style={{...cardS,marginBottom:8}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div><div style={{fontSize:13,fontWeight:700,color:T.orange}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.client||"No client"} · {p.count} reports</div></div>
-              <div style={{fontSize:15,fontWeight:800,color:T.green}}>{fmt(p.grand)}</div>
+
+          {/* Period picker */}
+          <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,marginBottom:12,WebkitOverflowScrolling:"touch"}}>
+            {Object.entries(periodLabel).map(([k,l])=>{
+              const on=billPeriod===k;
+              return(
+                <button key={k} onClick={()=>setBillPeriod(k)}
+                  style={{flexShrink:0,padding:"7px 13px",borderRadius:16,cursor:"pointer",fontFamily:"inherit",
+                    fontSize:12,fontWeight:on?800:600,
+                    background:on?T.orange:T.surface,color:on?"#000":T.sub,
+                    border:`1px solid ${on?T.orange:T.border}`}}>{l}</button>
+              );
+            })}
+          </div>
+
+          {billLoading&&<div style={{textAlign:"center",padding:24,color:T.muted,fontSize:13}}>Loading billing…</div>}
+
+          {!billLoading&&<>
+            {/* Headline */}
+            <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
+              <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>
+                {periodLabel[billPeriod]} · {billFrom} → {billTo}
+              </div>
+              <div style={{fontSize:34,fontWeight:900,color:T.green,lineHeight:1.15,marginTop:2}}>{fmt(billGrand)}</div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>
+                {billScoped.length} report{billScoped.length!==1?"s":""} · {tixScoped.length} T&M · {fmtH(billCats.hrs)} labor hrs
+              </div>
             </div>
-          </div>)}
+
+            {/* Where the money is */}
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Breakdown</div>
+            <div style={{...cardS,marginBottom:16,padding:"6px 14px"}}>
+              {[["Labor",billCats.labor,T.green],
+                ["Equipment",billCats.equip,T.yellow],
+                ["Rental",billCats.rental,T.purple],
+                ["Materials",billCats.mats,T.blue],
+                ["Subcontractors",billCats.subs,T.orange],
+                ["T&M Tickets",billTM,T.teal]].map(([l,v,c])=>{
+                const pct=billGrand>0?(v/billGrand)*100:0;
+                return(
+                  <div key={l} style={{padding:"9px 0",borderBottom:`1px solid ${T.border}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                      <span style={{fontSize:12.5,color:v>0?T.text:T.muted}}>{l}</span>
+                      <span style={{fontSize:13,fontWeight:800,color:v>0?c:T.muted}}>
+                        {fmt(v)}{v>0&&<span style={{color:T.muted,fontWeight:600,fontSize:11,marginLeft:6}}>{pct.toFixed(0)}%</span>}
+                      </span>
+                    </div>
+                    <div style={{height:4,background:T.border,borderRadius:3}}>
+                      <div style={{height:4,borderRadius:3,background:c,width:`${pct}%`,transition:"width 0.3s"}}/>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Budget warnings */}
+            {overBudget.length>0&&<>
+              <div style={{fontSize:11,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+                ⚠️ At or Near Budget ({overBudget.length})
+              </div>
+              {overBudget.map(p=>(
+                <div key={p.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${p.burn>=100?T.red:T.yellow}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div><div style={{fontSize:13,fontWeight:700,color:T.orange}}>{p.name}</div>
+                      <div style={{fontSize:11,color:T.muted}}>{fmt(p.toDate)} of {fmt(p.budget)}</div></div>
+                    <div style={{fontSize:17,fontWeight:900,color:p.burn>=100?T.red:T.yellow}}>{Math.round(p.burn)}%</div>
+                  </div>
+                </div>
+              ))}
+              <div style={{height:8}}/>
+            </>}
+
+            {/* Per-job */}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>
+                By Job ({shownBillRows.length})
+              </div>
+              <button onClick={()=>setShowZeros(v=>!v)}
+                style={{background:"none",border:"none",color:T.orange,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                {showZeros?"Hide jobs with no activity":`Show all ${activeBillRows.length} jobs`}
+              </button>
+            </div>
+
+            {shownBillRows.length===0&&<div style={{...cardS,textAlign:"center",padding:"26px 16px",color:T.muted}}>
+              <div style={{fontSize:30,marginBottom:8}}>📭</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.sub}}>No billable activity this period</div>
+            </div>}
+
+            {shownBillRows.map(p=>(
+              <div key={p.id} style={{...cardS,marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div style={{minWidth:0,paddingRight:10}}>
+                    <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{p.name}</div>
+                    <div style={{fontSize:11,color:T.muted}}>
+                      {p.client||"No client"}
+                      {p.reps>0&&` · ${p.reps} report${p.reps!==1?"s":""}`}
+                      {p.tix>0&&` · ${p.tix} T&M`}
+                      {p.hrs>0&&` · ${fmtH(p.hrs)} hrs`}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:15,fontWeight:900,color:p.period>0?T.green:T.muted}}>{fmt(p.period)}</div>
+                    {p.toDate>p.period&&<div style={{fontSize:10,color:T.muted,marginTop:1}}>{fmt(p.toDate)} to date</div>}
+                  </div>
+                </div>
+                {p.burn!==null&&<div style={{marginTop:9,paddingTop:9,borderTop:`1px solid ${T.border}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:10.5,color:T.muted,marginBottom:4}}>
+                    <span>{p.contract_value?"Contract":"Est. budget"} {fmt(p.budget)}</span>
+                    <span style={{fontWeight:700,color:p.burn>=100?T.red:p.burn>=90?T.yellow:T.green}}>{Math.round(p.burn)}% used</span>
+                  </div>
+                  <div style={{height:5,background:T.border,borderRadius:3}}>
+                    <div style={{height:5,borderRadius:3,width:`${Math.min(100,p.burn)}%`,
+                      background:p.burn>=100?T.red:p.burn>=90?T.yellow:T.green,transition:"width 0.3s"}}/>
+                  </div>
+                </div>}
+              </div>
+            ))}
+
+            {shownBillRows.length>0&&<button onClick={exportBilling}
+              style={{...primBtn,borderRadius:12,marginTop:14,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`}}>
+              📥 Export to Excel
+            </button>}
+          </>}
         </div>}
 
         {/* REPORTS */}
