@@ -4132,8 +4132,8 @@ function UserManagementScreen({onBack,currentUser,user}){
   async function save(){
     if(!f.name.trim())return;setSaving(true);
     try{
-      if(active){await API.userProfiles.update(active.id,{role:f.role,division:f.division,pin:f.pin,active:f.active});}
-      else{await API.userProfiles.upsert({name:f.name,role:f.role,division:f.division||null,pin:f.pin||null,active:true});}
+      if(active){await API.userProfiles.update(active.id,{role:f.role,division:f.division,pin:f.pin,email:f.email||null,active:f.active});}
+      else{await API.userProfiles.upsert({name:f.name,role:f.role,division:f.division||null,pin:f.pin||null,email:f.email||null,active:true});}
       await load();setMode("list");setActive(null);setF({...blank});
     }catch(e){setErr(e.message);}setSaving(false);
   }
@@ -4172,6 +4172,15 @@ function UserManagementScreen({onBack,currentUser,user}){
 
         {/* Every role needs a PIN — the login screen requires one regardless of
             permission level, so gating this field by role locked crew out. */}
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Email</label>
+          <input type="email" value={f.email||""} onChange={e=>set("email",e.target.value)}
+            placeholder="name@aimemd.com" style={inp}/>
+          <div style={{fontSize:11,color:T.muted,marginTop:4}}>
+            Used to send this person bids for review and other notifications.
+          </div>
+        </div>
+
         <div style={{marginBottom:14}}>
           <label style={lbl}>{(ROLE_META[f.role]||ROLE_META.crew).label} PIN (required)</label>
           <input type="text" inputMode="numeric" maxLength={6} placeholder="Set a PIN (numbers)"
@@ -4223,7 +4232,7 @@ function UserManagementScreen({onBack,currentUser,user}){
                   </div>
                 </div>
                 <div style={{display:"flex",gap:6}}>
-                  <button onClick={()=>{setActive(p);setF({name:p.name,role:p.role,division:p.division||null,pin:p.pin||"",active:p.active});setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"6px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
+                  <button onClick={()=>{setActive(p);setF({name:p.name,role:p.role,division:p.division||null,pin:p.pin||"",email:p.email||"",active:p.active});setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"6px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
                   {p.name!==me.name&&<button onClick={()=>remove(p.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>}
                 </div>
               </div>
@@ -4736,6 +4745,109 @@ function BidBoard({user,onBack}){
   );
 }
 
+/* ── Send a bid for review ───────────────────────────────────── */
+function ReviewRequestModal({bid,user,onClose,onSent,onErr}){
+  const [people,setPeople]=useState([]);
+  const [name,setName]=useState(bid.reviewer_name||"");
+  const [email,setEmail]=useState(bid.reviewer_email||"");
+  const [note,setNote]=useState("");
+  const [sending,setSending]=useState(false);
+
+  useEffect(()=>{(async()=>{
+    try{
+      const rows=await API.userProfiles.list();
+      // only people who can actually review, and who have somewhere to be emailed
+      setPeople((rows||[]).filter(p=>p.active!==false&&p.email&&
+        ["admin","pm","estimator"].includes(p.role)));
+    }catch(e){ /* typing an address still works */ }
+  })();},[]);
+
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  async function send(){
+    if(!email.trim()){onErr&&onErr("Pick a reviewer or enter an email address.");return;}
+    setSending(true);
+    try{
+      await API.estimates.update(bid.id,{
+        status:"ready_review",
+        reviewer_name:name||null,reviewer_email:email.trim(),
+        review_note:note||null,review_requested_at:new Date().toISOString(),
+        updated_at:new Date().toISOString(),
+      });
+      // in-app notification lands immediately, whether or not the email is sent
+      await notify("bid_review",`Bid ready for review — ${bid.name||"Untitled"}`,
+        `${user.name} moved this bid to Ready For Review${name?` for ${name}`:""}.${note?` Note: ${note}`:""}`,
+        {});
+
+      const link=`${window.location.origin}${window.location.pathname}?bid=${bid.id}`;
+      const subj=`Bid ready for review — ${bid.name||""}${bid.quote_number?` (Quote ${bid.quote_number})`:""}`;
+      const body=[
+        `${name?name+",":"Hello,"}`,"",
+        `${bid.name||"A bid"} is ready for your review.`,"",
+        `Customer:  ${bid.requester_company||"—"}`,
+        `Division:  ${bid.division||"—"}`,
+        `Due:       ${bid.due_date||"—"}`,
+        `Total:     ${money(bid.total_sales)}`,
+        ...(note?["",`Note: ${note}`]:[]),
+        "",link,"","Thanks,",user.name||"",
+      ].join("\n");
+      window.location.href=`mailto:${encodeURIComponent(email.trim())}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+      onSent&&onSent();
+    }catch(e){onErr&&onErr(e.message);}
+    setSending(false);
+  }
+
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:220,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:24,width:"100%",maxWidth:460,border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:16,fontWeight:900,color:T.text,marginBottom:4}}>Send for Review</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:16}}>
+          Moves this bid to Ready For Review and lets the reviewer know.
+        </div>
+
+        <label style={lbl}>Reviewer</label>
+        {people.length>0?(
+          <select value={email} onChange={e=>{
+            const p=people.find(x=>x.email===e.target.value);
+            setEmail(e.target.value); setName(p?p.name:"");
+          }} style={{...inp,marginBottom:12}}>
+            <option value="">Choose someone…</option>
+            {people.map(p=><option key={p.id} value={p.email}>{p.name} — {ROLE_META[p.role]?.label||p.role}</option>)}
+          </select>
+        ):(
+          <div style={{fontSize:11.5,color:T.yellow,marginBottom:10,lineHeight:1.6}}>
+            No profiles have an email address yet. Add one under PM Dashboard → Users,
+            or type an address below.
+          </div>
+        )}
+
+        <label style={lbl}>Email {people.length>0?"(or type another)":""}</label>
+        <input type="email" value={email} onChange={e=>setEmail(e.target.value)}
+          placeholder="name@aimemd.com" style={{...inp,marginBottom:12}}/>
+
+        <label style={lbl}>Note (optional)</label>
+        <textarea value={note} onChange={e=>setNote(e.target.value)} rows={3}
+          placeholder="Anything the reviewer should know before opening it"
+          style={{...inp,marginBottom:16,resize:"vertical"}}/>
+
+        <div style={{background:T.surface,borderRadius:10,padding:"10px 12px",fontSize:11.5,color:T.muted,lineHeight:1.6,marginBottom:16}}>
+          This opens an email draft in your mail client so it comes from you — review it
+          and hit send. The bid moves to Ready For Review either way, and the reviewer
+          also gets an in-app notification.
+        </div>
+
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={send} disabled={sending}
+            style={{...primBtn,borderRadius:10,background:T.green,color:"#000",opacity:sending?0.6:1}}>
+            {sending?"Sending…":"Send for Review"}
+          </button>
+          <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── ESTIMATING: single bid, tabbed ──────────────────────────── */
 const BID_TABS=[
   {id:"overview",   label:"Overview"},
@@ -4750,6 +4862,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
   const [bid,setBid]=useState(null);
   const [tab,setTab]=useState("overview");
   const [loading,setLoading]=useState(true);
+  const [askReview,setAskReview]=useState(false);
   const [err,setErr]=useState("");
 
   async function load(){
@@ -4789,7 +4902,11 @@ function BidDetail({bidId,user,onBack,onChanged}){
           <div style={{fontSize:22,fontWeight:900,color:T.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
             {bid.name||"Untitled bid"}
           </div>
-          <select value={bid.status||"estimating"} onChange={e=>patch({status:e.target.value})}
+          <select value={bid.status||"estimating"} onChange={e=>{
+              // moving to Ready For Review asks who should be told
+              if(e.target.value==="ready_review"){setAskReview(true);return;}
+              patch({status:e.target.value});
+            }}
             style={{background:`${st.color}18`,border:`1px solid ${st.color}55`,color:st.color,borderRadius:8,
               padding:"8px 10px",fontSize:11.5,fontWeight:800,fontFamily:"inherit",cursor:"pointer",
               textTransform:"uppercase",letterSpacing:"0.4px",outline:"none",flexShrink:0}}>
@@ -4811,6 +4928,11 @@ function BidDetail({bidId,user,onBack,onChanged}){
       </div>
 
       {err&&<div onClick={()=>setErr("")} style={{background:T.redLow,borderBottom:`1px solid ${T.red}40`,padding:"8px 24px",fontSize:12,color:T.red,cursor:"pointer"}}>{err} ✕</div>}
+
+      {askReview&&<ReviewRequestModal bid={bid} user={user}
+        onClose={()=>setAskReview(false)}
+        onSent={()=>{setAskReview(false);load();onChanged&&onChanged();}}
+        onErr={setErr}/>}
 
       <div style={{padding:"20px 24px 60px"}}>
         {tab==="overview"  &&<BidOverviewTab bid={bid} onSave={patch}/>}
