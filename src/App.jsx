@@ -4052,6 +4052,34 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   });
   const topJob=Object.entries(hoursByJob).sort((a,b)=>b[1]-a[1])[0]||null;
 
+  // Same month last period, for the trend arrow
+  const prevDate=new Date();prevDate.setDate(1);prevDate.setMonth(prevDate.getMonth()-1);
+  const prevKey=prevDate.toISOString().slice(0,7);
+  const prevHrs=scopedReports.filter(r=>(r.date||"").slice(0,7)===prevKey)
+    .reduce((s,r)=>s+reportTotals(r,divOf(r)).labor_hrs,0);
+  const hrsDelta=prevHrs>0?((monthTot.hrs-prevHrs)/prevHrs)*100:null;
+
+  // Jobs going quiet — last report date comes from the reports we already hold,
+  // so no extra fetch. reports.all() caps at 300 rows, so a job whose last
+  // report falls outside that window reads as "no reports" — still the right
+  // signal for this list, just not an exact date.
+  const lastReportByJob={};
+  scopedReports.forEach(r=>{
+    const d=r.date||"";
+    if(!d)return;
+    if(!lastReportByJob[r.project_id]||d>lastReportByJob[r.project_id])lastReportByJob[r.project_id]=d;
+  });
+  const QUIET_DAYS=7;
+  const quietJobs=scopedProjects.filter(p=>p.status==="active").map(p=>{
+    const last=lastReportByJob[p.id]||null;
+    const days=last?Math.floor((Date.now()-new Date(last+"T12:00:00").getTime())/86400000):null;
+    return{...p,last,days};
+  }).filter(p=>p.days===null||p.days>=QUIET_DAYS)
+    .sort((a,b)=>(b.days===null?9999:b.days)-(a.days===null?9999:a.days));
+
+  // Flagged reports — sent back to the crew and never tracked anywhere else
+  const flagged=scopedReports.filter(r=>r.status==="flagged");
+
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -4105,6 +4133,10 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
               <div>
                 <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Man Hours</div>
                 <div style={{fontSize:32,fontWeight:900,color:T.blue,lineHeight:1.1}}>{fmtH(monthTot.hrs)}</div>
+                {hrsDelta!==null&&<div style={{fontSize:11,fontWeight:700,marginTop:3,
+                  color:hrsDelta>=0?T.green:T.red}}>
+                  {hrsDelta>=0?"▲":"▼"} {Math.abs(hrsDelta).toFixed(0)}% vs {prevDate.toLocaleDateString("en-US",{month:"long"})}
+                </div>}
               </div>
               <div style={{textAlign:"right"}}>
                 <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Reports</div>
@@ -4131,12 +4163,61 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
             ))}
           </div>
 
-          {/* All-time by job */}
-          <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Active Jobs by Billings</div>
-          {projRows.slice(0,5).map(p=><div key={p.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div><div style={{fontSize:13,fontWeight:700,color:T.orange}}>{p.name}</div><div style={{fontSize:11,color:T.muted}}>{p.count} reports</div></div>
-            <div style={{fontSize:15,fontWeight:800,color:T.green}}>{fmt(p.grand)}</div>
-          </div>)}
+          {/* Jobs going quiet */}
+          {quietJobs.length>0&&<>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+              🔇 Going Quiet — no report in {QUIET_DAYS}+ days ({quietJobs.length})
+            </div>
+            {quietJobs.slice(0,6).map(p=>{
+              const c=p.days===null||p.days>=14?T.red:T.yellow;
+              return(
+                <div key={p.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${c}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{minWidth:0,paddingRight:10}}>
+                    <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{p.name}</div>
+                    <div style={{fontSize:11,color:T.muted}}>{[p.client,p.location].filter(Boolean).join(" · ")||"No details"}</div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:15,fontWeight:900,color:c}}>{p.days===null?"—":p.days+"d"}</div>
+                    <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>{p.days===null?"no reports":"since last"}</div>
+                  </div>
+                </div>
+              );
+            })}
+            {quietJobs.length>6&&<div style={{fontSize:11,color:T.muted,textAlign:"center",padding:"4px 0 10px"}}>
+              +{quietJobs.length-6} more
+            </div>}
+          </>}
+
+          {/* Flagged, waiting on the crew */}
+          {flagged.length>0&&<>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"16px 0 8px"}}>
+              🚩 Flagged — waiting on the crew ({flagged.length})
+            </div>
+            {flagged.slice(0,6).map(r=>{
+              const proj=projects.find(p=>p.id===r.project_id)||r.projects||{name:"Unknown"};
+              return(
+                <div key={r.id} onClick={()=>{setActiveReport(r);setActiveProject(proj);}}
+                  style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.red}`,cursor:"pointer"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div style={{minWidth:0,paddingRight:10}}>
+                      <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{proj.name}</div>
+                      <div style={{fontSize:11,color:T.muted}}>{r.date} · {r.submitted_by||"—"}</div>
+                    </div>
+                    <span style={{color:T.red,fontSize:14,flexShrink:0}}>→</span>
+                  </div>
+                  {r.pm_notes&&<div style={{fontSize:11.5,color:T.sub,marginTop:6,paddingTop:6,borderTop:`1px solid ${T.border}`,fontStyle:"italic",lineHeight:1.5}}>
+                    {r.pm_notes.length>110?r.pm_notes.slice(0,110)+"…":r.pm_notes}
+                  </div>}
+                </div>
+              );
+            })}
+          </>}
+
+          {quietJobs.length===0&&flagged.length===0&&<div style={{...cardS,textAlign:"center",padding:"26px 16px",color:T.muted}}>
+            <div style={{fontSize:30,marginBottom:8}}>👍</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.sub}}>Nothing needs chasing</div>
+            <div style={{fontSize:11.5,marginTop:3}}>Every active job has reported recently, and nothing is flagged.</div>
+          </div>}
         </div>}
 
         {/* APPROVALS */}
