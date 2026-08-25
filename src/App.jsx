@@ -4551,6 +4551,7 @@ function BidBoard({user,onBack}){
   const [sortKey,setSortKey]=useState("due_date");
   const [sortDir,setSortDir]=useState("asc");
   const [openId,setOpenId]=useState(null);    // bid being viewed
+  const [reviewBid,setReviewBid]=useState(null);
   const [creating,setCreating]=useState(false);
   const [err,setErr]=useState("");
 
@@ -4725,7 +4726,11 @@ function BidBoard({user,onBack}){
                         ):<span style={{fontSize:12,color:T.muted}}>Unassigned</span>}
                       </td>
                       <td style={{padding:"12px",verticalAlign:"top"}}>
-                        <select value={b.status||"estimating"} onChange={e=>setStatus(b,e.target.value)}
+                        <select value={b.status||"estimating"} onChange={e=>{
+                            // same prompt as the bid detail screen
+                            if(e.target.value==="ready_review"){setReviewBid(b);return;}
+                            setStatus(b,e.target.value);
+                          }}
                           style={{background:`${st.color}18`,border:`1px solid ${st.color}55`,color:st.color,
                             borderRadius:8,padding:"6px 8px",fontSize:11,fontWeight:800,fontFamily:"inherit",
                             cursor:"pointer",textTransform:"uppercase",letterSpacing:"0.4px",outline:"none"}}>
@@ -4741,6 +4746,10 @@ function BidBoard({user,onBack}){
         )}
       </div>
 
+      {reviewBid&&<ReviewRequestModal bid={reviewBid} user={user}
+        onClose={()=>setReviewBid(null)}
+        onSent={()=>{setReviewBid(null);load();}}
+        onErr={setErr}/>}
     </div>
   );
 }
