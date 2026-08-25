@@ -1859,7 +1859,7 @@ function SignaturePad({onSave,onCancel,reportName}){
 }
 
 
-function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,onFlag}){
+function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,onFlag,onArchive}){
   const [report,setReport]=useState(initReport);
   const [lb,setLb]=useState(null);const [flagNote,setFlagNote]=useState("");const [flagging,setFlagging]=useState(false);
   const [showSigPad,setShowSigPad]=useState(false);const [sigSaving,setSigSaving]=useState(false);
@@ -2364,6 +2364,17 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       {(report.materials||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Materials{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.mats)}</span>}</div>{report.materials.map((r,i)=>(<div key={i} style={{padding:"8px 0",borderBottom:i<report.materials.length-1?`1px solid ${T.border}`:"none"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:r.receipts?.length>0?8:0}}><span style={{fontSize:13}}>{r.qty?`${r.qty}x `:""}{r.description}</span>{can(user,"view_dashboard")&&<span style={{fontSize:13,fontWeight:700,color:T.green}}>${fmt(parseFloat(r.amount)||0)}</span>}</div>{r.receipts?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{r.receipts.map(rc=><img key={rc.id} src={rc.src} alt="" onClick={()=>setLb(rc.src)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer"}}/>)}</div>}</div>))}</div>}
       {can(user,"view_dashboard")&&<div style={{...cardS,background:divColor+"12",border:`1px solid ${divColor}40`,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:15,fontWeight:800}}>Grand Total</span><span style={{fontSize:26,fontWeight:900,color:divColor,letterSpacing:"-1px"}}>${fmt(tot.grand)}</span></div>}
       {can(user,"approve_report")&&report.status==="submitted"&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><button onClick={()=>onApprove&&onApprove(report.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>✓ Approve</button><button onClick={()=>setFlagging(!flagging)} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:12}}>🚩 Flag</button></div>)}
+
+      {/* Archiving is a supervisory action, so it sits with approve rather than
+          with the crew's own edit controls. */}
+      {can(user,"approve_report")&&(
+        <button onClick={()=>onArchive&&onArchive(report.id,!report.archived)}
+          style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10,
+            color:report.archived?T.green:T.muted,
+            border:`1px solid ${report.archived?T.green+"40":T.border}`}}>
+          {report.archived?"♻️ Restore Report":"📦 Archive Report"}
+        </button>
+      )}
       {flagging&&<div style={{...cardS,marginBottom:10}}><label style={lbl}>Flag Note for Crew</label><textarea value={flagNote} onChange={e=>setFlagNote(e.target.value)} rows={3} placeholder="What needs to be corrected…" style={{...inp,resize:"vertical",marginBottom:10}}/><button onClick={()=>{onFlag&&onFlag(report.id,flagNote);setFlagging(false);}} style={{...primBtn,borderRadius:12}}>Send Flag</button></div>}
       {/* Signature section */}
       {report.inspector_signature?(
@@ -3932,7 +3943,8 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
   if(showNotifs)return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}><TopBar title="🔔 Notifications" onBack={()=>{setShowNotifs(false);load();}}/><NotificationsPanel onClose={()=>{setShowNotifs(false);load();}}/></div>);
 
-  if(activeReport&&activeProject)return(<ReportDetail report={activeReport} project={activeProject} user={user} onBack={()=>{setActiveReport(null);setActiveProject(null);load();}} onDelete={async(id)=>{await API.reports.remove(id);setActiveReport(null);setActiveProject(null);load();}} onApprove={approve} onFlag={flag}/>);
+  if(activeReport&&activeProject)return(<ReportDetail report={activeReport} project={activeProject} user={user} onBack={()=>{setActiveReport(null);setActiveProject(null);load();}} onDelete={async(id)=>{await API.reports.remove(id);setActiveReport(null);setActiveProject(null);load();}} onApprove={approve} onFlag={flag}
+    onArchive={async(id,archived)=>{await API.reports.update(id,{archived});setActiveReport(null);setActiveProject(null);load();}}/>);
 
   const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${pending.length>0?" ("+pending.length+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
@@ -6534,7 +6546,8 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   const tot=reports.reduce((s,r)=>{const t=reportTotals(r);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
 
   if(screen==="newReport"&&can(user,"submit_report")) return <DailyReportForm user={user} project={project} onSave={saveReport} onCancel={()=>setScreen("detail")} isOnline={isOnline}/>;
-  if(screen==="reportDetail"&&activeReport) return <ReportDetail report={activeReport} project={project} user={user} onBack={()=>setScreen("detail")} onDelete={deleteReport} onApprove={approveReport} onFlag={flagReport}/>;
+  if(screen==="reportDetail"&&activeReport) return <ReportDetail report={activeReport} project={project} user={user} onBack={()=>setScreen("detail")} onDelete={deleteReport} onApprove={approveReport} onFlag={flagReport}
+    onArchive={async(id,archived)=>{try{await API.reports.update(id,{archived});setScreen("detail");await load();}catch(e){setErr(e.message);}}}/>;
   if(editProject&&can(user,"edit_job")) return <ProjectForm initial={project} onSave={updateProject} onCancel={()=>{setEditProject(false);setErr("");}} defaultDivision={project.division} saving={projSaving} externalErr={err} onClearErr={()=>setErr("")}/>;
 
   return(
@@ -6572,27 +6585,35 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
         {!loading&&tab==="reports"&&(()=>{
           // Approved reports move out of the working list into Completed, so the
           // Daily tab only shows what still needs attention.
-          const done=reports.filter(r=>r.status==="approved");
-          const open=reports.filter(r=>r.status!=="approved");
-          const shown=reportView==="completed"?done:open;
+          const live=reports.filter(r=>!r.archived);
+          const done=live.filter(r=>r.status==="approved");
+          const open=live.filter(r=>r.status!=="approved");
+          const archived=reports.filter(r=>r.archived);
+          const shown=reportView==="completed"?done:reportView==="archived"?archived:open;
           return(<div>
           {can(user,"submit_report")&&<button onClick={()=>setScreen("newReport")} style={{...primBtn,marginBottom:12,borderRadius:14,padding:"18px",fontSize:17,background:divMeta.color}}>📋 + New Daily Report</button>}
 
           <div style={{display:"flex",gap:8,marginBottom:14}}>
-            {[["daily","📋 Daily",open.length],["completed","✅ Completed",done.length]].map(([id,label,n])=>{
+            {[["daily","📋 Daily",open.length],["completed","✅ Completed",done.length],
+              ...(can(user,"approve_report")||archived.length?[["archived","📦 Archived",archived.length]]:[])].map(([id,label,n])=>{
               const on=reportView===id;
               return(
                 <button key={id} onClick={()=>setReportView(id)}
                   style={{flex:1,padding:"11px 10px",borderRadius:12,cursor:"pointer",fontFamily:"inherit",
-                    background:on?(id==="completed"?T.greenLow:T.orangeLow):T.surface,
-                    border:`1px solid ${on?(id==="completed"?T.green:T.orange)+"55":T.border}`,
-                    color:on?(id==="completed"?T.green:T.orange):T.sub,
-                    fontSize:13.5,fontWeight:on?800:600}}>
+                    background:on?(id==="completed"?T.greenLow:id==="archived"?T.surface:T.orangeLow):T.surface,
+                    border:`1px solid ${on?(id==="completed"?T.green:id==="archived"?T.muted:T.orange)+"55":T.border}`,
+                    color:on?(id==="completed"?T.green:id==="archived"?T.sub:T.orange):T.sub,
+                    fontSize:12.5,fontWeight:on?800:600}}>
                   {label} <span style={{opacity:0.75}}>({n})</span>
                 </button>
               );
             })}
           </div>
+          {shown.length===0&&reportView==="archived"&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+              <div style={{fontSize:40,marginBottom:10}}>📦</div>
+              <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>Nothing archived</div>
+              <div style={{fontSize:12.5,lineHeight:1.6}}>Archived reports are hidden from the working lists but never deleted.</div>
+            </div>}
           {shown.length===0&&reportView==="completed"&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
               <div style={{fontSize:40,marginBottom:10}}>✅</div>
               <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>Nothing completed yet</div>
@@ -9603,6 +9624,7 @@ export default function App(){
 /* ── T&M TICKET LIST (inside ProjectDetail tab) ─────────────── */
 function TMTicketList({project,user,onOpen,onNew}){
   const [tickets,setTickets]=useState([]);
+  const [tmView,setTmView]=useState("active");
   const [loading,setLoading]=useState(true);
   const canCreate=user.role==="admin"||user.role==="pm";
 
@@ -9619,30 +9641,67 @@ function TMTicketList({project,user,onOpen,onNew}){
   }
 
   const statusColor={draft:T.muted,submitted:T.yellow,approved:T.green};
-  const total=tickets.reduce((s,t)=>s+(t.grand_total||0),0);
+  const canArchive=can(user,"approve_report");
+  const live=tickets.filter(t=>!t.archived);
+  const archivedTix=tickets.filter(t=>t.archived);
+  const shownTix=tmView==="archived"?archivedTix:live;
+  const total=shownTix.reduce((s,t)=>s+(t.grand_total||0),0);
+
+  async function setArchived(id,archived){
+    setTickets(ts=>ts.map(t=>t.id===id?{...t,archived}:t));
+    try{ await API.tmTickets.update(id,{archived}); }catch(e){ await load(); }
+  }
 
   return(
     <div>
       {canCreate&&<button onClick={onNew} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.orange,color:"#000"}}>
         + New T&M Ticket
       </button>}
-      {tickets.length>0&&<div style={{...cardS,marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div style={{fontSize:12,color:T.muted}}>{tickets.length} ticket{tickets.length!==1?"s":""}</div>
+      {(canArchive||archivedTix.length>0)&&tickets.length>0&&(
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          {[["active","🧾 Active",live.length],["archived","📦 Archived",archivedTix.length]].map(([id,label,n])=>{
+            const on=tmView===id;
+            return(
+              <button key={id} onClick={()=>setTmView(id)}
+                style={{flex:1,padding:"10px",borderRadius:12,cursor:"pointer",fontFamily:"inherit",
+                  background:on?(id==="archived"?T.surface:T.orangeLow):T.surface,
+                  border:`1px solid ${on?(id==="archived"?T.muted:T.orange)+"55":T.border}`,
+                  color:on?(id==="archived"?T.sub:T.orange):T.sub,fontSize:13,fontWeight:on?800:600}}>
+                {label} <span style={{opacity:0.75}}>({n})</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {shownTix.length>0&&<div style={{...cardS,marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{fontSize:12,color:T.muted}}>{shownTix.length} ticket{shownTix.length!==1?"s":""}</div>
         <div style={{fontSize:15,fontWeight:900,color:T.green}}>${total.toLocaleString("en-US",{minimumFractionDigits:2})}</div>
       </div>}
       {loading&&<Spinner/>}
-      {!loading&&tickets.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
-        <div style={{fontSize:44,marginBottom:12}}>🧾</div>
-        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No T&M Tickets</div>
-        <div style={{fontSize:12}}>Create your first Time & Materials ticket above.</div>
+      {!loading&&shownTix.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>{tmView==="archived"?"📦":"🧾"}</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>
+          {tmView==="archived"?"Nothing archived":"No T&M Tickets"}
+        </div>
+        <div style={{fontSize:12}}>
+          {tmView==="archived"?"Archived tickets are hidden here but never deleted.":"Create your first Time & Materials ticket above."}
+        </div>
       </div>}
-      {tickets.map(t=>(
+      {shownTix.map(t=>(
         <div key={t.id} onClick={()=>onOpen(t)} style={{...cardS,marginBottom:8,cursor:"pointer",borderLeft:`3px solid ${statusColor[t.status]||T.muted}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
             <div>
               <div style={{fontSize:14,fontWeight:800,color:T.orange}}>T&M #{t.ticket_no||"—"}</div>
               <div style={{fontSize:12,color:T.sub}}>{t.ticket_date} {t.submitted_by?"· "+t.submitted_by:""}</div>
               {t.description&&<div style={{fontSize:11,color:T.muted,marginTop:2}}>{t.description.slice(0,60)}{t.description.length>60?"…":""}</div>}
+              {canArchive&&(
+                <button onClick={e=>{e.stopPropagation();setArchived(t.id,!t.archived);}}
+                  style={{background:"none",border:"none",padding:0,marginTop:6,cursor:"pointer",
+                    fontFamily:"inherit",fontSize:11,fontWeight:700,
+                    color:t.archived?T.green:T.muted}}>
+                  {t.archived?"♻️ Restore":"📦 Archive"}
+                </button>
+              )}
             </div>
             <div style={{textAlign:"right"}}>
               <div style={{fontSize:16,fontWeight:900,color:T.green}}>${(t.grand_total||0).toLocaleString("en-US",{minimumFractionDigits:2})}</div>
