@@ -124,10 +124,10 @@ async function storageRemove(bucket,path){
 // so phones (viewport under 480) are completely unaffected by these values.
 // Data-entry screens stay narrow — a form field stretched across a 27" monitor
 // is worse, not better.
-// Estimating is under construction — restricted to this account regardless of
-// role. Clear ESTIMATING_OWNER (set it to "") to open it up to the normal
-// `estimating` permission again.
-const ESTIMATING_OWNER="Doug Friedel";
+// Estimating is open to whoever holds the `estimating` permission — Admin, PM
+// and Estimator. Set ESTIMATING_OWNER to a profile name to lock it back down to
+// one person while something is being reworked.
+const ESTIMATING_OWNER="";
 const canEstimate=(u)=>!!u&&can(u,"estimating")&&(!ESTIMATING_OWNER||u.name===ESTIMATING_OWNER);
 
 const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs"]);
@@ -387,7 +387,7 @@ const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Reports, time card
 
 const PERMS={
   admin:     ["manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
-  pm:        ["create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications"],
+  pm:        ["create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
   // Estimator = everything a Foreman can do, plus the estimating platform and the dashboard
   estimator: ["estimating","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
   // Foreman can now run jobs end to end, but still can't approve or flag reports —
@@ -4970,83 +4970,17 @@ const DEFAULT_GENERAL_NOTES=[
   "-The increase related to any government action will be added to the cost of materials",
 ].join("\n");
 
-function ProposalTab({bid,user,onErr,onSaved}){
+// Shared by the Proposal tab and the public link, so the client sees exactly
+// what the estimator previewed.
+function buildProposalHtml(bid,f,total){
   const asList=(v)=>{
     if(Array.isArray(v))return v;
     if(typeof v==="string"){try{const p=JSON.parse(v);return Array.isArray(p)?p:[];}catch{return [];}}
     return [];
   };
-
-  const [f,setF]=useState({
-    quote_number:bid.quote_number||"",
-    quote_date:bid.quote_date||today(),
-    prepared_by:bid.prepared_by||user.name||"",
-    prepared_phone:bid.prepared_phone||"",
-    prepared_email:bid.prepared_email||"",
-    customer_address:bid.customer_address||"",
-    general_notes:bid.general_notes||DEFAULT_GENERAL_NOTES,
-  });
-  const [dirty,setDirty]=useState(false);
-  const [saving,setSaving]=useState(false);
-  const [total,setTotal]=useState(Number(bid.total_sales)||0);
-  const set=(k,v)=>{setF(s=>({...s,[k]:v}));setDirty(true);};
-
-  // Price comes from the Estimating tab's line items so the proposal can't
-  // quietly disagree with the estimate behind it.
-  useEffect(()=>{(async()=>{
-    try{
-      const [lines,items,marks]=await Promise.all([
-        API.estimateLines.forEstimate(bid.id),
-        API.takeoff.items(bid.id),
-        API.takeoff.marks(bid.id),
-      ]);
-      const itemById={};(items||[]).forEach(i=>itemById[i.id]=i);
-      const qtyFor=(l)=>{
-        if(l.takeoff_item_id&&!l.use_manual_qty)
-          return (marks||[]).filter(m=>m.item_id===l.takeoff_item_id).reduce((s,m)=>s+(Number(m.value)||0),0);
-        return Number(l.quantity)||0;
-      };
-      const weightOf=(l)=>{
-        const it=l.takeoff_item_id?itemById[l.takeoff_item_id]:null;
-        if(it&&it.use_weight&&Number(it.weight_per_unit)>0)return Number(it.weight_per_unit);
-        return Number(l.weight_per_unit)||0;
-      };
-      const rates={markup_materials:bid.markup_materials??12,markup_equip_owned:bid.markup_equip_owned??12,
-        markup_equip_rented:bid.markup_equip_rented??12,markup_equipment:bid.markup_equipment??12,
-        markup_labor:bid.markup_labor??0,markup_sub:bid.markup_sub??10};
-      const cat={};
-      (lines||[]).forEach(l=>{
-        const qty=qtyFor(l), wpu=weightOf(l);
-        const byWeight=l.pricing_basis==="weight"&&wpu>0;
-        const eff=byWeight?(Number(l.price_per_weight)||0)*wpu:(Number(l.unit_cost)||0);
-        const mat=qty*eff*(1+(Number(l.waste_pct)||0)/100);
-        const rate=l.labor_rate!=null&&l.labor_rate!==""?Number(l.labor_rate):Number(bid.labor_cost_rate)||102;
-        const cost=mat+qty*(Number(l.labor_hours)||0)*rate;
-        cat[l.category||"Other"]=(cat[l.category||"Other"]||0)+cost;
-      });
-      const marked=Object.entries(cat).reduce((s,[c,v])=>{
-        const key=MARKUP_KEY[c];
-        return s+v*(1+(key?Number(rates[key])||0:0)/100);
-      },0);
-      const overhead=marked*((Number(bid.overhead_pct)||0)/100);
-      const discount=(marked+overhead)*((Number(bid.discount_pct)||0)/100);
-      const t=marked+overhead-discount;
-      if(t>0)setTotal(t);
-    }catch(e){ /* fall back to the figure stored on the bid */ }
-  })();},[bid.id]);
-
-  async function save(){
-    setSaving(true);
-    try{ await API.estimates.update(bid.id,{...f,updated_at:new Date().toISOString()}); setDirty(false); onSaved&&onSaved(); }
-    catch(e){onErr&&onErr(e.message);}
-    setSaving(false);
-  }
-
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
   const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const lines=(s)=>esc(s).split("\n").map(l=>l.trim()).filter(Boolean);
-
-  function buildHtml(){
     const inc=asList(bid.inclusions), exc=asList(bid.exclusions);
     const dateStr=f.quote_date?new Date(f.quote_date+"T00:00:00").toLocaleDateString("en-US"):"";
     const running=`Quote: ${esc(f.quote_number||"—")} / Date: ${esc(dateStr)}`;
@@ -5144,6 +5078,183 @@ function ProposalTab({bid,user,onErr,onSaved}){
 </div>
 
 </body></html>`;
+}
+
+/* ── Public proposal view: what the client opens from the emailed link ── */
+function PublicProposalView({estimateId}){
+  const [html,setHtml]=useState("");
+  const [err,setErr]=useState("");
+  const [loading,setLoading]=useState(true);
+
+  useEffect(()=>{(async()=>{
+    try{
+      const rows=await sb(`/estimates?id=eq.${estimateId}&select=*&limit=1`);
+      const bid=Array.isArray(rows)?rows[0]:rows;
+      if(!bid){setErr("This proposal is no longer available.");setLoading(false);return;}
+      const f={
+        quote_number:bid.quote_number||"",quote_date:bid.quote_date||"",
+        prepared_by:bid.prepared_by||"",prepared_phone:bid.prepared_phone||"",
+        prepared_email:bid.prepared_email||"",customer_address:bid.customer_address||"",
+        general_notes:bid.general_notes||"",
+      };
+      setHtml(buildProposalHtml(bid,f,Number(bid.total_sales)||0));
+    }catch(e){ setErr("Could not load this proposal."); }
+    setLoading(false);
+  })();},[estimateId]);
+
+  if(loading)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#f4f4f6",fontFamily:"system-ui",color:"#555"}}>Loading proposal…</div>;
+  if(err)return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#f4f4f6",fontFamily:"system-ui",padding:20}}>
+      <div style={{background:"#fff",borderRadius:14,padding:34,maxWidth:420,textAlign:"center",boxShadow:"0 2px 20px rgba(0,0,0,0.08)"}}>
+        <div style={{fontSize:40,marginBottom:10}}>⚠️</div>
+        <div style={{fontSize:16,fontWeight:700,color:"#333"}}>{err}</div>
+        <div style={{fontSize:13,color:"#777",marginTop:8}}>Please contact AIME at (410) 355-1869.</div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{minHeight:"100vh",background:"#f4f4f6"}}>
+      <div style={{background:"#1F3864",color:"#fff",padding:"12px 20px",display:"flex",alignItems:"center",gap:14,
+        position:"sticky",top:0,zIndex:10,fontFamily:"system-ui"}} className="noprint">
+        <div style={{flex:1,fontSize:14,fontWeight:700}}>AIME — Proposal</div>
+        <button onClick={()=>window.print()}
+          style={{background:"#fff",color:"#1F3864",border:"none",borderRadius:8,padding:"9px 18px",
+            fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+          🖨️ Print / Save as PDF
+        </button>
+      </div>
+      <style>{`@media print{.noprint{display:none!important}body{background:#fff!important}}`}</style>
+      <div style={{maxWidth:900,margin:"0 auto",padding:"20px 0"}}>
+        <iframe title="Proposal" srcDoc={html} className="proposal-frame"
+          style={{width:"100%",height:"1150px",border:"none",background:"#fff",
+            boxShadow:"0 2px 20px rgba(0,0,0,0.10)"}}/>
+      </div>
+    </div>
+  );
+}
+
+function ProposalTab({bid,user,onErr,onSaved}){
+  const asList=(v)=>{
+    if(Array.isArray(v))return v;
+    if(typeof v==="string"){try{const p=JSON.parse(v);return Array.isArray(p)?p:[];}catch{return [];}}
+    return [];
+  };
+
+  const [f,setF]=useState({
+    quote_number:bid.quote_number||"",
+    quote_date:bid.quote_date||today(),
+    prepared_by:bid.prepared_by||user.name||"",
+    prepared_phone:bid.prepared_phone||"",
+    prepared_email:bid.prepared_email||"",
+    customer_address:bid.customer_address||"",
+    general_notes:bid.general_notes||DEFAULT_GENERAL_NOTES,
+  });
+  const [dirty,setDirty]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [total,setTotal]=useState(Number(bid.total_sales)||0);
+  const [linkCopied,setLinkCopied]=useState(false);
+  const set=(k,v)=>{setF(s=>({...s,[k]:v}));setDirty(true);};
+
+  // Price comes from the Estimating tab's line items so the proposal can't
+  // quietly disagree with the estimate behind it.
+  useEffect(()=>{(async()=>{
+    try{
+      const [lines,items,marks]=await Promise.all([
+        API.estimateLines.forEstimate(bid.id),
+        API.takeoff.items(bid.id),
+        API.takeoff.marks(bid.id),
+      ]);
+      const itemById={};(items||[]).forEach(i=>itemById[i.id]=i);
+      const qtyFor=(l)=>{
+        if(l.takeoff_item_id&&!l.use_manual_qty)
+          return (marks||[]).filter(m=>m.item_id===l.takeoff_item_id).reduce((s,m)=>s+(Number(m.value)||0),0);
+        return Number(l.quantity)||0;
+      };
+      const weightOf=(l)=>{
+        const it=l.takeoff_item_id?itemById[l.takeoff_item_id]:null;
+        if(it&&it.use_weight&&Number(it.weight_per_unit)>0)return Number(it.weight_per_unit);
+        return Number(l.weight_per_unit)||0;
+      };
+      const rates={markup_materials:bid.markup_materials??12,markup_equip_owned:bid.markup_equip_owned??12,
+        markup_equip_rented:bid.markup_equip_rented??12,markup_equipment:bid.markup_equipment??12,
+        markup_labor:bid.markup_labor??0,markup_sub:bid.markup_sub??10};
+      const cat={};
+      (lines||[]).forEach(l=>{
+        const qty=qtyFor(l), wpu=weightOf(l);
+        const byWeight=l.pricing_basis==="weight"&&wpu>0;
+        const eff=byWeight?(Number(l.price_per_weight)||0)*wpu:(Number(l.unit_cost)||0);
+        const mat=qty*eff*(1+(Number(l.waste_pct)||0)/100);
+        const rate=l.labor_rate!=null&&l.labor_rate!==""?Number(l.labor_rate):Number(bid.labor_cost_rate)||102;
+        const cost=mat+qty*(Number(l.labor_hours)||0)*rate;
+        cat[l.category||"Other"]=(cat[l.category||"Other"]||0)+cost;
+      });
+      const marked=Object.entries(cat).reduce((s,[c,v])=>{
+        const key=MARKUP_KEY[c];
+        return s+v*(1+(key?Number(rates[key])||0:0)/100);
+      },0);
+      const overhead=marked*((Number(bid.overhead_pct)||0)/100);
+      const discount=(marked+overhead)*((Number(bid.discount_pct)||0)/100);
+      const t=marked+overhead-discount;
+      if(t>0)setTotal(t);
+    }catch(e){ /* fall back to the figure stored on the bid */ }
+  })();},[bid.id]);
+
+  async function save(){
+    setSaving(true);
+    try{
+      // Store the computed total alongside the header fields. The public link
+      // reads total_sales, so saving keeps what the client sees identical to
+      // what was previewed here.
+      await API.estimates.update(bid.id,{...f,total_sales:total,updated_at:new Date().toISOString()});
+      setDirty(false); onSaved&&onSaved();
+    }
+    catch(e){onErr&&onErr(e.message);}
+    setSaving(false);
+  }
+
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const lines=(s)=>esc(s).split("\n").map(l=>l.trim()).filter(Boolean);
+
+  const buildHtml=()=>buildProposalHtml(bid,f,total);
+
+  const proposalLink=()=>`${window.location.origin}${window.location.pathname}?proposal=${bid.id}`;
+
+  function copyLink(){
+    const link=proposalLink();
+    const done=()=>{setLinkCopied(true);setTimeout(()=>setLinkCopied(false),2500);};
+    if(navigator.clipboard)navigator.clipboard.writeText(link).then(done).catch(done);
+    else{const el=document.createElement("textarea");el.value=link;document.body.appendChild(el);
+      el.select();document.execCommand("copy");document.body.removeChild(el);done();}
+  }
+
+  // Opens a draft in the estimator's own mail client. The proposal travels as a
+  // link rather than an attachment — mailto: can't carry files, and a link means
+  // the client always sees the current version.
+  function emailProposal(){
+    if(dirty){onErr&&onErr("Save the proposal details first so the client sees the latest version.");return;}
+    const to=bid.requester_email||"";
+    const subj=`AIME Proposal${f.quote_number?` #${f.quote_number}`:""} — ${bid.name||""}`;
+    const body=[
+      `${bid.contact_name?bid.contact_name+",":"Hello,"}`,
+      "",
+      `Please find our proposal for ${bid.name||"the referenced work"} at the link below.`,
+      "",
+      proposalLink(),
+      "",
+      `Total: ${money(total)}`,
+      "",
+      "The page includes a Print / Save as PDF button if you'd like a copy for your records.",
+      "",
+      "Please let me know if you have any questions.",
+      "",
+      f.prepared_by||user.name||"",
+      "Atlantic Industrial Mechanical & Environmental",
+      f.prepared_phone||"(410) 355-1869",
+      f.prepared_email||"",
+    ].join("\n");
+    window.location.href=`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
   }
 
   function printProposal(){
@@ -5211,11 +5322,27 @@ function ProposalTab({bid,user,onErr,onSaved}){
             <div style={{fontSize:26,fontWeight:900,color:T.green,marginTop:2}}>{money(total)}</div>
             <div style={{fontSize:11,color:T.muted,marginTop:2}}>Calculated from the Estimating tab</div>
           </div>
-          <button onClick={printProposal}
-            style={{...primBtn,width:"auto",padding:"14px 26px",fontSize:14,borderRadius:12,background:"#1f3864",color:"#fff"}}>
-            🖨️ Print / Save as PDF
-          </button>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            <button onClick={printProposal}
+              style={{...primBtn,width:"auto",padding:"14px 22px",fontSize:14,borderRadius:12,background:"#1f3864",color:"#fff"}}>
+              🖨️ Print / Save as PDF
+            </button>
+            <button onClick={emailProposal}
+              style={{...primBtn,width:"auto",padding:"14px 22px",fontSize:14,borderRadius:12,background:T.green,color:"#000"}}>
+              ✉️ Email to Client
+            </button>
+            <button onClick={copyLink}
+              style={{...primBtn,width:"auto",padding:"14px 18px",fontSize:14,borderRadius:12,
+                background:linkCopied?T.green:T.surface,color:linkCopied?"#000":T.text,border:`1px solid ${T.border}`}}>
+              {linkCopied?"✓ Copied":"🔗 Copy Link"}
+            </button>
+          </div>
         </div>
+        {Math.abs(total-(Number(bid.total_sales)||0))>0.005&&(
+          <div style={{marginTop:14,background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"10px 14px",fontSize:12,color:T.orange}}>
+            The shared link still shows {money(Number(bid.total_sales)||0)}. Save to publish {money(total)}.
+          </div>
+        )}
         {missing.length>0&&(
           <div style={{marginTop:14,background:T.yellowLow||T.surface,border:`1px solid ${T.yellow}40`,borderRadius:10,padding:"10px 14px",fontSize:12,color:T.yellow}}>
             Not filled in yet: {missing.join(", ")}. The proposal will print without {missing.length>1?"them":"it"}.
@@ -9701,6 +9828,7 @@ function AppInner(){
   const [publicCoId]             = useState(()=>new URLSearchParams(window.location.search).get("co"));
   const [publicInspId]           = useState(()=>new URLSearchParams(window.location.search).get("inspect"));
   const [publicTMId]             = useState(()=>new URLSearchParams(window.location.search).get("tmsign"));
+  const [publicPropId]           = useState(()=>new URLSearchParams(window.location.search).get("proposal"));
   const [user,setUser]           = useState(null);
   const [restoring,setRestoring] = useState(true);   // checking for a saved session
   const [projects,setProjects]   = useState([]);
@@ -9729,6 +9857,7 @@ function AppInner(){
   if(publicCoId) return <PublicCOForm coId={publicCoId}/>;
   if(publicInspId) return <PublicInspectorForm reportId={publicInspId}/>;
   if(publicTMId) return <PublicTMSignForm ticketId={publicTMId}/>;
+  if(publicPropId) return <PublicProposalView estimateId={publicPropId}/>;
 
   useEffect(()=>{
     const onOnline=()=>{setIsOnline(true);syncQueue();}
