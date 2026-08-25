@@ -5059,34 +5059,36 @@ function ProposalTab({bid,user,onErr,onSaved}){
     return `<!DOCTYPE html><html><head><meta charset="utf-8"/>
 <title>Proposal ${esc(f.quote_number)} — ${esc(bid.name||"")}</title>
 <style>
-  @page{size:letter;margin:0.6in 0.65in 0.7in;}
+  @page{size:letter;margin:0.4in 0.55in 0.4in;}
   *{box-sizing:border-box}
-  body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:10pt;line-height:1.45;margin:0}
+  body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:9pt;line-height:1.35;margin:0}
+  .twocol{display:flex;gap:26px;align-items:flex-start}
+  .twocol>div{flex:1;min-width:0}
   .run{position:running(head)}
   .quoteline{text-align:right;font-size:9pt;color:#222;margin-bottom:6px}
-  .brand{font-family:Arial Black,Arial,sans-serif;font-size:30pt;font-weight:900;color:#1F3864;letter-spacing:1px;line-height:1}
+  .brand{font-family:Arial Black,Arial,sans-serif;font-size:21pt;font-weight:900;color:#1F3864;letter-spacing:1px;line-height:1}
   .brandsub{font-size:6.5pt;font-weight:700;color:#1F3864;letter-spacing:0.5px;margin-top:2px}
-  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:26px}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
   .custlabel{text-align:right;color:#666;font-size:10pt;margin-bottom:6px}
-  .custbox{background:#EDEDED;padding:16px 18px;text-align:right;font-weight:700;min-width:280px}
-  .cols{display:flex;justify-content:space-between;gap:30px;margin-bottom:8px}
-  .from{font-size:10pt;line-height:1.5}
-  hr.rule{border:none;border-top:2px solid #000;margin:16px 0 12px}
-  .proj{font-size:11pt;margin:2px 0 18px}
+  .custbox{background:#EDEDED;padding:9px 12px;text-align:right;font-weight:700;min-width:240px;font-size:8pt;line-height:1.35}
+  .cols{display:flex;justify-content:space-between;gap:24px;margin-bottom:4px}
+  .from{font-size:8pt;line-height:1.35}
+  hr.rule{border:none;border-top:2px solid #000;margin:7px 0 6px}
+  .proj{font-size:10pt;margin:2px 0 8px}
   .proj span{color:#555}
-  h2{font-size:11pt;margin:18px 0 8px}
-  h3{font-size:9pt;margin:22px 0 4px}
-  .numlist{margin:0;padding-left:22px;font-size:9pt;line-height:1.5}
+  h2{font-size:10pt;margin:10px 0 4px}
+  h3{font-size:8.5pt;margin:9px 0 3px}
+  .numlist{margin:0;padding-left:16px;font-size:7.5pt;line-height:1.3}
   .muted{color:#777;font-size:9pt}
-  ul.scope{margin:8px 0 0;padding-left:22px}
+  ul.scope{margin:3px 0 0;padding-left:18px}
   ul.scope li{margin-bottom:2px}
-  .notes{font-size:10pt;font-weight:700;line-height:1.6;white-space:pre-wrap}
-  .sumwrap{margin-top:34px}
-  .sumrow{display:flex;justify-content:space-between;max-width:330px;border-bottom:1px solid #bbb;padding:4px 0;font-size:10pt}
-  .totalbox{border:2px solid #000;padding:18px 26px;font-size:20pt;text-align:center;min-width:330px}
+  .notes{font-size:7.5pt;font-weight:700;line-height:1.35;white-space:pre-wrap}
+  .sumwrap{margin-top:8px}
+  .sumrow{display:flex;justify-content:space-between;max-width:300px;border-bottom:1px solid #bbb;padding:3px 0;font-size:9pt}
+  .totalbox{border:2px solid #000;padding:9px 18px;font-size:15pt;text-align:center;min-width:210px}
   .accept{display:flex;gap:60px;align-items:flex-end}
   .sigline{border-bottom:2px dotted #000;min-width:190px;height:26px}
-  .siglabel{color:#666;font-size:9.5pt;margin-bottom:26px}
+  .siglabel{color:#666;font-size:8.5pt;margin-bottom:15px}
   .page{page-break-after:always}
   .page:last-child{page-break-after:auto}
   .cond h1{text-align:center;font-size:16pt;margin:0 0 4px}
@@ -5124,28 +5126,20 @@ function ProposalTab({bid,user,onErr,onSaved}){
   <h2>Scope of Work</h2>
   ${bid.scope_of_work?`<div>${lines(bid.scope_of_work).map(l=>l.startsWith("-")||l.startsWith("•")?`<ul class="scope"><li>${l.replace(/^[-•]\s*/,"")}</li></ul>`:`<div>${l}</div>`).join("")}</div>`:'<div class="muted">No scope entered.</div>'}
 
-  <h3>Included (+)</h3>
-  ${bulletBlock(inc)}
-
-  <h3>Excluded (-)</h3>
-  ${bulletBlock(exc)}
-</div>
-
-<div class="page">
-  <div class="quoteline">${running}</div>
-  <div class="brand" style="font-size:22pt">AIME</div>
-  <div class="brandsub" style="margin-bottom:30px">ATLANTIC INDUSTRIAL MECHANICAL &amp; ENVIRONMENTAL</div>
+  <div class="twocol">
+    <div><h3>Included (+)</h3>${bulletBlock(inc)}</div>
+    <div><h3>Excluded (-)</h3>${bulletBlock(exc)}</div>
+  </div>
 
   ${bid.clarifications?`<h3>Clarifications</h3><div class="notes">${esc(bid.clarifications)}</div>`:""}
 
-  <h2 style="margin-top:26px">Notes</h2>
+  <h3>Notes</h3>
   <div class="notes">${esc(f.general_notes)}</div>
 
-  <hr class="rule" style="margin-top:44px"/>
+  <hr class="rule" style="margin-top:14px"/>
   <div class="sumwrap">
-    <h2 style="margin-top:0">Summary</h2>
     <div class="sumrow"><span>Subtotal</span><span>${money(total)}</span></div>
-    <div style="display:flex;gap:44px;align-items:flex-end;margin-top:22px">
+    <div style="display:flex;gap:36px;align-items:flex-end;margin-top:8px">
       <div class="totalbox">${money(total)}</div>
       <div class="accept">
         <div><div class="siglabel">Accepted By</div><div class="sigline"></div></div>
