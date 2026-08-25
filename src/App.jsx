@@ -731,11 +731,22 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
   const meta=DIV_META[division]||{icon:"🏗️",color:T.orange};
 
   const divProjects=projects.filter(p=>p.division===division);
+  // Job numbers sort naturally: "2606-M" after "2599-P", and "26010" after "2609"
+  // — a plain string sort would put 10 before 9.
+  const jobKey=(p)=>String(p.job_number||p.name||"");
+  const naturalCmp=(a,b)=>jobKey(a).localeCompare(jobKey(b),undefined,{numeric:true,sensitivity:"base"});
+
   const filtered=divProjects.filter(p=>{
     const ms=filter==="all"?true:p.status===filter;
     const q=search.toLowerCase();
-    const ms2=!q||p.name?.toLowerCase().includes(q)||p.location?.toLowerCase().includes(q)||p.afe?.toLowerCase().includes(q)||p.client?.toLowerCase().includes(q);
+    const ms2=!q||[p.name,p.job_number,p.location,p.afe,p.client,p.work_order]
+      .some(v=>String(v||"").toLowerCase().includes(q));
     return ms&&ms2;
+  }).sort((a,b)=>{
+    // active first, then by job number
+    const aArch=a.status!=="active", bArch=b.status!=="active";
+    if(aArch!==bArch)return aArch?1:-1;
+    return naturalCmp(a,b);
   });
   const active=divProjects.filter(p=>p.status==="active");
   const canCreate=user.role==="admin"||user.role==="pm"||can(user,"create_job");
