@@ -377,15 +377,18 @@ function getAllPositions(){
 const WMO={0:["Clear Sky","☀️"],1:["Mainly Clear","🌤️"],2:["Partly Cloudy","⛅"],3:["Overcast","☁️"],45:["Foggy","🌫️"],48:["Icy Fog","🌫️"],51:["Light Drizzle","🌦️"],53:["Drizzle","🌦️"],55:["Heavy Drizzle","🌦️"],61:["Light Rain","🌧️"],63:["Rain","🌧️"],65:["Heavy Rain","🌧️"],71:["Light Snow","🌨️"],73:["Snow","🌨️"],75:["Heavy Snow","❄️"],80:["Light Showers","🌦️"],81:["Showers","🌦️"],82:["Violent Showers","⛈️"],95:["Thunderstorm","⛈️"],96:["Thunderstorm + Hail","⛈️"],99:["Severe Thunderstorm","⛈️"]};
 const DIVISIONS=["Mechanical","Pipeline","Structural","Manufacturing"];
 const DIV_META={Mechanical:{icon:"⚙️",color:"#60A5FA",desc:"Mechanical projects and equipment"},Pipeline:{icon:"🔧",color:"#3B82F6",desc:"Pipeline construction and maintenance"},Structural:{icon:"🏗️",color:"#34D399",desc:"Structural steel and civil work"},Manufacturing:{icon:"🏭",color:"#8B5CF6",desc:"Shop fabrication & production"}};
-const ROLES=["crew","foreman","pm","admin"];
-const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Submit daily reports and time cards"},foreman:{label:"Foreman",color:T.yellow,desc:"Reports, time, safety, equipment, docs, schedule"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, manage jobs, PM dashboard"},estimator:{label:"Estimator",color:T.purple,desc:"Estimating platform access only"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
+const ROLES=["crew","foreman","estimator","pm","admin"];
+const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Reports, time cards, photos, safety, schedule, weather"},foreman:{label:"Foreman",color:T.yellow,desc:"Everything crew can do, plus create and manage jobs"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, PM dashboard, custom reports"},estimator:{label:"Estimator",color:T.purple,desc:"Foreman access plus the estimating platform"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
 
 const PERMS={
   admin:     ["manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
   pm:        ["create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications"],
-  estimator: ["estimating","view_dashboard","crew_directory"],
-  foreman:   ["submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
-  crew:      ["submit_report","time_card","photos","crew_directory"],
+  // Estimator = everything a Foreman can do, plus the estimating platform and the dashboard
+  estimator: ["estimating","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
+  // Foreman can now run jobs end to end, but still can't approve or flag reports —
+  // that stays with PM and Admin so a foreman isn't signing off on their own work.
+  foreman:   ["create_job","edit_job","archive_job","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
+  crew:      ["submit_report","time_card","photos","crew_directory","safety","schedule","weather"],
 };
 const can=(user,action)=>(PERMS[user?.role]||PERMS.crew).includes(action);
 
