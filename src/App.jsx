@@ -1098,14 +1098,24 @@ function DelayAddRow({onAdd}){
   );
 }
 
-function DailyReportForm({user,project,onSave,onCancel,isOnline}){
-  const draftKey=`${project.id}_${user.name}`;
-  const existingDraft=loadDraft(draftKey);
+function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
+  // Edit mode reuses the whole wizard so every tab — labor, equipment, rental,
+  // materials, subs, site notes — is editable, not just the header fields.
+  const isEdit=!!(existing&&existing.id);
+  const draftKey=isEdit?`edit_${existing.id}`:`${project.id}_${user.name}`;
+  const existingDraft=isEdit?null:loadDraft(draftKey);
 
   const [step,setStep]=useState(1);const [saving,setSaving]=useState(false);
   const [draftSaved,setDraftSaved]=useState(false);
   const [showDraftBanner,setShowDraftBanner]=useState(!!existingDraft);
-  const [rpt,setRpt]=useState(existingDraft?.data||{date:today(),description:"",report_no:"",labor:[],equipment:[],rental_equipment:[],materials:[],subcontractors:[],visitor_log:[],delays:[],site_conditions:""});
+  const [rpt,setRpt]=useState(
+    isEdit
+      ?{date:existing.date||today(),description:existing.description||"",report_no:existing.report_no||"",
+        labor:existing.labor||[],equipment:existing.equipment||[],
+        rental_equipment:existing.rental_equipment||[],materials:existing.materials||[],
+        subcontractors:existing.subcontractors||[],visitor_log:existing.visitor_log||[],
+        delays:existing.delays||[],site_conditions:existing.site_conditions||""}
+      :(existingDraft?.data||{date:today(),description:"",report_no:"",labor:[],equipment:[],rental_equipment:[],materials:[],subcontractors:[],visitor_log:[],delays:[],site_conditions:""}));
   const topRef=useRef(null);
   const setR=(k,v)=>setRpt(r=>({...r,[k]:v}));
   function add(key,item){setR(key,[...rpt[key],item]);}
@@ -1154,11 +1164,11 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
   const tot=reportTotals(rpt,project.division);
 
   useEffect(()=>{
-    if(!rpt.report_no){
+    if(!isEdit&&!rpt.report_no){
       (async()=>{
         try{
-          const existing=await API.reports.forProject(project.id);
-          const nums=(existing||[]).map(r=>{
+          const prior=await API.reports.forProject(project.id);
+          const nums=(prior||[]).map(r=>{
             const n=parseInt((r.report_no||"0").replace(/\D/g,""));
             return isNaN(n)?0:n;
           });
@@ -1181,12 +1191,30 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
   async function submit(){
     setSaving(true);
     const{rental_equipment,...rptClean}=rpt;
-    const reportData={...rptClean,submitted_by:user.name,status:"submitted",project_id:project.id,rental_equipment:rental_equipment||[]};
+    const reportData={...rptClean,submitted_by:isEdit?(existing.submitted_by||user.name):user.name,
+      status:"submitted",project_id:project.id,rental_equipment:rental_equipment||[]};
 
+    /* ── Edit ── */
+    if(isEdit){
+      try{
+        await API.reports.update(existing.id,{...reportData,updated_at:new Date().toISOString()});
+        clearDraft(draftKey);
+        // Deliberately NOT re-running autoPopulateTimeCards: it adds hours to
+        // existing cards rather than replacing them, so editing would double
+        // the worker's day. Time cards from the original submission stand.
+        onSave&&onSave(reportData,existing.id);
+      }catch(e){
+        alert("Couldn't save changes: "+e.message);
+      }
+      setSaving(false);
+      return;
+    }
+
+    /* ── New ── */
     if(isOnline){
       try{
-        const existing=await API.reports.forProject(project.id);
-        const dupe=(existing||[]).find(r=>r.date===rpt.date);
+        const prior=await API.reports.forProject(project.id);
+        const dupe=(prior||[]).find(r=>r.date===rpt.date);
         if(dupe){
           const proceed=window.confirm(
             `⚠️ A report for ${fmtDate(rpt.date)} already exists on this job (submitted by ${dupe.submitted_by||"someone"}).\n\nDo you still want to submit a second report for this date?`
@@ -1228,9 +1256,15 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
         {/* Offline indicator */}
         {!isOnline&&<div style={{background:"#7c2d12",borderRadius:8,padding:"6px 10px",marginBottom:8,fontSize:12,color:"#fed7aa",display:"flex",alignItems:"center",gap:6}}><span>📡</span>Offline — report will save locally and sync when reconnected</div>}
         {/* Draft restore banner */}
+        {isEdit&&<div style={{background:T.yellowLow||T.surface,border:`1px solid ${T.yellow}40`,borderRadius:8,padding:"8px 10px",marginBottom:8,fontSize:11.5,color:T.yellow,lineHeight:1.6}}>
+          Saving resets this report to <strong>Submitted</strong> for re-approval. Time cards from the original submission are left alone — adjust them in the Time tab if hours changed.
+          {existing?.inspector_signature&&<div style={{color:T.red,marginTop:4,fontWeight:700}}>
+            ⚠️ This report is signed by {existing.inspector_name||"an inspector"}. Changing the content means the signature no longer matches what was signed.
+          </div>}
+        </div>}
         {showDraftBanner&&<div style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:8,padding:"8px 10px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{fontSize:12,color:T.blue}}><strong>Draft restored</strong> · saved {existingDraft?.saved_at?new Date(existingDraft.saved_at).toLocaleTimeString():""}</div><button onClick={()=>setShowDraftBanner(false)} style={{background:"none",border:"none",color:T.blue,cursor:"pointer",fontSize:16,padding:0}}>×</button></div>}
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
-          <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:16,fontWeight:800}}>New Daily Report</div>{draftSaved&&<span style={{fontSize:10,color:T.green,fontWeight:600}}>✓ Draft saved</span>}</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:16,fontWeight:800}}>{isEdit?`Edit Report${rpt.report_no?" #"+rpt.report_no:""}`:"New Daily Report"}</div>{draftSaved&&!isEdit&&<span style={{fontSize:10,color:T.green,fontWeight:600}}>✓ Draft saved</span>}</div>
           <button onClick={onCancel} style={{background:"none",border:"none",color:T.sub,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Cancel</button>
         </div>
         <div style={{display:"flex",alignItems:"center"}}>{RSTEPS.map((s,i)=>(<div key={i} style={{display:"flex",alignItems:"center",flex:i<RSTEPS.length-1?1:undefined}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}><div style={{width:26,height:26,borderRadius:"50%",background:i+1<step?T.green:i+1===step?divMeta.color:T.border,color:i+1<=step?"#0D0D0F":T.muted,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{i+1<step?"✓":i+1}</div><div style={{fontSize:8,color:i+1===step?divMeta.color:T.muted,fontWeight:i+1===step?700:400,whiteSpace:"nowrap"}}>{s}</div></div>{i<RSTEPS.length-1&&<div style={{flex:1,height:2,background:i+1<step?T.green:T.border,margin:"0 3px",marginBottom:14}}/>}</div>))}</div>
@@ -1351,7 +1385,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline}){
       </div>
       <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:T.bg+"EE",backdropFilter:"blur(12px)",borderTop:`1px solid ${T.border}`,padding:"12px 16px",display:"flex",gap:10}}>
         {step>1&&<button onClick={()=>{setStep(s=>s-1);scroll();}} style={{...ghostBtn,flex:1}}>← Back</button>}
-        {step<6?<button onClick={()=>{setStep(s=>s+1);scroll();}} style={{...primBtn,flex:2,borderRadius:12,background:divMeta.color}}>{step===4?"Review →":"Next →"}</button>:<button onClick={submit} style={{...primBtn,flex:2,borderRadius:12,background:divMeta.color,opacity:saving?0.6:1}}>{saving?"Saving…":"💾 Save Report"}</button>}
+        {step<6?<button onClick={()=>{setStep(s=>s+1);scroll();}} style={{...primBtn,flex:2,borderRadius:12,background:divMeta.color}}>{step===4?"Review →":"Next →"}</button>:<button onClick={submit} style={{...primBtn,flex:2,borderRadius:12,background:divMeta.color,opacity:saving?0.6:1}}>{saving?"Saving…":isEdit?"💾 Save Changes":"💾 Save Report"}</button>}
       </div>
     </div>
   );
@@ -1892,18 +1926,8 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     rental:true,materials:true,visitors:true,delays:true,signature:true
   });
   const [photoLayout,setPhotoLayout]=useState("grid"); // grid | full
-  const [editing,setEditing]=useState(false);const [editErr,setEditErr]=useState("");const [editSaving,setEditSaving]=useState(false);
-  const [editData,setEditData]=useState(null);
-
-  async function saveEdit(updated){
-    setEditSaving(true);setEditErr("");
-    try{
-      await API.reports.update(report.id,{...updated,status:"submitted",updated_at:new Date().toISOString()});
-      setReport(r=>({...r,...updated,status:"submitted"}));
-      setEditing(false);
-    }catch(e){setEditErr(e.message);}
-    setEditSaving(false);
-  }
+  // Editing is delegated to DailyReportForm, which owns the save.
+  const [editing,setEditing]=useState(false);
   const tot=reportTotals(report,project.division);
   const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[report.status]||T.muted;
   const divColor=DIV_META[project.division]?.color||T.orange;
@@ -2138,22 +2162,17 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       alert('Excel export failed: '+e.message);
     }
   }
-  if(editing&&editData){
+  // Editing reuses the full wizard, so every tab is editable — labor,
+  // equipment, rental, materials, subs and site notes, not just the header.
+  if(editing){
     return(
-      <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
-        <TopBar title="Edit Report" onBack={()=>setEditing(false)}/>
-        <div style={{padding:"14px 16px 100px"}}>
-          <ErrBanner msg={editErr} onDismiss={()=>setEditErr("")}/>
-          <div style={{...cardS,marginBottom:12,background:T.yellowLow,border:`1px solid ${T.yellow}40`}}>
-            <div style={{fontSize:12,color:T.yellow}}>⚠️ Editing this report will reset its status to Submitted and require re-approval.</div>
-          </div>
-          <div style={{marginBottom:12}}><label style={lbl}>Date</label><input type="date" value={editData.date||""} onChange={e=>setEditData(d=>({...d,date:e.target.value}))} style={inp}/></div>
-          <div style={{marginBottom:12}}><label style={lbl}>Report No.</label><input type="text" value={editData.report_no||""} onChange={e=>setEditData(d=>({...d,report_no:e.target.value}))} style={inp}/></div>
-          <div style={{marginBottom:20}}><label style={lbl}>Description of Work Done</label><textarea rows={4} value={editData.description||""} onChange={e=>setEditData(d=>({...d,description:e.target.value}))} style={{...inp,resize:"vertical",lineHeight:1.5}}/></div>
-          <div style={{fontSize:13,color:T.muted,marginBottom:12}}>To edit labor, equipment, or materials in detail — delete this report and create a new one.</div>
-          <button onClick={()=>saveEdit(editData)} style={{...primBtn,opacity:editSaving?0.6:1,borderRadius:14}}>{editSaving?"Saving…":"Save Changes"}</button>
-        </div>
-      </div>
+      <DailyReportForm
+        user={user} project={project} existing={report} isOnline={true}
+        onCancel={()=>setEditing(false)}
+        onSave={(updated)=>{
+          setReport(r=>({...r,...updated,status:"submitted"}));
+          setEditing(false);
+        }}/>
     );
   }
 
@@ -2426,8 +2445,10 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
         <button onClick={async()=>{setShowPrintModal(true);await loadPhotosForPrint();}} style={{...primBtn,background:"#1f3864",color:"#fff",borderRadius:14}}>🖨️ Print / Save PDF</button>
         <button onClick={exportXLSX} style={{...primBtn,background:divColor+"15",color:divColor,border:`1px solid ${divColor}40`,borderRadius:14}}>📥 Excel (.xlsx)</button>
       </div>
-      {can(user,"approve_report")&&!editing&&(
-        <button onClick={()=>{setEditData({date:report.date,report_no:report.report_no||"",description:report.description||""});setEditing(true);}} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10}}>
+      {/* Anyone who can approve, plus whoever submitted it — crew need to be
+          able to fix their own daily without waiting on a PM. */}
+      {(can(user,"approve_report")||report.submitted_by===user.name)&&!editing&&(
+        <button onClick={()=>setEditing(true)} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10}}>
           ✏️ Edit Report
         </button>
       )}
@@ -3952,6 +3973,30 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
     }).finally(()=>setBillLoading(false));
   },[pmTab,billPeriod]);
 
+  /* ── Workers tab: time cards are the authoritative hours record.
+     Dailies auto-populate them and foremen add manual entries, so
+     reading report labor rows alone misses real worked time. */
+  const [wkPeriod,setWkPeriod]=useState("month");
+  const [wkFrom,setWkFrom]=useState("");
+  const [wkTo,setWkTo]=useState("");
+  const [wkCards,setWkCards]=useState([]);
+  const [wkCrew,setWkCrew]=useState([]);
+  const [wkLoading,setWkLoading]=useState(false);
+  const [openWorker,setOpenWorker]=useState(null);
+
+  useEffect(()=>{
+    if(pmTab!=="workers")return;
+    const[f,t]=periodRange(wkPeriod);
+    setWkFrom(f);setWkTo(t);setWkLoading(true);
+    Promise.all([
+      API.timeCards.byRange(f,t).catch(()=>[]),
+      API.crew.list().catch(()=>[]),
+    ]).then(([cards,crew])=>{
+      setWkCards(Array.isArray(cards)?cards:[]);
+      setWkCrew(Array.isArray(crew)?crew:[]);
+    }).finally(()=>setWkLoading(false));
+  },[pmTab,wkPeriod]);
+
   async function load(){
     setLoading(true);setErr("");
     try{
@@ -4077,9 +4122,96 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const projMap={};scopedProjects.forEach(p=>{projMap[p.id]={...p,grand:0,count:0};});
   scopedReports.forEach(r=>{if(!projMap[r.project_id])return;const t=reportTotals(r,projMap[r.project_id].division);projMap[r.project_id].grand+=t.grand;projMap[r.project_id].count++;});
   const projRows=Object.values(projMap).filter(p=>p.status==="active").sort((a,b)=>b.grand-a.grand);
-  const workerHours={};
-  scopedReports.forEach(r=>(r.labor||[]).forEach(l=>{if(!l.name)return;if(!workerHours[l.name])workerHours[l.name]={name:l.name,reg:0,ot:0,pay:0};workerHours[l.name].reg+=parseFloat(l.regHrs)||0;workerHours[l.name].ot+=parseFloat(l.otHrs)||0;workerHours[l.name].pay+=laborAmt(l);}));
-  const workerRows=Object.values(workerHours).sort((a,b)=>b.pay-a.pay);
+  /* ── Workers roll-up ──
+     laborAmt() falls back to the Pipeline rate table when no division is
+     passed, so the old all-time list priced Mechanical work at Pipeline
+     rates. Each card is now priced against its own job's division. The rate
+     tables themselves are untouched — Pipeline and Mechanical stay separate. */
+  const cardDiv=(c)=>{
+    const p=projects.find(x=>x.id===c.project_id);
+    return p?p.division:(c.division||pmDiv);
+  };
+  const cardPay=(c)=>laborAmt({
+    classification:c.classification,
+    regHrs:c.reg_hours,otHrs:c.ot_hours,travelHrs:c.travel_hours,
+  },cardDiv(c));
+
+  const wkScoped=wkCards.filter(c=>
+    c.project_id?divIds.has(c.project_id):(!pmDiv||c.division===pmDiv));
+
+  const weekOf=(d)=>{                       // Monday of that date's week
+    const x=new Date(d+"T12:00:00");
+    const day=x.getDay();
+    x.setDate(x.getDate()-(day===0?6:day-1));
+    return x.toISOString().slice(0,10);
+  };
+
+  const wkMap={};
+  wkScoped.forEach(c=>{
+    const n=c.worker_name;if(!n)return;
+    if(!wkMap[n])wkMap[n]={name:n,reg:0,ot:0,travel:0,total:0,pay:0,jobs:{},weeks:{},classes:new Set()};
+    const w=wkMap[n];
+    const reg=parseFloat(c.reg_hours)||0,ot=parseFloat(c.ot_hours)||0,tr=parseFloat(c.travel_hours)||0;
+    const tot=c.total_hours!=null&&c.total_hours!==""?parseFloat(c.total_hours):reg+ot+tr;
+    w.reg+=reg;w.ot+=ot;w.travel+=tr;w.total+=tot;w.pay+=cardPay(c);
+    if(c.classification)w.classes.add(c.classification);
+    const job=(projects.find(x=>x.id===c.project_id)||{}).name||"Unassigned";
+    w.jobs[job]=(w.jobs[job]||0)+tot;
+    if(c.date)w.weeks[weekOf(c.date)]=(w.weeks[weekOf(c.date)]||0)+tot;
+  });
+  const workerRows=Object.values(wkMap).map(w=>({...w,
+    jobList:Object.entries(w.jobs).sort((a,b)=>b[1]-a[1]),
+    overWeeks:Object.entries(w.weeks).filter(([,h])=>h>40),
+    classification:[...w.classes].join(", "),
+  })).sort((a,b)=>b.total-a.total);
+
+  const wkTotals=workerRows.reduce((s,w)=>({
+    reg:s.reg+w.reg,ot:s.ot+w.ot,travel:s.travel+w.travel,
+    total:s.total+w.total,pay:s.pay+w.pay,
+  }),{reg:0,ot:0,travel:0,total:0,pay:0});
+
+  const otWorkers=workerRows.filter(w=>w.ot>0||w.overWeeks.length>0).sort((a,b)=>b.ot-a.ot);
+  const workedNames=new Set(workerRows.map(w=>w.name));
+  const idleCrew=wkCrew.filter(m=>m.active!==false&&!workedNames.has(m.name));
+
+  // Cert expiry — the crew directory computes this, but nobody opens that screen
+  const certSoon=[];
+  wkCrew.forEach(m=>(m.certifications||[]).forEach(c=>{
+    if(!c.expiry)return;
+    const days=Math.ceil((new Date(c.expiry+"T12:00:00")-new Date())/86400000);
+    if(days<=30)certSoon.push({worker:m.name,cert:c.name,expiry:c.expiry,days});
+  }));
+  certSoon.sort((a,b)=>a.days-b.days);
+
+  function exportPayroll(){
+    try{
+      const out=[["AIME Field Pro — Payroll Hours"],
+        ["Division",pmDiv||"All"],["Period",periodLabel[wkPeriod]],
+        ["Range",wkFrom+" to "+wkTo],[],
+        ["Worker","Week Of","Job","Classification","Reg","OT","Travel","Total"]];
+      // one line per worker / week / job — what payroll keys off
+      const grouped={};
+      wkScoped.forEach(c=>{
+        const reg=parseFloat(c.reg_hours)||0,ot=parseFloat(c.ot_hours)||0,tr=parseFloat(c.travel_hours)||0;
+        const name=c.worker_name||"",week=c.date?weekOf(c.date):"",
+          job=(projects.find(x=>x.id===c.project_id)||{}).name||"Unassigned",
+          cls=c.classification||"";
+        const k=[name,week,job,cls].join("|");
+        if(!grouped[k])grouped[k]={name,week,job,cls,reg:0,ot:0,tr:0,tot:0};
+        grouped[k].reg+=reg;grouped[k].ot+=ot;grouped[k].tr+=tr;grouped[k].tot+=reg+ot+tr;
+      });
+      Object.values(grouped)
+        .sort((a,b)=>a.name.localeCompare(b.name)||a.week.localeCompare(b.week)||a.job.localeCompare(b.job))
+        .forEach(r=>out.push([r.name,r.week,r.job,r.cls,r.reg,r.ot,r.tr,r.tot]));
+      out.push([]);
+      out.push(["TOTAL","","","",wkTotals.reg,wkTotals.ot,wkTotals.travel,wkTotals.total]);
+      const ws=XLSX.utils.aoa_to_sheet(out);
+      ws["!cols"]=[{wch:24},{wch:12},{wch:26},{wch:20},{wch:8},{wch:8},{wch:9},{wch:9}];
+      const wb=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb,ws,"Payroll Hours");
+      XLSX.writeFile(wb,`AIME_Payroll_${pmDiv||"All"}_${wkFrom}_to_${wkTo}.xlsx`);
+    }catch(e){setErr("Payroll export failed: "+e.message);}
+  }
 
   // Month to date, scoped to the selected division
   const monthReports=scopedReports.filter(r=>(r.date||"").slice(0,7)===monthKey);
@@ -4352,11 +4484,150 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
         {/* WORKERS */}
         {pmTab==="workers"&&!loading&&<div>
-          {workerRows.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}>No labor data yet</div>}
-          {workerRows.map(w=><div key={w.name} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div><div style={{fontSize:13,fontWeight:700,color:T.orange}}>{w.name}</div><div style={{fontSize:11,color:T.muted}}>{w.reg.toFixed(1)}h reg · {w.ot.toFixed(1)}h OT</div></div>
-            <div style={{fontSize:15,fontWeight:800,color:T.green}}>{fmt(w.pay)}</div>
-          </div>)}
+
+          <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,marginBottom:12,WebkitOverflowScrolling:"touch"}}>
+            {Object.entries(periodLabel).map(([k,l])=>{
+              const on=wkPeriod===k;
+              return(
+                <button key={k} onClick={()=>setWkPeriod(k)}
+                  style={{flexShrink:0,padding:"7px 13px",borderRadius:16,cursor:"pointer",fontFamily:"inherit",
+                    fontSize:12,fontWeight:on?800:600,
+                    background:on?T.orange:T.surface,color:on?"#000":T.sub,
+                    border:`1px solid ${on?T.orange:T.border}`}}>{l}</button>
+              );
+            })}
+          </div>
+
+          {wkLoading&&<div style={{textAlign:"center",padding:24,color:T.muted,fontSize:13}}>Loading hours…</div>}
+
+          {!wkLoading&&<>
+            {/* Expiring certs */}
+            {certSoon.length>0&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:"10px 14px",marginBottom:12}}>
+              <div style={{fontSize:12,fontWeight:800,color:T.red,marginBottom:5}}>
+                ⚠️ {certSoon.length} cert{certSoon.length!==1?"s":""} expiring or expired
+              </div>
+              {certSoon.slice(0,4).map((c,i)=>(
+                <div key={i} style={{fontSize:11,color:c.days<=0?T.red:T.yellow,marginBottom:2}}>
+                  {c.worker} · {c.cert} · {c.days<=0?`expired ${c.expiry}`:`${c.days}d left`}
+                </div>
+              ))}
+              {certSoon.length>4&&<div style={{fontSize:10,color:T.muted,marginTop:3}}>+{certSoon.length-4} more — see Crew Directory</div>}
+            </div>}
+
+            {/* Headline */}
+            <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}>
+              <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>
+                {periodLabel[wkPeriod]} · {wkFrom} → {wkTo}
+              </div>
+              <div style={{fontSize:32,fontWeight:900,color:T.blue,lineHeight:1.15,marginTop:2}}>{fmtH(wkTotals.total)}</div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>
+                total hours · {workerRows.length} worker{workerRows.length!==1?"s":""}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                {[["Reg",fmtH(wkTotals.reg),T.sub],["OT",fmtH(wkTotals.ot),wkTotals.ot>0?T.yellow:T.muted],
+                  ["Travel",fmtH(wkTotals.travel),T.sub],["Cost",fmt(wkTotals.pay),T.green]].map(([l,v,c])=>(
+                  <div key={l} style={{textAlign:"center"}}>
+                    <div style={{fontSize:14,fontWeight:800,color:c}}>{v}</div>
+                    <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:2}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Overtime */}
+            {otWorkers.length>0&&<>
+              <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+                ⏱ Overtime ({otWorkers.length})
+              </div>
+              {otWorkers.slice(0,5).map(w=>(
+                <div key={w.name} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.yellow}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{w.name}</div>
+                    <div style={{fontSize:11,color:T.muted}}>
+                      {w.overWeeks.length>0
+                        ?`${w.overWeeks.length} week${w.overWeeks.length!==1?"s":""} over 40 hrs`
+                        :"OT recorded"}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:16,fontWeight:900,color:T.yellow}}>{fmtH(w.ot)}</div>
+                    <div style={{fontSize:9,color:T.muted,textTransform:"uppercase"}}>OT hrs</div>
+                  </div>
+                </div>
+              ))}
+              <div style={{height:8}}/>
+            </>}
+
+            {/* Everyone */}
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+              Hours by Worker ({workerRows.length})
+            </div>
+
+            {workerRows.length===0&&<div style={{...cardS,textAlign:"center",padding:"26px 16px",color:T.muted}}>
+              <div style={{fontSize:30,marginBottom:8}}>⏱</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.sub}}>No hours logged this period</div>
+            </div>}
+
+            {workerRows.map(w=>{
+              const open=openWorker===w.name;
+              return(
+                <div key={w.name} onClick={()=>setOpenWorker(open?null:w.name)}
+                  style={{...cardS,marginBottom:8,cursor:"pointer"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div style={{minWidth:0,paddingRight:10}}>
+                      <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{w.name}</div>
+                      <div style={{fontSize:11,color:T.muted}}>
+                        {fmtH(w.reg)} reg
+                        {w.ot>0&&<span style={{color:T.yellow}}> · {fmtH(w.ot)} OT</span>}
+                        {w.travel>0&&` · ${fmtH(w.travel)} travel`}
+                        {w.jobList.length>0&&` · ${w.jobList.length} job${w.jobList.length!==1?"s":""}`}
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontSize:16,fontWeight:900,color:T.blue}}>{fmtH(w.total)}</div>
+                      <div style={{fontSize:11,fontWeight:700,color:T.green}}>{fmt(w.pay)}</div>
+                    </div>
+                  </div>
+                  {open&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                    {w.classification&&<div style={{fontSize:11,color:T.muted,marginBottom:6}}>{w.classification}</div>}
+                    {w.jobList.map(([job,hrs])=>(
+                      <div key={job} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",fontSize:11.5}}>
+                        <span style={{color:T.sub}}>{job}</span>
+                        <span style={{color:T.blue,fontWeight:700}}>{fmtH(hrs)} hrs</span>
+                      </div>
+                    ))}
+                    {w.overWeeks.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:`1px solid ${T.border}`}}>
+                      {w.overWeeks.map(([wk,h])=>(
+                        <div key={wk} style={{fontSize:11,color:T.yellow}}>Week of {wk} — {fmtH(h)} hrs</div>
+                      ))}
+                    </div>}
+                  </div>}
+                </div>
+              );
+            })}
+
+            {/* Idle */}
+            {idleCrew.length>0&&<>
+              <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"16px 0 8px"}}>
+                💤 No Hours This Period ({idleCrew.length})
+              </div>
+              <div style={{...cardS,padding:"10px 14px"}}>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {idleCrew.map(m=>(
+                    <span key={m.id} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,
+                      padding:"4px 10px",fontSize:11.5,color:T.sub}}>
+                      {m.name}{m.classification?` · ${m.classification}`:""}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </>}
+
+            {workerRows.length>0&&<button onClick={exportPayroll}
+              style={{...primBtn,borderRadius:12,marginTop:14,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`}}>
+              📥 Export Payroll Hours
+            </button>}
+          </>}
         </div>}
 
         {/* BILLING */}
