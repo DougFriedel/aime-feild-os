@@ -280,6 +280,28 @@ const API={
     updateItem:(id,d)=>sb(`/estimate_items?id=eq.${id}`,{method:"PATCH",body:d}),
     removeItem:(id)=>sb(`/estimate_items?id=eq.${id}`,{method:"DELETE"}),
   },
+  invoices:{
+    forProject:(pid)=>sb(`/job_invoices?project_id=eq.${pid}&select=*&order=invoice_date.desc,created_at.desc`),
+    create:(d)=>sb("/job_invoices",{method:"POST",body:d,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/job_invoices?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
+    remove:(id)=>sb(`/job_invoices?id=eq.${id}`,{method:"DELETE"}),
+  },
+  sov:{
+    forProject:(pid)=>sb(`/sov_items?project_id=eq.${pid}&select=*&order=item_no.asc`),
+    create:(d)=>sb("/sov_items",{method:"POST",body:d,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/sov_items?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
+    remove:(id)=>sb(`/sov_items?id=eq.${id}`,{method:"DELETE"}),
+  },
+  payApps:{
+    forProject:(pid)=>sb(`/pay_apps?project_id=eq.${pid}&select=*&order=app_no.desc`),
+    create:(d)=>sb("/pay_apps",{method:"POST",body:d,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/pay_apps?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
+    remove:(id)=>sb(`/pay_apps?id=eq.${id}`,{method:"DELETE"}),
+    lines:(aid)=>sb(`/pay_app_lines?pay_app_id=eq.${aid}&select=*&order=item_no.asc`),
+    addLine:(d)=>sb("/pay_app_lines",{method:"POST",body:d,prefer:"return=representation"}),
+    updateLine:(id,d)=>sb(`/pay_app_lines?id=eq.${id}`,{method:"PATCH",body:d}),
+    clearLines:(aid)=>sb(`/pay_app_lines?pay_app_id=eq.${aid}`,{method:"DELETE"}),
+  },
   changeOrders:{
     forProject:(pid)=>sb(`/change_orders?project_id=eq.${pid}&order=date_submitted.asc`),
     create:(d)=>sb("/change_orders",{method:"POST",body:d,prefer:"return=representation"}),
@@ -3907,6 +3929,7 @@ function InfoTab({project,user,onEdit,onArchive,onDelete}){
 const PTABS=[
   {id:"reports",icon:"📋",label:"Reports",perm:"submit_report"},
   {id:"tm",icon:"🧾",label:"T&M",perm:"submit_report"},
+  {id:"billing",icon:"💰",label:"Billing",perm:"approve_report"},
   {id:"time",icon:"⏱️",label:"Time",perm:"approve_report"},
   {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
   {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
@@ -8440,6 +8463,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
         {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="subs"     &&can(user,"subs")        &&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="safety"   &&can(user,"safety")      &&<SafetyTab projectId={project.id} safety={safety} user={user} onRefresh={()=>load(true)} onErr={setErr}/>}
+        {!loading&&tab==="billing"&&<BillingTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="co"&&<ChangeOrdersTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="rfi"&&<RFIsTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="docs"     &&can(user,"docs")        &&<DocsTab projectId={project.id} user={user} onErr={setErr}/>}
@@ -11422,6 +11446,1346 @@ export default function App(){
     <ErrorBoundary>
       <AppInner/>
     </ErrorBoundary>
+  );
+}
+
+/* ══════════════ JOB BILLING — Invoices + AIA Pay Applications ══════════════ */
+
+const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const money0=(n)=>"$"+Math.round(Number(n||0)).toLocaleString("en-US");
+const num2=(n)=>Number(n||0).toFixed(2);
+
+function BillingTab({project,user,onErr}){
+  const isContract=project.job_type==="Contract";
+  const [view,setView]=useState("invoices");     // invoices | sov | payapps
+  const [openInvoice,setOpenInvoice]=useState(null);
+  const [openPayApp,setOpenPayApp]=useState(null);
+  const canBill=can(user,"approve_report")||user.role==="admin"||user.role==="pm";
+
+  if(!canBill)return(
+    <div style={{...cardS,textAlign:"center",padding:"34px 18px",color:T.muted}}>
+      <div style={{fontSize:32,marginBottom:8}}>🔒</div>
+      <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>Billing is PM-only</div>
+      <div style={{fontSize:12}}>Ask a project manager or admin if you need an invoice raised.</div>
+    </div>
+  );
+
+  if(openInvoice!==null)return(
+    <InvoiceForm project={project} user={user} invoice={openInvoice.id?openInvoice:null}
+      onBack={()=>setOpenInvoice(null)} onSaved={()=>setOpenInvoice(null)} onErr={onErr}/>
+  );
+  if(openPayApp!==null)return(
+    <PayAppForm project={project} user={user} payApp={openPayApp.id?openPayApp:null}
+      onBack={()=>setOpenPayApp(null)} onSaved={()=>setOpenPayApp(null)} onErr={onErr}/>
+  );
+
+  const tabs=isContract
+    ?[["invoices","🧾 Invoices"],["sov","📋 Schedule of Values"],["payapps","📄 Pay Applications"]]
+    :[["invoices","🧾 Invoices"]];
+
+  return(
+    <div>
+      {isContract&&<div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4,overflowX:"auto"}}>
+        {tabs.map(([id,label])=>(
+          <button key={id} onClick={()=>setView(id)}
+            style={{flex:1,minWidth:110,padding:"9px 8px",background:view===id?T.orange:"transparent",
+              color:view===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:12,fontWeight:700,
+              cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{label}</button>
+        ))}
+      </div>}
+
+      {view==="invoices"&&<InvoiceList project={project} user={user}
+        onNew={()=>setOpenInvoice({})} onOpen={inv=>setOpenInvoice(inv)} onErr={onErr}/>}
+      {view==="sov"&&isContract&&<SOVEditor project={project} user={user} onErr={onErr}/>}
+      {view==="payapps"&&isContract&&<PayAppList project={project} user={user}
+        onNew={()=>setOpenPayApp({})} onOpen={a=>setOpenPayApp(a)} onErr={onErr}/>}
+    </div>
+  );
+}
+
+/* ─────────────── INVOICE LIST ─────────────── */
+function InvoiceList({project,user,onNew,onOpen,onErr}){
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+
+  async function load(){
+    setLoading(true);
+    try{ setRows(await API.invoices.forProject(project.id)||[]); }
+    catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[project.id]);
+
+  async function del(inv){
+    if(!window.confirm(`Delete invoice ${inv.invoice_no||""}?`))return;
+    try{ await API.invoices.remove(inv.id); await load(); }catch(e){ onErr&&onErr(e.message); }
+  }
+
+  const statusColor={draft:T.muted,sent:T.yellow,paid:T.green,void:T.red};
+  const billed=rows.filter(r=>r.status!=="void").reduce((s,r)=>s+(parseFloat(r.total)||0),0);
+  const paid=rows.filter(r=>r.status==="paid").reduce((s,r)=>s+(parseFloat(r.total)||0),0);
+  const outstanding=billed-paid;
+
+  return(
+    <div>
+      <button onClick={onNew} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.orange,color:"#000"}}>
+        + New Invoice
+      </button>
+
+      {rows.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+        {[["Billed",billed,T.text],["Paid",paid,T.green],["Outstanding",outstanding,outstanding>0?T.yellow:T.muted]].map(([l,v,c])=>(
+          <div key={l} style={{...cardS,textAlign:"center",padding:"11px 6px"}}>
+            <div style={{fontSize:15,fontWeight:900,color:c}}>{money0(v)}</div>
+            <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:2}}>{l}</div>
+          </div>
+        ))}
+      </div>}
+
+      {loading&&<Spinner/>}
+      {!loading&&rows.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>🧾</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Invoices</div>
+        <div style={{fontSize:12}}>Create one above. You can pull lines straight from unbilled daily reports and T&M tickets.</div>
+      </div>}
+
+      {rows.map(inv=>(
+        <div key={inv.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${statusColor[inv.status]||T.muted}`}}>
+          <div onClick={()=>onOpen(inv)} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",cursor:"pointer"}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:800,color:T.orange}}>Invoice {inv.invoice_no||"(no #)"}</div>
+              <div style={{fontSize:11.5,color:T.muted}}>
+                {inv.invoice_date||"—"}{inv.due_date?` · due ${inv.due_date}`:""}{inv.bill_to?` · ${inv.bill_to}`:""}
+              </div>
+              {inv.description&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{inv.description.slice(0,70)}{inv.description.length>70?"…":""}</div>}
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div style={{fontSize:16,fontWeight:900,color:T.green}}>{money(inv.total)}</div>
+              <span style={pill(statusColor[inv.status]||T.muted)}>{inv.status}</span>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+            <button onClick={()=>onOpen(inv)} style={{...ghostBtn,flex:2,textAlign:"center",fontSize:12}}>Open</button>
+            <button onClick={()=>del(inv)} style={{...ghostBtn,fontSize:12,color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─────────────── INVOICE FORM ─────────────── */
+function InvoiceForm({project,user,invoice,onBack,onSaved,onErr}){
+  const isNew=!invoice;
+  const [f,setF]=useState({
+    invoice_no:invoice?.invoice_no||"",
+    invoice_date:invoice?.invoice_date||today(),
+    due_date:invoice?.due_date||"",
+    bill_to:invoice?.bill_to||project.client||"",
+    bill_to_address:invoice?.bill_to_address||"",
+    po_number:invoice?.po_number||project.work_order||"",
+    description:invoice?.description||"",
+    notes:invoice?.notes||"",
+    terms:invoice?.terms||"Net 30",
+    tax_pct:invoice?.tax_pct??0,
+    retainage_pct:invoice?.retainage_pct??0,
+    status:invoice?.status||"draft",
+    amount_paid:invoice?.amount_paid??0,
+    paid_date:invoice?.paid_date||"",
+  });
+  const [lines,setLines]=useState(()=>{
+    const l=invoice?.lines;
+    if(Array.isArray(l))return l;
+    if(typeof l==="string"){try{const p=JSON.parse(l);return Array.isArray(p)?p:[];}catch{return [];}}
+    return [];
+  });
+  const [saving,setSaving]=useState(false);
+  const [showPull,setShowPull]=useState(false);
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+
+  const uid=()=>Math.random().toString(36).slice(2,10);
+  const addLine=()=>setLines(ls=>[...ls,{id:uid(),description:"",qty:1,unit:"LS",unit_price:"",source:null}]);
+  const setLine=(id,k,v)=>setLines(ls=>ls.map(l=>l.id===id?{...l,[k]:v}:l));
+  const delLine=(id)=>setLines(ls=>ls.filter(l=>l.id!==id));
+
+  const lineAmt=(l)=>(parseFloat(l.qty)||0)*(parseFloat(l.unit_price)||0);
+  const subtotal=lines.reduce((s,l)=>s+lineAmt(l),0);
+  const taxAmount=subtotal*((parseFloat(f.tax_pct)||0)/100);
+  const retainAmount=subtotal*((parseFloat(f.retainage_pct)||0)/100);
+  const total=subtotal+taxAmount-retainAmount;
+
+  // Auto-number new invoices
+  useEffect(()=>{
+    if(isNew&&!f.invoice_no){
+      API.invoices.forProject(project.id).then(prior=>{
+        const n=(Array.isArray(prior)?prior:[]).length+1;
+        set("invoice_no",`${project.name||"JOB"}-INV-${String(n).padStart(3,"0")}`);
+      }).catch(()=>{});
+    }
+  },[]);
+
+  async function save(){
+    setSaving(true);
+    const body={
+      project_id:project.id,...f,
+      tax_pct:parseFloat(f.tax_pct)||0,
+      retainage_pct:parseFloat(f.retainage_pct)||0,
+      amount_paid:parseFloat(f.amount_paid)||0,
+      due_date:f.due_date||null,paid_date:f.paid_date||null,
+      lines,subtotal,tax_amount:taxAmount,retainage_amount:retainAmount,total,
+      created_by:invoice?.created_by||user.name,
+      updated_at:new Date().toISOString(),
+    };
+    try{
+      let invId=invoice?.id;
+      if(isNew){
+        const r=await API.invoices.create(body);
+        invId=Array.isArray(r)?r[0]?.id:r?.id;
+      }else{
+        await API.invoices.update(invoice.id,body);
+      }
+      // Flag any source documents that were pulled onto this invoice
+      const srcReports=lines.filter(l=>l.source?.type==="report").map(l=>l.source.id);
+      const srcTickets=lines.filter(l=>l.source?.type==="tm").map(l=>l.source.id);
+      const stamp={invoiced:true,invoice_no:f.invoice_no,invoiced_at:new Date().toISOString()};
+      await Promise.all([
+        ...srcReports.map(id=>API.reports.update(id,stamp).catch(()=>{})),
+        ...srcTickets.map(id=>API.tmTickets.update(id,stamp).catch(()=>{})),
+      ]);
+      onSaved&&onSaved();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  function printInvoice(){
+    const w=window.open("","_blank");
+    if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Invoice ${esc(f.invoice_no)}</title><style>
+@page{size:letter;margin:0.6in}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}
+body{font-size:10pt;color:#111}
+.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1f3864;padding-bottom:12px;margin-bottom:16px}
+.brand{font-size:24pt;font-weight:900;color:#1f3864;letter-spacing:1px}
+.sub{font-size:8pt;color:#555;margin-top:3px;line-height:1.5}
+h1{font-size:20pt;color:#1f3864;text-align:right}
+.meta{text-align:right;font-size:9pt;color:#444;margin-top:4px;line-height:1.6}
+.boxes{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.box{background:#f0f4ff;border:1px solid #c7d2fe;border-radius:6px;padding:10px 14px}
+.bl{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;margin-bottom:3px}
+table{width:100%;border-collapse:collapse;margin-bottom:14px}
+th{background:#1f3864;color:#fff;padding:6px 8px;text-align:left;font-size:8pt;text-transform:uppercase}
+td{padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:9.5pt}
+tr:nth-child(even) td{background:#fafbff}
+.tot{width:56%;margin-left:auto;border-collapse:collapse}
+.tot td{padding:5px 8px;border-bottom:1px solid #e5e7eb}
+.grand td{background:#1f3864;color:#fff;font-weight:900;font-size:12pt;border:none}
+.note{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:9pt;line-height:1.6;margin-top:14px}
+.foot{margin-top:22px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="head">
+  <div><div class="brand">AIME</div>
+    <div class="sub">Atlantic Industrial Mechanical &amp; Environmental Inc.<br/>
+    5730 Pennington Ave, Baltimore, MD 21226<br/>(410) 355-1869</div></div>
+  <div><h1>INVOICE</h1>
+    <div class="meta"><strong>${esc(f.invoice_no)}</strong><br/>
+    Date: ${esc(f.invoice_date)}${f.due_date?`<br/>Due: ${esc(f.due_date)}`:""}${f.terms?`<br/>Terms: ${esc(f.terms)}`:""}</div></div>
+</div>
+<div class="boxes">
+  <div class="box"><div class="bl">Bill To</div>
+    <div style="font-weight:700">${esc(f.bill_to)}</div>
+    <div style="font-size:9pt;color:#444;line-height:1.5">${esc(f.bill_to_address).replace(/\n/g,"<br/>")}</div></div>
+  <div class="box"><div class="bl">Project</div>
+    <div style="font-weight:700">${esc(project.name)}</div>
+    <div style="font-size:9pt;color:#444;line-height:1.5">${esc(project.location||"")}${f.po_number?`<br/>PO: ${esc(f.po_number)}`:""}${project.afe?`<br/>AFE: ${esc(project.afe)}`:""}</div></div>
+</div>
+${f.description?`<div style="margin-bottom:12px;font-size:10pt"><strong>Description:</strong> ${esc(f.description)}</div>`:""}
+<table><thead><tr><th style="width:48%">Description</th><th style="text-align:center">Qty</th><th style="text-align:center">Unit</th>
+<th style="text-align:right">Unit Price</th><th style="text-align:right">Amount</th></tr></thead><tbody>
+${lines.filter(l=>!l.hidden).map(l=>`<tr><td>${esc(l.description)}</td><td style="text-align:center">${esc(l.qty)}</td>
+<td style="text-align:center">${esc(l.unit)}</td><td style="text-align:right">${money(l.unit_price)}</td>
+<td style="text-align:right">${money(lineAmt(l))}</td></tr>`).join("")}
+</tbody></table>
+<table class="tot"><tbody>
+<tr><td>Subtotal</td><td style="text-align:right">${money(subtotal)}</td></tr>
+${taxAmount?`<tr><td>Tax (${f.tax_pct}%)</td><td style="text-align:right">${money(taxAmount)}</td></tr>`:""}
+${retainAmount?`<tr><td>Less Retainage (${f.retainage_pct}%)</td><td style="text-align:right">-${money(retainAmount)}</td></tr>`:""}
+<tr class="grand"><td>AMOUNT DUE</td><td style="text-align:right">${money(total)}</td></tr>
+</tbody></table>
+${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/g,"<br/>")}</div>`:""}
+<div class="foot"><span>AIME · ${esc(project.name)} · Invoice ${esc(f.invoice_no)}</span><span>${new Date().toLocaleString()}</span></div>
+</body></html>`);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},350);
+  }
+
+  const ri={...inp,fontSize:13,padding:"8px 10px"};
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:0}}>← Invoices</button>
+        <div style={{fontSize:20,fontWeight:900,color:T.green}}>{money(total)}</div>
+      </div>
+
+      <div style={{...cardS,marginBottom:12}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Invoice #</label><input value={f.invoice_no} onChange={e=>set("invoice_no",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Status</label>
+            <select value={f.status} onChange={e=>set("status",e.target.value)} style={{...ri,color:T.orange}}>
+              {["draft","sent","paid","void"].map(s=><option key={s} value={s}>{s}</option>)}
+            </select></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Invoice Date</label><input type="date" value={f.invoice_date} onChange={e=>set("invoice_date",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Due Date</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Terms</label><input value={f.terms} onChange={e=>set("terms",e.target.value)} placeholder="Net 30" style={ri}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Bill To</label><input value={f.bill_to} onChange={e=>set("bill_to",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>PO #</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} style={ri}/></div>
+        </div>
+        <div style={{marginBottom:10}}><label style={lbl}>Bill To Address</label>
+          <textarea value={f.bill_to_address} onChange={e=>set("bill_to_address",e.target.value)} rows={2} style={{...ri,resize:"vertical"}}/></div>
+        <div><label style={lbl}>Description</label>
+          <input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="What this invoice covers" style={ri}/></div>
+      </div>
+
+      {/* Lines */}
+      <div style={{display:"flex",gap:8,marginBottom:10}}>
+        <button onClick={addLine} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ Add Line</button>
+        <button onClick={()=>setShowPull(true)} style={{...primBtn,flex:1,borderRadius:12,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,fontSize:13}}>
+          ↓ Pull Unbilled Work
+        </button>
+      </div>
+
+      {lines.length===0&&<div style={{...cardS,textAlign:"center",padding:"24px",color:T.muted,fontSize:12,marginBottom:10}}>
+        No lines yet. Add them by hand, or pull from approved dailies and signed T&M tickets.
+      </div>}
+
+      {lines.filter(l=>!l.hidden).map(l=>(
+        <div key={l.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${l.source?T.green:T.blue}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontSize:11,color:T.muted}}>
+              {l.source?<span style={{color:T.green,fontWeight:700}}>
+                {l.source.type==="report"?"📋 Daily":"🧾 T&M"} {l.source.label||""}
+              </span>:"Manual line"}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:14,fontWeight:900,color:T.green}}>{money(lineAmt(l))}</span>
+              <button onClick={()=>delLine(l.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+            </div>
+          </div>
+          <div style={{marginBottom:8}}><label style={lbl}>Description</label>
+            <input value={l.description} onChange={e=>setLine(l.id,"description",e.target.value)} style={ri}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            <div><label style={lbl}>Qty</label><input type="number" step="0.01" value={l.qty} onChange={e=>setLine(l.id,"qty",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>Unit</label><input value={l.unit} onChange={e=>setLine(l.id,"unit",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>Unit Price</label><input type="number" step="0.01" value={l.unit_price} onChange={e=>setLine(l.id,"unit_price",e.target.value)} style={ri}/></div>
+          </div>
+        </div>
+      ))}
+
+      {/* Totals */}
+      <div style={{...cardS,marginTop:12,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:13}}>
+          <span style={{color:T.sub}}>Subtotal</span><span style={{fontWeight:700}}>{money(subtotal)}</span></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderTop:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:13,color:T.sub}}>Tax</span>
+            <input type="number" step="0.001" value={f.tax_pct} onChange={e=>set("tax_pct",e.target.value)}
+              style={{...inp,width:62,padding:"4px 6px",fontSize:12,textAlign:"center"}}/><span style={{fontSize:12,color:T.muted}}>%</span>
+          </div>
+          <span style={{fontWeight:700}}>{money(taxAmount)}</span></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderTop:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:13,color:T.sub}}>Less Retainage</span>
+            <input type="number" step="0.001" value={f.retainage_pct} onChange={e=>set("retainage_pct",e.target.value)}
+              style={{...inp,width:62,padding:"4px 6px",fontSize:12,textAlign:"center"}}/><span style={{fontSize:12,color:T.muted}}>%</span>
+          </div>
+          <span style={{fontWeight:700,color:retainAmount>0?T.red:T.muted}}>-{money(retainAmount)}</span></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:10,marginTop:4,borderTop:`2px solid ${T.border}`}}>
+          <span style={{fontSize:15,fontWeight:900}}>AMOUNT DUE</span>
+          <span style={{fontSize:24,fontWeight:900,color:T.green}}>{money(total)}</span></div>
+      </div>
+
+      <div style={{...cardS,marginBottom:14}}>
+        <label style={lbl}>Notes</label>
+        <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <button onClick={save} disabled={saving}
+          style={{...primBtn,borderRadius:14,background:T.orange,color:"#000",opacity:saving?0.6:1}}>
+          {saving?"Saving…":"💾 Save Invoice"}
+        </button>
+        <button onClick={printInvoice} style={{...primBtn,borderRadius:14,background:"#1f3864"}}>🖨️ Print</button>
+      </div>
+
+      {showPull&&<PullUnbilledModal project={project}
+        onClose={()=>setShowPull(false)}
+        onPull={(newLines)=>{setLines(ls=>[...ls,...newLines]);setShowPull(false);}}
+        onErr={onErr}/>}
+    </div>
+  );
+}
+
+/* ── Pull approved dailies / signed T&M onto an invoice ── */
+function PullUnbilledModal({project,onClose,onPull,onErr}){
+  const [reports,setReports]=useState([]);
+  const [tickets,setTickets]=useState([]);
+  const [sel,setSel]=useState({});
+  const [loading,setLoading]=useState(true);
+  const [detail,setDetail]=useState(true);   // one line per document vs one combined line
+
+  useEffect(()=>{(async()=>{
+    try{
+      const [r,t]=await Promise.all([
+        API.reports.forProject(project.id).catch(()=>[]),
+        API.tmTickets.forProject(project.id).catch(()=>[]),
+      ]);
+      setReports((r||[]).filter(x=>!x.invoiced&&(x.status==="approved"||x.status==="signed")));
+      setTickets((t||[]).filter(x=>!x.invoiced&&(x.status==="approved"||x.client_signature)));
+    }catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  })();},[project.id]);
+
+  const toggle=(k)=>setSel(s=>{const n={...s};if(n[k])delete n[k];else n[k]=true;return n;});
+  const uid=()=>Math.random().toString(36).slice(2,10);
+
+  const repAmt=(r)=>{
+    const t=reportTotals(r,project.division);
+    const subs=(r.subcontractors||[]).reduce((a,x)=>a+subLineTotal(x),0);
+    return t.grand+subs;
+  };
+
+  const chosenReports=reports.filter(r=>sel["r"+r.id]);
+  const chosenTickets=tickets.filter(t=>sel["t"+t.id]);
+  const total=chosenReports.reduce((s,r)=>s+repAmt(r),0)
+             +chosenTickets.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
+
+  function pull(){
+    if(detail){
+      const out=[
+        ...chosenReports.map(r=>({id:uid(),
+          description:`Daily Report ${r.report_no?"#"+r.report_no+" ":""}— ${r.date}${r.description?": "+r.description.slice(0,60):""}`,
+          qty:1,unit:"LS",unit_price:repAmt(r).toFixed(2),
+          source:{type:"report",id:r.id,label:r.report_no||r.date}})),
+        ...chosenTickets.map(t=>({id:uid(),
+          description:`T&M Ticket ${t.ticket_no?"#"+t.ticket_no+" ":""}— ${t.ticket_date}${t.description?": "+t.description.slice(0,60):""}`,
+          qty:1,unit:"LS",unit_price:(parseFloat(t.grand_total)||0).toFixed(2),
+          source:{type:"tm",id:t.id,label:t.ticket_no||t.ticket_date}})),
+      ];
+      onPull(out);
+      return;
+    }
+    // Combined: one visible line, but each source still gets its own hidden
+    // zero-value line so the documents are flagged as invoiced on save.
+    const dates=[...chosenReports.map(r=>r.date),...chosenTickets.map(t=>t.ticket_date)].filter(Boolean).sort();
+    const span=dates.length?`${dates[0]} to ${dates[dates.length-1]}`:"";
+    onPull([
+      {id:uid(),
+        description:`Work performed ${span} — ${chosenReports.length} daily report(s), ${chosenTickets.length} T&M ticket(s)`,
+        qty:1,unit:"LS",unit_price:total.toFixed(2),source:null},
+      ...chosenReports.map(r=>({id:uid(),description:`  · Daily ${r.report_no||r.date}`,
+        qty:0,unit:"",unit_price:0,source:{type:"report",id:r.id,label:r.report_no||r.date},hidden:true})),
+      ...chosenTickets.map(t=>({id:uid(),description:`  · T&M ${t.ticket_no||t.ticket_date}`,
+        qty:0,unit:"",unit_price:0,source:{type:"tm",id:t.id,label:t.ticket_no||t.ticket_date},hidden:true})),
+    ]);
+  }
+
+  const Row=({k,title,sub,amt})=>(
+    <div onClick={()=>toggle(k)} style={{...cardS,marginBottom:6,padding:"10px 12px",cursor:"pointer",
+      display:"flex",alignItems:"center",gap:10,
+      border:sel[k]?`1px solid ${T.green}`:`1px solid ${T.border}`,
+      background:sel[k]?T.greenLow:T.card}}>
+      <div style={{width:19,height:19,borderRadius:5,flexShrink:0,display:"flex",alignItems:"center",
+        justifyContent:"center",fontSize:12,fontWeight:900,
+        background:sel[k]?T.green:"transparent",color:"#000",
+        border:sel[k]?"none":`1.5px solid ${T.border}`}}>{sel[k]?"✓":""}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{title}</div>
+        <div style={{fontSize:11,color:T.muted}}>{sub}</div>
+      </div>
+      <div style={{fontSize:13,fontWeight:800,color:T.green,flexShrink:0}}>{money(amt)}</div>
+    </div>
+  );
+
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:220,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:"18px 18px 0 0",width:"100%",maxWidth:640,maxHeight:"88vh",display:"flex",flexDirection:"column"}}>
+        <div style={{padding:"16px 18px 10px",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontSize:16,fontWeight:900,color:T.text}}>↓ Pull Unbilled Work</div>
+          <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>
+            Approved daily reports and signed or approved T&M tickets not yet on an invoice.
+          </div>
+        </div>
+
+        <div style={{padding:"10px 18px",borderBottom:`1px solid ${T.border}`,display:"flex",gap:8}}>
+          {[[true,"One line each"],[false,"Single combined line"]].map(([v,l])=>(
+            <button key={String(v)} onClick={()=>setDetail(v)}
+              style={{flex:1,padding:"7px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",fontSize:12,
+                fontWeight:detail===v?800:600,
+                background:detail===v?T.orange:T.surface,color:detail===v?"#000":T.sub,
+                border:`1px solid ${detail===v?T.orange:T.border}`}}>{l}</button>
+          ))}
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:"12px 18px"}}>
+          {loading&&<div style={{textAlign:"center",padding:20,color:T.muted,fontSize:13}}>Loading…</div>}
+          {!loading&&reports.length===0&&tickets.length===0&&<div style={{textAlign:"center",padding:"30px 10px",color:T.muted}}>
+            <div style={{fontSize:30,marginBottom:8}}>✅</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.sub}}>Nothing unbilled</div>
+            <div style={{fontSize:11.5,marginTop:3}}>Everything approved has already been invoiced.</div>
+          </div>}
+
+          {reports.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>
+            📋 Daily Reports ({reports.length})</div>}
+          {reports.map(r=><Row key={r.id} k={"r"+r.id}
+            title={`${r.date}${r.report_no?"  ·  #"+r.report_no:""}`}
+            sub={r.submitted_by||""} amt={repAmt(r)}/>)}
+
+          {tickets.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 6px"}}>
+            🧾 T&M Tickets ({tickets.length})</div>}
+          {tickets.map(t=><Row key={t.id} k={"t"+t.id}
+            title={`${t.ticket_date}  ·  #${t.ticket_no||""}`}
+            sub={`${t.submitted_by||""}${t.client_signature?"  ·  ✍️ signed":""}`}
+            amt={t.grand_total}/>)}
+        </div>
+
+        <div style={{padding:"12px 18px 20px",borderTop:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+            <span style={{fontSize:12,color:T.sub}}>{chosenReports.length+chosenTickets.length} selected</span>
+            <span style={{fontSize:15,fontWeight:900,color:T.green}}>{money(total)}</span>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={pull} disabled={!chosenReports.length&&!chosenTickets.length}
+              style={{...primBtn,borderRadius:12,background:T.green,color:"#000",
+                opacity:(chosenReports.length||chosenTickets.length)?1:0.4}}>
+              Add to Invoice
+            </button>
+            <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── SCHEDULE OF VALUES ─────────── */
+function SOVEditor({project,user,onErr}){
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [dirty,setDirty]=useState(false);
+
+  async function load(){
+    setLoading(true);
+    try{ setRows(await API.sov.forProject(project.id)||[]); }
+    catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[project.id]);
+
+  const contractSum=parseFloat(project.contract_value)||0;
+  const scheduled=rows.reduce((s,r)=>s+(parseFloat(r.scheduled_value)||0),0);
+  const variance=scheduled-contractSum;
+
+  const setRow=(id,k,v)=>{setRows(rs=>rs.map(r=>r.id===id?{...r,[k]:v}:r));setDirty(true);};
+
+  async function addRow(){
+    const next=(rows.reduce((m,r)=>Math.max(m,r.item_no||0),0))+1;
+    try{
+      const r=await API.sov.create({project_id:project.id,item_no:next,description:"",scheduled_value:0});
+      const row=Array.isArray(r)?r[0]:r;
+      setRows(rs=>[...rs,row]);
+    }catch(e){ onErr&&onErr(e.message); }
+  }
+  async function delRow(id){
+    if(!window.confirm("Remove this line from the schedule of values?"))return;
+    setRows(rs=>rs.filter(r=>r.id!==id));
+    try{ await API.sov.remove(id); }catch(e){ onErr&&onErr(e.message); load(); }
+  }
+  async function saveAll(){
+    setSaving(true);
+    try{
+      await Promise.all(rows.map(r=>API.sov.update(r.id,{
+        item_no:parseInt(r.item_no)||1,
+        description:r.description||"",
+        scheduled_value:parseFloat(r.scheduled_value)||0,
+        updated_at:new Date().toISOString(),
+      })));
+      setDirty(false);
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  // Approved change orders that aren't on the SOV yet
+  const [cos,setCos]=useState([]);
+  useEffect(()=>{
+    API.changeOrders.forProject(project.id)
+      .then(c=>setCos((c||[]).filter(x=>x.status==="Approved")))
+      .catch(()=>{});
+  },[project.id]);
+  const missingCOs=cos.filter(c=>!rows.some(r=>r.change_order_id===c.id));
+
+  async function addCO(co){
+    const next=(rows.reduce((m,r)=>Math.max(m,r.item_no||0),0))+1;
+    try{
+      const r=await API.sov.create({project_id:project.id,item_no:next,
+        description:`${co.co_number} — ${co.description||"Change Order"}`.slice(0,180),
+        scheduled_value:parseFloat(co.amount)||0,change_order_id:co.id});
+      const row=Array.isArray(r)?r[0]:r;
+      setRows(rs=>[...rs,row]);
+    }catch(e){ onErr&&onErr(e.message); }
+  }
+
+  const ri={...inp,fontSize:13,padding:"7px 9px"};
+
+  return(
+    <div>
+      <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${Math.abs(variance)<0.01?T.green:T.yellow}`}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+          {[["Contract Sum",contractSum,T.text],
+            ["Scheduled",scheduled,T.blue],
+            ["Variance",variance,Math.abs(variance)<0.01?T.green:T.yellow]].map(([l,v,c])=>(
+            <div key={l} style={{textAlign:"center"}}>
+              <div style={{fontSize:15,fontWeight:900,color:c}}>{money0(v)}</div>
+              <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:2}}>{l}</div>
+            </div>
+          ))}
+        </div>
+        {Math.abs(variance)>=0.01&&<div style={{fontSize:11.5,color:T.yellow,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,lineHeight:1.5}}>
+          The schedule of values {variance>0?"exceeds":"is under"} the contract sum by {money(Math.abs(variance))}.
+          A pay application built on this won't reconcile to the contract.
+        </div>}
+        {contractSum===0&&<div style={{fontSize:11.5,color:T.muted,marginTop:8}}>
+          No contract value set on this job — add one under the Info tab.
+        </div>}
+      </div>
+
+      {missingCOs.length>0&&<div style={{...cardS,marginBottom:12,border:`1px solid ${T.orange}40`}}>
+        <div style={{fontSize:12,fontWeight:800,color:T.orange,marginBottom:8}}>
+          Approved change orders not on the SOV ({missingCOs.length})
+        </div>
+        {missingCOs.map(co=>(
+          <div key={co.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderTop:`1px solid ${T.border}`}}>
+            <div style={{minWidth:0,paddingRight:10}}>
+              <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{co.co_number}</div>
+              <div style={{fontSize:11,color:T.muted}}>{(co.description||"").slice(0,54)}</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+              <span style={{fontSize:12.5,fontWeight:800,color:T.green}}>{money(co.amount)}</span>
+              <button onClick={()=>addCO(co)} style={{background:T.orange,color:"#000",border:"none",borderRadius:8,padding:"5px 11px",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button>
+            </div>
+          </div>
+        ))}
+      </div>}
+
+      <button onClick={addRow} style={{...primBtn,borderRadius:12,marginBottom:12,background:T.blue,fontSize:13}}>+ Add SOV Line</button>
+
+      {loading&&<Spinner/>}
+      {!loading&&rows.length===0&&<div style={{textAlign:"center",padding:"36px 16px",color:T.muted}}>
+        <div style={{fontSize:40,marginBottom:10}}>📋</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:5}}>No Schedule of Values</div>
+        <div style={{fontSize:12,lineHeight:1.6}}>Break the contract into line items here. Every pay application is built from these lines.</div>
+      </div>}
+
+      {rows.map(r=>(
+        <div key={r.id} style={{...cardS,marginBottom:8,padding:"10px 12px",
+          borderLeft:r.change_order_id?`3px solid ${T.orange}`:`3px solid ${T.border}`}}>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+            <div style={{width:52,flexShrink:0}}>
+              <label style={lbl}>Item</label>
+              <input type="number" value={r.item_no||""} onChange={e=>setRow(r.id,"item_no",e.target.value)} style={{...ri,textAlign:"center"}}/>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <label style={lbl}>Description of Work</label>
+              <input value={r.description||""} onChange={e=>setRow(r.id,"description",e.target.value)} style={ri}/>
+            </div>
+            <div style={{width:118,flexShrink:0}}>
+              <label style={lbl}>Scheduled Value</label>
+              <input type="number" step="0.01" value={r.scheduled_value||""} onChange={e=>setRow(r.id,"scheduled_value",e.target.value)} style={{...ri,textAlign:"right"}}/>
+            </div>
+            <button onClick={()=>delRow(r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:8,padding:"8px 9px",color:T.red,fontSize:12,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>🗑</button>
+          </div>
+          {r.change_order_id&&<div style={{fontSize:10,color:T.orange,marginTop:5,fontWeight:700}}>From change order</div>}
+        </div>
+      ))}
+
+      {rows.length>0&&<button onClick={saveAll} disabled={!dirty||saving}
+        style={{...primBtn,borderRadius:12,marginTop:12,
+          background:dirty?T.green:T.border,color:dirty?"#000":T.muted,opacity:saving?0.6:1}}>
+        {saving?"Saving…":dirty?"💾 Save Schedule of Values":"✓ Saved"}
+      </button>}
+    </div>
+  );
+}
+
+/* ─────────── PAY APPLICATION LIST ─────────── */
+function PayAppList({project,user,onNew,onOpen,onErr}){
+  const [rows,setRows]=useState([]);
+  const [sov,setSov]=useState([]);
+  const [loading,setLoading]=useState(true);
+
+  async function load(){
+    setLoading(true);
+    try{
+      const [a,s]=await Promise.all([
+        API.payApps.forProject(project.id),
+        API.sov.forProject(project.id).catch(()=>[]),
+      ]);
+      setRows(a||[]);setSov(s||[]);
+    }catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[project.id]);
+
+  async function del(a){
+    if(!window.confirm(`Delete Application No. ${a.app_no}?`))return;
+    try{ await API.payApps.remove(a.id); await load(); }catch(e){ onErr&&onErr(e.message); }
+  }
+
+  const statusColor={draft:T.muted,submitted:T.yellow,certified:T.blue,paid:T.green};
+  const billedToDate=rows.reduce((m,a)=>Math.max(m,parseFloat(a.completed_stored)||0),0);
+  const contractSum=rows.length?parseFloat(rows[0].contract_to_date)||0:(parseFloat(project.contract_value)||0);
+  const pct=contractSum>0?(billedToDate/contractSum)*100:0;
+
+  if(sov.length===0&&!loading)return(
+    <div style={{...cardS,textAlign:"center",padding:"36px 18px",color:T.muted}}>
+      <div style={{fontSize:40,marginBottom:10}}>📋</div>
+      <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:5}}>Schedule of Values required</div>
+      <div style={{fontSize:12,lineHeight:1.6}}>
+        A pay application is built from the schedule of values — the G703 continuation sheet is one row per SOV line.
+        Set that up first on the Schedule of Values tab.
+      </div>
+    </div>
+  );
+
+  return(
+    <div>
+      <button onClick={onNew} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.orange,color:"#000"}}>
+        + New Pay Application
+      </button>
+
+      {rows.length>0&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+          <span style={{fontSize:12,color:T.sub}}>Completed &amp; stored to date</span>
+          <span style={{fontSize:13,fontWeight:800,color:T.green}}>{money(billedToDate)}</span>
+        </div>
+        <div style={{height:7,background:T.border,borderRadius:4}}>
+          <div style={{height:7,borderRadius:4,width:`${Math.min(100,pct)}%`,
+            background:pct>=100?T.green:`linear-gradient(90deg,${T.blue},${T.green})`,transition:"width 0.3s"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:11,color:T.muted}}>
+          <span>{Math.round(pct)}% of contract</span><span>{money0(contractSum)}</span>
+        </div>
+      </div>}
+
+      {loading&&<Spinner/>}
+      {!loading&&rows.length===0&&<div style={{textAlign:"center",padding:"36px 16px",color:T.muted}}>
+        <div style={{fontSize:40,marginBottom:10}}>📄</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:5}}>No Pay Applications</div>
+        <div style={{fontSize:12}}>Create Application No. 1 above.</div>
+      </div>}
+
+      {rows.map(a=>(
+        <div key={a.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${statusColor[a.status]||T.muted}`}}>
+          <div onClick={()=>onOpen(a)} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",cursor:"pointer"}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:800,color:T.orange}}>Application No. {a.app_no}</div>
+              <div style={{fontSize:11.5,color:T.muted}}>
+                Period to {a.period_to||"—"}{a.app_date?`  ·  dated ${a.app_date}`:""}
+              </div>
+              <div style={{fontSize:11,color:T.sub,marginTop:2}}>
+                Completed &amp; stored {money(a.completed_stored)} · retainage {money(a.retainage_total)}
+              </div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div style={{fontSize:16,fontWeight:900,color:T.green}}>{money(a.current_due)}</div>
+              <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>due</div>
+              <span style={pill(statusColor[a.status]||T.muted)}>{a.status}</span>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+            <button onClick={()=>onOpen(a)} style={{...ghostBtn,flex:2,textAlign:"center",fontSize:12}}>Open</button>
+            <button onClick={()=>del(a)} style={{...ghostBtn,fontSize:12,color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─────────── PAY APPLICATION FORM (G702 + G703) ─────────── */
+function PayAppForm({project,user,payApp,onBack,onSaved,onErr}){
+  const isNew=!payApp;
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [sov,setSov]=useState([]);
+  const [prior,setPrior]=useState([]);        // earlier applications
+  const [cos,setCos]=useState([]);
+  const [lines,setLines]=useState([]);        // G703 rows
+  const [tab,setTab]=useState("g703");        // g703 | g702 | header
+  const [showSig,setShowSig]=useState(false);
+
+  const [f,setF]=useState({
+    app_no:payApp?.app_no||1,
+    period_from:payApp?.period_from||"",
+    period_to:payApp?.period_to||today(),
+    app_date:payApp?.app_date||today(),
+    contract_date:payApp?.contract_date||project.start_date||"",
+    owner_name:payApp?.owner_name||project.client||"",
+    owner_address:payApp?.owner_address||"",
+    architect_name:payApp?.architect_name||"",
+    contract_for:payApp?.contract_for||"",
+    project_nos:payApp?.project_nos||project.afe||"",
+    retainage_work_pct:payApp?.retainage_work_pct??10,
+    retainage_stored_pct:payApp?.retainage_stored_pct??10,
+    status:payApp?.status||"draft",
+    notes:payApp?.notes||"",
+    contractor_name:payApp?.contractor_name||user.name,
+  });
+  const [sig,setSig]=useState(payApp?.contractor_sig||null);
+  const [sigAt,setSigAt]=useState(payApp?.contractor_signed_at||null);
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+
+  useEffect(()=>{(async()=>{
+    try{
+      const [s,apps,c]=await Promise.all([
+        API.sov.forProject(project.id).catch(()=>[]),
+        API.payApps.forProject(project.id).catch(()=>[]),
+        API.changeOrders.forProject(project.id).catch(()=>[]),
+      ]);
+      const sovRows=s||[];
+      setSov(sovRows);setCos((c||[]).filter(x=>x.status==="Approved"));
+
+      const earlier=(apps||[]).filter(a=>payApp?a.app_no<payApp.app_no:true)
+        .sort((a,b)=>a.app_no-b.app_no);
+      setPrior(earlier);
+
+      if(payApp){
+        const l=await API.payApps.lines(payApp.id).catch(()=>[]);
+        setLines((l||[]).map(x=>({...x,
+          this_period:String(x.this_period??""),
+          stored_materials:String(x.stored_materials??"")})));
+      }else{
+        // Column D "from previous application" is summed from prior apps rather
+        // than typed, so the continuation sheet can't drift out of step.
+        const priorLines=await Promise.all(earlier.map(a=>API.payApps.lines(a.id).catch(()=>[])));
+        const prevBySov={};
+        priorLines.flat().forEach(pl=>{
+          const k=pl.sov_item_id||("no"+pl.item_no);
+          prevBySov[k]=(prevBySov[k]||0)+(parseFloat(pl.this_period)||0)+(parseFloat(pl.from_previous)||0)*0;
+        });
+        // from_previous for this app = D + E of the immediately prior app
+        const lastLines=priorLines.length?priorLines[priorLines.length-1]:[];
+        const lastBySov={};
+        lastLines.forEach(pl=>{
+          const k=pl.sov_item_id||("no"+pl.item_no);
+          lastBySov[k]=(parseFloat(pl.from_previous)||0)+(parseFloat(pl.this_period)||0);
+        });
+        setLines(sovRows.map(r=>({
+          sov_item_id:r.id,item_no:r.item_no,description:r.description,
+          scheduled_value:parseFloat(r.scheduled_value)||0,
+          from_previous:lastBySov[r.id]||0,
+          this_period:"",stored_materials:"",
+        })));
+        setF(s=>({...s,app_no:(earlier.reduce((m,a)=>Math.max(m,a.app_no||0),0))+1}));
+      }
+    }catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  })();},[project.id]);
+
+  const setLine=(idx,k,v)=>setLines(ls=>ls.map((l,i)=>i===idx?{...l,[k]:v}:l));
+
+  /* ── G703 maths ── */
+  const calc=(l)=>{
+    const C=parseFloat(l.scheduled_value)||0;
+    const D=parseFloat(l.from_previous)||0;
+    const E=parseFloat(l.this_period)||0;
+    const F=parseFloat(l.stored_materials)||0;
+    const G=D+E+F;
+    return{C,D,E,F,G,pct:C>0?(G/C)*100:0,balance:C-G};
+  };
+  const tot=lines.reduce((s,l)=>{const c=calc(l);
+    return{C:s.C+c.C,D:s.D+c.D,E:s.E+c.E,F:s.F+c.F,G:s.G+c.G,balance:s.balance+c.balance};},
+    {C:0,D:0,E:0,F:0,G:0,balance:0});
+
+  /* ── G702 lines 1-9 ── */
+  const originalContract=parseFloat(project.contract_value)||0;
+  const coAdditions=cos.filter(c=>(parseFloat(c.amount)||0)>0).reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+  const coDeductions=Math.abs(cos.filter(c=>(parseFloat(c.amount)||0)<0).reduce((s,c)=>s+(parseFloat(c.amount)||0),0));
+  const netCO=coAdditions-coDeductions;
+  const contractToDate=originalContract+netCO;              // line 3
+  const completedStored=tot.G;                              // line 4
+  // 5a is retainage on completed work (D+E), 5b on stored material (F)
+  const retainWork=(tot.D+tot.E)*((parseFloat(f.retainage_work_pct)||0)/100);
+  const retainStored=tot.F*((parseFloat(f.retainage_stored_pct)||0)/100);
+  const retainTotal=retainWork+retainStored;                // line 5
+  const earnedLessRetain=completedStored-retainTotal;       // line 6
+  // line 7 is line 6 from the prior certificate
+  const lessPrevious=prior.length?(parseFloat(prior[prior.length-1].earned_less_retain)||0):0;
+  const currentDue=earnedLessRetain-lessPrevious;           // line 8
+  const balanceToFinish=contractToDate-earnedLessRetain;    // line 9
+
+  async function save(){
+    setSaving(true);
+    const body={
+      project_id:project.id,...f,
+      app_no:parseInt(f.app_no)||1,
+      period_from:f.period_from||null,period_to:f.period_to||null,
+      app_date:f.app_date||null,contract_date:f.contract_date||null,
+      retainage_work_pct:parseFloat(f.retainage_work_pct)||0,
+      retainage_stored_pct:parseFloat(f.retainage_stored_pct)||0,
+      original_contract:originalContract,net_change_orders:netCO,
+      contract_to_date:contractToDate,completed_stored:completedStored,
+      retainage_work:retainWork,retainage_stored:retainStored,retainage_total:retainTotal,
+      earned_less_retain:earnedLessRetain,less_previous:lessPrevious,
+      current_due:currentDue,balance_to_finish:balanceToFinish,
+      co_prev_additions:0,co_prev_deductions:0,
+      co_this_additions:coAdditions,co_this_deductions:coDeductions,
+      contractor_sig:sig,contractor_signed_at:sigAt,
+      created_by:payApp?.created_by||user.name,
+      updated_at:new Date().toISOString(),
+    };
+    try{
+      let appId=payApp?.id;
+      if(isNew){
+        const r=await API.payApps.create(body);
+        appId=Array.isArray(r)?r[0]?.id:r?.id;
+      }else{
+        await API.payApps.update(payApp.id,body);
+        await API.payApps.clearLines(payApp.id);
+      }
+      if(appId){
+        for(const l of lines){
+          const c=calc(l);
+          await API.payApps.addLine({pay_app_id:appId,sov_item_id:l.sov_item_id||null,
+            item_no:l.item_no||1,description:l.description||"",
+            scheduled_value:c.C,from_previous:c.D,this_period:c.E,
+            stored_materials:c.F,total_completed:c.G,balance_finish:c.balance,
+            retainage:0}).catch(()=>{});
+        }
+      }
+      onSaved&&onSaved();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  function printForm(){
+    const w=window.open("","_blank");
+    if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const m0=(n)=>Math.round(Number(n||0)).toLocaleString("en-US");
+
+    const g703rows=lines.map(l=>{
+      const c=calc(l);
+      return `<tr>
+        <td style="text-align:center">${esc(l.item_no)}</td>
+        <td>${esc(l.description)}</td>
+        <td class="n">${m0(c.C)}</td>
+        <td class="n">${c.D?m0(c.D):""}</td>
+        <td class="n">${c.E?m0(c.E):""}</td>
+        <td class="n">${c.F?m0(c.F):""}</td>
+        <td class="n">${m0(c.G)}</td>
+        <td style="text-align:center">${c.C>0?Math.round(c.pct)+"%":""}</td>
+        <td class="n">${m0(c.balance)}</td>
+      </tr>`;
+    }).join("");
+
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Application for Payment No. ${esc(f.app_no)} — ${esc(project.name)}</title><style>
+@page{size:letter portrait;margin:0.4in}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}
+body{font-size:8pt;color:#000}
+.page{page-break-after:always}
+.page:last-child{page-break-after:auto}
+.title{font-size:13pt;font-weight:700;letter-spacing:0.5px}
+.hdr{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:1px solid #000;margin-bottom:6px}
+.hdr>div{padding:5px 7px;border-right:1px solid #000}
+.hdr>div:last-child{border-right:none}
+.lbl{font-size:6.5pt;font-weight:700;text-transform:uppercase;color:#333}
+.val{font-size:9pt;font-weight:600;margin-top:1px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+table.g702{width:100%;border-collapse:collapse}
+table.g702 td{padding:3px 5px;font-size:8.5pt;vertical-align:top}
+.rowline td{border-bottom:1px solid #ddd}
+.n{text-align:right;font-variant-numeric:tabular-nums}
+.amt{border-bottom:1px solid #000;min-width:92px;display:inline-block;text-align:right;font-weight:600}
+.big{font-size:10pt;font-weight:800}
+.cert{font-size:7pt;line-height:1.45;text-align:justify}
+.sigline{border-bottom:1px solid #000;height:24px;margin:10px 0 3px}
+table.g703{width:100%;border-collapse:collapse;margin-top:4px}
+table.g703 th{border:1px solid #000;padding:3px;font-size:6.5pt;text-transform:uppercase;background:#f0f0f0}
+table.g703 td{border:1px solid #000;padding:3px 5px;font-size:8pt}
+table.g703 tfoot td{font-weight:800;background:#f0f0f0}
+.co{width:100%;border-collapse:collapse;margin-top:4px}
+.co td,.co th{border:1px solid #000;padding:3px 5px;font-size:7.5pt}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+
+<!-- ══ G702 ══ -->
+<div class="page">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:5px">
+    <div class="title">APPLICATION AND CERTIFICATE FOR PAYMENT</div>
+    <div style="font-size:7.5pt">PAGE ONE OF 2 PAGES</div>
+  </div>
+
+  <div class="hdr">
+    <div><div class="lbl">To Owner</div><div class="val">${esc(f.owner_name)}</div>
+      <div style="font-size:7.5pt;line-height:1.4">${esc(f.owner_address).replace(/\n/g,"<br/>")}</div></div>
+    <div><div class="lbl">Project</div><div class="val">${esc(project.name)}</div>
+      <div style="font-size:7.5pt">${esc(project.location||"")}</div></div>
+    <div><div class="lbl">Application No.</div><div class="val">${esc(f.app_no)}</div>
+      <div class="lbl" style="margin-top:4px">Period To</div><div class="val">${esc(f.period_to)}</div></div>
+  </div>
+  <div class="hdr">
+    <div><div class="lbl">From Contractor</div>
+      <div class="val">Atlantic Industrial Mechanical &amp; Environmental Inc.</div>
+      <div style="font-size:7.5pt">5730 Pennington Ave, Baltimore, MD 21226</div></div>
+    <div><div class="lbl">Via Architect</div><div class="val">${esc(f.architect_name)}</div></div>
+    <div><div class="lbl">Project Nos.</div><div class="val">${esc(f.project_nos)}</div>
+      <div class="lbl" style="margin-top:4px">Contract Date</div><div class="val">${esc(f.contract_date)}</div></div>
+  </div>
+  ${f.contract_for?`<div style="border:1px solid #000;padding:4px 7px;margin-bottom:6px"><span class="lbl">Contract For:</span> <span style="font-size:8.5pt">${esc(f.contract_for)}</span></div>`:""}
+
+  <div class="two">
+    <div>
+      <div style="font-weight:700;font-size:9pt;margin-bottom:3px">CONTRACTOR'S APPLICATION FOR PAYMENT</div>
+      <div style="font-size:7.5pt;margin-bottom:5px">Application is made for payment, as shown below, in connection with the Contract.<br/>Continuation Sheet, AIA Document G703, is attached.</div>
+      <table class="g702"><tbody>
+        <tr class="rowline"><td style="width:22px">1.</td><td>ORIGINAL CONTRACT SUM</td><td class="n"><span class="amt">${m0(originalContract)}</span></td></tr>
+        <tr class="rowline"><td>2.</td><td>Net Change by Change Orders</td><td class="n"><span class="amt">${m0(netCO)}</span></td></tr>
+        <tr class="rowline"><td>3.</td><td>CONTRACT SUM TO DATE (Line 1 &plusmn; 2)</td><td class="n"><span class="amt">${m0(contractToDate)}</span></td></tr>
+        <tr class="rowline"><td>4.</td><td>TOTAL COMPLETED &amp; STORED TO DATE<br/><span style="font-size:7pt;color:#555">(Column G on G703)</span></td><td class="n"><span class="amt">${m0(completedStored)}</span></td></tr>
+        <tr><td>5.</td><td>RETAINAGE:</td><td></td></tr>
+        <tr><td></td><td style="padding-left:14px">a. ${esc(f.retainage_work_pct)}% of Completed Work<br/><span style="font-size:7pt;color:#555">(Columns D + E on G703)</span></td><td class="n">${m0(retainWork)}</td></tr>
+        <tr class="rowline"><td></td><td style="padding-left:14px">b. ${esc(f.retainage_stored_pct)}% of Stored Material<br/><span style="font-size:7pt;color:#555">(Column F on G703)</span></td><td class="n">${m0(retainStored)}</td></tr>
+        <tr class="rowline"><td></td><td>Total Retainage (Line 5a + 5b)</td><td class="n"><span class="amt">${m0(retainTotal)}</span></td></tr>
+        <tr class="rowline"><td>6.</td><td>TOTAL EARNED LESS RETAINAGE<br/><span style="font-size:7pt;color:#555">(Line 4 less Line 5 Total)</span></td><td class="n"><span class="amt">${m0(earnedLessRetain)}</span></td></tr>
+        <tr class="rowline"><td>7.</td><td>LESS PREVIOUS CERTIFICATES FOR PAYMENT<br/><span style="font-size:7pt;color:#555">(Line 6 from prior Certificate)</span></td><td class="n"><span class="amt">${m0(lessPrevious)}</span></td></tr>
+        <tr class="rowline"><td>8.</td><td class="big">CURRENT PAYMENT DUE</td><td class="n"><span class="amt big">${m0(currentDue)}</span></td></tr>
+        <tr><td>9.</td><td>BALANCE TO FINISH, INCLUDING RETAINAGE<br/><span style="font-size:7pt;color:#555">(Line 3 less Line 6)</span></td><td class="n"><span class="amt">${m0(balanceToFinish)}</span></td></tr>
+      </tbody></table>
+
+      <table class="co"><thead><tr><th style="text-align:left">CHANGE ORDER SUMMARY</th><th style="text-align:right">ADDITIONS</th><th style="text-align:right">DEDUCTIONS</th></tr></thead>
+      <tbody>
+        <tr><td>Total changes approved in previous months by Owner</td><td class="n">0</td><td class="n">0</td></tr>
+        <tr><td>Total approved this month</td><td class="n">${m0(coAdditions)}</td><td class="n">${m0(coDeductions)}</td></tr>
+        <tr><td style="font-weight:700">TOTALS</td><td class="n" style="font-weight:700">${m0(coAdditions)}</td><td class="n" style="font-weight:700">${m0(coDeductions)}</td></tr>
+        <tr><td style="font-weight:700">NET CHANGES by Change Order</td><td class="n" style="font-weight:700" colspan="2">${m0(netCO)}</td></tr>
+      </tbody></table>
+    </div>
+
+    <div>
+      <div class="cert">The undersigned Contractor certifies that to the best of the Contractor's knowledge, information and belief the Work covered by this Application for Payment has been completed in accordance with the Contract Documents, that all amounts have been paid by the Contractor for Work for which previous Certificates for Payment were issued and payments received from the Owner, and that current payment shown herein is now due.</div>
+      <div style="margin-top:10px;font-weight:700;font-size:8.5pt">CONTRACTOR:</div>
+      <div style="font-size:8pt">Atlantic Industrial Mechanical &amp; Environmental Inc.</div>
+      ${sig?`<img src="${sig}" style="max-height:44px;max-width:190px;display:block;margin-top:6px;background:#fff;border:1px solid #ccc;border-radius:3px;padding:3px"/>`:`<div class="sigline"></div>`}
+      <div style="display:flex;justify-content:space-between;font-size:7.5pt">
+        <span>By: ${esc(f.contractor_name)}</span>
+        <span>Date: ${sigAt?new Date(sigAt).toLocaleDateString():esc(f.app_date)}</span></div>
+
+      <div style="margin-top:8px;font-size:7.5pt">State of: ______________ County of: ______________</div>
+      <div style="font-size:7.5pt;margin-top:4px">Subscribed and sworn to before me this ______ day of ____________</div>
+      <div style="font-size:7.5pt;margin-top:6px">Notary Public: _______________________________</div>
+      <div style="font-size:7.5pt;margin-top:4px">My Commission expires: ________________________</div>
+
+      <div style="margin-top:12px;font-weight:700;font-size:8.5pt">ARCHITECT'S CERTIFICATE FOR PAYMENT</div>
+      <div class="cert" style="margin-top:3px">In accordance with the Contract Documents, based on on-site observations and the data comprising this application, the Architect certifies to the Owner that to the best of the Architect's knowledge, information and belief the Work has progressed as indicated, the quality of the Work is in accordance with the Contract Documents, and the Contractor is entitled to payment of the AMOUNT CERTIFIED.</div>
+      <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:baseline">
+        <span style="font-weight:700;font-size:9pt">AMOUNT CERTIFIED</span>
+        <span class="amt big">${payApp?.amount_certified!=null?m0(payApp.amount_certified):""}</span></div>
+      <div style="font-size:6.5pt;margin-top:4px;line-height:1.4">(Attach explanation if amount certified differs from the amount applied for. Initial all figures on this Application and on the Continuation Sheet that are changed to conform to the amount certified.)</div>
+      <div style="margin-top:8px;font-weight:700;font-size:8.5pt">ARCHITECT:</div>
+      <div class="sigline"></div>
+      <div style="display:flex;justify-content:space-between;font-size:7.5pt"><span>By:</span><span>Date:</span></div>
+      <div style="font-size:6.5pt;margin-top:6px;line-height:1.4">This certificate is not negotiable. The AMOUNT CERTIFIED is payable only to the Contractor named herein. Issuance, payment and acceptance of payment are without prejudice to any rights of the Owner or Contractor under this Contract.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ G703 ══ -->
+<div class="page">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:4px">
+    <div class="title">CONTINUATION SHEET</div>
+    <div style="font-size:7.5pt">PAGE 2 OF 2 PAGES</div>
+  </div>
+  <div style="display:flex;justify-content:space-between;font-size:7.5pt;margin-bottom:4px">
+    <div>Application and Certificate for Payment, containing Contractor's signed Certification, is attached.<br/>
+    In tabulations below, amounts are stated to the nearest dollar.</div>
+    <div style="text-align:right">
+      APPLICATION NO.: <strong>${esc(f.app_no)}</strong><br/>
+      APPLICATION DATE: <strong>${esc(f.app_date)}</strong><br/>
+      PERIOD TO: <strong>${esc(f.period_to)}</strong></div>
+  </div>
+
+  <table class="g703">
+    <thead>
+      <tr>
+        <th rowspan="2" style="width:32px">A<br/>ITEM NO.</th>
+        <th rowspan="2">B<br/>DESCRIPTION OF WORK</th>
+        <th rowspan="2" style="width:78px">C<br/>SCHEDULED VALUE</th>
+        <th colspan="2">WORK COMPLETED</th>
+        <th rowspan="2" style="width:72px">F<br/>MATERIALS PRESENTLY STORED<br/>(NOT IN D OR E)</th>
+        <th rowspan="2" style="width:78px">G<br/>TOTAL COMPLETED AND STORED TO DATE<br/>(D+E+F)</th>
+        <th rowspan="2" style="width:42px">H<br/>%<br/>(G&divide;C)</th>
+        <th rowspan="2" style="width:74px">I<br/>BALANCE TO FINISH<br/>(C-G)</th>
+      </tr>
+      <tr>
+        <th style="width:76px">D<br/>FROM PREVIOUS APPLICATION</th>
+        <th style="width:72px">E<br/>THIS PERIOD</th>
+      </tr>
+    </thead>
+    <tbody>${g703rows}</tbody>
+    <tfoot><tr>
+      <td></td><td style="text-align:right">TOTALS</td>
+      <td class="n">${m0(tot.C)}</td><td class="n">${m0(tot.D)}</td><td class="n">${m0(tot.E)}</td>
+      <td class="n">${m0(tot.F)}</td><td class="n">${m0(tot.G)}</td>
+      <td style="text-align:center">${tot.C>0?Math.round((tot.G/tot.C)*100)+"%":""}</td>
+      <td class="n">${m0(tot.balance)}</td>
+    </tr></tfoot>
+  </table>
+</div>
+
+</body></html>`);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},400);
+  }
+
+  if(loading)return <div style={{padding:40,textAlign:"center"}}><Spinner/></div>;
+
+  const ri={...inp,fontSize:13,padding:"7px 9px"};
+  const g702row=(no,label,value,bold)=>(
+    <div style={{display:"flex",alignItems:"flex-start",gap:8,padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+      <span style={{width:18,fontSize:12,color:T.muted,flexShrink:0}}>{no}</span>
+      <span style={{flex:1,fontSize:bold?13.5:12.5,color:T.text,fontWeight:bold?800:400,lineHeight:1.4}}>{label}</span>
+      <span style={{fontSize:bold?15:13,fontWeight:bold?900:700,color:bold?T.green:T.text,whiteSpace:"nowrap"}}>{money(value)}</span>
+    </div>
+  );
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:0}}>← Pay Applications</button>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:20,fontWeight:900,color:T.green}}>{money(currentDue)}</div>
+          <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>current payment due</div>
+        </div>
+      </div>
+
+      <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:12,gap:4}}>
+        {[["g703","📊 G703 Continuation"],["g702","📄 G702 Summary"],["header","⚙️ Header"]].map(([id,l])=>(
+          <button key={id} onClick={()=>setTab(id)}
+            style={{flex:1,padding:"9px 6px",background:tab===id?T.orange:"transparent",
+              color:tab===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:11.5,fontWeight:700,
+              cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{l}</button>
+        ))}
+      </div>
+
+      {/* ── G703 ── */}
+      {tab==="g703"&&<div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:10,lineHeight:1.6,background:T.surface,borderRadius:10,padding:"9px 12px"}}>
+          Enter <strong style={{color:T.text}}>this period</strong> and any <strong style={{color:T.text}}>stored materials</strong>.
+          Column D is summed from prior applications, so previous work can't drift out of step.
+        </div>
+
+        {lines.length===0&&<div style={{...cardS,textAlign:"center",padding:26,color:T.muted,fontSize:12}}>
+          No schedule of values lines. Set up the SOV first.
+        </div>}
+
+        {lines.map((l,i)=>{
+          const c=calc(l);
+          return(
+            <div key={l.sov_item_id||i} style={{...cardS,marginBottom:8,padding:"11px 13px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:9}}>
+                <div style={{minWidth:0,paddingRight:10}}>
+                  <div style={{fontSize:13,fontWeight:700,color:T.text}}>
+                    <span style={{color:T.muted,marginRight:6}}>{l.item_no}.</span>{l.description||"—"}
+                  </div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                    Scheduled {money(c.C)} · previous {money(c.D)}
+                  </div>
+                </div>
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  <div style={{fontSize:14,fontWeight:900,color:c.G>0?T.green:T.muted}}>{money(c.G)}</div>
+                  <div style={{fontSize:10,color:T.muted}}>{Math.round(c.pct)}% complete</div>
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <div><label style={lbl}>E — This Period</label>
+                  <input type="number" step="0.01" value={l.this_period}
+                    onChange={e=>setLine(i,"this_period",e.target.value)} placeholder="0.00" style={{...ri,textAlign:"right"}}/></div>
+                <div><label style={lbl}>F — Stored Materials</label>
+                  <input type="number" step="0.01" value={l.stored_materials}
+                    onChange={e=>setLine(i,"stored_materials",e.target.value)} placeholder="0.00" style={{...ri,textAlign:"right"}}/></div>
+              </div>
+              {c.G>c.C&&c.C>0&&<div style={{fontSize:11,color:T.red,marginTop:7,fontWeight:700}}>
+                ⚠️ Over the scheduled value by {money(c.G-c.C)}
+              </div>}
+              <div style={{height:4,background:T.border,borderRadius:3,marginTop:8}}>
+                <div style={{height:4,borderRadius:3,width:`${Math.min(100,c.pct)}%`,
+                  background:c.pct>=100?T.green:T.blue,transition:"width 0.25s"}}/>
+              </div>
+            </div>
+          );
+        })}
+
+        {lines.length>0&&<div style={{...cardS,marginTop:12,borderLeft:`3px solid ${T.green}`}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:9}}>Continuation Sheet Totals</div>
+          {[["C — Scheduled value",tot.C],["D — From previous",tot.D],["E — This period",tot.E],
+            ["F — Stored materials",tot.F],["G — Completed and stored",tot.G],["I — Balance to finish",tot.balance]].map(([l,v],i,a)=>(
+            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",
+              borderBottom:i<a.length-1?`1px solid ${T.border}`:"none",fontSize:12.5}}>
+              <span style={{color:T.sub}}>{l}</span>
+              <span style={{fontWeight:700,color:l.startsWith("G")?T.green:T.text}}>{money(v)}</span>
+            </div>
+          ))}
+        </div>}
+      </div>}
+
+      {/* ── G702 ── */}
+      {tab==="g702"&&<div>
+        <div style={{...cardS,marginBottom:12}}>
+          {g702row("1.","Original contract sum",originalContract)}
+          {g702row("2.","Net change by change orders",netCO)}
+          {g702row("3.","Contract sum to date (1 ± 2)",contractToDate)}
+          {g702row("4.","Total completed & stored to date (Column G)",completedStored)}
+
+          <div style={{padding:"9px 0",borderBottom:`1px solid ${T.border}`}}>
+            <div style={{display:"flex",gap:8,marginBottom:7}}>
+              <span style={{width:18,fontSize:12,color:T.muted}}>5.</span>
+              <span style={{fontSize:12.5,color:T.text}}>Retainage</span>
+            </div>
+            <div style={{paddingLeft:26}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:7}}>
+                <div style={{display:"flex",alignItems:"center",gap:7}}>
+                  <span style={{fontSize:12,color:T.muted}}>a.</span>
+                  <input type="number" step="0.1" value={f.retainage_work_pct}
+                    onChange={e=>set("retainage_work_pct",e.target.value)}
+                    style={{...inp,width:58,padding:"4px 6px",fontSize:12,textAlign:"center"}}/>
+                  <span style={{fontSize:12,color:T.sub}}>% of completed work (D+E)</span>
+                </div>
+                <span style={{fontSize:12.5,fontWeight:700}}>{money(retainWork)}</span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div style={{display:"flex",alignItems:"center",gap:7}}>
+                  <span style={{fontSize:12,color:T.muted}}>b.</span>
+                  <input type="number" step="0.1" value={f.retainage_stored_pct}
+                    onChange={e=>set("retainage_stored_pct",e.target.value)}
+                    style={{...inp,width:58,padding:"4px 6px",fontSize:12,textAlign:"center"}}/>
+                  <span style={{fontSize:12,color:T.sub}}>% of stored material (F)</span>
+                </div>
+                <span style={{fontSize:12.5,fontWeight:700}}>{money(retainStored)}</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:8,paddingTop:7,borderTop:`1px solid ${T.border}`}}>
+                <span style={{fontSize:12.5,color:T.sub}}>Total retainage</span>
+                <span style={{fontSize:13,fontWeight:800,color:T.red}}>{money(retainTotal)}</span>
+              </div>
+            </div>
+          </div>
+
+          {g702row("6.","Total earned less retainage (4 − 5)",earnedLessRetain)}
+          {g702row("7.","Less previous certificates for payment",lessPrevious)}
+          {g702row("8.","CURRENT PAYMENT DUE",currentDue,true)}
+          {g702row("9.","Balance to finish, including retainage (3 − 6)",balanceToFinish)}
+        </div>
+
+        {prior.length>0&&<div style={{fontSize:11.5,color:T.muted,marginBottom:12,lineHeight:1.6,background:T.surface,borderRadius:10,padding:"9px 12px"}}>
+          Line 7 is line 6 from Application No. {prior[prior.length-1].app_no} ({money(lessPrevious)}), pulled automatically.
+        </div>}
+
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:9}}>Change Order Summary</div>
+          {cos.length===0?<div style={{fontSize:12,color:T.muted}}>No approved change orders on this job.</div>:<>
+            {cos.map(c=>(
+              <div key={c.id} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
+                <span style={{color:T.sub}}>{c.co_number} — {(c.description||"").slice(0,40)}</span>
+                <span style={{fontWeight:700,color:(parseFloat(c.amount)||0)<0?T.red:T.green}}>{money(c.amount)}</span>
+              </div>
+            ))}
+            <div style={{display:"flex",justifyContent:"space-between",paddingTop:8,marginTop:4,borderTop:`2px solid ${T.border}`,fontSize:12.5}}>
+              <span style={{fontWeight:800}}>Net change by change order</span>
+              <span style={{fontWeight:900,color:T.green}}>{money(netCO)}</span>
+            </div>
+          </>}
+        </div>
+
+        {/* Contractor certification */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:8}}>✍️ Contractor Certification</div>
+          {sig?(
+            <div>
+              <div style={{background:"#fff",border:"1px solid #ccc",borderRadius:8,padding:6,display:"inline-block",marginBottom:6}}>
+                <img src={sig} alt="signature" style={{maxHeight:54,maxWidth:200,display:"block"}}/>
+              </div>
+              <div style={{fontSize:12,color:T.sub}}>{f.contractor_name}{sigAt?` · ${new Date(sigAt).toLocaleDateString()}`:""}</div>
+              <button onClick={()=>{setSig(null);setSigAt(null);}}
+                style={{...ghostBtn,fontSize:11,color:T.red,border:`1px solid ${T.red}30`,marginTop:7}}>Clear</button>
+            </div>
+          ):(
+            <button onClick={()=>setShowSig(true)}
+              style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>
+              ✍️ Sign Application
+            </button>
+          )}
+        </div>
+      </div>}
+
+      {/* ── Header ── */}
+      {tab==="header"&&<div>
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Application No.</label>
+              <input type="number" value={f.app_no} onChange={e=>set("app_no",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>Status</label>
+              <select value={f.status} onChange={e=>set("status",e.target.value)} style={{...ri,color:T.orange}}>
+                {["draft","submitted","certified","paid"].map(s=><option key={s} value={s}>{s}</option>)}
+              </select></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Period From</label><input type="date" value={f.period_from} onChange={e=>set("period_from",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>Period To</label><input type="date" value={f.period_to} onChange={e=>set("period_to",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>Application Date</label><input type="date" value={f.app_date} onChange={e=>set("app_date",e.target.value)} style={ri}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><label style={lbl}>Contract Date</label><input type="date" value={f.contract_date} onChange={e=>set("contract_date",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>Project Nos.</label><input value={f.project_nos} onChange={e=>set("project_nos",e.target.value)} style={ri}/></div>
+          </div>
+        </div>
+
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10}}>To Owner</div>
+          <div style={{marginBottom:10}}><label style={lbl}>Owner Name</label>
+            <input value={f.owner_name} onChange={e=>set("owner_name",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Owner Address</label>
+            <textarea value={f.owner_address} onChange={e=>set("owner_address",e.target.value)} rows={2} style={{...ri,resize:"vertical"}}/></div>
+        </div>
+
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{marginBottom:10}}><label style={lbl}>Via Architect</label>
+            <input value={f.architect_name} onChange={e=>set("architect_name",e.target.value)} placeholder="Architect / engineer of record" style={ri}/></div>
+          <div style={{marginBottom:10}}><label style={lbl}>Contract For</label>
+            <input value={f.contract_for} onChange={e=>set("contract_for",e.target.value)} placeholder="Scope of the contract" style={ri}/></div>
+          <div><label style={lbl}>Notes (internal)</label>
+            <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...ri,resize:"vertical"}}/></div>
+        </div>
+      </div>}
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:14}}>
+        <button onClick={save} disabled={saving}
+          style={{...primBtn,borderRadius:14,background:T.orange,color:"#000",opacity:saving?0.6:1}}>
+          {saving?"Saving…":"💾 Save Application"}
+        </button>
+        <button onClick={printForm} style={{...primBtn,borderRadius:14,background:"#1f3864"}}>
+          🖨️ Print G702 + G703
+        </button>
+      </div>
+
+      {showSig&&<SignaturePad reportName={`Application No. ${f.app_no} · ${project.name}`}
+        onSave={async(name,s)=>{set("contractor_name",name);setSig(s);setSigAt(new Date().toISOString());setShowSig(false);}}
+        onCancel={()=>setShowSig(false)}/>}
+    </div>
   );
 }
 
