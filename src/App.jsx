@@ -63,9 +63,28 @@ function getQueue(){
   catch{return [];}
 }
 function addToQueue(item){
+  // A report queued without a project_id can never be inserted — it has
+  // nothing to attach to. One sat in a queue for seven weeks failing silently
+  // before this check existed, so refuse it loudly instead.
+  const needsProject=["report","tm","timecard"].includes(item.type);
+  if(needsProject&&!item.data?.project_id){
+    console.error("Refusing to queue an item with no project_id",item);
+    throw new Error("Can't save offline: this isn't attached to a job. Reopen it from the job and try again.");
+  }
   const q=getQueue();
-  q.push({...item,qid:Math.random().toString(36).slice(2),queued_at:new Date().toISOString()});
+  q.push({...item,qid:Math.random().toString(36).slice(2),queued_at:new Date().toISOString(),
+          attempts:0,last_error:null});
   localStorage.setItem(QUEUE_KEY,JSON.stringify(q));
+}
+function markQueueFailure(qid,msg){
+  const q=getQueue().map(i=>i.qid===qid
+    ?{...i,attempts:(i.attempts||0)+1,last_error:String(msg||"").slice(0,300),
+      last_try:new Date().toISOString()}
+    :i);
+  localStorage.setItem(QUEUE_KEY,JSON.stringify(q));
+}
+function purgeQueueItem(qid){
+  localStorage.setItem(QUEUE_KEY,JSON.stringify(getQueue().filter(i=>i.qid!==qid)));
 }
 function removeFromQueue(qid){
   localStorage.setItem(QUEUE_KEY,JSON.stringify(getQueue().filter(i=>i.qid!==qid)));
@@ -735,6 +754,82 @@ function LoginScreen({onLogin}){
   );
 }
 
+/* Pending sync banner. Anything that has failed three times is called out
+   by name with its error, because the alternative is what happened on
+   9 July 2026: a foreman's whole day sat in a queue for seven weeks,
+   retrying and failing, and nobody knew. */
+function QueueBanner({onSync}){
+  const [open,setOpen]=useState(false);
+  const [items,setItems]=useState(()=>getQueue());
+  useEffect(()=>{
+    const t=setInterval(()=>setItems(getQueue()),3000);
+    return()=>clearInterval(t);
+  },[]);
+
+  const stuck=items.filter(i=>(i.attempts||0)>=3);
+  const label={report:"Daily report",tm:"T&M ticket",tm_update:"T&M edit",timecard:"Time card"};
+  const dayCount=(iso)=>{
+    if(!iso)return null;
+    return Math.floor((Date.now()-new Date(iso).getTime())/86400000);
+  };
+
+  function drop(qid){
+    if(!window.confirm("Delete this queued item? It cannot be recovered."))return;
+    purgeQueueItem(qid);
+    setItems(getQueue());
+  }
+
+  if(!items.length)return null;
+  const warn=stuck.length>0;
+
+  return(
+    <div style={{background:warn?T.redLow:T.greenLow,
+      border:`1px solid ${warn?T.red:T.green}40`,borderRadius:10,padding:"8px 12px",marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",flex:1,minWidth:0}}>
+          <span style={{fontSize:16}}>{warn?"⚠️":"⏳"}</span>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:700,color:warn?T.red:T.green}}>
+              {items.length} pending{warn?` · ${stuck.length} stuck`:" — tap to sync"}
+            </div>
+            {warn&&<div style={{fontSize:11,color:T.yellow}}>Tap to see what's failing</div>}
+          </div>
+        </div>
+        <button onClick={onSync} style={{background:warn?T.yellow:T.green,color:"#0D0D0F",border:"none",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>Sync Now</button>
+      </div>
+
+      {open&&<div style={{marginTop:9,paddingTop:9,borderTop:`1px solid ${T.border}`}}>
+        {items.map(i=>{
+          const age=dayCount(i.queued_at);
+          const bad=(i.attempts||0)>=3;
+          return(
+            <div key={i.qid} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,padding:"6px 0",borderBottom:`1px solid ${T.border}`}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:700,color:bad?T.red:T.sub}}>
+                  {label[i.type]||i.type}
+                  {i.data?.date?` · ${i.data.date}`:""}
+                  {i.data?.ticket_date?` · ${i.data.ticket_date}`:""}
+                </div>
+                <div style={{fontSize:10.5,color:T.muted}}>
+                  queued {age===0?"today":`${age} day${age!==1?"s":""} ago`}
+                  {i.attempts>0?` · ${i.attempts} failed attempt${i.attempts!==1?"s":""}`:""}
+                </div>
+                {bad&&i.last_error&&<div style={{fontSize:10.5,color:T.red,marginTop:3,lineHeight:1.5}}>
+                  {i.last_error}
+                </div>}
+              </div>
+              {bad&&<button onClick={()=>drop(i.qid)}
+                style={{background:"none",border:`1px solid ${T.red}40`,borderRadius:7,padding:"3px 9px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+                Discard
+              </button>}
+            </div>
+          );
+        })}
+      </div>}
+    </div>
+  );
+}
+
 function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,isOnline,pendingCount,onSync}){
   const divStats=DIVISIONS.map(div=>{
     const divProjects=projects.filter(p=>p.division===div&&p.status==="active");
@@ -749,7 +844,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px"}}>
         {/* Offline / pending banner */}
         {!isOnline&&<div style={{background:"#7c2d12",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:16}}>📡</span><div><div style={{fontSize:13,fontWeight:700,color:"#fed7aa"}}>No Connection</div><div style={{fontSize:11,color:"#fdba74"}}>{pendingCount>0?`${pendingCount} report${pendingCount!==1?'s':''} will sync when back online`:"Reports will save locally until reconnected"}</div></div></div>}
-        {isOnline&&pendingCount>0&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:16}}>⏳</span><div style={{fontSize:13,fontWeight:700,color:T.green}}>{pendingCount} pending — tap to sync</div></div><button onClick={onSync} style={{background:T.green,color:"#0D0D0F",border:"none",borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Sync Now</button></div>}
+        {isOnline&&pendingCount>0&&<QueueBanner onSync={onSync}/>}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{display:"flex",flexDirection:"column",gap:2}}>
@@ -1320,11 +1415,13 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
     }
 
     if(!isOnline){
-      addToQueue({type:'report',data:reportData});
-      clearDraft(draftKey);
+      try{
+        addToQueue({type:'report',data:reportData});
+        clearDraft(draftKey);
+        alert("No connection — report saved and will sync automatically when you're back online.");
+        onCancel();
+      }catch(qe){ alert(qe.message); }
       setSaving(false);
-      alert("No connection — report saved and will sync automatically when you're back online.");
-      onCancel();
       return;
     }
     try{
@@ -1336,10 +1433,12 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
       }catch(e){}
       await notify("report_submitted","New Report Submitted",`${user.name} submitted a report for ${project.name}`,{project_id:project.id});
     }catch(e){
-      addToQueue({type:'report',data:reportData});
-      clearDraft(draftKey);
-      alert("Couldn't reach server — report queued and will sync when reconnected.");
-      onCancel();
+      try{
+        addToQueue({type:'report',data:reportData});
+        clearDraft(draftKey);
+        alert("Couldn't reach server — report queued and will sync when reconnected.");
+        onCancel();
+      }catch(qe){ alert(qe.message); }
     }
     setSaving(false);
   }
@@ -2570,17 +2669,22 @@ function TimeCardsTab({projectId,user,onErr}){
     const reset=()=>{setShowForm(false);setF({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",notes:""});};
 
     if(!navigator.onLine){
-      addToQueue({type:"timecard",data});
-      onErr("No connection — hours saved on your phone and will sync when you're back online.");
-      reset();setSaving(false);return;
+      try{
+        addToQueue({type:"timecard",data});
+        onErr("No connection — hours saved on your phone and will sync when you're back online.");
+        reset();
+      }catch(qe){ onErr(qe.message); }
+      setSaving(false);return;
     }
     try{
       await API.timeCards.create(data);
       await load();reset();
     }catch(e){
-      addToQueue({type:"timecard",data});
-      onErr("Couldn't reach the server — hours queued and will sync when reconnected.");
-      reset();
+      try{
+        addToQueue({type:"timecard",data});
+        onErr("Couldn't reach the server — hours queued and will sync when reconnected.");
+        reset();
+      }catch(qe){ onErr(qe.message); }
     }
     setSaving(false);
   }
@@ -11539,7 +11643,11 @@ function AppInner(){
           // Unknown type from an older build — drop it rather than retry forever.
           removeFromQueue(item.qid);
         }
-      }catch(e){ failed++; console.warn("Sync failed for item",item.qid,e); }
+      }catch(e){
+        failed++;
+        markQueueFailure(item.qid,e.message);
+        console.warn("Sync failed for item",item.qid,e);
+      }
     }
     setSyncMsg(
       failed>0
@@ -13560,10 +13668,12 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
     // A T&M ticket is a billing document — losing one in a dead spot costs
     // real money, so it queues exactly like a daily report.
     if(!navigator.onLine){
-      addToQueue(isNew?{type:"tm",data}:{type:"tm_update",id:ticket.id,data});
+      try{
+        addToQueue(isNew?{type:"tm",data}:{type:"tm_update",id:ticket.id,data});
+        alert("No connection — this ticket is saved on your phone and will sync automatically when you're back online.");
+        onSaved&&onSaved();
+      }catch(qe){ alert(qe.message); }
       setSaving(false);
-      alert("No connection — this ticket is saved on your phone and will sync automatically when you're back online.");
-      onSaved&&onSaved();
       return;
     }
     try{
@@ -13571,9 +13681,11 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       else await API.tmTickets.update(ticket.id,data);
       onSaved&&onSaved();
     }catch(e){
-      addToQueue(isNew?{type:"tm",data}:{type:"tm_update",id:ticket.id,data});
-      alert("Couldn't reach the server — ticket queued and will sync when reconnected.");
-      onSaved&&onSaved();
+      try{
+        addToQueue(isNew?{type:"tm",data}:{type:"tm_update",id:ticket.id,data});
+        alert("Couldn't reach the server — ticket queued and will sync when reconnected.");
+        onSaved&&onSaved();
+      }catch(qe){ alert(qe.message); }
     }
     setSaving(false);
   }
