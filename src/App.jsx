@@ -218,7 +218,7 @@ const API={
     assemblyLog:{forPart:(pid)=>sb(`/mfg_assembly_log?part_id=eq.${pid}&order=completion_date.desc`),forJob:(jid)=>sb(`/mfg_assembly_log?job_id=eq.${jid}&order=completion_date.desc`),create:(d)=>sb('/mfg_assembly_log',{method:'POST',body:d,prefer:'return=representation'})},
     shippingLog:{forPart:(pid)=>sb(`/mfg_shipping_log?part_id=eq.${pid}&order=ship_date.desc`),forJob:(jid)=>sb(`/mfg_shipping_log?job_id=eq.${jid}&order=ship_date.desc`),create:(d)=>sb('/mfg_shipping_log',{method:'POST',body:d,prefer:'return=representation'})},
     packingSlips:{forJob:(jid)=>sb(`/mfg_packing_slips?job_id=eq.${jid}&order=created_at.desc`),create:(d)=>sb('/mfg_packing_slips',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'DELETE'})},
-    labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
+    labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_labor?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
     ncr:{forJob:(jid)=>sb(`/mfg_ncr?job_id=eq.${jid}&order=created_at.desc`),forPart:(pid)=>sb(`/mfg_ncr?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_ncr',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_ncr?id=eq.${id}`,{method:'PATCH',body:d})},
   },
   docFolders:{forProject:(pid)=>sb(`/document_folders?project_id=eq.${pid}&order=name.asc`),create:(d)=>sb("/document_folders",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/document_folders?id=eq.${id}`,{method:"PATCH",body:d}),remove:(id)=>sb(`/document_folders?id=eq.${id}`,{method:"DELETE"})},
@@ -282,6 +282,7 @@ const API={
   },
   invoices:{
     forProject:(pid)=>sb(`/job_invoices?project_id=eq.${pid}&select=*&order=invoice_date.desc,created_at.desc`),
+    forMfgJob:(jid)=>sb(`/job_invoices?mfg_job_id=eq.${jid}&select=*&order=invoice_date.desc,created_at.desc`),
     create:(d)=>sb("/job_invoices",{method:"POST",body:d,prefer:"return=representation"}),
     update:(id,d)=>sb(`/job_invoices?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
     remove:(id)=>sb(`/job_invoices?id=eq.${id}`,{method:"DELETE"}),
@@ -9608,7 +9609,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
-        {[["overview","📊 Overview"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["shipping","📤 Shipping Log"]].map(([id,label])=>(
+        {[["overview","📊 Overview"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["shipping","📤 Shipping Log"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"12px 4px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -9617,6 +9618,8 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
       <div style={{padding:"14px 16px 100px"}}>
         {loading&&<Spinner/>}
+
+        {!loading&&tab==="billing"&&canAdmin&&<MfgBillingTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
 
         {}
         {!loading&&tab==="overview"&&<>
@@ -11504,17 +11507,21 @@ function BillingTab({project,user,onErr}){
 }
 
 /* ─────────────── INVOICE LIST ─────────────── */
-function InvoiceList({project,user,onNew,onOpen,onErr}){
+function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
   const [rows,setRows]=useState([]);
   const [loading,setLoading]=useState(true);
+  const ownerId=mfgJob?mfgJob.id:project.id;
 
   async function load(){
     setLoading(true);
-    try{ setRows(await API.invoices.forProject(project.id)||[]); }
+    try{
+      setRows((mfgJob?await API.invoices.forMfgJob(mfgJob.id)
+                     :await API.invoices.forProject(project.id))||[]);
+    }
     catch(e){ onErr&&onErr(e.message); }
     setLoading(false);
   }
-  useEffect(()=>{load();},[project.id]);
+  useEffect(()=>{load();},[ownerId]);
 
   async function del(inv){
     if(!window.confirm(`Delete invoice ${inv.invoice_no||""}?`))return;
@@ -11545,7 +11552,7 @@ function InvoiceList({project,user,onNew,onOpen,onErr}){
       {!loading&&rows.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
         <div style={{fontSize:44,marginBottom:12}}>🧾</div>
         <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Invoices</div>
-        <div style={{fontSize:12}}>Create one above. You can pull lines straight from unbilled daily reports and T&M tickets.</div>
+        <div style={{fontSize:12}}>Create one above. You can pull lines straight from {mfgJob?"unbilled shop labor":"unbilled daily reports and T&M tickets"}.</div>
       </div>}
 
       {rows.map(inv=>(
@@ -11574,15 +11581,21 @@ function InvoiceList({project,user,onNew,onOpen,onErr}){
 }
 
 /* ─────────────── INVOICE FORM ─────────────── */
-function InvoiceForm({project,user,invoice,onBack,onSaved,onErr}){
+function InvoiceForm({project,mfgJob,user,invoice,onBack,onSaved,onErr}){
   const isNew=!invoice;
+  // One form, two owners: a field project or a manufacturing job.
+  const owner=mfgJob
+    ?{id:mfgJob.id,name:mfgJob.job_number,client:mfgJob.customer,
+      po:mfgJob.po_number,location:"",afe:"",division:"Manufacturing"}
+    :{id:project.id,name:project.name,client:project.client,
+      po:project.work_order,location:project.location,afe:project.afe,division:project.division};
   const [f,setF]=useState({
     invoice_no:invoice?.invoice_no||"",
     invoice_date:invoice?.invoice_date||today(),
     due_date:invoice?.due_date||"",
-    bill_to:invoice?.bill_to||project.client||"",
+    bill_to:invoice?.bill_to||owner.client||"",
     bill_to_address:invoice?.bill_to_address||"",
-    po_number:invoice?.po_number||project.work_order||"",
+    po_number:invoice?.po_number||owner.po||"",
     description:invoice?.description||"",
     notes:invoice?.notes||"",
     terms:invoice?.terms||"Net 30",
@@ -11616,9 +11629,9 @@ function InvoiceForm({project,user,invoice,onBack,onSaved,onErr}){
   // Auto-number new invoices
   useEffect(()=>{
     if(isNew&&!f.invoice_no){
-      API.invoices.forProject(project.id).then(prior=>{
+      (mfgJob?API.invoices.forMfgJob(mfgJob.id):API.invoices.forProject(project.id)).then(prior=>{
         const n=(Array.isArray(prior)?prior:[]).length+1;
-        set("invoice_no",`${project.name||"JOB"}-INV-${String(n).padStart(3,"0")}`);
+        set("invoice_no",`${owner.name||"JOB"}-INV-${String(n).padStart(3,"0")}`);
       }).catch(()=>{});
     }
   },[]);
@@ -11626,7 +11639,9 @@ function InvoiceForm({project,user,invoice,onBack,onSaved,onErr}){
   async function save(){
     setSaving(true);
     const body={
-      project_id:project.id,...f,
+      project_id:mfgJob?null:project.id,
+      mfg_job_id:mfgJob?mfgJob.id:null,
+      ...f,
       tax_pct:parseFloat(f.tax_pct)||0,
       retainage_pct:parseFloat(f.retainage_pct)||0,
       amount_paid:parseFloat(f.amount_paid)||0,
@@ -11644,12 +11659,15 @@ function InvoiceForm({project,user,invoice,onBack,onSaved,onErr}){
         await API.invoices.update(invoice.id,body);
       }
       // Flag any source documents that were pulled onto this invoice
-      const srcReports=lines.filter(l=>l.source?.type==="report").map(l=>l.source.id);
-      const srcTickets=lines.filter(l=>l.source?.type==="tm").map(l=>l.source.id);
       const stamp={invoiced:true,invoice_no:f.invoice_no,invoiced_at:new Date().toISOString()};
+      const srcOf=(t)=>lines.filter(l=>l.source?.type===t);
       await Promise.all([
-        ...srcReports.map(id=>API.reports.update(id,stamp).catch(()=>{})),
-        ...srcTickets.map(id=>API.tmTickets.update(id,stamp).catch(()=>{})),
+        ...srcOf("report").map(l=>API.reports.update(l.source.id,stamp).catch(()=>{})),
+        ...srcOf("tm").map(l=>API.tmTickets.update(l.source.id,stamp).catch(()=>{})),
+        // Shop labor records the rate it was billed at, so changing the shop
+        // rate later cannot restate an invoice that already went out.
+        ...srcOf("mfglabor").flatMap(l=>(l.source.ids||[l.source.id]).map(id=>
+          API.mfg.labor.update(id,{...stamp,billed_rate:parseFloat(l.unit_price)||null}).catch(()=>{}))),
       ]);
       onSaved&&onSaved();
     }catch(e){ onErr&&onErr(e.message); }
@@ -11697,8 +11715,8 @@ tr:nth-child(even) td{background:#fafbff}
     <div style="font-weight:700">${esc(f.bill_to)}</div>
     <div style="font-size:9pt;color:#444;line-height:1.5">${esc(f.bill_to_address).replace(/\n/g,"<br/>")}</div></div>
   <div class="box"><div class="bl">Project</div>
-    <div style="font-weight:700">${esc(project.name)}</div>
-    <div style="font-size:9pt;color:#444;line-height:1.5">${esc(project.location||"")}${f.po_number?`<br/>PO: ${esc(f.po_number)}`:""}${project.afe?`<br/>AFE: ${esc(project.afe)}`:""}</div></div>
+    <div style="font-weight:700">${esc(owner.name)}</div>
+    <div style="font-size:9pt;color:#444;line-height:1.5">${esc(owner.location||"")}${f.po_number?`<br/>PO: ${esc(f.po_number)}`:""}${owner.afe?`<br/>AFE: ${esc(owner.afe)}`:""}</div></div>
 </div>
 ${f.description?`<div style="margin-bottom:12px;font-size:10pt"><strong>Description:</strong> ${esc(f.description)}</div>`:""}
 <table><thead><tr><th style="width:48%">Description</th><th style="text-align:center">Qty</th><th style="text-align:center">Unit</th>
@@ -11714,7 +11732,7 @@ ${retainAmount?`<tr><td>Less Retainage (${f.retainage_pct}%)</td><td style="text
 <tr class="grand"><td>AMOUNT DUE</td><td style="text-align:right">${money(total)}</td></tr>
 </tbody></table>
 ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/g,"<br/>")}</div>`:""}
-<div class="foot"><span>AIME · ${esc(project.name)} · Invoice ${esc(f.invoice_no)}</span><span>${new Date().toLocaleString()}</span></div>
+<div class="foot"><span>AIME · ${esc(owner.name)} · Invoice ${esc(f.invoice_no)}</span><span>${new Date().toLocaleString()}</span></div>
 </body></html>`);
     w.document.close();setTimeout(()=>{w.focus();w.print();},350);
   }
@@ -11755,12 +11773,12 @@ ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/
       <div style={{display:"flex",gap:8,marginBottom:10}}>
         <button onClick={addLine} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ Add Line</button>
         <button onClick={()=>setShowPull(true)} style={{...primBtn,flex:1,borderRadius:12,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,fontSize:13}}>
-          ↓ Pull Unbilled Work
+          ↓ Pull Unbilled {mfgJob?"Labor":"Work"}
         </button>
       </div>
 
       {lines.length===0&&<div style={{...cardS,textAlign:"center",padding:"24px",color:T.muted,fontSize:12,marginBottom:10}}>
-        No lines yet. Add them by hand, or pull from approved dailies and signed T&M tickets.
+        No lines yet. Add them by hand, or pull {mfgJob?"unbilled shop labor":"from approved dailies and signed T&M tickets"}.
       </div>}
 
       {lines.filter(l=>!l.hidden).map(l=>(
@@ -11822,10 +11840,15 @@ ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/
         <button onClick={printInvoice} style={{...primBtn,borderRadius:14,background:"#1f3864"}}>🖨️ Print</button>
       </div>
 
-      {showPull&&<PullUnbilledModal project={project}
-        onClose={()=>setShowPull(false)}
-        onPull={(newLines)=>{setLines(ls=>[...ls,...newLines]);setShowPull(false);}}
-        onErr={onErr}/>}
+      {showPull&&(mfgJob
+        ?<PullMfgLaborModal job={mfgJob}
+           onClose={()=>setShowPull(false)}
+           onPull={(newLines)=>{setLines(ls=>[...ls,...newLines]);setShowPull(false);}}
+           onErr={onErr}/>
+        :<PullUnbilledModal project={project}
+           onClose={()=>setShowPull(false)}
+           onPull={(newLines)=>{setLines(ls=>[...ls,...newLines]);setShowPull(false);}}
+           onErr={onErr}/>)}
     </div>
   );
 }
@@ -12785,6 +12808,209 @@ table.g703 tfoot td{font-weight:800;background:#f0f0f0}
       {showSig&&<SignaturePad reportName={`Application No. ${f.app_no} · ${project.name}`}
         onSave={async(name,s)=>{set("contractor_name",name);setSig(s);setSigAt(new Date().toISOString());setShowSig(false);}}
         onCancel={()=>setShowSig(false)}/>}
+    </div>
+  );
+}
+
+
+/* ── Pull unbilled shop labor onto an invoice (Manufacturing) ── */
+function PullMfgLaborModal({job,onClose,onPull,onErr}){
+  const [rows,setRows]=useState([]);
+  const [parts,setParts]=useState([]);
+  const [sel,setSel]=useState({});
+  const [loading,setLoading]=useState(true);
+  const [rate,setRate]=useState(String(job.labor_rate??75));
+  const [mode,setMode]=useState("worker");   // worker | operation | entry
+
+  useEffect(()=>{(async()=>{
+    try{
+      const [l,p]=await Promise.all([
+        API.mfg.labor.forJob(job.id).catch(()=>[]),
+        API.mfg.parts.forJob(job.id).catch(()=>[]),
+      ]);
+      setRows((l||[]).filter(x=>!x.invoiced));
+      setParts(p||[]);
+    }catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  })();},[job.id]);
+
+  const toggle=(id)=>setSel(s=>{const n={...s};if(n[id])delete n[id];else n[id]=true;return n;});
+  const allOn=()=>setSel(Object.fromEntries(rows.map(r=>[r.id,true])));
+  const allOff=()=>setSel({});
+  const uid=()=>Math.random().toString(36).slice(2,10);
+
+  const chosen=rows.filter(r=>sel[r.id]);
+  const hrs=chosen.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
+  const rateN=parseFloat(rate)||0;
+  const total=hrs*rateN;
+
+  function pull(){
+    if(!chosen.length)return;
+    const partOf=(id)=>(parts.find(p=>p.id===id)||{}).part_number||"";
+    let groups;
+    if(mode==="entry"){
+      groups=chosen.map(r=>({
+        key:r.id,
+        label:`Shop labor — ${r.worker_name||"—"} · ${r.work_date}${r.operation?" · "+r.operation:""}${r.part_id?" · "+partOf(r.part_id):""}`,
+        hours:parseFloat(r.hours)||0, ids:[r.id]}));
+    }else{
+      const by={};
+      chosen.forEach(r=>{
+        const k=mode==="worker"?(r.worker_name||"Unassigned"):(r.operation||"General");
+        if(!by[k])by[k]={key:k,hours:0,ids:[],dates:[]};
+        by[k].hours+=parseFloat(r.hours)||0;
+        by[k].ids.push(r.id);
+        if(r.work_date)by[k].dates.push(r.work_date);
+      });
+      groups=Object.values(by).map(g=>{
+        const d=g.dates.sort();
+        const span=d.length?(d[0]===d[d.length-1]?d[0]:`${d[0]} to ${d[d.length-1]}`):"";
+        return{...g,label:`Shop labor — ${g.key}${span?" · "+span:""}`};
+      });
+    }
+    onPull(groups.map(g=>({
+      id:uid(),
+      description:g.label,
+      qty:Number(g.hours.toFixed(2)),
+      unit:"HRS",
+      unit_price:rateN.toFixed(2),
+      source:{type:"mfglabor",ids:g.ids},
+    })));
+  }
+
+  const modeLabel={worker:"By worker",operation:"By operation",entry:"One line each"};
+
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:220,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:"18px 18px 0 0",width:"100%",maxWidth:640,maxHeight:"88vh",display:"flex",flexDirection:"column"}}>
+        <div style={{padding:"16px 18px 10px",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontSize:16,fontWeight:900,color:T.text}}>↓ Pull Unbilled Labor</div>
+          <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Shop hours on {job.job_number} not yet invoiced.</div>
+        </div>
+
+        <div style={{padding:"10px 18px",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <span style={{fontSize:12,color:T.sub,fontWeight:700}}>Shop rate</span>
+            <input type="number" step="0.01" value={rate} onChange={e=>setRate(e.target.value)}
+              style={{...inp,width:96,padding:"6px 9px",fontSize:13,textAlign:"right"}}/>
+            <span style={{fontSize:12,color:T.muted}}>per hour</span>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            {Object.entries(modeLabel).map(([k,l])=>(
+              <button key={k} onClick={()=>setMode(k)}
+                style={{flex:1,padding:"7px 4px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,
+                  fontWeight:mode===k?800:600,
+                  background:mode===k?T.orange:T.surface,color:mode===k?"#000":T.sub,
+                  border:`1px solid ${mode===k?T.orange:T.border}`}}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:"12px 18px"}}>
+          {loading&&<div style={{textAlign:"center",padding:20,color:T.muted,fontSize:13}}>Loading…</div>}
+          {!loading&&rows.length===0&&<div style={{textAlign:"center",padding:"30px 10px",color:T.muted}}>
+            <div style={{fontSize:30,marginBottom:8}}>✅</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.sub}}>No unbilled labor</div>
+            <div style={{fontSize:11.5,marginTop:3}}>Every logged hour on this job has been invoiced.</div>
+          </div>}
+
+          {rows.length>0&&<div style={{display:"flex",gap:8,marginBottom:10}}>
+            <button onClick={allOn} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:11.5,padding:"6px",color:T.green,border:`1px solid ${T.green}40`}}>Select all</button>
+            <button onClick={allOff} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:11.5,padding:"6px"}}>Clear</button>
+          </div>}
+
+          {rows.map(r=>{
+            const on=!!sel[r.id];
+            const part=(parts.find(p=>p.id===r.part_id)||{}).part_number;
+            return(
+              <div key={r.id} onClick={()=>toggle(r.id)} style={{...cardS,marginBottom:6,padding:"10px 12px",cursor:"pointer",
+                display:"flex",alignItems:"center",gap:10,
+                border:on?`1px solid ${T.green}`:`1px solid ${T.border}`,
+                background:on?T.greenLow:T.card}}>
+                <div style={{width:19,height:19,borderRadius:5,flexShrink:0,display:"flex",alignItems:"center",
+                  justifyContent:"center",fontSize:12,fontWeight:900,
+                  background:on?T.green:"transparent",color:"#000",
+                  border:on?"none":`1.5px solid ${T.border}`}}>{on?"✓":""}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{r.worker_name||"—"}</div>
+                  <div style={{fontSize:11,color:T.muted}}>
+                    {r.work_date}{r.operation?"  ·  "+r.operation:""}{part?"  ·  "+part:""}
+                  </div>
+                </div>
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  <div style={{fontSize:13,fontWeight:800,color:T.blue}}>{Number(r.hours||0).toFixed(1)}h</div>
+                  <div style={{fontSize:10.5,color:T.green}}>{money((parseFloat(r.hours)||0)*rateN)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{padding:"12px 18px 20px",borderTop:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+            <span style={{fontSize:12,color:T.sub}}>{chosen.length} entries · {hrs.toFixed(1)} hrs @ {money(rateN)}</span>
+            <span style={{fontSize:15,fontWeight:900,color:T.green}}>{money(total)}</span>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={pull} disabled={!chosen.length}
+              style={{...primBtn,borderRadius:12,background:T.green,color:"#000",opacity:chosen.length?1:0.4}}>
+              Add to Invoice
+            </button>
+            <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Manufacturing billing tab — invoices only, no AIA ── */
+function MfgBillingTab({job,user,onErr}){
+  const [openInvoice,setOpenInvoice]=useState(null);
+  const [rate,setRate]=useState(String(job.labor_rate??75));
+  const [savingRate,setSavingRate]=useState(false);
+  const canBill=user.role==="admin"||user.role==="pm";
+
+  if(!canBill)return(
+    <div style={{...cardS,textAlign:"center",padding:"34px 18px",color:T.muted}}>
+      <div style={{fontSize:32,marginBottom:8}}>🔒</div>
+      <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>Billing is PM-only</div>
+      <div style={{fontSize:12}}>Ask a project manager or admin if you need an invoice raised.</div>
+    </div>
+  );
+
+  if(openInvoice!==null)return(
+    <InvoiceForm mfgJob={{...job,labor_rate:parseFloat(rate)||75}} user={user}
+      invoice={openInvoice.id?openInvoice:null}
+      onBack={()=>setOpenInvoice(null)} onSaved={()=>setOpenInvoice(null)} onErr={onErr}/>
+  );
+
+  async function saveRate(){
+    setSavingRate(true);
+    try{ await API.mfg.jobs.update(job.id,{labor_rate:parseFloat(rate)||75}); }
+    catch(e){ onErr&&onErr(e.message); }
+    setSavingRate(false);
+  }
+
+  return(
+    <div>
+      <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.purple}`}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Shop Rate</div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:15,color:T.muted}}>$</span>
+          <input type="number" step="0.01" value={rate} onChange={e=>setRate(e.target.value)}
+            onBlur={saveRate}
+            style={{...inp,width:110,fontSize:16,fontWeight:800,padding:"8px 10px",textAlign:"right"}}/>
+          <span style={{fontSize:13,color:T.sub}}>per man hour</span>
+          {savingRate&&<span style={{fontSize:11,color:T.muted}}>saving…</span>}
+        </div>
+        <div style={{fontSize:11,color:T.muted,marginTop:7,lineHeight:1.5}}>
+          Used when pulling labor onto an invoice. Each invoice records the rate it billed at, so changing this later won't restate anything already sent.
+        </div>
+      </div>
+
+      <InvoiceList mfgJob={job} user={user}
+        onNew={()=>setOpenInvoice({})} onOpen={inv=>setOpenInvoice(inv)} onErr={onErr}/>
     </div>
   );
 }
