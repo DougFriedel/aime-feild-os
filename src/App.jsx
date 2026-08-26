@@ -89,9 +89,17 @@ async function supa(path,{method="GET",body,prefer}={}){
   if(!r.ok)throw new Error(await r.text()||`HTTP ${r.status}`);
   const t=await r.text();return t?JSON.parse(t):null;
 }
+/* Who the audit trigger should credit a change to. Set at login, cleared at
+   logout. Not a security control — the header is trivially forgeable — but
+   once JWT auth lands the trigger reads the verified claim instead and the
+   log becomes trustworthy without touching this. */
+let CURRENT_USER=null;
+function setAuditUser(name){CURRENT_USER=name||null;}
+
 async function sb(path,opts={}){
   const{method="GET",body,prefer}=opts;
   const headers={"apikey":SUPA_KEY,"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json"};
+  if(CURRENT_USER)headers["X-AIME-User"]=CURRENT_USER;
   if(prefer)headers["Prefer"]=prefer;
   const res=await fetch(`${SUPA_URL}/rest/v1${path}`,{method,headers,...(body!==undefined?{body:JSON.stringify(body)}:{})});
   if(!res.ok)throw new Error(await res.text()||`HTTP ${res.status}`);
@@ -251,6 +259,10 @@ const API={
   docs:     {forProject:(pid)=>sb(`/documents?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/documents?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
   milestones:{forProject:(pid)=>sb(`/milestones?project_id=eq.${pid}&order=sort_order.asc,target_date.asc`),create:(d)=>sb("/milestones",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/milestones?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/milestones?id=eq.${id}`,{method:"DELETE"})},
   crew:     {list:()=>sb("/crew_members?order=name.asc"),create:(d)=>sb("/crew_members",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/crew_members?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/crew_members?id=eq.${id}`,{method:"DELETE"})},
+  audit:{
+    forRecord:(table,id)=>sb(`/audit_recent?table_name=eq.${table}&record_id=eq.${id}&order=changed_at.desc`),
+    recent:(limit=100)=>sb(`/audit_recent?order=changed_at.desc&limit=${limit}`),
+  },
   notifications:{list:()=>sb("/notifications?order=created_at.desc&limit=50"),unread:()=>sb("/notifications?read=eq.false&order=created_at.desc"),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:()=>sb("/notifications?read=eq.false",{method:"PATCH",body:{read:true}}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
   notifSettings:{get:(name)=>sb(`/notification_settings?pm_name=eq.${encodeURIComponent(name)}&limit=1`),upsert:(d)=>sb("/notification_settings",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"})},
   userProfiles:{
@@ -2524,6 +2536,8 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
         </div>
       </div>}
 
+      <AuditTrail table="daily_reports" recordId={report.id} label="this report"/>
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
         <button onClick={async()=>{setShowPrintModal(true);await loadPhotosForPrint();}} style={{...primBtn,background:"#1f3864",color:"#fff",borderRadius:14}}>🖨️ Print / Save PDF</button>
         <button onClick={exportXLSX} style={{...primBtn,background:divColor+"15",color:divColor,border:`1px solid ${divColor}40`,borderRadius:14}}>📥 Excel (.xlsx)</button>
@@ -2546,7 +2560,30 @@ function TimeCardsTab({projectId,user,onErr}){
   const weekStart=getWeekStart();
   async function load(){setLoading(true);try{setCards(await API.timeCards.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[projectId]);
-  async function save(){if(!f.worker_name||!f.date)return;setSaving(true);const total_hours=calcHours(f.clock_in,f.clock_out);const ot_hours=Math.max(0,total_hours-8);try{await API.timeCards.create({...f,project_id:projectId,total_hours,ot_hours});await load();setShowForm(false);setF({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",notes:""});}catch(e){onErr(e.message);}setSaving(false);}
+  async function save(){
+    if(!f.worker_name||!f.date)return;
+    setSaving(true);
+    const total_hours=calcHours(f.clock_in,f.clock_out);
+    const ot_hours=Math.max(0,total_hours-8);
+    const reg_hours=Math.max(0,total_hours-ot_hours);
+    const data={...f,project_id:projectId,total_hours,ot_hours,reg_hours};
+    const reset=()=>{setShowForm(false);setF({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",notes:""});};
+
+    if(!navigator.onLine){
+      addToQueue({type:"timecard",data});
+      onErr("No connection — hours saved on your phone and will sync when you're back online.");
+      reset();setSaving(false);return;
+    }
+    try{
+      await API.timeCards.create(data);
+      await load();reset();
+    }catch(e){
+      addToQueue({type:"timecard",data});
+      onErr("Couldn't reach the server — hours queued and will sync when reconnected.");
+      reset();
+    }
+    setSaving(false);
+  }
   async function remove(id){try{await API.timeCards.remove(id);await load();}catch(e){onErr(e.message);}}
   const weekCards=cards.filter(c=>c.date>=weekStart);
   const byWorker={};weekCards.forEach(c=>{if(!byWorker[c.worker_name])byWorker[c.worker_name]={name:c.worker_name,reg:0,ot:0,total:0};byWorker[c.worker_name].total+=(c.total_hours||0);byWorker[c.worker_name].ot+=(c.ot_hours||0);byWorker[c.worker_name].reg+=Math.max(0,(c.total_hours||0)-(c.ot_hours||0));});
@@ -11394,7 +11431,7 @@ function AppInner(){
     (async()=>{
       const p=await restoreSession();
       if(cancelled)return;
-      if(p)setUser(p);
+      if(p){setAuditUser(p.name);setUser(p);}
       setRestoring(false);
     })();
     return()=>{cancelled=true;};
@@ -11411,7 +11448,14 @@ function AppInner(){
     const onOffline=()=>setIsOnline(false);
     window.addEventListener("online",onOnline);window.addEventListener("offline",onOffline);
     setupPushNotifications();
-    return()=>{window.removeEventListener("online",onOnline);window.removeEventListener("offline",onOffline);};
+    // Items are queued from several screens, so poll rather than trying to
+    // thread a callback through every form.
+    setPendingCount(getQueue().length);
+    const tick=setInterval(()=>setPendingCount(getQueue().length),3000);
+    return()=>{
+      clearInterval(tick);
+      window.removeEventListener("online",onOnline);window.removeEventListener("offline",onOffline);
+    };
   },[]);
 
   useEffect(()=>{
@@ -11453,8 +11497,8 @@ function AppInner(){
   async function syncQueue(){
     const queue=getQueue();
     if(!queue.length)return;
-    setSyncMsg(`Syncing ${queue.length} queued report${queue.length!==1?"s":""}…`);
-    let synced=0;
+    setSyncMsg(`Syncing ${queue.length} item${queue.length!==1?"s":""}…`);
+    let synced=0, failed=0;
     for(const item of queue){
       try{
         if(item.type==="report"){
@@ -11466,17 +11510,50 @@ function AppInner(){
           if(proj) await autoPopulateTimeCards(item.data,proj).catch(()=>{});
           synced++;
         }
-      }catch(e){console.warn("Sync failed for item",item.qid,e);}
+        else if(item.type==="tm"){
+          await API.tmTickets.create(item.data);
+          removeFromQueue(item.qid); synced++;
+        }
+        else if(item.type==="tm_update"){
+          await API.tmTickets.update(item.id,item.data);
+          removeFromQueue(item.qid); synced++;
+        }
+        else if(item.type==="timecard"){
+          // A card for the same worker/date/job may have been created online in
+          // the meantime — add to it rather than making a duplicate.
+          const existing=await API.timeCards.find(
+            item.data.worker_name,item.data.date,item.data.project_id).catch(()=>[]);
+          const card=Array.isArray(existing)?existing[0]:null;
+          if(card){
+            const reg=(parseFloat(card.reg_hours)||0)+(parseFloat(item.data.reg_hours)||0);
+            const ot=(parseFloat(card.ot_hours)||0)+(parseFloat(item.data.ot_hours)||0);
+            const tr=(parseFloat(card.travel_hours)||0)+(parseFloat(item.data.travel_hours)||0);
+            await API.timeCards.update(card.id,{reg_hours:reg,ot_hours:ot,travel_hours:tr,
+              total_hours:reg+ot+tr});
+          }else{
+            await API.timeCards.create(item.data);
+          }
+          removeFromQueue(item.qid); synced++;
+        }
+        else{
+          // Unknown type from an older build — drop it rather than retry forever.
+          removeFromQueue(item.qid);
+        }
+      }catch(e){ failed++; console.warn("Sync failed for item",item.qid,e); }
     }
-    setSyncMsg(synced>0?`✓ Synced ${synced} report${synced!==1?"s":""}!`:"");
+    setSyncMsg(
+      failed>0
+        ?`Synced ${synced}, ${failed} still queued — will retry`
+        :(synced>0?`✓ Synced ${synced} item${synced!==1?"s":""}!`:""));
     if(synced>0){await loadProjects();}
-    setTimeout(()=>setSyncMsg(""),4000);
+    setTimeout(()=>setSyncMsg(""),4500);
     setPendingCount(getQueue().length);
   }
 
-  function handleLogin(profile,token){saveSession(token);setUser(profile);}
+  function handleLogin(profile,token){saveSession(token);setAuditUser(profile.name);setUser(profile);}
   async function handleLogout(){
     await clearSession();          // ends the session server-side too
+    setAuditUser(null);
     setUser(null);setScreen("division");setSelectedDiv(null);setSelectedProject(null);
   }
   function handleDivisionSelect(div){setSelectedDiv(div);setSelectedMfgJob(null);setSelectedMfgPart(null);setScreen("jobs");}
@@ -13118,6 +13195,93 @@ function MfgBillingTab({job,user,onErr}){
   );
 }
 
+
+/* ── Change history for a single record ── */
+function AuditTrail({table,recordId,label}){
+  const [rows,setRows]=useState(null);
+  const [open,setOpen]=useState(false);
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState("");
+
+  async function load(){
+    setLoading(true);setErr("");
+    try{ setRows(await API.audit.forRecord(table,recordId)||[]); }
+    catch(e){
+      // Migration not run yet — say so plainly rather than showing an empty list.
+      setErr(String(e.message||"").includes("audit_recent")
+        ?"Change history isn't set up yet — run AIME_audit_log.sql."
+        :e.message);
+      setRows([]);
+    }
+    setLoading(false);
+  }
+
+  function toggle(){
+    const next=!open;setOpen(next);
+    if(next&&rows===null)load();
+  }
+
+  const actionMeta={INSERT:{icon:"➕",color:T.green,verb:"created"},
+                    UPDATE:{icon:"✏️",color:T.yellow,verb:"edited"},
+                    DELETE:{icon:"🗑",color:T.red,verb:"deleted"}};
+
+  const pretty=(v)=>{
+    if(v===null||v===undefined)return "—";
+    if(typeof v==="object")return Array.isArray(v)?`${v.length} item${v.length!==1?"s":""}`:"…";
+    const str=String(v);
+    if(str.length>60)return str.slice(0,60)+"…";
+    return str||"—";
+  };
+  const fieldName=(k)=>k.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase());
+
+  return(
+    <div style={{...cardS,marginBottom:10}}>
+      <div onClick={toggle} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+        <div style={{fontSize:12,fontWeight:800,color:T.text}}>
+          🕓 Change History{rows?` (${rows.length})`:""}
+        </div>
+        <span style={{color:T.muted,fontSize:13}}>{open?"▲":"▼"}</span>
+      </div>
+
+      {open&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+        {loading&&<div style={{fontSize:12,color:T.muted,textAlign:"center",padding:"10px 0"}}>Loading…</div>}
+        {err&&<div style={{fontSize:11.5,color:T.yellow,lineHeight:1.6}}>{err}</div>}
+        {!loading&&!err&&rows&&rows.length===0&&
+          <div style={{fontSize:12,color:T.muted}}>No changes recorded since auditing was turned on.</div>}
+
+        {(rows||[]).map(r=>{
+          const m=actionMeta[r.action]||{icon:"•",color:T.muted,verb:r.action};
+          const changed=r.changes&&typeof r.changes==="object"?Object.entries(r.changes):[];
+          return(
+            <div key={r.id} style={{padding:"9px 0",borderBottom:`1px solid ${T.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:10}}>
+                <div style={{fontSize:12.5,color:T.text}}>
+                  <span style={{marginRight:6}}>{m.icon}</span>
+                  <strong style={{color:m.color}}>{r.changed_by||"unknown"}</strong>
+                  <span style={{color:T.muted}}> {m.verb} {label||"this record"}</span>
+                </div>
+                <span style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",flexShrink:0}}>
+                  {new Date(r.changed_at).toLocaleString()}
+                </span>
+              </div>
+              {changed.length>0&&<div style={{marginTop:6,paddingLeft:20}}>
+                {changed.map(([k,v])=>(
+                  <div key={k} style={{fontSize:11.5,color:T.sub,padding:"2px 0",lineHeight:1.5}}>
+                    <span style={{color:T.muted}}>{fieldName(k)}:</span>{" "}
+                    <span style={{color:T.red,textDecoration:"line-through"}}>{pretty(v?.from)}</span>
+                    {" → "}
+                    <span style={{color:T.green}}>{pretty(v?.to)}</span>
+                  </div>
+                ))}
+              </div>}
+            </div>
+          );
+        })}
+      </div>}
+    </div>
+  );
+}
+
 /* ── T&M TICKET LIST (inside ProjectDetail tab) ─────────────── */
 function TMTicketList({project,user,onOpen,onNew}){
   const [tickets,setTickets]=useState([]);
@@ -13393,11 +13557,24 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       customer:project.client||null,
       updated_at:new Date().toISOString(),
     };
+    // A T&M ticket is a billing document — losing one in a dead spot costs
+    // real money, so it queues exactly like a daily report.
+    if(!navigator.onLine){
+      addToQueue(isNew?{type:"tm",data}:{type:"tm_update",id:ticket.id,data});
+      setSaving(false);
+      alert("No connection — this ticket is saved on your phone and will sync automatically when you're back online.");
+      onSaved&&onSaved();
+      return;
+    }
     try{
       if(isNew)await API.tmTickets.create(data);
       else await API.tmTickets.update(ticket.id,data);
       onSaved&&onSaved();
-    }catch(e){alert("Error saving: "+e.message);}
+    }catch(e){
+      addToQueue(isNew?{type:"tm",data}:{type:"tm_update",id:ticket.id,data});
+      alert("Couldn't reach the server — ticket queued and will sync when reconnected.");
+      onSaved&&onSaved();
+    }
     setSaving(false);
   }
 
@@ -13775,6 +13952,8 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
             <label style={lbl}>Notes / Special Conditions</label>
             <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={3} placeholder="Any notes…" style={{...inp,resize:"vertical"}}/>
           </div>
+
+          {!isNew&&<AuditTrail table="tm_tickets" recordId={ticket.id} label="this ticket"/>}
 
           {canEdit&&<div style={{...cardS,marginBottom:12}}>
             <label style={lbl}>Status</label>
