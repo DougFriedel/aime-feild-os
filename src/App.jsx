@@ -151,28 +151,40 @@ const shellMax=(screen)=>SCREEN_MAX[screen]||(WIDE_SCREENS.has(screen)?1180:480)
    timestamp — never the PIN — and re-reads the profile from the database on
    restore, so a role change or deactivation takes effect immediately. */
 const SESSION_KEY="aime_session";
-const SESSION_MAX_AGE=1000*60*60*24*7; // 7 days
 
-function saveSession(profile){
-  try{localStorage.setItem(SESSION_KEY,JSON.stringify({name:profile.name,at:Date.now()}));}catch{}
+/* The browser holds a random token issued by the database and nothing else.
+   The old version stored { name, at } and trusted it, which meant anyone
+   could type a name into localStorage and be signed in as that person. */
+function saveSession(token){
+  try{ if(token) localStorage.setItem(SESSION_KEY,token); }catch{}
 }
-function clearSession(){
+function getSessionToken(){
+  try{
+    const raw=localStorage.getItem(SESSION_KEY);
+    if(!raw)return null;
+    // Tolerate the old { name, at } shape: it is worthless now, so bin it.
+    if(raw.startsWith("{")){localStorage.removeItem(SESSION_KEY);return null;}
+    return raw;
+  }catch{ return null; }
+}
+async function clearSession(){
+  const t=getSessionToken();
   try{localStorage.removeItem(SESSION_KEY);}catch{}
+  if(t){ try{ await rpc("end_session",{p_token:t}); }catch{} }
 }
 async function restoreSession(){
-  let s;
-  try{s=JSON.parse(localStorage.getItem(SESSION_KEY)||"null");}catch{return null;}
-  if(!s||!s.name)return null;
-  if(Date.now()-(s.at||0)>SESSION_MAX_AGE){clearSession();return null;}
+  const t=getSessionToken();
+  if(!t)return null;
   try{
-    const rows=await API.userProfiles.getByName(s.name);
-    const raw=rows&&rows.length>0?rows[0]:null;
-    if(!raw||raw.active===false){clearSession();return null;}
-    // Never carry a PIN into app state, even if the column still exists.
-    const{pin,...p}=raw;
-    saveSession(p);            // slide the window forward on each use
+    const rows=await rpc("verify_session",{p_token:t});
+    const p=Array.isArray(rows)?rows[0]:rows;
+    if(!p||!p.name){ try{localStorage.removeItem(SESSION_KEY);}catch{} return null; }
     return p;
-  }catch{ return null; }       // offline: don't wipe the session, just stay logged out this load
+  }catch(e){
+    // Offline, or verify_session not deployed yet — stay signed out for this
+    // load rather than discarding a token that may still be good.
+    return null;
+  }
 }
 
 const API={
@@ -613,23 +625,21 @@ function LoginScreen({onLogin}){
     if(!name||checking)return;
     setChecking(true); setErr("");
     try{
-      // The PIN is checked in the database. Nothing about it is sent here.
-      const rows=await rpc("verify_pin",{p_name:name,p_pin:pin});
+      // The PIN is checked in the database and comes back as a session token.
+      const rows=await rpc("verify_pin",
+        {p_name:name,p_pin:pin,p_user_agent:navigator.userAgent||null});
       const p=Array.isArray(rows)?rows[0]:rows;
-      if(p&&p.name){ onLogin(p); }
-      else{ setErr("Incorrect PIN"); setPin(""); }
+      if(p&&p.name&&p.token){
+        const{token,expires_at,...profile}=p;
+        onLogin(profile,token);
+      }else{ setErr("Incorrect PIN"); setPin(""); }
     }catch(e){
       const msg=String(e.message||"");
-      // verify_pin missing means AIME_security_pins.sql has not been run.
       if(msg.includes("PGRST202")||msg.includes("does not exist")||msg.includes("404")){
+        // The security migrations have not been run. Refuse rather than fall
+        // back to comparing PINs in the browser.
         setLegacy(true);
-        try{
-          const rows=await API.userProfiles.getByName(name);
-          const p=rows&&rows.length>0?rows[0]:null;
-          const ok=p&&p.pin ? pin===p.pin : (name==="Admin"&&pin==="1234");
-          if(ok) onLogin(p||{name,role:"admin",division:null});
-          else { setErr("Incorrect PIN"); setPin(""); }
-        }catch{ setErr("Could not sign in — check your connection."); }
+        setErr("Sign-in is not available until the security migration is run.");
       }else{
         setErr("Could not sign in — check your connection.");
       }
@@ -658,8 +668,8 @@ function LoginScreen({onLogin}){
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
         {legacy&&<div style={{background:T.redLow,border:`1px solid ${T.red}55`,borderRadius:10,
           padding:"9px 12px",marginBottom:12,fontSize:11.5,color:T.red,lineHeight:1.6}}>
-          ⚠️ PINs are still being checked in the browser. Run
-          <strong> AIME_security_pins.sql</strong> in Supabase to move that into the database.
+          ⚠️ Sign-in is unavailable. Run <strong>AIME_security_pins.sql</strong> and
+          <strong> AIME_security_sessions.sql</strong> in Supabase, then reload.
         </div>}
         <div style={{marginBottom:14}}>
           <label style={{...lbl,color:"#C8D4F0"}}>Select Your Name</label>
@@ -5105,6 +5115,16 @@ function UserManagementScreen({onBack,currentUser,user}){
                 </div>
                 <div style={{display:"flex",gap:6}}>
                   <button onClick={()=>{setActive(p);setF({name:p.name,role:p.role,division:p.division||null,pin:"",email:p.email||"",active:p.active});setAdminPin("");setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"6px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
+                  <button title="Sign this person out on every device"
+                    onClick={async()=>{
+                      const ap=window.prompt(`Sign ${p.name} out everywhere.\n\nEnter your own admin PIN to confirm:`);
+                      if(!ap)return;
+                      try{
+                        const n=await rpc("revoke_sessions",{p_target:p.name,p_admin_name:me.name,p_admin_pin:ap});
+                        alert(`${n||0} session(s) ended for ${p.name}.`);
+                      }catch(e){setErr("Could not revoke: "+e.message);}
+                    }}
+                    style={{background:"none",border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>⏏</button>
                   {p.name!==me.name&&<button onClick={()=>remove(p.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>}
                 </div>
               </div>
@@ -11454,8 +11474,11 @@ function AppInner(){
     setPendingCount(getQueue().length);
   }
 
-  function handleLogin(profile){saveSession(profile);setUser(profile);}
-  function handleLogout(){clearSession();setUser(null);setScreen("division");setSelectedDiv(null);setSelectedProject(null);}
+  function handleLogin(profile,token){saveSession(token);setUser(profile);}
+  async function handleLogout(){
+    await clearSession();          // ends the session server-side too
+    setUser(null);setScreen("division");setSelectedDiv(null);setSelectedProject(null);
+  }
   function handleDivisionSelect(div){setSelectedDiv(div);setSelectedMfgJob(null);setSelectedMfgPart(null);setScreen("jobs");}
   function handleSelectProject(p){setSelectedProject(p);setScreen("detail");}
 
