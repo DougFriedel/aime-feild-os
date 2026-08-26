@@ -98,6 +98,18 @@ async function sb(path,opts={}){
   const t=await res.text();return t?JSON.parse(t):null;
 }
 
+/* Postgres function call. Used for anything the browser must not see —
+   PIN checking happens in the database, not here. */
+async function rpc(fn,args){
+  const res=await fetch(`${SUPA_URL}/rest/v1/rpc/${fn}`,{
+    method:"POST",
+    headers:{apikey:SUPA_KEY,Authorization:`Bearer ${SUPA_KEY}`,"Content-Type":"application/json"},
+    body:JSON.stringify(args||{}),
+  });
+  if(!res.ok)throw new Error((await res.text())||`RPC ${fn} failed (${res.status})`);
+  const t=await res.text();return t?JSON.parse(t):null;
+}
+
 /* Supabase Storage over plain REST — the app has no supabase-js client. */
 async function storageUpload(bucket,path,file,contentType){
   const res=await fetch(`${SUPA_URL}/storage/v1/object/${bucket}/${path}`,{
@@ -154,8 +166,10 @@ async function restoreSession(){
   if(Date.now()-(s.at||0)>SESSION_MAX_AGE){clearSession();return null;}
   try{
     const rows=await API.userProfiles.getByName(s.name);
-    const p=rows&&rows.length>0?rows[0]:null;
-    if(!p||p.active===false){clearSession();return null;}
+    const raw=rows&&rows.length>0?rows[0]:null;
+    if(!raw||raw.active===false){clearSession();return null;}
+    // Never carry a PIN into app state, even if the column still exists.
+    const{pin,...p}=raw;
     saveSession(p);            // slide the window forward on each use
     return p;
   }catch{ return null; }       // offline: don't wipe the session, just stay logged out this load
@@ -571,32 +585,60 @@ function LoginScreen({onLogin}){
   const [name,setName]=useState("");
   const [pin,setPin]=useState("");
   const [profile,setProfile]=useState(null);
+  const [hasPin,setHasPin]=useState(false);
   const [loading,setLoading]=useState(false);
+  const [checking,setChecking]=useState(false);
+  const [legacy,setLegacy]=useState(false);   // verify_pin not deployed yet
   const [err,setErr]=useState("");
 
   async function handleNameChange(n){
-    setName(n); setPin(""); setErr(""); setProfile(null);
+    setName(n); setPin(""); setErr(""); setProfile(null); setHasPin(false);
     if(!n) return;
     setLoading(true);
     try{
       const rows=await API.userProfiles.getByName(n);
-      setProfile(rows&&rows.length>0?rows[0]:{name:n,role:"crew",division:null,pin:null});
-    }catch{setProfile({name:n,role:"crew",division:null,pin:null});}
+      setProfile(rows&&rows.length>0?rows[0]:{name:n,role:"crew",division:null});
+    }catch{setProfile({name:n,role:"crew",division:null});}
+    // Whether a PIN exists — never the PIN itself.
+    try{
+      const st=await sb(`/user_pin_status?name=eq.${encodeURIComponent(n)}&limit=1`);
+      setHasPin(Array.isArray(st)&&st.length>0?!!st[0].has_pin:false);
+    }catch{
+      setHasPin(true);   // status view not deployed — let them try
+    }
     setLoading(false);
   }
 
   async function handleLogin(){
-    if(!name||!profile)return;
-    if(profile.pin){
-      if(pin!==profile.pin){ setErr("Incorrect PIN"); return; }
-    } else if(name==="Admin"){
-      if(pin!=="1234"){ setErr("Incorrect PIN (default: 1234)"); return; }
+    if(!name||checking)return;
+    setChecking(true); setErr("");
+    try{
+      // The PIN is checked in the database. Nothing about it is sent here.
+      const rows=await rpc("verify_pin",{p_name:name,p_pin:pin});
+      const p=Array.isArray(rows)?rows[0]:rows;
+      if(p&&p.name){ onLogin(p); }
+      else{ setErr("Incorrect PIN"); setPin(""); }
+    }catch(e){
+      const msg=String(e.message||"");
+      // verify_pin missing means AIME_security_pins.sql has not been run.
+      if(msg.includes("PGRST202")||msg.includes("does not exist")||msg.includes("404")){
+        setLegacy(true);
+        try{
+          const rows=await API.userProfiles.getByName(name);
+          const p=rows&&rows.length>0?rows[0]:null;
+          const ok=p&&p.pin ? pin===p.pin : (name==="Admin"&&pin==="1234");
+          if(ok) onLogin(p||{name,role:"admin",division:null});
+          else { setErr("Incorrect PIN"); setPin(""); }
+        }catch{ setErr("Could not sign in — check your connection."); }
+      }else{
+        setErr("Could not sign in — check your connection.");
+      }
     }
-    onLogin(profile);
+    setChecking(false);
   }
 
   const roleM=profile?ROLE_META[profile.role]:null;
-  const pinIsSet=profile&&(profile.pin||name==="Admin");
+  const pinIsSet=profile&&(hasPin||legacy||name==="Admin");
 
   return(
     <div style={{minHeight:"100vh",backgroundImage:`url(${LOGIN_BG})`,backgroundSize:"cover",backgroundPosition:"center",backgroundRepeat:"no-repeat",display:"flex",flexDirection:"column",justifyContent:"center",padding:24,fontFamily:"inherit",position:"relative"}}>
@@ -614,6 +656,11 @@ function LoginScreen({onLogin}){
 
       <div style={{...cardS,maxWidth:420,margin:"0 auto",width:"100%",background:"rgba(8,10,18,0.88)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",borderRadius:20,border:"1px solid rgba(96,165,250,0.25)",padding:"28px 24px",boxShadow:"0 8px 32px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.05)"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {legacy&&<div style={{background:T.redLow,border:`1px solid ${T.red}55`,borderRadius:10,
+          padding:"9px 12px",marginBottom:12,fontSize:11.5,color:T.red,lineHeight:1.6}}>
+          ⚠️ PINs are still being checked in the browser. Run
+          <strong> AIME_security_pins.sql</strong> in Supabase to move that into the database.
+        </div>}
         <div style={{marginBottom:14}}>
           <label style={{...lbl,color:"#C8D4F0"}}>Select Your Name</label>
           <select value={name} onChange={e=>handleNameChange(e.target.value)} style={{...inp,color:T.orange,background:T.card}}>
@@ -655,8 +702,11 @@ function LoginScreen({onLogin}){
           </div>
         )}
 
-        <button onClick={handleLogin} style={{...primBtn,opacity:name&&!loading&&(pinIsSet?pin.length>0:false)?1:0.3,boxShadow:name&&!loading&&(pinIsSet?pin.length>0:false)?"0 4px 20px rgba(96,165,250,0.4)":"none"}} disabled={!name||loading||!pinIsSet||pin.length===0}>
-          {loading?"Loading…":"Sign In →"}
+        <button onClick={handleLogin}
+          style={{...primBtn,opacity:name&&!loading&&!checking&&(pinIsSet?pin.length>0:false)?1:0.3,
+            boxShadow:name&&!loading&&!checking&&(pinIsSet?pin.length>0:false)?"0 4px 20px rgba(96,165,250,0.4)":"none"}}
+          disabled={!name||loading||checking||!pinIsSet||pin.length===0}>
+          {loading?"Loading…":checking?"Checking…":"Sign In →"}
         </button>
       </div>
     </div>
@@ -4916,16 +4966,36 @@ function UserManagementScreen({onBack,currentUser,user}){
   const [active,setActive]=useState(null);const [saving,setSaving]=useState(false);
   const blank={name:"",role:"crew",division:null,pin:"",active:true};
   const [f,setF]=useState({...blank});
+  const [adminPin,setAdminPin]=useState("");   // proves the caller is an admin
+  const [pinStatus,setPinStatus]=useState({}); // name -> has_pin
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
 
-  async function load(){setLoading(true);try{setProfiles(await API.userProfiles.list()||[]);}catch(e){setErr(e.message);}setLoading(false);}
+  async function load(){
+    setLoading(true);
+    try{
+      setProfiles(await API.userProfiles.list()||[]);
+      try{
+        const st=await sb("/user_pin_status?select=name,has_pin");
+        setPinStatus(Object.fromEntries((st||[]).map(r=>[r.name,!!r.has_pin])));
+      }catch{ /* view not deployed yet */ }
+    }catch(e){setErr(e.message);}
+    setLoading(false);
+  }
   useEffect(()=>{load();},[]);
 
   async function save(){
     if(!f.name.trim())return;setSaving(true);
     try{
-      if(active){await API.userProfiles.update(active.id,{role:f.role,division:f.division,pin:f.pin,email:f.email||null,active:f.active});}
-      else{await API.userProfiles.upsert({name:f.name,role:f.role,division:f.division||null,pin:f.pin||null,email:f.email||null,active:true});}
+      // Profile fields go through the table; the PIN goes through a database
+      // function that verifies the caller is an admin. It is never written
+      // to a column the browser can read back.
+      if(active){await API.userProfiles.update(active.id,{role:f.role,division:f.division,email:f.email||null,active:f.active});}
+      else{await API.userProfiles.upsert({name:f.name,role:f.role,division:f.division||null,email:f.email||null,active:true});}
+      if(f.pin&&f.pin.trim()){
+        if(!adminPin.trim()){throw new Error("Enter your own admin PIN to set someone else's.");}
+        await rpc("set_pin",{p_target:f.name,p_new_pin:f.pin.trim(),
+                             p_admin_name:me.name,p_admin_pin:adminPin.trim()});
+      }
       await load();setMode("list");setActive(null);setF({...blank});
     }catch(e){setErr(e.message);}setSaving(false);
   }
@@ -4976,12 +5046,22 @@ function UserManagementScreen({onBack,currentUser,user}){
         <div style={{marginBottom:14}}>
           <label style={lbl}>{(ROLE_META[f.role]||ROLE_META.crew).label} PIN (required)</label>
           <input type="text" inputMode="numeric" maxLength={6} placeholder="Set a PIN (numbers)"
-            value={f.pin||""} onChange={e=>set("pin",e.target.value.replace(/[^0-9]/g,""))} style={inp}/>
+            value={f.pin||""} onChange={e=>set("pin",e.target.value.replace(/[^0-9]/g,""))} style={inp}
+            placeholder={pinStatus[f.name]?"Leave blank to keep the current PIN":"Set a PIN (numbers)"}/>
           <div style={{fontSize:11,color:T.muted,marginTop:4}}>
             This person will need to enter this PIN to sign in.
           </div>
-          {!f.pin&&<div style={{fontSize:11,color:T.yellow,marginTop:4}}>
+          {!f.pin&&!pinStatus[f.name]&&<div style={{fontSize:11,color:T.yellow,marginTop:4}}>
             ⚠️ Without a PIN this person cannot log in.
+          </div>}
+          {f.pin&&f.pin.trim()&&<div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+            <label style={lbl}>Your Admin PIN (to confirm)</label>
+            <input type="password" inputMode="numeric" maxLength={6} value={adminPin}
+              onChange={e=>setAdminPin(e.target.value.replace(/[^0-9]/g,""))}
+              placeholder="Your own PIN" style={inp}/>
+            <div style={{fontSize:11,color:T.muted,marginTop:4,lineHeight:1.5}}>
+              Setting someone's PIN is checked in the database, so it needs proof you're an admin.
+            </div>
           </div>}
         </div>
 
@@ -5020,11 +5100,11 @@ function UserManagementScreen({onBack,currentUser,user}){
                     <span style={pill(m.color)}>{m.label}</span>
                     {p.division&&<span style={pill(DIV_META[p.division]?.color||T.muted)}>{DIV_META[p.division]?.icon} {p.division}</span>}
                     {!p.active&&<span style={pill(T.red)}>INACTIVE</span>}
-                    {!p.pin&&<span style={pill(T.yellow)}>NO PIN</span>}
+                    {pinStatus[p.name]===false&&<span style={pill(T.yellow)}>NO PIN</span>}
                   </div>
                 </div>
                 <div style={{display:"flex",gap:6}}>
-                  <button onClick={()=>{setActive(p);setF({name:p.name,role:p.role,division:p.division||null,pin:p.pin||"",email:p.email||"",active:p.active});setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"6px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
+                  <button onClick={()=>{setActive(p);setF({name:p.name,role:p.role,division:p.division||null,pin:"",email:p.email||"",active:p.active});setAdminPin("");setMode("edit");}} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:8,padding:"6px 12px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Edit</button>
                   {p.name!==me.name&&<button onClick={()=>remove(p.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button>}
                 </div>
               </div>
