@@ -831,7 +831,35 @@ function QueueBanner({onSync}){
 }
 
 function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,isOnline,pendingCount,onSync}){
+  // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
+  // by division always returned zero for that card.
+  const [mfgStats,setMfgStats]=useState(null);
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        const jobs=await API.mfg.jobs.list().catch(()=>[]);
+        const active=(jobs||[]).filter(j=>j.status==="active");
+        // "Reports" for a shop job is the number of labour entries logged.
+        const labor=await Promise.all(active.map(j=>API.mfg.labor.forJob(j.id).catch(()=>[])));
+        const entries=labor.flat();
+        const hours=entries.reduce((s,l)=>s+(parseFloat(l.hours)||0),0);
+        const billed=entries.reduce((s,l)=>{
+          const job=active.find(j=>j.id===l.job_id);
+          const rate=parseFloat(job?.labor_rate)||75;
+          return s+(parseFloat(l.hours)||0)*rate;
+        },0);
+        if(!cancelled)setMfgStats({count:active.length,reports:entries.length,billed,hours});
+      }catch{ if(!cancelled)setMfgStats({count:0,reports:0,billed:0,hours:0}); }
+    })();
+    return()=>{cancelled=true;};
+  },[]);
+
   const divStats=DIVISIONS.map(div=>{
+    if(div==="Manufacturing"){
+      return{div,count:mfgStats?.count||0,billed:mfgStats?.billed||0,
+             reports:mfgStats?.reports||0,mfg:true};
+    }
     const divProjects=projects.filter(p=>p.division===div&&p.status==="active");
     const totalBilled=divProjects.reduce((s,p)=>s+(p._billed||0),0);
     const totalReports=divProjects.reduce((s,p)=>s+(p._reports||0),0);
@@ -902,7 +930,10 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
                   </div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-                  {[["Active Jobs",stats?.count||0,divColor],["Reports",stats?.reports||0,T.green],["Billed","$"+(stats?.billed>=1000?(stats.billed/1000).toFixed(1)+"k":fmt(stats?.billed||0)),T.blue]].map(([l,v,c])=>(
+                  {[["Active Jobs",stats?.count||0,divColor],
+                    // A shop job logs labour entries, not daily reports.
+                    [stats?.mfg?"Labor Logs":"Reports",stats?.reports||0,T.green],
+                    ["Billed","$"+(stats?.billed>=1000?(stats.billed/1000).toFixed(1)+"k":fmt(stats?.billed||0)),T.blue]].map(([l,v,c])=>(
                     <div key={l} style={{textAlign:"center"}}>
                       <div style={{fontSize:15,fontWeight:800,color:c}}>{v}</div>
                       <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.6px",marginTop:2}}>{l}</div>
@@ -11582,8 +11613,13 @@ function AppInner(){
           const rfiList=Array.isArray(rfis)?rfis:[];
           const coList=Array.isArray(cos)?cos:[];
           const photoList=Array.isArray(photos)?photos:[];
+          // daily_reports has no labor_total / equipment_total columns — the
+          // figures are derived from the labor and equipment JSON, which is
+          // why every division read $0.00 before.
           const billed=repList.reduce((s,r)=>{
-            return s+(r.labor_total||0)+(r.equipment_total||0);
+            const t=reportTotals(r,p.division);
+            const subs=(r.subcontractors||[]).reduce((a,x)=>a+subLineTotal(x),0);
+            return s+t.grand+subs;
           },0);
           const lastRep=repList.length>0?repList.sort((a,b)=>b.date?.localeCompare(a.date))[0].date:null;
           const openRfis=rfiList.filter(r=>r.status==="Open"||r.status==="Overdue").length;
