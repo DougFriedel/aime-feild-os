@@ -13304,7 +13304,7 @@ function MfgBillingTab({job,user,onErr}){
   );
 
   if(openInvoice!==null)return(
-    <InvoiceForm mfgJob={{...job,labor_rate:parseFloat(rate)||75}} user={user}
+    <MfgInvoiceForm job={{...job,labor_rate:parseFloat(rate)||75}} user={user}
       invoice={openInvoice.id?openInvoice:null}
       onBack={()=>setOpenInvoice(null)} onSaved={()=>setOpenInvoice(null)} onErr={onErr}/>
   );
@@ -13422,6 +13422,517 @@ function AuditTrail({table,recordId,label}){
           );
         })}
       </div>}
+    </div>
+  );
+}
+
+
+/* ── Manufacturing invoice — weekly man-hour billing ──
+   Matches the AIME invoice form: one row per billing week with employees,
+   hours each, man-hours, rate and amount. */
+function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
+  const isNew=!invoice;
+  const uid=()=>Math.random().toString(36).slice(2,10);
+
+  const [f,setF]=useState({
+    invoice_no:invoice?.invoice_no||"",
+    invoice_date:invoice?.invoice_date||today(),
+    due_date:invoice?.due_date||"",
+    bill_to:invoice?.bill_to||job.customer||"",
+    bill_to_address:invoice?.bill_to_address||"",
+    po_number:invoice?.po_number||job.po_number||"",
+    description:invoice?.description||job.description||"",
+    part_number:invoice?.part_number||"",
+    period_from:invoice?.period_from||"",
+    period_to:invoice?.period_to||"",
+    notes:invoice?.notes||"Net 30 unless otherwise agreed in writing.",
+    terms:invoice?.terms||"Net 30",
+    materials:invoice?.materials_amount??"",
+    freight:invoice?.freight_amount??"",
+    tax_pct:invoice?.tax_pct??0,
+    status:invoice?.status||"draft",
+    amount_paid:invoice?.amount_paid??"",
+  });
+  const [lines,setLines]=useState(()=>{
+    const l=invoice?.lines;
+    if(Array.isArray(l))return l;
+    if(typeof l==="string"){try{const p=JSON.parse(l);return Array.isArray(p)?p:[];}catch{return [];}}
+    return [];
+  });
+  const [rate,setRate]=useState(String(job.labor_rate??75));
+  const [saving,setSaving]=useState(false);
+  const [showPull,setShowPull]=useState(false);
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+
+  const addLine=()=>setLines(ls=>[...ls,{id:uid(),period_start:"",period_end:"",
+    description:`${job.description||job.job_number} - Weekly Labor`,
+    employees:"",hours:"",rate:rate,source:null}]);
+  const setLine=(id,k,v)=>setLines(ls=>ls.map(l=>l.id===id?{...l,[k]:v}:l));
+  const delLine=(id)=>setLines(ls=>ls.filter(l=>l.id!==id));
+
+  // Man-hours = employees × hours each. Amount = man-hours × rate.
+  const manHours=(l)=>(parseFloat(l.employees)||0)*(parseFloat(l.hours)||0);
+  const lineAmt=(l)=>manHours(l)*(parseFloat(l.rate)||0);
+
+  const totalManHours=lines.reduce((s,l)=>s+manHours(l),0);
+  const laborSubtotal=lines.reduce((s,l)=>s+lineAmt(l),0);
+  const materials=parseFloat(f.materials)||0;
+  const freight=parseFloat(f.freight)||0;
+  const taxable=laborSubtotal+materials+freight;
+  const taxAmount=taxable*((parseFloat(f.tax_pct)||0)/100);
+  const total=taxable+taxAmount;
+  const paid=parseFloat(f.amount_paid)||0;
+  const balanceDue=total-paid;
+
+  useEffect(()=>{
+    if(isNew&&!f.invoice_no){
+      API.invoices.forMfgJob(job.id).then(prior=>{
+        const n=(Array.isArray(prior)?prior:[]).length+1;
+        set("invoice_no",`${job.job_number||"JOB"}-INV-${String(n).padStart(3,"0")}`);
+      }).catch(()=>{});
+    }
+  },[]);
+
+  async function save(){
+    setSaving(true);
+    const body={
+      project_id:null,mfg_job_id:job.id,
+      invoice_no:f.invoice_no,invoice_date:f.invoice_date||null,due_date:f.due_date||null,
+      bill_to:f.bill_to,bill_to_address:f.bill_to_address,po_number:f.po_number,
+      description:f.description,notes:f.notes,terms:f.terms,status:f.status,
+      tax_pct:parseFloat(f.tax_pct)||0,tax_amount:taxAmount,
+      retainage_pct:0,retainage_amount:0,
+      amount_paid:paid,
+      subtotal:laborSubtotal,total,
+      lines,
+      created_by:invoice?.created_by||user.name,
+      updated_at:new Date().toISOString(),
+    };
+    try{
+      if(isNew)await API.invoices.create(body);
+      else await API.invoices.update(invoice.id,body);
+
+      // Flag the labour entries that were pulled onto this invoice.
+      const stamp={invoiced:true,invoice_no:f.invoice_no,invoiced_at:new Date().toISOString()};
+      const ids=lines.flatMap(l=>l.source?.ids||[]);
+      await Promise.all(ids.map(id=>
+        API.mfg.labor.update(id,{...stamp,billed_rate:parseFloat(rate)||null}).catch(()=>{})));
+      onSaved&&onSaved();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  function printInvoice(){
+    const w=window.open("","_blank");
+    if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const n0=(v)=>v?Number(v).toLocaleString("en-US"):"";
+    const m2=(v)=>v?Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"";
+    const dt=(d)=>{ if(!d)return ""; const[y,m,dd]=d.split("-"); return `${m}/${dd}/${y}`; };
+    const period=(l)=>l.period_start&&l.period_end?`${dt(l.period_start)} - ${dt(l.period_end)}`:dt(l.period_start)||"";
+
+    // Always draw seven rows so the form keeps its shape when short.
+    const rows=[...lines];
+    while(rows.length<7)rows.push(null);
+
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Invoice ${esc(f.invoice_no)} — ${esc(job.job_number)}</title><style>
+@page{size:letter portrait;margin:0.45in}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+body{font-size:9pt;color:#1f2937}
+.bar{height:26px;background:#1F3864;margin:-0.45in -0.45in 22px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:26px}
+.logo{font-family:Arial Black,Arial,sans-serif;font-size:40pt;font-weight:900;color:#1F3864;letter-spacing:2px;line-height:1}
+.logosub{font-size:7pt;color:#6b7280;margin-top:4px;letter-spacing:0.5px}
+h1{font-size:30pt;font-weight:900;color:#1F3864;text-align:right;letter-spacing:-1px}
+.meta{margin-top:10px;border-top:1px solid #d1d5db;padding-top:10px}
+.meta tr td{padding:3px 0;font-size:8pt}
+.meta .k{color:#4b5563;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;padding-right:26px}
+.meta .v{color:#111;text-align:right;min-width:110px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-bottom:20px}
+h2{font-size:11pt;font-weight:800;color:#1F3864;margin-bottom:8px}
+.panel{border:1px solid #e5e7eb;border-radius:4px;padding:10px 12px}
+.frow{display:grid;grid-template-columns:88px 1fr;align-items:center;margin-bottom:6px}
+.frow:last-child{margin-bottom:0}
+.fk{font-size:7pt;font-weight:700;color:#4b5563;text-transform:uppercase;letter-spacing:0.4px}
+.fv{border:1px solid #e5e7eb;border-radius:3px;padding:4px 7px;font-size:8.5pt;min-height:20px;background:#fff}
+table.items{width:100%;border-collapse:collapse;margin-bottom:20px}
+table.items th{background:#1F3864;color:#fff;padding:8px 7px;font-size:7.5pt;text-transform:uppercase;letter-spacing:0.4px;text-align:left;border:1px solid #1F3864}
+table.items td{border:1px solid #d1d5db;padding:7px;font-size:8.5pt;height:26px}
+.c{text-align:center}.r{text-align:right}
+.foot{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+.note{border:1px solid #e5e7eb;border-radius:4px;padding:10px 12px;font-size:8.5pt;line-height:1.6;min-height:120px}
+.hl{background:#eef2f8;border-radius:3px;padding:6px 8px;font-weight:700;margin-bottom:8px;font-size:8pt}
+.sig{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+.sigline{border:1px solid #e5e7eb;border-radius:3px;height:26px}
+.siglbl{font-size:7pt;font-weight:700;color:#4b5563;text-transform:uppercase;margin-top:4px;letter-spacing:0.4px}
+table.tot{width:100%;border-collapse:collapse}
+table.tot td{padding:6px 2px;font-size:8.5pt;border-bottom:1px solid #e5e7eb}
+table.tot .k{color:#374151;font-weight:700;text-transform:uppercase;font-size:7.5pt;letter-spacing:0.4px}
+table.tot .v{text-align:right;min-width:90px}
+.due{background:#1F3864;color:#fff;border-radius:4px;display:flex;justify-content:space-between;align-items:center;padding:12px 14px;margin-top:12px}
+.due .l{font-size:12pt;font-weight:800;letter-spacing:0.5px}
+.due .a{font-size:14pt;font-weight:900;background:#fff;color:#1F3864;border-radius:3px;padding:5px 14px;min-width:110px;text-align:right}
+.end{margin-top:26px;padding-top:9px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;font-size:7.5pt;color:#9ca3af}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="bar"></div>
+
+<div class="top">
+  <div><div class="logo">AIME</div>
+    <div class="logosub">ATLANTIC INDUSTRIAL MECHANICAL &amp; ENVIRONMENTAL INC.</div></div>
+  <div style="min-width:290px">
+    <h1>INVOICE</h1>
+    <table class="meta" style="width:100%">
+      <tr><td class="k">Date</td><td class="v">${dt(f.invoice_date)}</td></tr>
+      <tr><td class="k">Due Date</td><td class="v">${dt(f.due_date)}</td></tr>
+      <tr><td class="k">Customer PO #</td><td class="v">${esc(f.po_number)}</td></tr>
+      <tr><td class="k">AIME Job #</td><td class="v">${esc(job.job_number)}</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="two">
+  <div><h2>BILL TO</h2>
+    <div class="panel">
+      <div class="frow"><span class="fk">Customer</span><div class="fv">${esc(f.bill_to)}</div></div>
+      <div class="frow"><span class="fk">Address</span><div class="fv">${esc((f.bill_to_address||"").split("\n")[0]||"")}</div></div>
+      <div class="frow"><span class="fk">City / State / Zip</span><div class="fv">${esc((f.bill_to_address||"").split("\n").slice(1).join(", "))}</div></div>
+    </div>
+  </div>
+  <div><h2>${esc(f.description||job.description||"JOB")} INFORMATION</h2>
+    <div class="panel">
+      <div class="frow"><span class="fk">Project</span><div class="fv">${esc(f.description||job.description||"")}</div></div>
+      <div class="frow"><span class="fk">Part #</span><div class="fv">${esc(f.part_number)}</div></div>
+      <div class="frow"><span class="fk">Billing Period</span><div class="fv">${f.period_from?`${dt(f.period_from)} - ${dt(f.period_to)}`:""}</div></div>
+    </div>
+  </div>
+</div>
+
+<table class="items">
+  <thead><tr>
+    <th style="width:20%">Billing Period</th>
+    <th style="width:30%">Description</th>
+    <th class="c" style="width:10%">Employees</th>
+    <th class="c" style="width:8%">Hours</th>
+    <th class="c" style="width:11%">Man-Hours</th>
+    <th class="c" style="width:8%">Rate</th>
+    <th class="r" style="width:13%">Amount</th>
+  </tr></thead>
+  <tbody>
+    ${rows.map(l=>l?`<tr>
+      <td>${period(l)}</td>
+      <td>${esc(l.description)}</td>
+      <td class="c">${n0(l.employees)}</td>
+      <td class="c">${n0(l.hours)}</td>
+      <td class="c">${n0(manHours(l))}</td>
+      <td class="c">${n0(l.rate)}</td>
+      <td class="r">${n0(lineAmt(l))}</td>
+    </tr>`:`<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join("")}
+  </tbody>
+</table>
+
+<div class="foot">
+  <div>
+    <h2>NOTES / PAYMENT TERMS</h2>
+    <div class="hl">Labor billed at $${m2(rate)} per man-hour. Weekly billing period.</div>
+    <div class="note">${esc(f.notes).replace(/\n/g,"<br/>")}</div>
+    <div class="sig">
+      <div><div class="sigline"></div><div class="siglbl">Authorized By</div></div>
+      <div><div class="sigline"></div><div class="siglbl">Date</div></div>
+    </div>
+  </div>
+  <div>
+    <table class="tot">
+      <tr><td class="k">Total Man-Hours</td><td class="v">${n0(totalManHours)}</td></tr>
+      <tr><td class="k">Labor Subtotal</td><td class="v">${n0(laborSubtotal)}</td></tr>
+      <tr><td class="k">Materials / Consumables</td><td class="v">${n0(materials)}</td></tr>
+      <tr><td class="k">Freight / Other</td><td class="v">${n0(freight)}</td></tr>
+      <tr><td class="k">Sales Tax</td><td class="v">${n0(taxAmount)}</td></tr>
+      <tr><td class="k">Total</td><td class="v">${n0(total)}</td></tr>
+      <tr><td class="k">Amount Paid</td><td class="v">${n0(paid)}</td></tr>
+    </table>
+    <div class="due"><span class="l">BALANCE DUE</span><span class="a">${n0(balanceDue)}</span></div>
+  </div>
+</div>
+
+<div class="end"><span>Thank you for your business.</span>
+  <span>Atlantic Industrial Mechanical &amp; Environmental Inc.</span></div>
+</body></html>`);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},400);
+  }
+
+  const ri={...inp,fontSize:13,padding:"8px 10px"};
+  const money2=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:0}}>← Invoices</button>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:20,fontWeight:900,color:T.green}}>{money2(balanceDue)}</div>
+          <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>balance due</div>
+        </div>
+      </div>
+
+      {/* Header */}
+      <div style={{...cardS,marginBottom:12}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Invoice #</label><input value={f.invoice_no} onChange={e=>set("invoice_no",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Status</label>
+            <select value={f.status} onChange={e=>set("status",e.target.value)} style={{...ri,color:T.orange}}>
+              {["draft","sent","paid","void"].map(x=><option key={x} value={x}>{x}</option>)}
+            </select></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Invoice Date</label><input type="date" value={f.invoice_date} onChange={e=>set("invoice_date",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Due Date</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Customer PO #</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} style={ri}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div><label style={lbl}>Bill To</label><input value={f.bill_to} onChange={e=>set("bill_to",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Part #</label><input value={f.part_number} onChange={e=>set("part_number",e.target.value)} placeholder="e.g. 0801651" style={ri}/></div>
+        </div>
+      </div>
+
+      <div style={{...cardS,marginBottom:12}}>
+        <div style={{marginBottom:10}}><label style={lbl}>Address (first line, then city / state / zip)</label>
+          <textarea value={f.bill_to_address} onChange={e=>set("bill_to_address",e.target.value)} rows={2}
+            placeholder={"84 Iron Street - Dock 2\nJohnstown, PA 15906"} style={{...ri,resize:"vertical"}}/></div>
+        <div style={{marginBottom:10}}><label style={lbl}>Project / Description</label>
+          <input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="e.g. JLG 1651 Weldments" style={ri}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div><label style={lbl}>Billing Period From</label><input type="date" value={f.period_from} onChange={e=>set("period_from",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Billing Period To</label><input type="date" value={f.period_to} onChange={e=>set("period_to",e.target.value)} style={ri}/></div>
+        </div>
+      </div>
+
+      {/* Rate */}
+      <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`,display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:12,fontWeight:700,color:T.sub}}>Rate</span>
+        <span style={{fontSize:15,color:T.muted}}>$</span>
+        <input type="number" step="0.01" value={rate} onChange={e=>setRate(e.target.value)}
+          style={{...inp,width:104,fontSize:16,fontWeight:800,padding:"7px 9px",textAlign:"right"}}/>
+        <span style={{fontSize:12,color:T.sub}}>per man-hour</span>
+      </div>
+
+      {/* Lines */}
+      <div style={{display:"flex",gap:8,marginBottom:10}}>
+        <button onClick={addLine} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ Add Week</button>
+        <button onClick={()=>setShowPull(true)} style={{...primBtn,flex:1,borderRadius:12,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,fontSize:13}}>
+          ↓ Pull Logged Hours
+        </button>
+      </div>
+
+      {lines.length===0&&<div style={{...cardS,textAlign:"center",padding:"24px",color:T.muted,fontSize:12,marginBottom:10}}>
+        No billing weeks yet. Pull logged hours to build them automatically, or add a week by hand.
+      </div>}
+
+      {lines.map(l=>(
+        <div key={l.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${l.source?T.green:T.blue}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+            <div style={{fontSize:11,color:l.source?T.green:T.muted,fontWeight:l.source?700:400}}>
+              {l.source?`🏭 ${l.source.ids.length} labor entries`:"Manual week"}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:9}}>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:14,fontWeight:900,color:T.green}}>{money2(lineAmt(l))}</div>
+                <div style={{fontSize:10,color:T.muted}}>{manHours(l)} man-hrs</div>
+              </div>
+              <button onClick={()=>delLine(l.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <div><label style={lbl}>Week From</label><input type="date" value={l.period_start||""} onChange={e=>setLine(l.id,"period_start",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>Week To</label><input type="date" value={l.period_end||""} onChange={e=>setLine(l.id,"period_end",e.target.value)} style={ri}/></div>
+          </div>
+          <div style={{marginBottom:8}}><label style={lbl}>Description</label>
+            <input value={l.description||""} onChange={e=>setLine(l.id,"description",e.target.value)} style={ri}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            <div><label style={lbl}>Employees</label>
+              <input type="number" value={l.employees||""} onChange={e=>setLine(l.id,"employees",e.target.value)} style={{...ri,textAlign:"center"}}/></div>
+            <div><label style={lbl}>Hours Each</label>
+              <input type="number" step="0.5" value={l.hours||""} onChange={e=>setLine(l.id,"hours",e.target.value)} style={{...ri,textAlign:"center"}}/></div>
+            <div><label style={lbl}>Rate</label>
+              <input type="number" step="0.01" value={l.rate||""} onChange={e=>setLine(l.id,"rate",e.target.value)} style={{...ri,textAlign:"right"}}/></div>
+          </div>
+        </div>
+      ))}
+
+      {/* Totals */}
+      <div style={{...cardS,marginTop:12,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
+        {[["Total Man-Hours",totalManHours,false],["Labor Subtotal",laborSubtotal,true]].map(([l,v,isMoney])=>(
+          <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${T.border}`,fontSize:13}}>
+            <span style={{color:T.sub}}>{l}</span>
+            <span style={{fontWeight:700}}>{isMoney?money2(v):Number(v).toLocaleString("en-US")}</span>
+          </div>
+        ))}
+        {[["Materials / Consumables","materials"],["Freight / Other","freight"]].map(([l,k])=>(
+          <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}`}}>
+            <span style={{fontSize:13,color:T.sub}}>{l}</span>
+            <input type="number" step="0.01" value={f[k]} onChange={e=>set(k,e.target.value)}
+              placeholder="0.00" style={{...inp,width:110,padding:"4px 8px",fontSize:12.5,textAlign:"right"}}/>
+          </div>
+        ))}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:13,color:T.sub}}>Sales Tax</span>
+            <input type="number" step="0.001" value={f.tax_pct} onChange={e=>set("tax_pct",e.target.value)}
+              style={{...inp,width:58,padding:"4px 6px",fontSize:12,textAlign:"center"}}/><span style={{fontSize:12,color:T.muted}}>%</span>
+          </div>
+          <span style={{fontSize:13,fontWeight:700}}>{money2(taxAmount)}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:14}}>
+          <span style={{fontWeight:800}}>Total</span><span style={{fontWeight:900}}>{money2(total)}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0"}}>
+          <span style={{fontSize:13,color:T.sub}}>Amount Paid</span>
+          <input type="number" step="0.01" value={f.amount_paid} onChange={e=>set("amount_paid",e.target.value)}
+            placeholder="0.00" style={{...inp,width:110,padding:"4px 8px",fontSize:12.5,textAlign:"right"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:10,marginTop:4,borderTop:`2px solid ${T.border}`}}>
+          <span style={{fontSize:15,fontWeight:900}}>BALANCE DUE</span>
+          <span style={{fontSize:24,fontWeight:900,color:T.green}}>{money2(balanceDue)}</span>
+        </div>
+      </div>
+
+      <div style={{...cardS,marginBottom:14}}>
+        <label style={lbl}>Notes / Payment Terms</label>
+        <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={3} style={{...inp,resize:"vertical"}}/>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <button onClick={save} disabled={saving}
+          style={{...primBtn,borderRadius:14,background:T.orange,color:"#000",opacity:saving?0.6:1}}>
+          {saving?"Saving…":"💾 Save Invoice"}
+        </button>
+        <button onClick={printInvoice} style={{...primBtn,borderRadius:14,background:"#1f3864"}}>🖨️ Print</button>
+      </div>
+
+      {showPull&&<PullMfgWeeksModal job={job} rate={rate}
+        onClose={()=>setShowPull(false)}
+        onPull={(weeks)=>{setLines(ls=>[...ls,...weeks]);setShowPull(false);}}
+        onErr={onErr}/>}
+    </div>
+  );
+}
+
+/* ── Group unbilled shop labour into billing weeks ── */
+function PullMfgWeeksModal({job,rate,onClose,onPull,onErr}){
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [sel,setSel]=useState({});
+
+  useEffect(()=>{(async()=>{
+    try{
+      const l=await API.mfg.labor.forJob(job.id).catch(()=>[]);
+      setRows((l||[]).filter(x=>!x.invoiced));
+    }catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  })();},[job.id]);
+
+  // Monday-to-Friday weeks, matching how the shop bills.
+  const weekStart=(d)=>{
+    const x=new Date(d+"T12:00:00");
+    const day=x.getDay();
+    x.setDate(x.getDate()-(day===0?6:day-1));
+    return x.toISOString().slice(0,10);
+  };
+  const addDays=(d,n)=>{
+    const x=new Date(d+"T12:00:00");x.setDate(x.getDate()+n);
+    return x.toISOString().slice(0,10);
+  };
+
+  const weeks={};
+  rows.forEach(r=>{
+    if(!r.work_date)return;
+    const k=weekStart(r.work_date);
+    if(!weeks[k])weeks[k]={start:k,end:addDays(k,4),ids:[],workers:new Set(),manHours:0};
+    weeks[k].ids.push(r.id);
+    if(r.worker_name)weeks[k].workers.add(r.worker_name);
+    weeks[k].manHours+=parseFloat(r.hours)||0;
+  });
+  const weekList=Object.values(weeks).sort((a,b)=>a.start.localeCompare(b.start));
+
+  const toggle=(k)=>setSel(s=>{const n={...s};if(n[k])delete n[k];else n[k]=true;return n;});
+  const chosen=weekList.filter(w=>sel[w.start]);
+  const rateN=parseFloat(rate)||0;
+  const total=chosen.reduce((s,w)=>s+w.manHours*rateN,0);
+  const uid=()=>Math.random().toString(36).slice(2,10);
+
+  function pull(){
+    onPull(chosen.map(w=>{
+      const emp=w.workers.size||1;
+      return{id:uid(),period_start:w.start,period_end:w.end,
+        description:`${job.description||job.job_number} - Weekly Labor`,
+        employees:emp,
+        // Hours each — man-hours split across the crew, as the form expects.
+        hours:Number((w.manHours/emp).toFixed(2)),
+        rate:rateN,
+        source:{type:"mfglabor",ids:w.ids}};
+    }));
+  }
+
+  const money2=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const dt=(d)=>{const[y,m,dd]=d.split("-");return `${m}/${dd}`;};
+
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:220,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:"18px 18px 0 0",width:"100%",maxWidth:620,maxHeight:"86vh",display:"flex",flexDirection:"column"}}>
+        <div style={{padding:"16px 18px 10px",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontSize:16,fontWeight:900,color:T.text}}>↓ Pull Logged Hours</div>
+          <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>
+            Unbilled shop labour on {job.job_number}, grouped into billing weeks.
+          </div>
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:"12px 18px"}}>
+          {loading&&<div style={{textAlign:"center",padding:20,color:T.muted,fontSize:13}}>Loading…</div>}
+          {!loading&&weekList.length===0&&<div style={{textAlign:"center",padding:"30px 10px",color:T.muted}}>
+            <div style={{fontSize:30,marginBottom:8}}>✅</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.sub}}>No unbilled hours</div>
+            <div style={{fontSize:11.5,marginTop:3}}>Everything logged on this job has been invoiced.</div>
+          </div>}
+
+          {weekList.map(w=>{
+            const on=!!sel[w.start];
+            const emp=w.workers.size||1;
+            return(
+              <div key={w.start} onClick={()=>toggle(w.start)}
+                style={{...cardS,marginBottom:7,padding:"11px 13px",cursor:"pointer",
+                  display:"flex",alignItems:"center",gap:11,
+                  border:on?`1px solid ${T.green}`:`1px solid ${T.border}`,
+                  background:on?T.greenLow:T.card}}>
+                <div style={{width:19,height:19,borderRadius:5,flexShrink:0,display:"flex",alignItems:"center",
+                  justifyContent:"center",fontSize:12,fontWeight:900,
+                  background:on?T.green:"transparent",color:"#000",
+                  border:on?"none":`1.5px solid ${T.border}`}}>{on?"✓":""}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{dt(w.start)} – {dt(w.end)}</div>
+                  <div style={{fontSize:11,color:T.muted}}>
+                    {emp} employee{emp!==1?"s":""} · {w.manHours.toFixed(1)} man-hours · {w.ids.length} entries
+                  </div>
+                </div>
+                <div style={{fontSize:13,fontWeight:800,color:T.green,flexShrink:0}}>{money2(w.manHours*rateN)}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{padding:"12px 18px 20px",borderTop:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+            <span style={{fontSize:12,color:T.sub}}>{chosen.length} week{chosen.length!==1?"s":""} @ {money2(rateN)}/man-hr</span>
+            <span style={{fontSize:15,fontWeight:900,color:T.green}}>{money2(total)}</span>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={pull} disabled={!chosen.length}
+              style={{...primBtn,borderRadius:12,background:T.green,color:"#000",opacity:chosen.length?1:0.4}}>
+              Add to Invoice
+            </button>
+            <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
