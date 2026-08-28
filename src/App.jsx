@@ -545,7 +545,33 @@ function ErrBanner({msg,onDismiss}){if(!msg)return null;return(<div style={{back
 function Lightbox({src,onClose}){if(!src)return null;return(<div onClick={onClose} style={{position:"fixed",inset:0,zIndex:999,background:"rgba(0,0,0,0.95)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}><img src={src} alt="" style={{maxWidth:"100%",maxHeight:"90vh",borderRadius:12}} onClick={e=>e.stopPropagation()}/><button onClick={onClose} style={{position:"absolute",top:16,right:16,background:"#D4D4D8",border:"none",color:"#fff",borderRadius:"50%",width:36,height:36,fontSize:18,cursor:"pointer"}}>×</button></div>);}
 function DashedAdd({label,onClick,color}){const c=color||T.muted;return(<button onClick={onClick} style={{width:"100%",border:`2px dashed ${c}50`,background:c+"08",color:c,borderRadius:14,padding:"14px",fontSize:15,cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>{label}</button>);}
 function StatBar({items}){return(<div style={{display:"grid",gridTemplateColumns:`repeat(${items.length},1fr)`,gap:8}}>{items.map(({label,val,color})=>(<div key={label} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 8px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:900,color:color||T.text}}>{val}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.7px",marginTop:2}}>{label}</div></div>))}</div>);}
-function TopBar({title,sub,onBack,right}){return(<div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>{onBack&&<button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>}<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{title}</div>{sub&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{sub}</div>}</div>{right&&<div style={{flexShrink:0,marginLeft:12}}>{right}</div>}</div></div>);}
+/* ── iOS safe area ──
+   On a notched iPhone the status bar overlays the page, so a sticky header at
+   top:0 sits underneath the clock and the Back button becomes untappable.
+   env() returns 0 on anything without a notch, so these are no-ops elsewhere.
+
+   This also sets viewport-fit=cover, without which env() always reports 0. */
+const SAFE_TOP="env(safe-area-inset-top, 0px)";
+const SAFE_BOTTOM="env(safe-area-inset-bottom, 0px)";
+const padTop=(base)=>`calc(${base}px + ${SAFE_TOP})`;
+const padBottom=(base)=>`calc(${base}px + ${SAFE_BOTTOM})`;
+
+if(typeof document!=="undefined"){
+  const vp=document.querySelector('meta[name="viewport"]');
+  const want="width=device-width, initial-scale=1, viewport-fit=cover";
+  if(vp){ if(!/viewport-fit/.test(vp.content))vp.setAttribute("content",want); }
+  else{
+    const m=document.createElement("meta");
+    m.name="viewport";m.content=want;document.head.appendChild(m);
+  }
+  // Paint the notch strip the app's background rather than white.
+  document.documentElement.style.background="#0D0D0F";
+  const st=document.createElement("style");
+  st.textContent="body{background:#0D0D0F;overscroll-behavior-y:none}";
+  document.head.appendChild(st);
+}
+
+function TopBar({title,sub,onBack,right}){return(<div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50}}>{onBack&&<button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>}<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{title}</div>{sub&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{sub}</div>}</div>{right&&<div style={{flexShrink:0,marginLeft:12}}>{right}</div>}</div></div>);}
 
 function LaborCard({row,onChange,onRemove,division}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
 function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>set("qty",e.target.value)} style={inp}/></div><div>
@@ -1494,7 +1520,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
   const divMeta=DIV_META[project.division]||{color:T.orange};
   return(
     <div ref={topRef} style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50}}>
         {/* Offline indicator */}
         {!isOnline&&<div style={{background:"#7c2d12",borderRadius:8,padding:"6px 10px",marginBottom:8,fontSize:12,color:"#fed7aa",display:"flex",alignItems:"center",gap:6}}><span>📡</span>Offline — report will save locally and sync when reconnected</div>}
         {/* Draft restore banner */}
@@ -1625,7 +1651,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
           </div>
         </div>)}
       </div>
-      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:T.bg+"EE",backdropFilter:"blur(12px)",borderTop:`1px solid ${T.border}`,padding:"12px 16px",display:"flex",gap:10}}>
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:T.bg+"EE",backdropFilter:"blur(12px)",borderTop:`1px solid ${T.border}`,padding:"12px 16px",paddingBottom:padBottom(12),display:"flex",gap:10}}>
         {step>1&&<button onClick={()=>{setStep(s=>s-1);scroll();}} style={{...ghostBtn,flex:1}}>← Back</button>}
         {step<6?<button onClick={()=>{setStep(s=>s+1);scroll();}} style={{...primBtn,flex:2,borderRadius:12,background:divMeta.color}}>{step===4?"Review →":"Next →"}</button>:<button onClick={submit} style={{...primBtn,flex:2,borderRadius:12,background:divMeta.color,opacity:saving?0.6:1}}>{saving?"Saving…":isEdit?"💾 Save Changes":"💾 Save Report"}</button>}
       </div>
@@ -2446,7 +2472,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
 
     return(
       <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-        <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <button onClick={()=>setShowPrintModal(false)} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
           <div style={{fontSize:15,fontWeight:800,color:T.text}}>🖨️ Print / Export PDF</div>
           <button onClick={generate} style={{background:T.blue,color:"#fff",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
@@ -3974,7 +4000,7 @@ function SignaturePackageScreen({project,user,onBack,onErr}){
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",paddingTop:padTop(12),position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:4,padding:0}}>← Back</button>
         <div style={{fontSize:15,fontWeight:900,color:T.text}}>📦 Send Package for Signature</div>
         <div style={{fontSize:11,color:T.muted,marginTop:2}}>
@@ -4017,7 +4043,7 @@ function SignaturePackageScreen({project,user,onBack,onErr}){
       </div>
 
       {!loading&&(dailies.length>0||tickets.length>0)&&(
-        <div style={{position:"fixed",left:0,right:0,bottom:0,background:T.surface,borderTop:`1px solid ${T.border}`,padding:"10px 16px",zIndex:60}}>
+        <div style={{position:"fixed",left:0,right:0,bottom:0,background:T.surface,borderTop:`1px solid ${T.border}`,padding:"10px 16px",paddingBottom:padBottom(10),zIndex:60}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <span style={{fontSize:12,color:T.sub}}>{chosen.length} selected</span>
             <span style={{fontSize:15,fontWeight:900,color:T.green}}>{m(total)}</span>
@@ -4938,7 +4964,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <button onClick={()=>setPmDiv(null)} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Divisions</button>
         <div style={{textAlign:"center"}}>
           <div style={{fontSize:15,fontWeight:900,color:(DIV_META[pmDiv]||{}).color||T.orange}}>
@@ -5494,7 +5520,7 @@ function CrewDirectoryScreen({onBack,user}){
         ))}
         {certAlerts.length>3&&<div style={{fontSize:10,color:T.muted,marginTop:2}}>+{certAlerts.length-3} more — view Crew Directory for full list</div>}
       </div>}
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👥 Crew Directory</div><button onClick={()=>{setF({...blank});setMode("new");}} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:10,padding:"8px 14px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ Add</button></div>
       </div>
@@ -5629,7 +5655,7 @@ function UserManagementScreen({onBack,currentUser,user}){
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>👤 User Management</div><div style={{fontSize:12,color:T.muted}}>Set permission levels for your crew</div></div>
@@ -7303,7 +7329,7 @@ function PublicProposalView({estimateId}){
 
   return(
     <div style={{minHeight:"100vh",background:"#f4f4f6"}}>
-      <div style={{background:"#1F3864",color:"#fff",padding:"12px 20px",display:"flex",alignItems:"center",gap:14,
+      <div style={{background:"#1F3864",color:"#fff",padding:"12px 20px",paddingTop:padTop(12),display:"flex",alignItems:"center",gap:14,
         position:"sticky",top:0,zIndex:10,fontFamily:"system-ui"}} className="noprint">
         <div style={{flex:1,fontSize:14,fontWeight:700}}>AIME — Proposal</div>
         <button onClick={()=>window.print()}
@@ -9123,7 +9149,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← {project.division}</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
           <div style={{flex:1,minWidth:0,paddingRight:10}}>
@@ -10090,7 +10116,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:20}}>🏭</span>
@@ -10402,7 +10428,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       {/* Header */}
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",paddingTop:padTop(12),position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",display:"block",marginBottom:4}}>← Back to Jobs</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div><div style={{fontSize:18,fontWeight:900,color:T.purple}}>{job.job_number}</div>
@@ -11322,7 +11348,7 @@ function ManufacturingTraveler({part,job,user,onBack}){
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       {/* Header */}
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:6}}>← {job.job_number}</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
           <div>
@@ -12981,7 +13007,7 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",paddingTop:padTop(12),position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",display:"block",marginBottom:4}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontSize:15,fontWeight:900,color:T.text}}>📄 Packing Slip</div>
@@ -15961,7 +15987,7 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       {/* Sticky header with live grand total */}
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",paddingTop:padTop(12),position:"sticky",top:0,zIndex:50}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",display:"block",marginBottom:4}}>← Back</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
