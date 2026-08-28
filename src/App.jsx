@@ -908,7 +908,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
       {/* Header */}
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px",paddingTop:padTop(16)}}>
         {/* Offline / pending banner */}
         {!isOnline&&<div style={{background:"#7c2d12",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:16}}>📡</span><div><div style={{fontSize:13,fontWeight:700,color:"#fed7aa"}}>No Connection</div><div style={{fontSize:11,color:"#fdba74"}}>{pendingCount>0?`${pendingCount} report${pendingCount!==1?'s':''} will sync when back online`:"Reports will save locally until reconnected"}</div></div></div>}
         {isOnline&&pendingCount>0&&<QueueBanner onSync={onSync}/>}
@@ -1072,7 +1072,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px 0"}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px 0",paddingTop:padTop(14)}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:10,padding:0,fontFamily:"inherit"}}>← Divisions</button>
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
           <div style={{width:44,height:44,borderRadius:14,background:meta.color+"20",border:`2px solid ${meta.color}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{meta.icon}</div>
@@ -4431,7 +4431,7 @@ function DrawingViewer({drawing,user,onBack,onErr,bucket="drawings",onPageCount}
 
   return(
     <div style={{position:"fixed",inset:0,background:T.bg,zIndex:150,display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"10px 14px",flexShrink:0,display:"flex",alignItems:"center",gap:10}}>
+      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"10px 14px",paddingTop:padTop(10),flexShrink:0,display:"flex",alignItems:"center",gap:10}}>
         <div style={{flex:1,minWidth:0}}>
           <button onClick={goBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:4,padding:0}}>← Back to Drawings</button>
           <div style={{fontSize:14,fontWeight:800,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
@@ -15946,7 +15946,7 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
     const link=`${window.location.origin}${window.location.pathname}?tmsign=${ticket?.id}`;
     return(
       <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-        <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px"}}>
+        <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"12px 16px",paddingTop:padTop(12)}}>
           <button onClick={()=>setShowTMShare(false)} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",display:"block",marginBottom:4}}>← Back</button>
           <div style={{fontSize:15,fontWeight:900,color:T.text}}>📤 Send Client Link</div>
         </div>
