@@ -278,7 +278,7 @@ const API={
     assemblyLog:{forPart:(pid)=>sb(`/mfg_assembly_log?part_id=eq.${pid}&order=completion_date.desc`),forJob:(jid)=>sb(`/mfg_assembly_log?job_id=eq.${jid}&order=completion_date.desc`),create:(d)=>sb('/mfg_assembly_log',{method:'POST',body:d,prefer:'return=representation'})},
     shippingLog:{forPart:(pid)=>sb(`/mfg_shipping_log?part_id=eq.${pid}&order=ship_date.desc`),forJob:(jid)=>sb(`/mfg_shipping_log?job_id=eq.${jid}&order=ship_date.desc`),create:(d)=>sb('/mfg_shipping_log',{method:'POST',body:d,prefer:'return=representation'})},
     packingSlips:{forJob:(jid)=>sb(`/mfg_packing_slips?job_id=eq.${jid}&order=created_at.desc`),create:(d)=>sb('/mfg_packing_slips',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'DELETE'})},
-    labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_labor?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
+    labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),openFor:(name)=>sb(`/mfg_labor?worker_name=eq.${encodeURIComponent(name)}&status=eq.open&limit=1`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_labor?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
     ncr:{forJob:(jid)=>sb(`/mfg_ncr?job_id=eq.${jid}&order=created_at.desc`),forPart:(pid)=>sb(`/mfg_ncr?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_ncr',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_ncr?id=eq.${id}`,{method:'PATCH',body:d})},
   },
   docFolders:{forProject:(pid)=>sb(`/document_folders?project_id=eq.${pid}&order=name.asc`),create:(d)=>sb("/document_folders",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/document_folders?id=eq.${id}`,{method:"PATCH",body:d}),remove:(id)=>sb(`/document_folders?id=eq.${id}`,{method:"DELETE"})},
@@ -10349,7 +10349,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
-        {[["overview","📊 Overview"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["shipping","📤 Shipping Log"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["shipping","📤 Shipping Log"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"12px 4px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -10358,6 +10358,8 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
       <div style={{padding:"14px 16px 100px"}}>
         {loading&&<Spinner/>}
+
+        {!loading&&tab==="time"&&<MfgTimeTab job={job} parts={parts} user={user} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="billing"&&canAdmin&&<MfgBillingTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
 
@@ -11330,6 +11332,414 @@ function ManufacturingTraveler({part,job,user,onBack}){
           );
         })}
       </div>
+    </div>
+  );
+}
+
+
+/* ── Shop time clock ──
+   Writes to mfg_labor rather than time_cards, because that is what the
+   manufacturing invoice pulls from. A worker cannot be on the shop clock and
+   a field clock at once — both are checked before a punch is allowed. */
+function MfgClockCard({job,parts,user,onChange}){
+  const [open,setOpen]=useState(null);       // open shop punch
+  const [fieldOpen,setFieldOpen]=useState(null); // open field punch, if any
+  const [loading,setLoading]=useState(true);
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+  const [now,setNow]=useState(Date.now());
+  const [operation,setOperation]=useState("");
+  const [partId,setPartId]=useState("");
+
+  const OPERATIONS=["Material Received","Material Inspection","Tacking","Welding",
+    "Welder QC","Manager QC","Palletizing/Shipping","General/Other"];
+
+  useEffect(()=>{
+    const t=setInterval(()=>setNow(Date.now()),1000);
+    return()=>clearInterval(t);
+  },[]);
+
+  async function load(){
+    setLoading(true);
+    try{
+      const [shop,field]=await Promise.all([
+        API.mfg.labor.openFor(user.name).catch(()=>[]),
+        API.punches.open(user.name).catch(()=>[]),
+      ]);
+      setOpen(Array.isArray(shop)&&shop.length?shop[0]:null);
+      setFieldOpen(Array.isArray(field)&&field.length?field[0]:null);
+    }catch(e){ setErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[user.name,job.id]);
+
+  function position(){
+    return new Promise(res=>{
+      if(!navigator.geolocation)return res({lat:null,lng:null});
+      navigator.geolocation.getCurrentPosition(
+        p=>res({lat:p.coords.latitude,lng:p.coords.longitude}),
+        ()=>res({lat:null,lng:null}),{timeout:6000,maximumAge:60000});
+    });
+  }
+
+  async function clockIn(){
+    setBusy(true);setErr("");
+    try{
+      const{lat,lng}=await position();
+      const at=new Date();
+      await API.mfg.labor.create({
+        job_id:job.id,part_id:partId||null,
+        worker_name:user.name,
+        work_date:at.toISOString().slice(0,10),
+        operation:operation||null,
+        hours:0,
+        clock_in_at:at.toISOString(),
+        clock_in_lat:lat,clock_in_lng:lng,
+        status:"open",source:"punch",
+      });
+      await load();onChange&&onChange();
+    }catch(e){
+      setErr(String(e.message||"").includes("mfg_labor_one_open_uidx")
+        ?"You're already clocked in on another shop job. Clock out there first."
+        :e.message);
+    }
+    setBusy(false);
+  }
+
+  async function clockOut(){
+    if(!open)return;
+    setBusy(true);setErr("");
+    try{
+      const{lat,lng}=await position();
+      const at=new Date();
+      const inAt=new Date(open.clock_in_at);
+      const hrs=Math.max(0,Math.round(((at-inAt)/3600000)*4)/4);
+      await API.mfg.labor.update(open.id,{
+        clock_out_at:at.toISOString(),
+        clock_out_lat:lat,clock_out_lng:lng,
+        hours:hrs,original_hours:hrs,status:"pending",
+      });
+      await load();onChange&&onChange();
+    }catch(e){ setErr(e.message); }
+    setBusy(false);
+  }
+
+  const onThisJob=open&&open.job_id===job.id;
+  const elapsed=()=>{
+    if(!open?.clock_in_at)return "0:00:00";
+    const ms=Math.max(0,now-new Date(open.clock_in_at).getTime());
+    const h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000),sec=Math.floor(ms%60000/1000);
+    return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+  };
+  const since=()=>open?.clock_in_at
+    ?new Date(open.clock_in_at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"";
+
+  if(loading)return(
+    <div style={{...cardS,marginBottom:14,textAlign:"center",padding:20,color:T.muted,fontSize:13}}>
+      Checking the clock…
+    </div>
+  );
+
+  // On a field job — the two clocks must not run together
+  if(fieldOpen&&!open)return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.yellow}`}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.yellow,textTransform:"uppercase",letterSpacing:"1px"}}>
+        Clocked in on a field job
+      </div>
+      <div style={{fontSize:15,fontWeight:800,color:T.text,marginTop:4}}>
+        {fieldOpen.projects?.name||"A field job"}
+      </div>
+      <div style={{fontSize:11.5,color:T.sub,marginTop:8,lineHeight:1.6}}>
+        Clock out there before starting shop work, so the hours land in the right place.
+      </div>
+    </div>
+  );
+
+  if(open&&!onThisJob)return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.yellow}`}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.yellow,textTransform:"uppercase",letterSpacing:"1px"}}>
+        Clocked in on another shop job
+      </div>
+      <div style={{fontSize:12,color:T.muted,marginTop:4}}>Since {since()} · {elapsed()}</div>
+      <div style={{fontSize:11.5,color:T.sub,marginTop:8,lineHeight:1.6}}>
+        Clock out of that job before starting here.
+      </div>
+    </div>
+  );
+
+  if(onThisJob)return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`,background:T.greenLow}}>
+      {err&&<div style={{fontSize:11.5,color:T.red,marginBottom:8}}>{err}</div>}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px"}}>
+            ● On the clock
+          </div>
+          <div style={{fontSize:12,color:T.muted,marginTop:3}}>
+            Since {since()}{open.operation?` · ${open.operation}`:""}
+          </div>
+        </div>
+        <div style={{fontSize:30,fontWeight:900,color:T.green,fontVariantNumeric:"tabular-nums",letterSpacing:"-1px"}}>
+          {elapsed()}
+        </div>
+      </div>
+      <button onClick={clockOut} disabled={busy}
+        style={{...primBtn,borderRadius:14,padding:"18px",fontSize:17,background:T.red,color:"#fff",opacity:busy?0.6:1}}>
+        {busy?"…":"⏹ Clock Out"}
+      </button>
+    </div>
+  );
+
+  return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.border}`}}>
+      {err&&<div style={{fontSize:11.5,color:T.red,marginBottom:8}}>{err}</div>}
+      <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>
+        Shop Clock · {job.job_number}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+        <div><label style={lbl}>Operation</label>
+          <select value={operation} onChange={e=>setOperation(e.target.value)} style={inpSel}>
+            <option value="">— Select —</option>
+            {OPERATIONS.map(o=><option key={o}>{o}</option>)}
+          </select></div>
+        <div><label style={lbl}>Part (optional)</label>
+          <select value={partId} onChange={e=>setPartId(e.target.value)} style={inpSel}>
+            <option value="">— All / general —</option>
+            {(parts||[]).map(p=><option key={p.id} value={p.id}>{p.part_number}</option>)}
+          </select></div>
+      </div>
+      <button onClick={clockIn} disabled={busy}
+        style={{...primBtn,borderRadius:14,padding:"18px",fontSize:17,background:T.green,color:"#000",opacity:busy?0.6:1}}>
+        {busy?"…":"▶ Clock In"}
+      </button>
+      <div style={{fontSize:10.5,color:T.muted,textAlign:"center",marginTop:7}}>
+        📍 Your location is recorded with the punch
+      </div>
+    </div>
+  );
+}
+
+/* ── Shop floor: who's on the clock, and hours waiting on approval ── */
+function MfgTimeTab({job,parts,user,onErr}){
+  const [openRows,setOpenRows]=useState([]);
+  const [pendRows,setPendRows]=useState([]);
+  const [recent,setRecent]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [edit,setEdit]=useState(null);
+  const [draft,setDraft]=useState({});
+  const [now,setNow]=useState(Date.now());
+  const [showManual,setShowManual]=useState(false);
+  const [mf,setMf]=useState({worker_name:user.name,work_date:today(),hours:"",operation:"",part_id:"",notes:""});
+  const canApprove=user.role==="admin"||user.role==="pm";
+  const isSupervisor=canApprove||user.role==="foreman";
+
+  useEffect(()=>{
+    const t=setInterval(()=>setNow(Date.now()),30000);
+    return()=>clearInterval(t);
+  },[]);
+
+  async function load(){
+    setLoading(true);
+    try{
+      const all=await API.mfg.labor.forJob(job.id)||[];
+      setOpenRows(all.filter(r=>r.status==="open"));
+      setPendRows(all.filter(r=>r.status==="pending"));
+      setRecent(all.filter(r=>r.status==="approved").slice(0,25));
+    }catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[job.id]);
+
+  async function approve(ids){
+    setSaving(true);
+    try{
+      await Promise.all(ids.map(id=>API.mfg.labor.update(id,{
+        status:"approved",approved_by:user.name,approved_at:new Date().toISOString(),
+      })));
+      await load();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  async function saveEdit(r){
+    setSaving(true);
+    try{
+      await API.mfg.labor.update(r.id,{
+        hours:parseFloat(draft.hours)||0,
+        original_hours:r.original_hours??r.hours,
+        edited_by:user.name,edited_at:new Date().toISOString(),
+        edit_reason:draft.edit_reason||null,
+      });
+      setEdit(null);await load();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  async function saveManual(){
+    if(!mf.worker_name||!mf.hours)return;
+    setSaving(true);
+    try{
+      await API.mfg.labor.create({...mf,job_id:job.id,
+        hours:parseFloat(mf.hours)||0,part_id:mf.part_id||null,
+        source:"manual",status:"approved",
+        approved_by:user.name,approved_at:new Date().toISOString()});
+      setShowManual(false);
+      setMf({worker_name:user.name,work_date:today(),hours:"",operation:"",part_id:"",notes:""});
+      await load();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  const OPERATIONS=["Material Received","Material Inspection","Tacking","Welding",
+    "Welder QC","Manager QC","Palletizing/Shipping","General/Other"];
+  const hoursOpen=(r)=>Math.max(0,(now-new Date(r.clock_in_at).getTime())/3600000);
+  const partOf=(id)=>(parts||[]).find(p=>p.id===id)?.part_number||"";
+  const hhmm=(iso)=>iso?new Date(iso).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"—";
+  const ri={...inp,fontSize:13,padding:"7px 9px"};
+  const pendHrs=pendRows.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
+
+  return(
+    <div>
+      <MfgClockCard job={job} parts={parts} user={user} onChange={load}/>
+
+      {loading&&<Spinner/>}
+
+      {isSupervisor&&openRows.length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:9}}>
+          ● On the clock now ({openRows.length})
+        </div>
+        {openRows.map(r=>{
+          const h=hoursOpen(r), bad=h>12;
+          return(
+            <div key={r.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderTop:`1px solid ${T.border}`}}>
+              <div>
+                <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{r.worker_name}</div>
+                <div style={{fontSize:10.5,color:T.muted}}>
+                  in at {hhmm(r.clock_in_at)}{r.operation?` · ${r.operation}`:""}{r.part_id?` · ${partOf(r.part_id)}`:""}
+                </div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:13,fontWeight:800,color:bad?T.red:T.green}}>
+                  {Math.floor(h)}h {Math.floor((h%1)*60)}m
+                </div>
+                {bad&&<div style={{fontSize:9.5,color:T.red,fontWeight:700}}>forgot to clock out?</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>}
+
+      {canApprove&&pendRows.length>0&&<div style={{marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.yellow,textTransform:"uppercase",letterSpacing:"1px"}}>
+            ⏳ Hours to approve ({pendRows.length}) · {pendHrs.toFixed(2)}h
+          </div>
+          <button onClick={()=>approve(pendRows.map(r=>r.id))} disabled={saving}
+            style={{background:T.green,color:"#000",border:"none",borderRadius:9,padding:"6px 13px",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+            ✓ Approve all
+          </button>
+        </div>
+        {pendRows.map(r=>{
+          const editing=edit===r.id;
+          const wasEdited=r.edited_by&&r.original_hours!=null&&Number(r.original_hours)!==Number(r.hours);
+          return(
+            <div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.yellow}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:T.purple}}>{r.worker_name}</div>
+                  <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                    {r.work_date}{r.clock_in_at?` · ${hhmm(r.clock_in_at)} → ${hhmm(r.clock_out_at)}`:""}
+                    {r.operation?` · ${r.operation}`:""}{r.part_id?` · ${partOf(r.part_id)}`:""}
+                  </div>
+                  {wasEdited&&<div style={{fontSize:10.5,color:T.blue,marginTop:3}}>
+                    edited by {r.edited_by} · was {Number(r.original_hours).toFixed(2)}h
+                    {r.edit_reason?` — ${r.edit_reason}`:""}
+                  </div>}
+                </div>
+                <div style={{fontSize:17,fontWeight:900,color:T.green}}>{Number(r.hours||0).toFixed(2)}h</div>
+              </div>
+              {editing?(
+                <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:8,marginBottom:9}}>
+                    <div><label style={lbl}>Hours</label>
+                      <input type="number" step="0.25" value={draft.hours}
+                        onChange={e=>setDraft(d=>({...d,hours:e.target.value}))} style={{...ri,textAlign:"center"}}/></div>
+                    <div><label style={lbl}>Reason</label>
+                      <input value={draft.edit_reason}
+                        onChange={e=>setDraft(d=>({...d,edit_reason:e.target.value}))}
+                        placeholder="e.g. forgot to clock out" style={ri}/></div>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>saveEdit(r)} disabled={saving}
+                      style={{...primBtn,flex:2,borderRadius:10,fontSize:12.5,background:T.blue}}>Save Hours</button>
+                    <button onClick={()=>setEdit(null)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12.5}}>Cancel</button>
+                  </div>
+                </div>
+              ):(
+                <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                  <button onClick={()=>{setEdit(r.id);setDraft({hours:r.hours??"",edit_reason:""});}}
+                    style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12}}>✏️ Edit Hours</button>
+                  <button onClick={()=>approve([r.id])} disabled={saving}
+                    style={{...primBtn,flex:1,borderRadius:10,fontSize:12,background:T.green,color:"#000",padding:"9px"}}>✓ Approve</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>}
+
+      {isSupervisor&&<>
+        <button onClick={()=>setShowManual(s=>!s)}
+          style={{...ghostBtn,width:"100%",textAlign:"center",fontSize:13,marginBottom:12}}>
+          {showManual?"✕ Cancel":"⏱️ Log Hours by Hand"}
+        </button>
+        {showManual&&<div style={{...cardS,marginBottom:12,border:`1px solid ${T.purple}40`}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <div><label style={lbl}>Worker</label>
+              <select value={mf.worker_name} onChange={e=>setMf(x=>({...x,worker_name:e.target.value}))} style={inpSel}>
+                {NAMES.map(n=><option key={n}>{n}</option>)}
+              </select></div>
+            <div><label style={lbl}>Date</label>
+              <input type="date" value={mf.work_date} onChange={e=>setMf(x=>({...x,work_date:e.target.value}))} style={ri}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:9}}>
+            <div><label style={lbl}>Hours</label>
+              <input type="number" step="0.25" value={mf.hours} onChange={e=>setMf(x=>({...x,hours:e.target.value}))} placeholder="8" style={{...ri,textAlign:"center"}}/></div>
+            <div><label style={lbl}>Operation</label>
+              <select value={mf.operation} onChange={e=>setMf(x=>({...x,operation:e.target.value}))} style={inpSel}>
+                <option value="">—</option>{OPERATIONS.map(o=><option key={o}>{o}</option>)}
+              </select></div>
+            <div><label style={lbl}>Part</label>
+              <select value={mf.part_id} onChange={e=>setMf(x=>({...x,part_id:e.target.value}))} style={inpSel}>
+                <option value="">—</option>{(parts||[]).map(p=><option key={p.id} value={p.id}>{p.part_number}</option>)}
+              </select></div>
+          </div>
+          <button onClick={saveManual} disabled={!mf.hours||saving}
+            style={{...primBtn,borderRadius:12,background:T.purple,opacity:mf.hours&&!saving?1:0.5}}>
+            {saving?"Saving…":"Save Hours"}
+          </button>
+        </div>}
+      </>}
+
+      {isSupervisor&&recent.length>0&&<>
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+          Approved Hours
+        </div>
+        {recent.map(r=>(
+          <div key={r.id} style={{...cardS,marginBottom:6,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{r.worker_name}</div>
+              <div style={{fontSize:10.5,color:T.muted}}>
+                {r.work_date}{r.operation?` · ${r.operation}`:""}{r.invoiced?" · invoiced":""}
+              </div>
+            </div>
+            <div style={{fontSize:13,fontWeight:800,color:r.invoiced?T.muted:T.green}}>
+              {Number(r.hours||0).toFixed(2)}h
+            </div>
+          </div>
+        ))}
+      </>}
     </div>
   );
 }
@@ -14294,7 +14704,9 @@ function PullMfgWeeksModal({job,rate,onClose,onPull,onErr}){
   useEffect(()=>{(async()=>{
     try{
       const l=await API.mfg.labor.forJob(job.id).catch(()=>[]);
-      setRows((l||[]).filter(x=>!x.invoiced));
+      // Only approved hours are billable — an open punch has no hours yet and
+      // a pending one has not been checked by a PM.
+      setRows((l||[]).filter(x=>!x.invoiced&&(x.status||"approved")==="approved"));
     }catch(e){ onErr&&onErr(e.message); }
     setLoading(false);
   })();},[job.id]);
