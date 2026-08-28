@@ -277,7 +277,7 @@ const API={
     stageLog:{forPart:(pid)=>sb(`/mfg_stage_log?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_stage_log',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_stage_log?id=eq.${id}`,{method:'DELETE'})},
     assemblyLog:{forPart:(pid)=>sb(`/mfg_assembly_log?part_id=eq.${pid}&order=completion_date.desc`),forJob:(jid)=>sb(`/mfg_assembly_log?job_id=eq.${jid}&order=completion_date.desc`),create:(d)=>sb('/mfg_assembly_log',{method:'POST',body:d,prefer:'return=representation'})},
     shippingLog:{forPart:(pid)=>sb(`/mfg_shipping_log?part_id=eq.${pid}&order=ship_date.desc`),forJob:(jid)=>sb(`/mfg_shipping_log?job_id=eq.${jid}&order=ship_date.desc`),create:(d)=>sb('/mfg_shipping_log',{method:'POST',body:d,prefer:'return=representation'})},
-    packingSlips:{forJob:(jid)=>sb(`/mfg_packing_slips?job_id=eq.${jid}&order=created_at.desc`),create:(d)=>sb('/mfg_packing_slips',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'DELETE'})},
+    packingSlips:{forJob:(jid)=>sb(`/mfg_packing_slips?job_id=eq.${jid}&order=created_at.desc`),latest:()=>sb('/mfg_packing_slips?select=slip_number&slip_number=not.is.null&order=slip_number.desc&limit=1'),create:(d)=>sb('/mfg_packing_slips',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'DELETE'})},
     labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),openFor:(name)=>sb(`/mfg_labor?worker_name=eq.${encodeURIComponent(name)}&status=eq.open&limit=1`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_labor?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
     ncr:{forJob:(jid)=>sb(`/mfg_ncr?job_id=eq.${jid}&order=created_at.desc`),forPart:(pid)=>sb(`/mfg_ncr?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_ncr',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_ncr?id=eq.${id}`,{method:'PATCH',body:d})},
   },
@@ -12088,9 +12088,33 @@ function ManufacturingDashboard({jobs,user,onSelectJob}){
   );
 }
 
+/* Packing slips are numbered company-wide, not per job, so the sequence has
+   to come from the highest number anywhere. Format is YY-NNNN; the series
+   starts at 26-0050. */
+const SLIP_SERIES_START="26-0050";
+function nextSlipNumber(latest){
+  const m=/^(\d{2})-(\d+)$/.exec(String(latest||"").trim());
+  if(!m)return SLIP_SERIES_START;
+  const[,prefix,seq]=m;
+  const next=parseInt(seq,10)+1;
+  const candidate=`${prefix}-${String(next).padStart(4,"0")}`;
+  // Never issue below the agreed start of the series.
+  return candidate<SLIP_SERIES_START&&prefix==="26"?SLIP_SERIES_START:candidate;
+}
+
 function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
   const [slipId,setSlipId]=useState(existingSlip?.id||null);
   const [slipNo,setSlipNo]=useState(existingSlip?.slip_number||existingSlip?.data?.slipNo||"");
+  const [slipAuto,setSlipAuto]=useState(false);
+  useEffect(()=>{
+    if(existingSlip||slipNo)return;
+    API.mfg.packingSlips.latest()
+      .then(r=>{
+        const last=Array.isArray(r)&&r.length?r[0].slip_number:null;
+        setSlipNo(nextSlipNumber(last));setSlipAuto(true);
+      })
+      .catch(()=>{setSlipNo(SLIP_SERIES_START);setSlipAuto(true);});
+  },[]);
   const [shipDate,setShipDate]=useState(existingSlip?.ship_date||existingSlip?.data?.shipDate||today());
   const [carrier,setCarrier]=useState(existingSlip?.data?.carrier||"Vendor Truck");
   const [truckTrailer,setTruckTrailer]=useState(existingSlip?.data?.truckTrailer||"");
@@ -12125,7 +12149,19 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
       if(slipId){
         await API.mfg.packingSlips.update(slipId,{slip_number:slipNo,ship_date:shipDate||null,data,updated_at:new Date().toISOString()});
       }else{
-        const r=await API.mfg.packingSlips.create({job_id:job.id,slip_number:slipNo,ship_date:shipDate||null,data,created_by:user.name});
+        // Two people creating a slip at once would otherwise land on the same
+        // number, so re-check the series immediately before inserting.
+        let useNo=slipNo;
+        if(slipAuto){
+          try{
+            const r2=await API.mfg.packingSlips.latest();
+            const last=Array.isArray(r2)&&r2.length?r2[0].slip_number:null;
+            const fresh=nextSlipNumber(last);
+            if(fresh!==slipNo){useNo=fresh;setSlipNo(fresh);}
+          }catch{}
+        }
+        data.slipNo=useNo;
+        const r=await API.mfg.packingSlips.create({job_id:job.id,slip_number:useNo,ship_date:shipDate||null,data,created_by:user.name});
         const newId=Array.isArray(r)?r[0]?.id:r?.id;
         if(newId)setSlipId(newId);
       }
@@ -12331,7 +12367,13 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
         <div style={{...cardS,marginBottom:12}}>
           <div style={{fontSize:12,fontWeight:800,color:T.blue,marginBottom:12}}>📋 Slip Info</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div><label style={lbl}>Packing Slip #</label><input value={slipNo} onChange={e=>setSlipNo(e.target.value)} placeholder="Slip #" style={inp}/></div>
+            <div><label style={lbl}>Packing Slip #</label>
+              <input value={slipNo} onChange={e=>{setSlipNo(e.target.value);setSlipAuto(false);}}
+                placeholder="Slip #" style={inp}/>
+              {slipAuto&&<div style={{fontSize:10.5,color:T.muted,marginTop:3}}>
+                Next in the series — type over it if you need a different number.
+              </div>}
+            </div>
             <div><label style={lbl}>Ship Date</label><input type="date" value={shipDate} onChange={e=>setShipDate(e.target.value)} style={inp}/></div>
           </div>
         </div>
