@@ -10012,6 +10012,31 @@ const MFG_STAGES=[
   {id:"shipped",       label:"Palletized & Shipped", icon:"📦", color:"#34D399", desc:"Banded and ready to go"},
 ];
 
+/* ══ Manufacturing permissions ══
+   These were five separate `canAdmin` variables written at different times,
+   and they disagreed: a foreman could sign manager QC on a traveler but not
+   on the QC checklist, and could delete a shipping record on a job they were
+   not allowed to create. The name was misleading too — `canAdmin` was true
+   for foremen in three of those places. */
+const MFG_PERMS={
+  // Job lifecycle — create, hold, delete.
+  manage_jobs:  ["admin","pm"],
+  // Day-to-day shop work: receiving, BOM, inventory counts, assembly,
+  // shipping, packing slips, and traveler stages up to welder QC.
+  shop_floor:   ["admin","pm","foreman"],
+  // A genuine second set of eyes. Excludes foreman on purpose, so the person
+  // who ran the work is not the person signing it off.
+  manager_qc:   ["admin","pm"],
+  approve_time: ["admin","pm"],
+  billing:      ["admin","pm"],
+  // Anyone can clock in and inspect their own work.
+  clock:        ["admin","pm","foreman","estimator","crew"],
+  employee_qc:  ["admin","pm","foreman","estimator","crew"],
+};
+function canMfg(user,action){
+  return (MFG_PERMS[action]||[]).includes(user?.role);
+}
+
 function ManufacturingJobBoard({user,onBack,onSelectJob}){
   const [jobs,setJobs]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -10019,7 +10044,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
   const [f,setF]=useState({job_number:"",customer:"",description:"",po_number:"",due_date:"",notes:""});
   const [saving,setSaving]=useState(false);
   const [boardTab,setBoardTab]=useState("jobs");
-  const canAdmin=user.role==="admin"||user.role==="pm";
+  const canAdmin=canMfg(user,"manage_jobs");
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
 
   useEffect(()=>{load();},[]);
@@ -10172,7 +10197,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [shippingLogs,setShippingLogs]=useState([]);
   const [loading,setLoading]=useState(true);
   const [tab,setTab]=useState("overview"); // overview | received | assembly | shipping
-  const canAdmin=user.role==="admin"||user.role==="pm"||user.role==="foreman";
+  const canAdmin=canMfg(user,"shop_floor");
 
   const [selectedBomItem,setSelectedBomItem]=useState(null);
   const [rQty,setRQty]=useState("");
@@ -11204,7 +11229,9 @@ function ManufacturingTraveler({part,job,user,onBack}){
   const [openStage,setOpenStage]=useState(null); // which stage form is open
   const [sf,setSf]=useState({});
   const [saving,setSaving]=useState(false);
-  const canAdmin=user.role==="admin"||user.role==="pm"||user.role==="foreman";
+  const canAdmin=canMfg(user,"shop_floor");
+  // Manager QC is the one stage a foreman cannot sign.
+  const canManagerQC=canMfg(user,"manager_qc");
 
   const STAGES=[
     {id:"mat_received",   label:"Material Received",   icon:"📦",color:"#60A5FA", fields:[
@@ -11359,7 +11386,7 @@ function ManufacturingTraveler({part,job,user,onBack}){
                     </>}
                   </div>
                 </div>
-                {canAdmin&&<button onClick={()=>{
+                {(stage.id==="manager_qc"?canManagerQC:canAdmin)&&<button onClick={()=>{
                     if(isOpen){setOpenStage(null);setSf({});}
                     else{
                       const defaults={log_date:today()};
@@ -11371,6 +11398,11 @@ function ManufacturingTraveler({part,job,user,onBack}){
                   {isOpen?"✕ Cancel":"+ Log"}
                 </button>}
               </div>
+
+              {stage.id==="manager_qc"&&!canManagerQC&&
+                <div style={{fontSize:11,color:T.muted,marginBottom:8,fontStyle:"italic"}}>
+                  Manager QC is signed off by a PM or admin.
+                </div>}
 
               {/* Log entry form */}
               {isOpen&&<div style={{background:T.surface,borderRadius:10,padding:12,marginBottom:10,border:`1px solid ${stage.color}40`}}>
@@ -11621,8 +11653,8 @@ function MfgTimeTab({job,parts,user,onErr}){
   const [now,setNow]=useState(Date.now());
   const [showManual,setShowManual]=useState(false);
   const [mf,setMf]=useState({worker_name:user.name,work_date:today(),hours:"",operation:"",part_id:"",notes:""});
-  const canApprove=user.role==="admin"||user.role==="pm";
-  const isSupervisor=canApprove||user.role==="foreman";
+  const canApprove=canMfg(user,"approve_time");
+  const isSupervisor=canApprove||canMfg(user,"shop_floor");
 
   useEffect(()=>{
     const t=setInterval(()=>setNow(Date.now()),30000);
@@ -11970,7 +12002,7 @@ function QCForm({job,parts,user,record,onBack,onSaved,onErr}){
   const [saving,setSaving]=useState(false);
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
 
-  const isManager=user.role==="admin"||user.role==="pm";
+  const isManager=canMfg(user,"manager_qc");
 
   const setItem=(who,key,field,val)=>{
     const fn=who==="employee"?setEmpItems:setMgrItems;
@@ -14812,7 +14844,7 @@ function MfgBillingTab({job,user,onErr}){
   const [openInvoice,setOpenInvoice]=useState(null);
   const [rate,setRate]=useState(String(job.labor_rate??75));
   const [savingRate,setSavingRate]=useState(false);
-  const canBill=user.role==="admin"||user.role==="pm";
+  const canBill=canMfg(user,"billing");
 
   if(!canBill)return(
     <div style={{...cardS,textAlign:"center",padding:"34px 18px",color:T.muted}}>
