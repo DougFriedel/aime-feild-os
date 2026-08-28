@@ -257,6 +257,13 @@ const API={
   },
   safety:   {forProject:(pid)=>sb(`/safety_logs?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/safety_logs",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/safety_logs?id=eq.${id}`,{method:"DELETE"})},
   photos:   {forProject:(pid)=>sb(`/project_photos?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/project_photos",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/project_photos?id=eq.${id}`,{method:"DELETE"})},
+  punches:{
+    open:(name)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&status=eq.open&limit=1`),
+    openForProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&status=eq.open&order=clock_in_at.asc`),
+    openAll:()=>sb("/time_cards?status=eq.open&select=*,projects(id,name,division)&order=clock_in_at.asc"),
+    pending:()=>sb("/time_cards?status=eq.pending&select=*,projects(id,name,division)&order=date.desc,worker_name.asc"),
+    pendingForProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&status=eq.pending&order=date.desc,worker_name.asc`),
+  },
   timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
@@ -1226,7 +1233,10 @@ async function autoPopulateTimeCards(report, project){
     if(reg+ot+travel===0) continue;
     try{
       const existing=await API.timeCards.find(entry.name,report.date,project.id);
-      const card=Array.isArray(existing)?existing[0]:null;
+      const all=Array.isArray(existing)?existing:[];
+      // Only merge into another daily-report card. Merging into a clock punch
+      // would double the worker's day.
+      const card=all.find(c=>(c.source||"manual")!=="punch")||null;
       if(card){
         const newReg=(parseFloat(card.reg_hours)||0)+reg;
         const newOT=(parseFloat(card.ot_hours)||0)+ot;
@@ -1250,6 +1260,7 @@ async function autoPopulateTimeCards(report, project){
           travel_hours:travel,
           total_hours:reg+ot+travel,
           notes:`Auto-filled from daily report${report.report_no?" #"+report.report_no:""} · ${project.name}`,
+          source:"daily",status:"pending",
         });
         created++;
       }
@@ -2684,8 +2695,348 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   );
 }
 
-function TimeCardsTab({projectId,user,onErr}){
+
+/* ── Time clock ──
+   Crew clock in on the job they're standing on. Someone who moves between
+   jobs gets one punch per job, because time_cards is keyed by worker, date
+   and project. A punch is a real timestamp, not a typed time. */
+function ClockCard({project,user,onChange}){
+  const [open,setOpen]=useState(null);      // this worker's open punch, any job
+  const [loading,setLoading]=useState(true);
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+  const [now,setNow]=useState(Date.now());
+  const [classification,setClassification]=useState("");
+
+  useEffect(()=>{
+    const t=setInterval(()=>setNow(Date.now()),1000);
+    return()=>clearInterval(t);
+  },[]);
+
+  async function load(){
+    setLoading(true);
+    try{
+      const r=await API.punches.open(user.name);
+      setOpen(Array.isArray(r)&&r.length?r[0]:null);
+    }catch(e){ setErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[user.name,project.id]);
+
+  function position(){
+    return new Promise(res=>{
+      if(!navigator.geolocation)return res({lat:null,lng:null});
+      navigator.geolocation.getCurrentPosition(
+        p=>res({lat:p.coords.latitude,lng:p.coords.longitude}),
+        ()=>res({lat:null,lng:null}),
+        {timeout:6000,maximumAge:60000});
+    });
+  }
+
+  async function clockIn(){
+    setBusy(true);setErr("");
+    try{
+      const{lat,lng}=await position();
+      const at=new Date();
+      await API.timeCards.create({
+        worker_name:user.name,project_id:project.id,division:project.division,
+        date:at.toISOString().slice(0,10),
+        classification:classification||null,
+        clock_in_at:at.toISOString(),
+        clock_in_lat:lat,clock_in_lng:lng,
+        reg_hours:0,ot_hours:0,travel_hours:0,total_hours:0,
+        status:"open",source:"punch",
+      });
+      await load();onChange&&onChange();
+    }catch(e){
+      // The unique index on one open punch per worker is the guard here.
+      setErr(String(e.message||"").includes("time_cards_one_open_uidx")
+        ?"You're already clocked in on another job. Clock out there first."
+        :e.message);
+    }
+    setBusy(false);
+  }
+
+  async function clockOut(){
+    if(!open)return;
+    setBusy(true);setErr("");
+    try{
+      const{lat,lng}=await position();
+      const at=new Date();
+      const inAt=new Date(open.clock_in_at);
+      // Quarter-hour rounding, to match how payroll reads it.
+      const hrs=Math.max(0,Math.round(((at-inAt)/3600000)*4)/4);
+      const ot=Math.max(0,hrs-8);
+      await API.timeCards.update(open.id,{
+        clock_out_at:at.toISOString(),
+        clock_out_lat:lat,clock_out_lng:lng,
+        reg_hours:hrs-ot,ot_hours:ot,total_hours:hrs,
+        original_hours:hrs,
+        status:"pending",
+      });
+      await load();onChange&&onChange();
+    }catch(e){ setErr(e.message); }
+    setBusy(false);
+  }
+
+  const onThisJob=open&&open.project_id===project.id;
+  const elapsed=()=>{
+    if(!open?.clock_in_at)return "0:00:00";
+    const ms=Math.max(0,now-new Date(open.clock_in_at).getTime());
+    const h=Math.floor(ms/3600000), m=Math.floor(ms%3600000/60000), sec=Math.floor(ms%60000/1000);
+    return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+  };
+  const since=()=>open?.clock_in_at
+    ?new Date(open.clock_in_at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"";
+
+  if(loading)return(
+    <div style={{...cardS,marginBottom:14,textAlign:"center",padding:20,color:T.muted,fontSize:13}}>
+      Checking the clock…
+    </div>
+  );
+
+  // Clocked in somewhere else
+  if(open&&!onThisJob)return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.yellow}`}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.yellow,textTransform:"uppercase",letterSpacing:"1px"}}>
+        Clocked in on another job
+      </div>
+      <div style={{fontSize:15,fontWeight:800,color:T.text,marginTop:4}}>
+        {open.projects?.name||"Another job"}
+      </div>
+      <div style={{fontSize:12,color:T.muted,marginTop:2}}>
+        Since {since()} · {elapsed()}
+      </div>
+      <div style={{fontSize:11.5,color:T.sub,marginTop:9,lineHeight:1.6}}>
+        Clock out of that job before starting here, so your hours land on the right one.
+      </div>
+    </div>
+  );
+
+  // On the clock, this job
+  if(onThisJob)return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`,background:T.greenLow}}>
+      {err&&<div style={{fontSize:11.5,color:T.red,marginBottom:8}}>{err}</div>}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px"}}>
+            ● On the clock
+          </div>
+          <div style={{fontSize:12,color:T.muted,marginTop:3}}>Since {since()}</div>
+        </div>
+        <div style={{fontSize:30,fontWeight:900,color:T.green,fontVariantNumeric:"tabular-nums",letterSpacing:"-1px"}}>
+          {elapsed()}
+        </div>
+      </div>
+      <button onClick={clockOut} disabled={busy}
+        style={{...primBtn,borderRadius:14,padding:"18px",fontSize:17,background:T.red,color:"#fff",opacity:busy?0.6:1}}>
+        {busy?"…":"⏹ Clock Out"}
+      </button>
+    </div>
+  );
+
+  // Off the clock
+  return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.border}`}}>
+      {err&&<div style={{fontSize:11.5,color:T.red,marginBottom:8}}>{err}</div>}
+      <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>
+        Time Clock · {project.name}
+      </div>
+      <div style={{marginBottom:10}}>
+        <label style={lbl}>Working as (optional)</label>
+        <select value={classification} onChange={e=>setClassification(e.target.value)} style={inpSel}>
+          <option value="">— Classification —</option>
+          {getAllPositions().map(p=><option key={p.name}>{p.name}</option>)}
+        </select>
+      </div>
+      <button onClick={clockIn} disabled={busy}
+        style={{...primBtn,borderRadius:14,padding:"18px",fontSize:17,background:T.green,color:"#000",opacity:busy?0.6:1}}>
+        {busy?"…":"▶ Clock In"}
+      </button>
+      <div style={{fontSize:10.5,color:T.muted,textAlign:"center",marginTop:7}}>
+        📍 Your location is recorded with the punch
+      </div>
+    </div>
+  );
+}
+
+/* ── Who is on the clock right now, on this job ── */
+function OnTheClockNow({projectId,refreshKey}){
+  const [rows,setRows]=useState([]);
+  const [now,setNow]=useState(Date.now());
+
+  useEffect(()=>{
+    const t=setInterval(()=>setNow(Date.now()),30000);
+    return()=>clearInterval(t);
+  },[]);
+  useEffect(()=>{
+    API.punches.openForProject(projectId).then(r=>setRows(r||[])).catch(()=>{});
+  },[projectId,refreshKey,Math.floor(now/60000)]);
+
+  if(!rows.length)return null;
+
+  const dur=(c)=>{
+    const ms=Math.max(0,now-new Date(c.clock_in_at).getTime());
+    return `${Math.floor(ms/3600000)}h ${Math.floor(ms%3600000/60000)}m`;
+  };
+
+  return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:9}}>
+        ● On the clock now ({rows.length})
+      </div>
+      {rows.map(c=>(
+        <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderTop:`1px solid ${T.border}`}}>
+          <div>
+            <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{c.worker_name}</div>
+            <div style={{fontSize:10.5,color:T.muted}}>
+              in at {new Date(c.clock_in_at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}
+              {c.classification?` · ${c.classification}`:""}
+            </div>
+          </div>
+          <div style={{fontSize:13,fontWeight:800,color:T.green}}>{dur(c)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── PM review: edit the hours, then approve ── */
+function TimeApproval({projectId,user,refreshKey,onChange,onErr}){
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [edit,setEdit]=useState(null);      // card id being edited
+  const [draft,setDraft]=useState({});
+  const [saving,setSaving]=useState(false);
+
+  async function load(){
+    setLoading(true);
+    try{ setRows(await API.punches.pendingForProject(projectId)||[]); }
+    catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[projectId,refreshKey]);
+
+  function startEdit(c){
+    setEdit(c.id);
+    setDraft({reg_hours:c.reg_hours??"",ot_hours:c.ot_hours??"",
+      travel_hours:c.travel_hours??"",edit_reason:""});
+  }
+
+  async function saveEdit(c){
+    setSaving(true);
+    const reg=parseFloat(draft.reg_hours)||0;
+    const ot=parseFloat(draft.ot_hours)||0;
+    const tr=parseFloat(draft.travel_hours)||0;
+    try{
+      await API.timeCards.update(c.id,{
+        reg_hours:reg,ot_hours:ot,travel_hours:tr,total_hours:reg+ot+tr,
+        // Keep whatever the clock originally said, so an edit is visible.
+        original_hours:c.original_hours??c.total_hours,
+        edited_by:user.name,edited_at:new Date().toISOString(),
+        edit_reason:draft.edit_reason||null,
+      });
+      setEdit(null);await load();onChange&&onChange();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  async function approve(ids){
+    setSaving(true);
+    try{
+      await Promise.all(ids.map(id=>API.timeCards.update(id,{
+        status:"approved",approved_by:user.name,approved_at:new Date().toISOString(),
+      })));
+      await load();onChange&&onChange();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  const t=(c)=>(parseFloat(c.total_hours)||0);
+  const totalHrs=rows.reduce((s,c)=>s+t(c),0);
+  const ri={...inp,fontSize:13,padding:"7px 9px",textAlign:"center"};
+  const hhmm=(iso)=>iso?new Date(iso).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):"—";
+
+  if(loading)return <div style={{textAlign:"center",padding:16,color:T.muted,fontSize:13}}>Loading hours…</div>;
+  if(!rows.length)return null;
+
+  return(
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.yellow,textTransform:"uppercase",letterSpacing:"1px"}}>
+          ⏳ Hours to approve ({rows.length}) · {totalHrs.toFixed(1)}h
+        </div>
+        <button onClick={()=>approve(rows.map(r=>r.id))} disabled={saving}
+          style={{background:T.green,color:"#000",border:"none",borderRadius:9,padding:"6px 13px",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+          ✓ Approve all
+        </button>
+      </div>
+
+      {rows.map(c=>{
+        const editing=edit===c.id;
+        const wasEdited=c.edited_by&&c.original_hours!=null&&Number(c.original_hours)!==t(c);
+        return(
+          <div key={c.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.yellow}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{c.worker_name}</div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                  {c.date}
+                  {c.clock_in_at?` · ${hhmm(c.clock_in_at)} → ${hhmm(c.clock_out_at)}`:""}
+                  {c.source==="daily"?" · from daily report":c.source==="punch"?" · clocked":""}
+                </div>
+                {c.classification&&<div style={{fontSize:10.5,color:T.muted}}>{c.classification}</div>}
+                {wasEdited&&<div style={{fontSize:10.5,color:T.blue,marginTop:3}}>
+                  edited by {c.edited_by} · was {Number(c.original_hours).toFixed(2)}h
+                  {c.edit_reason?` — ${c.edit_reason}`:""}
+                </div>}
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontSize:17,fontWeight:900,color:T.green}}>{t(c).toFixed(2)}h</div>
+                {(parseFloat(c.ot_hours)||0)>0&&
+                  <div style={{fontSize:10.5,color:T.yellow}}>{Number(c.ot_hours).toFixed(2)} OT</div>}
+              </div>
+            </div>
+
+            {editing?(
+              <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+                  {[["Reg","reg_hours"],["OT","ot_hours"],["Travel","travel_hours"]].map(([l,k])=>(
+                    <div key={k}><label style={lbl}>{l}</label>
+                      <input type="number" step="0.25" value={draft[k]}
+                        onChange={e=>setDraft(d=>({...d,[k]:e.target.value}))} style={ri}/></div>
+                  ))}
+                </div>
+                <div style={{marginBottom:9}}><label style={lbl}>Reason for the change</label>
+                  <input value={draft.edit_reason}
+                    onChange={e=>setDraft(d=>({...d,edit_reason:e.target.value}))}
+                    placeholder="e.g. forgot to clock out, left at 3:30"
+                    style={{...inp,fontSize:13,padding:"7px 9px"}}/></div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>saveEdit(c)} disabled={saving}
+                    style={{...primBtn,flex:2,borderRadius:10,fontSize:12.5,background:T.blue}}>Save Hours</button>
+                  <button onClick={()=>setEdit(null)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12.5}}>Cancel</button>
+                </div>
+              </div>
+            ):(
+              <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                <button onClick={()=>startEdit(c)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12}}>✏️ Edit Hours</button>
+                <button onClick={()=>approve([c.id])} disabled={saving}
+                  style={{...primBtn,flex:1,borderRadius:10,fontSize:12,background:T.green,color:"#000",padding:"9px"}}>✓ Approve</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TimeCardsTab({projectId,user,project,onErr}){
   const [cards,setCards]=useState([]);const [loading,setLoading]=useState(true);const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
+  const [clockKey,setClockKey]=useState(0);   // bumped on any punch, to refresh the lists
+  const canApprove=can(user,"approve_report");
+  const isSupervisor=canApprove||user.role==="foreman";
   const [f,setF]=useState({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",notes:""});
   const weekStart=getWeekStart();
   async function load(){setLoading(true);try{setCards(await API.timeCards.forProject(projectId)||[]);}catch(e){onErr(e.message);}setLoading(false);}
@@ -2696,7 +3047,8 @@ function TimeCardsTab({projectId,user,onErr}){
     const total_hours=calcHours(f.clock_in,f.clock_out);
     const ot_hours=Math.max(0,total_hours-8);
     const reg_hours=Math.max(0,total_hours-ot_hours);
-    const data={...f,project_id:projectId,total_hours,ot_hours,reg_hours};
+    const data={...f,project_id:projectId,total_hours,ot_hours,reg_hours,
+      source:"manual",status:"approved",approved_by:user.name,approved_at:new Date().toISOString()};
     const reset=()=>{setShowForm(false);setF({worker_name:user.name,date:today(),clock_in:"07:00",clock_out:"",notes:""});};
 
     if(!navigator.onLine){
@@ -2725,11 +3077,23 @@ function TimeCardsTab({projectId,user,onErr}){
   const workerRows=Object.values(byWorker).sort((a,b)=>b.total-a.total);
   const todayCards=cards.filter(c=>c.date===today());
   const recentCards=cards.filter(c=>c.date!==today()).slice(0,30);
+  const bump=()=>{setClockKey(k=>k+1);load();};
+
   return(<div>
-    <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
-      <strong>⚡ Auto-filled from daily reports</strong> — hours are added automatically when a foreman submits a daily report. Manual entries below for anything not on a daily.
-    </div>
-    <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"⏱️ Log Time"}</button>
+    {/* The clock comes first — it is what most people open this tab to do. */}
+    <ClockCard project={project||{id:projectId}} user={user} onChange={bump}/>
+
+    {isSupervisor&&<OnTheClockNow projectId={projectId} refreshKey={clockKey}/>}
+
+    {canApprove&&<TimeApproval projectId={projectId} user={user} refreshKey={clockKey}
+      onChange={bump} onErr={onErr}/>}
+
+    {isSupervisor&&<>
+      <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
+        <strong>⚡ Also filled from daily reports</strong> — submitting a daily adds hours automatically. Log time by hand below for anything the clock missed.
+      </div>
+      <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"⏱️ Log Time by Hand"}</button>
+    </>}
     {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`}}>
       <div style={{marginBottom:10}}><label style={lbl}>Worker</label><select value={f.worker_name} onChange={e=>setF(x=>({...x,worker_name:e.target.value}))} style={inpSel}>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
       <div style={{marginBottom:10}}><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))} style={inp}/></div>
@@ -2739,7 +3103,7 @@ function TimeCardsTab({projectId,user,onErr}){
       <button onClick={save} style={{...primBtn,background:T.green,color:"#0D0D0F",borderRadius:12}}>{saving?"Saving…":"Save Time Card"}</button>
     </div>}
     {loading&&<Spinner/>}
-    {!loading&&<>{workerRows.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>This Week</div>{workerRows.map(w=>(<div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:14,fontWeight:600,color:T.text}}>{w.name}</span><div style={{display:"flex",gap:12,alignItems:"center"}}><span style={{fontSize:12,color:T.muted}}>{w.reg.toFixed(1)}reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)}OT</span>}<span style={{fontSize:15,fontWeight:800,color:T.green}}>{w.total.toFixed(1)}h</span></div></div>))}</div>}
+    {!loading&&isSupervisor&&<>{workerRows.length>0&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>This Week</div>{workerRows.map(w=>(<div key={w.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}><span style={{fontSize:14,fontWeight:600,color:T.text}}>{w.name}</span><div style={{display:"flex",gap:12,alignItems:"center"}}><span style={{fontSize:12,color:T.muted}}>{w.reg.toFixed(1)}reg</span>{w.ot>0&&<span style={{fontSize:12,color:T.yellow}}>{w.ot.toFixed(1)}OT</span>}<span style={{fontSize:15,fontWeight:800,color:T.green}}>{w.total.toFixed(1)}h</span></div></div>))}</div>}
     {todayCards.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Today</div>}
     {todayCards.map(c=><div key={c.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:14,fontWeight:700,color:T.text}}>{c.worker_name}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{fmtShort(c.date)}{c.clock_in?" · "+c.clock_in:""}{c.clock_out?" → "+c.clock_out:""}</div>{c.notes&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{c.notes}</div>}</div><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:T.green}}>{(c.total_hours||0).toFixed(1)}h</div>{(c.ot_hours||0)>0&&<div style={{fontSize:10,color:T.yellow}}>{c.ot_hours.toFixed(1)} OT</div>}</div><button onClick={()=>remove(c.id)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:16,padding:0}}>🗑</button></div></div>)}
     {recentCards.length>0&&<div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 10px"}}>Recent</div>}
@@ -4163,7 +4527,7 @@ const PTABS=[
   {id:"reports",icon:"📋",label:"Reports",perm:"submit_report"},
   {id:"tm",icon:"🧾",label:"T&M",perm:"submit_report"},
   {id:"billing",icon:"💰",label:"Billing",perm:"approve_report"},
-  {id:"time",icon:"⏱️",label:"Time",perm:"approve_report"},
+  {id:"time",icon:"⏱️",label:"Time",perm:"time_card"},
   {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
   {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
   {id:"safety",icon:"⛑️",label:"Safety",perm:"safety"},
@@ -4757,6 +5121,8 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
           {wkLoading&&<div style={{textAlign:"center",padding:24,color:T.muted,fontSize:13}}>Loading hours…</div>}
 
           {!wkLoading&&<>
+            <ClockRoster pmDiv={pmDiv} divIds={divIds} user={user} onErr={setErr}/>
+
             {/* Expiring certs */}
             {certSoon.length>0&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:"10px 14px",marginBottom:12}}>
               <div style={{fontSize:12,fontWeight:800,color:T.red,marginBottom:5}}>
@@ -5950,6 +6316,106 @@ ${employees.length===0
   win.document.close();
   win.focus();
   setTimeout(()=>{win.focus();win.print();},1200);
+}
+
+
+/* ── Division-wide clock: who is on it now, and what needs approving ── */
+function ClockRoster({pmDiv,divIds,user,onErr}){
+  const [openRows,setOpenRows]=useState([]);
+  const [pendRows,setPendRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [now,setNow]=useState(Date.now());
+
+  useEffect(()=>{
+    const t=setInterval(()=>setNow(Date.now()),30000);
+    return()=>clearInterval(t);
+  },[]);
+
+  async function load(){
+    setLoading(true);
+    try{
+      const [o,p]=await Promise.all([
+        API.punches.openAll().catch(()=>[]),
+        API.punches.pending().catch(()=>[]),
+      ]);
+      const mine=(r)=>!divIds||divIds.has(r.project_id);
+      setOpenRows((o||[]).filter(mine));
+      setPendRows((p||[]).filter(mine));
+    }catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[pmDiv]);
+
+  async function approveAll(){
+    if(!pendRows.length)return;
+    if(!window.confirm(`Approve ${pendRows.length} time card${pendRows.length!==1?"s":""}?`))return;
+    setSaving(true);
+    try{
+      await Promise.all(pendRows.map(c=>API.timeCards.update(c.id,{
+        status:"approved",approved_by:user.name,approved_at:new Date().toISOString(),
+      })));
+      await load();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  // A punch still open long after a normal shift is almost always a forgotten
+  // clock-out, and it inflates payroll until someone notices.
+  const hoursOpen=(c)=>Math.max(0,(now-new Date(c.clock_in_at).getTime())/3600000);
+  const stale=openRows.filter(c=>hoursOpen(c)>12);
+  const pendHrs=pendRows.reduce((s,c)=>s+(parseFloat(c.total_hours)||0),0);
+
+  if(loading)return null;
+  if(!openRows.length&&!pendRows.length)return null;
+
+  return(
+    <>
+      {openRows.length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:9}}>
+          ● On the clock now ({openRows.length})
+        </div>
+        {openRows.map(c=>{
+          const h=hoursOpen(c);
+          const bad=h>12;
+          return(
+            <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderTop:`1px solid ${T.border}`}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{c.worker_name}</div>
+                <div style={{fontSize:10.5,color:T.muted}}>
+                  {c.projects?.name||"—"} · in at {new Date(c.clock_in_at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}
+                </div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontSize:13,fontWeight:800,color:bad?T.red:T.green}}>
+                  {Math.floor(h)}h {Math.floor((h%1)*60)}m
+                </div>
+                {bad&&<div style={{fontSize:9.5,color:T.red,fontWeight:700}}>forgot to clock out?</div>}
+              </div>
+            </div>
+          );
+        })}
+        {stale.length>0&&<div style={{fontSize:11,color:T.red,marginTop:9,paddingTop:9,borderTop:`1px solid ${T.border}`,lineHeight:1.6}}>
+          {stale.length} punch{stale.length!==1?"es have":" has"} been open over 12 hours. Open the job's Time tab to correct the hours before approving.
+        </div>}
+      </div>}
+
+      {pendRows.length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.yellow}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.yellow,textTransform:"uppercase",letterSpacing:"1px"}}>
+            ⏳ Hours to approve ({pendRows.length}) · {pendHrs.toFixed(1)}h
+          </div>
+          <button onClick={approveAll} disabled={saving}
+            style={{background:T.green,color:"#000",border:"none",borderRadius:9,padding:"6px 13px",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
+            ✓ Approve all
+          </button>
+        </div>
+        <div style={{fontSize:11.5,color:T.muted,lineHeight:1.6}}>
+          Edit individual hours on the job's Time tab before approving — this button takes them as they stand.
+        </div>
+      </div>}
+    </>
+  );
 }
 
 function TimeCardsScreen({user,projects,onBack}){
@@ -8732,7 +9198,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
             </div>}
           {shown.map(r=>{const t=reportTotals(r,project.division);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
          </div>);})()}
-        {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="subs"     &&can(user,"subs")        &&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="safety"   &&can(user,"safety")      &&<SafetyTab projectId={project.id} safety={safety} user={user} onRefresh={()=>load(true)} onErr={setErr}/>}
