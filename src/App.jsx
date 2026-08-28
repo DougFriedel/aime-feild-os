@@ -278,6 +278,12 @@ const API={
     assemblyLog:{forPart:(pid)=>sb(`/mfg_assembly_log?part_id=eq.${pid}&order=completion_date.desc`),forJob:(jid)=>sb(`/mfg_assembly_log?job_id=eq.${jid}&order=completion_date.desc`),create:(d)=>sb('/mfg_assembly_log',{method:'POST',body:d,prefer:'return=representation'})},
     shippingLog:{forPart:(pid)=>sb(`/mfg_shipping_log?part_id=eq.${pid}&order=ship_date.desc`),forJob:(jid)=>sb(`/mfg_shipping_log?job_id=eq.${jid}&order=ship_date.desc`),create:(d)=>sb('/mfg_shipping_log',{method:'POST',body:d,prefer:'return=representation'})},
     packingSlips:{forJob:(jid)=>sb(`/mfg_packing_slips?job_id=eq.${jid}&order=created_at.desc`),latest:()=>sb('/mfg_packing_slips?select=slip_number&slip_number=not.is.null&order=slip_number.desc&limit=1'),create:(d)=>sb('/mfg_packing_slips',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'DELETE'})},
+    qc:{
+      forJob:(jid)=>sb(`/mfg_qc_checklists?job_id=eq.${jid}&select=*&order=qc_date.desc,created_at.desc`),
+      create:(d)=>sb('/mfg_qc_checklists',{method:'POST',body:d,prefer:'return=representation'}),
+      update:(id,d)=>sb(`/mfg_qc_checklists?id=eq.${id}`,{method:'PATCH',body:d}),
+      remove:(id)=>sb(`/mfg_qc_checklists?id=eq.${id}`,{method:'DELETE'}),
+    },
     labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),openFor:(name)=>sb(`/mfg_labor?worker_name=eq.${encodeURIComponent(name)}&status=eq.open&limit=1`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_labor?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
     ncr:{forJob:(jid)=>sb(`/mfg_ncr?job_id=eq.${jid}&order=created_at.desc`),forPart:(pid)=>sb(`/mfg_ncr?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_ncr',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_ncr?id=eq.${id}`,{method:'PATCH',body:d})},
   },
@@ -10389,7 +10395,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
-        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["shipping","📤 Shipping Log"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"12px 4px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -10400,6 +10406,8 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
         {loading&&<Spinner/>}
 
         {!loading&&tab==="time"&&<MfgTimeTab job={job} parts={parts} user={user} onErr={m=>setFormErr(m)}/>}
+
+        {!loading&&tab==="qc"&&<QCTab job={job} parts={parts} user={user} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="billing"&&canAdmin&&<MfgBillingTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
 
@@ -11822,6 +11830,515 @@ function MfgTimeTab({job,parts,user,onErr}){
           </div>
         ))}
       </>}
+    </div>
+  );
+}
+
+
+/* ══════════════ QC CHECKLIST (form QC-FRM Rev. 2) ══════════════ */
+
+// The five inspection rows, and what the three columns mean for each. The
+// paper form uses Good/Bad for the first two and Yes/No for the rest.
+const QC_ITEMS=[
+  {key:"welds",       label:"Welds",                              good:"Good",bad:"Bad"},
+  {key:"cleaning",    label:"Cleaning",                           good:"Good",bad:"Bad"},
+  {key:"no_go",       label:"No-Go Condition Present",            good:"Yes", bad:"No"},
+  {key:"measurements",label:"Measurements Meet Requirements",     good:"Yes", bad:"No"},
+  {key:"complete",    label:"Part Is Complete and Ready for Approval",good:"Yes",bad:"No"},
+];
+const QC_DISPOSITIONS=[
+  ["approved","Approved"],
+  ["hold","Hold for Further Review"],
+  ["rejected","Rejected (parts marked)"],
+  ["extra_cleaning","Extra Cleaning Required"],
+];
+
+function QCTab({job,parts,user,onErr}){
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [openForm,setOpenForm]=useState(null);   // {} for new, row for edit
+
+  async function load(){
+    setLoading(true);
+    try{ setRows(await API.mfg.qc.forJob(job.id)||[]); }
+    catch(e){ onErr&&onErr(e.message); }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[job.id]);
+
+  async function del(r){
+    if(!window.confirm("Delete this QC checklist?"))return;
+    try{ await API.mfg.qc.remove(r.id); await load(); }catch(e){ onErr&&onErr(e.message); }
+  }
+
+  if(openForm!==null)return(
+    <QCForm job={job} parts={parts} user={user}
+      record={openForm.id?openForm:null}
+      onBack={()=>setOpenForm(null)}
+      onSaved={()=>{setOpenForm(null);load();}}
+      onErr={onErr}/>
+  );
+
+  const dispMeta={approved:{c:T.green,l:"Approved"},hold:{c:T.yellow,l:"Hold"},
+    rejected:{c:T.red,l:"Rejected"},extra_cleaning:{c:T.orange,l:"Extra Cleaning"}};
+  const statusMeta={draft:{c:T.muted,l:"draft"},employee_signed:{c:T.yellow,l:"awaiting manager"},
+    complete:{c:T.green,l:"complete"}};
+
+  return(
+    <div>
+      <button onClick={()=>setOpenForm({})}
+        style={{...primBtn,borderRadius:14,marginBottom:14,background:T.purple}}>
+        + New QC Checklist
+      </button>
+
+      {loading&&<Spinner/>}
+      {!loading&&rows.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>✅</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No QC Checklists</div>
+        <div style={{fontSize:12,lineHeight:1.6}}>
+          Employee inspects and signs, then a manager verifies the same items and signs off.
+        </div>
+      </div>}
+
+      {rows.map(r=>{
+        const d=dispMeta[r.disposition];
+        const st=statusMeta[r.status]||statusMeta.draft;
+        return(
+          <div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${d?d.c:st.c}`}}>
+            <div onClick={()=>setOpenForm(r)} style={{cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:13.5,fontWeight:800,color:T.purple}}>
+                  {r.part_label||job.description||"QC Checklist"}
+                </div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>
+                  {r.qc_date||"—"}
+                  {r.quantity_inspected?` · qty ${r.quantity_inspected}`:""}
+                  {r.inspector?` · ${r.inspector}`:""}
+                </div>
+                <div style={{fontSize:11,color:T.sub,marginTop:3}}>
+                  {r.employee_sig?"✍️ employee":"○ employee"}
+                  {"  ·  "}
+                  {r.manager_sig?"✍️ manager":"○ manager"}
+                </div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                {d&&<span style={pill(d.c)}>{d.l}</span>}
+                <div style={{fontSize:10,color:st.c,marginTop:4,textTransform:"uppercase",letterSpacing:"0.5px"}}>{st.l}</div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+              <button onClick={()=>setOpenForm(r)} style={{...ghostBtn,flex:2,textAlign:"center",fontSize:12}}>Open</button>
+              <button onClick={()=>del(r)} style={{...ghostBtn,fontSize:12,color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function QCForm({job,parts,user,record,onBack,onSaved,onErr}){
+  const isNew=!record;
+  const nowTime=()=>new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false});
+  const parse=(v)=>{
+    if(!v)return {};
+    if(typeof v==="string"){try{return JSON.parse(v)||{};}catch{return {};}}
+    return v;
+  };
+
+  const [f,setF]=useState({
+    part_label:record?.part_label||(job.description?job.description:"")||"",
+    part_id:record?.part_id||"",
+    qc_date:record?.qc_date||today(),
+    quantity_inspected:record?.quantity_inspected??"",
+    inspector:record?.inspector||user.name,
+    employee_corrective:record?.employee_corrective||"",
+    employee_name:record?.employee_name||user.name,
+    employee_date:record?.employee_date||today(),
+    employee_time:record?.employee_time||"",
+    manager_comments:record?.manager_comments||"",
+    manager_name:record?.manager_name||"",
+    manager_date:record?.manager_date||"",
+    manager_time:record?.manager_time||"",
+    disposition:record?.disposition||"",
+  });
+  const [empItems,setEmpItems]=useState(parse(record?.employee_items));
+  const [mgrItems,setMgrItems]=useState(parse(record?.manager_items));
+  const [empSig,setEmpSig]=useState(record?.employee_sig||null);
+  const [mgrSig,setMgrSig]=useState(record?.manager_sig||null);
+  const [signing,setSigning]=useState(null);     // "employee" | "manager"
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+
+  const isManager=user.role==="admin"||user.role==="pm";
+
+  const setItem=(who,key,field,val)=>{
+    const fn=who==="employee"?setEmpItems:setMgrItems;
+    fn(s=>({...s,[key]:{...(s[key]||{}),[field]:val}}));
+  };
+
+  const status=()=>{
+    if(mgrSig)return "complete";
+    if(empSig)return "employee_signed";
+    return "draft";
+  };
+
+  async function save(){
+    setSaving(true);
+    const body={
+      job_id:job.id,part_id:f.part_id||null,part_label:f.part_label||null,
+      qc_date:f.qc_date||null,
+      quantity_inspected:f.quantity_inspected===""?null:parseInt(f.quantity_inspected)||0,
+      inspector:f.inspector||null,
+      employee_items:empItems,employee_corrective:f.employee_corrective||null,
+      employee_name:f.employee_name||null,employee_sig:empSig,
+      employee_date:f.employee_date||null,employee_time:f.employee_time||null,
+      manager_items:mgrItems,manager_comments:f.manager_comments||null,
+      manager_name:f.manager_name||null,manager_sig:mgrSig,
+      manager_date:f.manager_date||null,manager_time:f.manager_time||null,
+      disposition:f.disposition||null,
+      status:status(),
+      created_by:record?.created_by||user.name,
+      updated_at:new Date().toISOString(),
+    };
+    try{
+      if(isNew)await API.mfg.qc.create(body);
+      else await API.mfg.qc.update(record.id,body);
+      onSaved&&onSaved();
+    }catch(e){ onErr&&onErr(e.message); }
+    setSaving(false);
+  }
+
+  function printForm(){
+    const w=window.open("","_blank");
+    if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const dt=(d)=>{ if(!d)return ""; const[y,m,dd]=d.split("-"); return `${m}/${dd}/${y}`; };
+    // ☒ / ☐ rather than a CSS box, so it survives any print stylesheet.
+    const box=(on)=>on?"&#9746;":"&#9744;";
+
+    const section=(title,items,comments,commentLabel)=>`
+      <div class="band">${title}</div>
+      <table class="insp">
+        <thead><tr>
+          <th style="width:26%">Inspection Item</th>
+          <th style="width:17%" class="c">Good / Acceptable</th>
+          <th style="width:17%" class="c">Bad / Unacceptable</th>
+          <th style="width:9%"  class="c">N/A</th>
+          <th style="width:31%">Comments / Defects Found</th>
+        </tr></thead>
+        <tbody>
+        ${QC_ITEMS.map(it=>{
+          const v=(items||{})[it.key]||{};
+          return `<tr>
+            <td class="item">${it.label}</td>
+            <td class="c">${box(v.result==="good")} ${it.good}</td>
+            <td class="c">${box(v.result==="bad")} ${it.bad}</td>
+            <td class="c">${box(v.result==="na")} N/A</td>
+            <td class="cmt">${esc(v.comment||"")}</td>
+          </tr>`;
+        }).join("")}
+        </tbody>
+      </table>
+      ${commentLabel?`<div class="corr"><span class="corrlbl">${commentLabel}</span>
+        <div class="corrbox">${esc(comments||"").replace(/\n/g,"<br/>")}</div></div>`:""}`;
+
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>QC Checklist — ${esc(f.part_label||job.job_number)}</title><style>
+@page{size:letter portrait;margin:0.4in}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+body{font-size:8.5pt;color:#000}
+.frame{border:2px solid #1F3864}
+.head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:2px solid #1F3864}
+.logo{font-family:Arial Black,Arial,sans-serif;font-size:30pt;font-weight:900;color:#1F3864;letter-spacing:2px;line-height:1}
+.logosub{font-size:6.5pt;color:#333;margin-top:2px}
+.title{text-align:right}
+.title .t1{font-size:19pt;font-weight:900;color:#1F3864;letter-spacing:0.5px}
+.title .t2{font-size:14pt;font-weight:800;color:#1F3864;margin-top:2px}
+.meta{padding:8px 14px;border-bottom:2px solid #1F3864}
+.mrow{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-bottom:7px}
+.mrow:last-child{margin-bottom:0}
+.fld{display:flex;align-items:baseline;gap:8px}
+.fld .k{font-weight:700;font-size:9pt;white-space:nowrap}
+.fld .v{flex:1;border-bottom:1px solid #666;min-height:15px;padding:0 4px;font-size:9pt}
+.band{background:#1F3864;color:#fff;text-align:center;font-size:11pt;font-weight:800;padding:5px;letter-spacing:1px}
+table.insp{width:100%;border-collapse:collapse}
+table.insp th{border:1px solid #000;padding:5px 4px;font-size:7.5pt;font-weight:800;text-transform:uppercase;background:#fff}
+table.insp td{border:1px solid #000;padding:6px 5px;font-size:8.5pt;height:26px}
+.c{text-align:center}
+.item{font-weight:700}
+.cmt{font-size:8pt}
+.corr{padding:8px 12px;border-left:1px solid #000;border-right:1px solid #000;border-bottom:1px solid #000}
+.corrlbl{font-weight:800;font-size:8.5pt;text-transform:uppercase}
+.corrbox{border-bottom:1px solid #666;min-height:26px;margin-top:5px;font-size:9pt;line-height:1.5}
+.confirm{padding:6px 12px;font-size:8pt;font-style:italic;border-left:1px solid #000;border-right:1px solid #000}
+.sigs{display:grid;grid-template-columns:1fr 1fr;gap:26px;padding:9px 14px;border:1px solid #000;border-top:none}
+.sigfld{display:flex;align-items:flex-end;gap:8px;margin-bottom:9px}
+.sigfld:last-child{margin-bottom:0}
+.sigfld .k{font-weight:700;font-size:9pt;white-space:nowrap}
+.sigfld .v{flex:1;border-bottom:1px solid #666;min-height:17px;font-size:9pt;padding:0 4px}
+.sigimg{max-height:34px;max-width:160px;display:block}
+.disp{display:grid;grid-template-columns:0.9fr 1.4fr;border:1px solid #000;border-top:none}
+.dispL{padding:9px 12px;border-right:1px solid #000}
+.dispT{font-size:11pt;font-weight:900;color:#1F3864;margin-bottom:7px}
+.dispO{font-size:8.5pt;margin-bottom:5px}
+.dispR{padding:9px 12px}
+.foot{display:flex;justify-content:space-between;padding:5px 14px;border-top:2px solid #1F3864;font-size:7.5pt;font-weight:700;letter-spacing:1px;color:#1F3864}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="frame">
+
+  <div class="head">
+    <div><div class="logo">AIME</div>
+      <div class="logosub">Atlantic Industrial Mechanical &amp; Environmental</div></div>
+    <div class="title"><div class="t1">QC CHECKLIST</div>
+      <div class="t2">${esc(f.part_label||job.job_number||"")}</div></div>
+  </div>
+
+  <div class="meta">
+    <div class="mrow">
+      <div class="fld"><span class="k">Date:</span><span class="v">${dt(f.qc_date)}</span></div>
+      <div class="fld"><span class="k">Quantity Inspected:</span><span class="v">${esc(f.quantity_inspected)}</span></div>
+    </div>
+    <div class="mrow" style="grid-template-columns:1fr">
+      <div class="fld"><span class="k">Inspector / Employee:</span><span class="v">${esc(f.inspector)}</span></div>
+    </div>
+  </div>
+
+  ${section("EMPLOYEE INSPECTION",empItems,f.employee_corrective,"Employee Corrective Action, If Required:")}
+  <div class="confirm">I confirm that I inspected the part listed above and that the information recorded is accurate.</div>
+  <div class="sigs">
+    <div>
+      <div class="sigfld"><span class="k">Employee Name:</span><span class="v">${esc(f.employee_name)}</span></div>
+      <div class="sigfld"><span class="k">Date:</span><span class="v">${dt(f.employee_date)}</span></div>
+    </div>
+    <div>
+      <div class="sigfld"><span class="k">Employee Signature:</span>
+        <span class="v">${empSig?`<img src="${empSig}" class="sigimg"/>`:""}</span></div>
+      <div class="sigfld"><span class="k">Time:</span><span class="v">${esc(f.employee_time)}</span></div>
+    </div>
+  </div>
+
+  ${section("MANAGER INSPECTION",mgrItems,null,null)}
+
+  <div class="disp">
+    <div class="dispL">
+      <div class="dispT">FINAL DISPOSITION</div>
+      ${QC_DISPOSITIONS.map(([k,l])=>`<div class="dispO">${box(f.disposition===k)} ${l}</div>`).join("")}
+    </div>
+    <div class="dispR">
+      <div style="font-weight:800;font-size:8.5pt;margin-bottom:5px">Manager Comments / Required Corrections:</div>
+      <div class="corrbox">${esc(f.manager_comments||"").replace(/\n/g,"<br/>")}</div>
+      <div style="font-size:8pt;font-style:italic;margin-top:7px">I confirm that I independently verified the same inspection items listed above.</div>
+    </div>
+  </div>
+
+  <div class="sigs">
+    <div>
+      <div class="sigfld"><span class="k">Manager Name:</span><span class="v">${esc(f.manager_name)}</span></div>
+      <div class="sigfld"><span class="k">Date:</span><span class="v">${dt(f.manager_date)}</span></div>
+    </div>
+    <div>
+      <div class="sigfld"><span class="k">Manager Signature:</span>
+        <span class="v">${mgrSig?`<img src="${mgrSig}" class="sigimg"/>`:""}</span></div>
+      <div class="sigfld"><span class="k">Time:</span><span class="v">${esc(f.manager_time)}</span></div>
+    </div>
+  </div>
+
+  <div class="foot"><span>QUALITY &middot; SAFETY &middot; INTEGRITY</span><span>QC-FRM Rev. 2</span></div>
+</div>
+</body></html>`);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},400);
+  }
+
+  const ri={...inp,fontSize:13,padding:"8px 10px"};
+
+  const ItemRows=({who,items,locked})=>(
+    <>
+      {QC_ITEMS.map(it=>{
+        const v=items[it.key]||{};
+        const choices=[["good",it.good,T.green],["bad",it.bad,T.red],["na","N/A",T.muted]];
+        return(
+          <div key={it.key} style={{...cardS,marginBottom:7,padding:"11px 12px",
+            borderLeft:`3px solid ${v.result==="bad"?T.red:v.result==="good"?T.green:T.border}`}}>
+            <div style={{fontSize:12.5,fontWeight:700,color:T.text,marginBottom:8}}>{it.label}</div>
+            <div style={{display:"flex",gap:6,marginBottom:v.comment!==undefined||v.result?8:0}}>
+              {choices.map(([val,label,color])=>{
+                const on=v.result===val;
+                return(
+                  <button key={val} disabled={locked}
+                    onClick={()=>setItem(who,it.key,"result",on?"":val)}
+                    style={{flex:1,padding:"9px 4px",borderRadius:9,cursor:locked?"default":"pointer",
+                      fontFamily:"inherit",fontSize:12,fontWeight:on?800:600,
+                      background:on?color:T.surface,color:on?(val==="na"?"#fff":"#000"):T.sub,
+                      border:`1px solid ${on?color:T.border}`,opacity:locked&&!on?0.4:1}}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {!locked&&<input value={v.comment||""} placeholder="Comments / defects found"
+              onChange={e=>setItem(who,it.key,"comment",e.target.value)}
+              style={{...inp,fontSize:12,padding:"6px 9px"}}/>}
+            {locked&&v.comment&&<div style={{fontSize:11.5,color:T.sub,fontStyle:"italic"}}>{v.comment}</div>}
+          </div>
+        );
+      })}
+    </>
+  );
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:0}}>← QC Checklists</button>
+        <span style={pill(mgrSig?T.green:empSig?T.yellow:T.muted)}>
+          {mgrSig?"complete":empSig?"awaiting manager":"draft"}
+        </span>
+      </div>
+
+      {/* Header */}
+      <div style={{...cardS,marginBottom:12}}>
+        <div style={{marginBottom:10}}><label style={lbl}>Part / Form Title</label>
+          <input value={f.part_label} onChange={e=>set("part_label",e.target.value)}
+            placeholder="e.g. JLG PART 1651" style={ri}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Date</label>
+            <input type="date" value={f.qc_date} onChange={e=>set("qc_date",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Quantity Inspected</label>
+            <input type="number" value={f.quantity_inspected} onChange={e=>set("quantity_inspected",e.target.value)} style={ri}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div><label style={lbl}>Inspector / Employee</label>
+            <select value={f.inspector} onChange={e=>{set("inspector",e.target.value);set("employee_name",e.target.value);}} style={inpSel}>
+              {NAMES.map(n=><option key={n}>{n}</option>)}
+            </select></div>
+          <div><label style={lbl}>Part (optional)</label>
+            <select value={f.part_id} onChange={e=>set("part_id",e.target.value)} style={inpSel}>
+              <option value="">—</option>
+              {(parts||[]).map(p=><option key={p.id} value={p.id}>{p.part_number}</option>)}
+            </select></div>
+        </div>
+      </div>
+
+      {/* Employee */}
+      <div style={{background:"#1F3864",color:"#fff",textAlign:"center",padding:"8px",borderRadius:"10px 10px 0 0",
+        fontSize:12.5,fontWeight:800,letterSpacing:"1px",marginBottom:8}}>
+        EMPLOYEE INSPECTION
+      </div>
+      <ItemRows who="employee" items={empItems} locked={!!empSig}/>
+
+      <div style={{...cardS,marginBottom:12}}>
+        <label style={lbl}>Employee Corrective Action, If Required</label>
+        <textarea value={f.employee_corrective} onChange={e=>set("employee_corrective",e.target.value)}
+          rows={2} disabled={!!empSig} style={{...ri,resize:"vertical",opacity:empSig?0.6:1}}/>
+      </div>
+
+      <div style={{...cardS,marginBottom:14}}>
+        <div style={{fontSize:11.5,color:T.muted,fontStyle:"italic",marginBottom:9,lineHeight:1.5}}>
+          I confirm that I inspected the part listed above and that the information recorded is accurate.
+        </div>
+        {empSig?(
+          <div>
+            <div style={{background:"#fff",border:"1px solid #ccc",borderRadius:8,padding:6,display:"inline-block",marginBottom:6}}>
+              <img src={empSig} alt="employee signature" style={{maxHeight:50,maxWidth:190,display:"block"}}/>
+            </div>
+            <div style={{fontSize:12,color:T.sub}}>
+              {f.employee_name} · {f.employee_date} {f.employee_time}
+            </div>
+            <button onClick={()=>{setEmpSig(null);set("employee_time","");}}
+              style={{...ghostBtn,fontSize:11,color:T.red,border:`1px solid ${T.red}30`,marginTop:7}}>Clear signature</button>
+          </div>
+        ):(
+          <button onClick={()=>setSigning("employee")}
+            style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>
+            ✍️ Employee Sign
+          </button>
+        )}
+      </div>
+
+      {/* Manager */}
+      <div style={{background:"#1F3864",color:"#fff",textAlign:"center",padding:"8px",borderRadius:"10px 10px 0 0",
+        fontSize:12.5,fontWeight:800,letterSpacing:"1px",marginBottom:8}}>
+        MANAGER INSPECTION
+      </div>
+
+      {!isManager&&<div style={{...cardS,marginBottom:12,fontSize:12,color:T.muted,lineHeight:1.6}}>
+        🔒 A manager or PM completes this section independently.
+      </div>}
+
+      {isManager&&<>
+        {!empSig&&<div style={{...cardS,marginBottom:8,fontSize:11.5,color:T.yellow,lineHeight:1.6}}>
+          The employee hasn't signed yet. The form is designed for them to inspect and sign first.
+        </div>}
+        <ItemRows who="manager" items={mgrItems} locked={!!mgrSig}/>
+
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:9}}>Final Disposition</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
+            {QC_DISPOSITIONS.map(([k,l])=>{
+              const on=f.disposition===k;
+              const c={approved:T.green,hold:T.yellow,rejected:T.red,extra_cleaning:T.orange}[k];
+              return(
+                <button key={k} disabled={!!mgrSig} onClick={()=>set("disposition",on?"":k)}
+                  style={{padding:"10px 8px",borderRadius:10,cursor:mgrSig?"default":"pointer",
+                    fontFamily:"inherit",fontSize:12,fontWeight:on?800:600,textAlign:"left",
+                    background:on?c:T.surface,color:on?"#000":T.sub,
+                    border:`1px solid ${on?c:T.border}`,opacity:mgrSig&&!on?0.4:1}}>
+                  {on?"☑ ":"☐ "}{l}
+                </button>
+              );
+            })}
+          </div>
+          <label style={lbl}>Manager Comments / Required Corrections</label>
+          <textarea value={f.manager_comments} onChange={e=>set("manager_comments",e.target.value)}
+            rows={2} disabled={!!mgrSig} style={{...ri,resize:"vertical",opacity:mgrSig?0.6:1}}/>
+        </div>
+
+        <div style={{...cardS,marginBottom:14}}>
+          <div style={{fontSize:11.5,color:T.muted,fontStyle:"italic",marginBottom:9,lineHeight:1.5}}>
+            I confirm that I independently verified the same inspection items listed above.
+          </div>
+          {mgrSig?(
+            <div>
+              <div style={{background:"#fff",border:"1px solid #ccc",borderRadius:8,padding:6,display:"inline-block",marginBottom:6}}>
+                <img src={mgrSig} alt="manager signature" style={{maxHeight:50,maxWidth:190,display:"block"}}/>
+              </div>
+              <div style={{fontSize:12,color:T.sub}}>
+                {f.manager_name} · {f.manager_date} {f.manager_time}
+              </div>
+              <button onClick={()=>{setMgrSig(null);set("manager_time","");}}
+                style={{...ghostBtn,fontSize:11,color:T.red,border:`1px solid ${T.red}30`,marginTop:7}}>Clear signature</button>
+            </div>
+          ):(
+            <button onClick={()=>setSigning("manager")}
+              style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>
+              ✍️ Manager Sign
+            </button>
+          )}
+        </div>
+      </>}
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <button onClick={save} disabled={saving}
+          style={{...primBtn,borderRadius:14,background:T.purple,opacity:saving?0.6:1}}>
+          {saving?"Saving…":"💾 Save Checklist"}
+        </button>
+        <button onClick={printForm} style={{...primBtn,borderRadius:14,background:"#1f3864"}}>🖨️ Print</button>
+      </div>
+
+      {signing&&<SignaturePad
+        reportName={`QC Checklist · ${f.part_label||job.job_number}`}
+        onSave={(name,sig)=>{
+          if(signing==="employee"){
+            setEmpSig(sig);set("employee_name",name);
+            set("employee_date",today());set("employee_time",nowTime());
+          }else{
+            setMgrSig(sig);set("manager_name",name);
+            set("manager_date",today());set("manager_time",nowTime());
+          }
+          setSigning(null);
+        }}
+        onCancel={()=>setSigning(null)}/>}
     </div>
   );
 }
