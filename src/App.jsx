@@ -3863,7 +3863,7 @@ function SignaturePackageScreen({project,user,onBack,onErr}){
   function buildItem({type,row}){
     if(type==="tm"){
       return {
-        docType:"tm",projectName:project.name,customer:project.client||"",
+        docType:"tm",projectName:project.name,customer:row.customer||project.client||"",
         poNumber:project.work_order||"",afeNumber:project.afe||"",location:project.location||"",
         description:row.description||"",reportNo:row.ticket_no||"",reportDate:row.ticket_date||"",
         submittedBy:row.submitted_by||"",
@@ -9944,7 +9944,9 @@ function PublicTMSignForm({ticketId}){
         <div style={{background:s.card,borderRadius:12,padding:"14px 16px",marginBottom:14,border:"1px solid #26262E"}}>
           <div style={{fontSize:11,fontWeight:700,color:"#7080A0",textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Time &amp; Materials Ticket — Client Approval</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            {[["Project",project?.name||"—"],["T&M #",ticket?.ticket_no||"—"],["Date",ticket?.ticket_date||"—"],["Submitted By",ticket?.submitted_by||"—"]].map(([l,v])=>(
+            {[["Project",project?.name||"—"],["Customer",ticket?.customer||project?.client||"—"],
+              ["T&M #",ticket?.ticket_no||"—"],["Date",ticket?.ticket_date||"—"],
+              ["Submitted By",ticket?.submitted_by||"—"]].map(([l,v])=>(
               <div key={l}><div style={{fontSize:10,color:"#7080A0",fontWeight:700,textTransform:"uppercase"}}>{l}</div><div style={{fontSize:13,fontWeight:600,color:"#F0F4FF",marginTop:2}}>{v}</div></div>
             ))}
           </div>
@@ -14407,6 +14409,7 @@ function PullMfgWeeksModal({job,rate,onClose,onPull,onErr}){
 function TMTicketList({project,user,onOpen,onNew}){
   const [tickets,setTickets]=useState([]);
   const [tmView,setTmView]=useState("active");
+  const [custFilter,setCustFilter]=useState("");   // shop jobs run many customers
   const [loading,setLoading]=useState(true);
   // Matches TMTicketForm's canEdit and the estimator/foreman job permissions —
   // the form already allowed foremen to edit, but the list never gave them a
@@ -14429,7 +14432,9 @@ function TMTicketList({project,user,onOpen,onNew}){
   const canArchive=can(user,"approve_report");
   const live=tickets.filter(t=>!t.archived);
   const archivedTix=tickets.filter(t=>t.archived);
-  const shownTix=tmView==="archived"?archivedTix:live;
+  const shownTix=(tmView==="archived"?archivedTix:live)
+    .filter(t=>!custFilter||t.customer===custFilter);
+  const customers=[...new Set(tickets.map(t=>t.customer).filter(Boolean))].sort();
   const total=shownTix.reduce((s,t)=>s+(t.grand_total||0),0);
 
   async function setArchived(id,archived){
@@ -14458,6 +14463,19 @@ function TMTicketList({project,user,onOpen,onNew}){
           })}
         </div>
       )}
+      {customers.length>1&&<div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:5,marginBottom:10,WebkitOverflowScrolling:"touch"}}>
+        {[["","All customers"],...customers.map(c=>[c,c])].map(([v,l])=>{
+          const on=custFilter===v;
+          return(
+            <button key={v||"all"} onClick={()=>setCustFilter(v)}
+              style={{flexShrink:0,padding:"6px 12px",borderRadius:15,cursor:"pointer",fontFamily:"inherit",
+                fontSize:11.5,fontWeight:on?800:600,whiteSpace:"nowrap",
+                background:on?T.orange:T.surface,color:on?"#000":T.sub,
+                border:`1px solid ${on?T.orange:T.border}`}}>{l}</button>
+          );
+        })}
+      </div>}
+
       {shownTix.length>0&&<div style={{...cardS,marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{fontSize:12,color:T.muted}}>{shownTix.length} ticket{shownTix.length!==1?"s":""}</div>
         <div style={{fontSize:15,fontWeight:900,color:T.green}}>${total.toLocaleString("en-US",{minimumFractionDigits:2})}</div>
@@ -14477,6 +14495,7 @@ function TMTicketList({project,user,onOpen,onNew}){
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
             <div>
               <div style={{fontSize:14,fontWeight:800,color:T.orange}}>T&M #{t.ticket_no||"—"}</div>
+              {t.customer&&<div style={{fontSize:12.5,fontWeight:700,color:T.text,marginTop:1}}>{t.customer}</div>}
               <div style={{fontSize:12,color:T.sub}}>{t.ticket_date} {t.submitted_by?"· "+t.submitted_by:""}</div>
               {t.description&&<div style={{fontSize:11,color:T.muted,marginTop:2}}>{t.description.slice(0,60)}{t.description.length>60?"…":""}</div>}
               {canArchive&&(
@@ -14515,6 +14534,17 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const [afeNumber,setAfeNumber]=useState(ticket?.afe_number||project.afe_number||"");
   const [workOrder,setWorkOrder]=useState(ticket?.work_order||"");
   const [location,setLocation]=useState(ticket?.location||"");
+  // Shop T&M jobs serve many customers, so the customer belongs on the
+  // ticket rather than being inherited from the job every time.
+  const [customer,setCustomer]=useState(ticket?.customer||project.client||"");
+  const [customerContact,setCustomerContact]=useState(ticket?.customer_contact||"");
+  const [customerHistory,setCustomerHistory]=useState([]);
+  useEffect(()=>{
+    API.tmTickets.forProject(project.id).then(rows=>{
+      const names=[...new Set((rows||[]).map(t=>t.customer).filter(Boolean))].sort();
+      setCustomerHistory(names);
+    }).catch(()=>{});
+  },[project.id]);
   const [markupPct,setMarkupPct]=useState(String(ticket?.markup_pct||"0"));
   const [notes,setNotes]=useState(ticket?.notes||"");
   const [status,setStatus]=useState(ticket?.status||"draft");
@@ -14564,7 +14594,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
           inspectorEmail:bsEmail.trim(),
           inspectorName:bsName.trim(),
           projectName:project.name,
-          customer:project.client||"",
+          customer:customer||project.client||"",
           poNumber:poNumber||"",
           afeNumber:afeNumber||workOrder||"",
           location:location||"",
@@ -14675,7 +14705,8 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       inspector_signed_at:sigAt||null,
       client_signature:clientSig||null,
       client_signed_at:clientSigAt||null,
-      customer:project.client||null,
+      customer:customer||project.client||null,
+      customer_contact:customerContact||null,
       updated_at:new Date().toISOString(),
     };
     // A T&M ticket is a billing document — losing one in a dead spot costs
@@ -14728,7 +14759,10 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   </div>
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb;margin-bottom:8px;">
-  ${[["Project",project.name||"—"],["Customer",project.client||"—"],["PO #",poNumber||"—"],["AFE/WO #",(afeNumber||workOrder||"—")],["Location",location||"—"],["Submitted By",user.name]].map(([l,v])=>`<div style="display:flex;border-bottom:1px solid #e5e7eb"><div style="background:#f3f4f6;padding:3px 8px;font-weight:700;font-size:7.5pt;width:100px;border-right:1px solid #e5e7eb;flex-shrink:0">${l}</div><div style="padding:3px 8px;font-size:8pt">${v}</div></div>`).join("")}
+  ${[["Project",project.name||"—"],["Customer",customer||project.client||"—"],
+     ["Contact",customerContact||"—"],["PO #",poNumber||"—"],
+     ["AFE/WO #",(afeNumber||workOrder||"—")],["Location",location||"—"],
+     ["Submitted By",user.name]].map(([l,v])=>`<div style="display:flex;border-bottom:1px solid #e5e7eb"><div style="background:#f3f4f6;padding:3px 8px;font-weight:700;font-size:7.5pt;width:100px;border-right:1px solid #e5e7eb;flex-shrink:0">${l}</div><div style="padding:3px 8px;font-size:8pt">${v}</div></div>`).join("")}
 </div>
 ${description?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:8px;font-size:8.5pt"><b>Description:</b> ${description}</div>`:""}
 ${labor.length?`<div style="margin-bottom:8px"><div style="background:#1f3864;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Labor</div>
@@ -14861,6 +14895,17 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
             <div><label style={lbl}>PO #</label><input value={poNumber} onChange={e=>setPoNumber(e.target.value)} style={ri}/></div>
             <div><label style={lbl}>AFE / WO #</label><input value={afeNumber} onChange={e=>setAfeNumber(e.target.value)} style={ri}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <div><label style={lbl}>Customer</label>
+              <input value={customer} onChange={e=>setCustomer(e.target.value)}
+                placeholder="Who is this work for?" style={ri} list="tm-customers"/>
+              <datalist id="tm-customers">
+                {customerHistory.map(c=><option key={c} value={c}/>)}
+              </datalist></div>
+            <div><label style={lbl}>Their Contact</label>
+              <input value={customerContact} onChange={e=>setCustomerContact(e.target.value)}
+                placeholder="Name / phone" style={ri}/></div>
           </div>
           <div style={{marginBottom:8}}><label style={lbl}>Location</label><input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Site location" style={ri}/></div>
           <div><label style={lbl}>Description of Work</label><textarea value={description} onChange={e=>setDescription(e.target.value)} rows={2} style={{...ri,resize:"vertical",width:"100%"}}/></div>
