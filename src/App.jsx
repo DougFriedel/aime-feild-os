@@ -10176,6 +10176,9 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [rBy,setRBy]=useState(user.name);
   const [saving,setSaving]=useState(false);
   const [formErr,setFormErr]=useState("");
+  const [adjItem,setAdjItem]=useState(null);   // bom row being counted
+  const [adjTo,setAdjTo]=useState("");
+  const [adjReason,setAdjReason]=useState("");
   const [showPackingSlip,setShowPackingSlip]=useState(false);
   const [editingSlip,setEditingSlip]=useState(null);
   const [packingSlips,setPackingSlips]=useState([]);
@@ -10227,13 +10230,25 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   }
 
   function inv(item){
+    // Every movement is a row in mfg_receipts, told apart by transaction_type.
+    // The old version summed qty_received across all of them, so an Issued row
+    // inflated the RECEIVED figure by the amount consumed.
     const itxns=receipts.filter(r=>r.bom_id===item.id);
-    const received=itxns.reduce((s,r)=>s+(r.qty_received||0),0);
-    const damaged=itxns.reduce((s,r)=>s+(r.qty_damaged||0),0);
-    const usedInAsm=itxns.filter(r=>r.transaction_type==="Issued").reduce((s,r)=>s+(r.qty_received||0),0);
-    const onHand=Math.max(0,received-damaged-usedInAsm);
+    const sumBy=(type)=>itxns.filter(r=>r.transaction_type===type)
+      .reduce((s,r)=>s+(parseFloat(r.qty_received)||0),0);
+
+    const received=sumBy("Received");
+    const usedInAsm=sumBy("Issued");
+    // A count correction, positive or negative, entered by hand.
+    const adjusted=sumBy("Adjustment");
+    const damaged=itxns.reduce((s,r)=>s+(parseFloat(r.qty_damaged)||0),0);
+
+    const onHand=Math.max(0,received+adjusted-damaged-usedInAsm);
     const qpa=item.qty_per_assembly||1;
-    return{received,damaged,usedInAsm,onHand,canBuild:Math.floor(onHand/qpa),qpa,reorderLevel:item.reorder_level||0,needsReorder:(item.reorder_level||0)>0&&onHand<=(item.reorder_level||0)};
+    return{received,damaged,usedInAsm,adjusted,onHand,
+      canBuild:Math.floor(onHand/qpa),qpa,
+      reorderLevel:item.reorder_level||0,
+      needsReorder:(item.reorder_level||0)>0&&onHand<=(item.reorder_level||0)};
   }
 
   function canBuildPart(partId){
@@ -10271,6 +10286,31 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   async function deletePart(id){
     if(!window.confirm("Delete this assembly and all its data?"))return;
     try{await API.mfg.parts.remove(id);await load();}catch(e){}
+  }
+
+  // Set the on-hand count directly. Recorded as a delta against the current
+  // figure so the running history stays intact rather than being overwritten.
+  async function saveAdjustment(){
+    if(!adjItem)return;
+    const target=parseFloat(adjTo);
+    if(isNaN(target)||target<0){setFormErr("Enter the count you actually have.");return;}
+    const current=inv(adjItem).onHand;
+    const delta=target-current;
+    if(delta===0){setAdjItem(null);return;}
+    setSaving(true);setFormErr("");
+    try{
+      await API.mfg.receipts.create({
+        bom_id:adjItem.id,part_id:adjItem.part_id,
+        qty_received:delta,qty_issued:0,qty_damaged:0,
+        transaction_type:"Adjustment",
+        received_date:today(),received_by:user.name,
+        job_number:job.job_number||null,
+        notes:`Counted ${target} (was ${current})${adjReason?" — "+adjReason:""}`,
+      });
+      setAdjItem(null);setAdjTo("");setAdjReason("");
+      await load();
+    }catch(e){setFormErr("Error: "+e.message);}
+    setSaving(false);
   }
 
   async function logReceipt(){
@@ -10413,20 +10453,58 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
                     <div style={{fontSize:10,color:T.muted,marginTop:2}}>{i.qpa}× per assembly · Reorder at {i.reorderLevel||"—"}</div>
                   </div>
                   <div style={{textAlign:"right",display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
-                    {canAdmin&&<button onClick={async e=>{e.stopPropagation();if(window.confirm("Remove "+item.component_part_number+" from BOM?"))try{await API.mfg.bom.remove(item.id);await load();}catch(err){}}} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"2px 8px",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>🗑 Remove</button>}
+                    <div style={{display:"flex",gap:5}}>
+                      {canAdmin&&<button onClick={e=>{e.stopPropagation();setAdjItem(item);setAdjTo(String(i.onHand));setAdjReason("");}}
+                        style={{background:"none",border:`1px solid ${T.blue}40`,borderRadius:6,padding:"2px 8px",color:T.blue,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>✏️ Count</button>}
+                      {canAdmin&&<button onClick={async e=>{e.stopPropagation();if(window.confirm("Remove "+item.component_part_number+" from BOM?"))try{await API.mfg.bom.remove(item.id);await load();}catch(err){}}} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"2px 8px",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>🗑 Remove</button>}
+                    </div>
                     <div style={{fontSize:28,fontWeight:900,color:i.needsReorder?T.red:i.onHand<=0?T.yellow:T.green,lineHeight:1}}>{i.onHand}</div>
                     <div style={{fontSize:10,color:T.muted,marginTop:2}}>on hand</div>
                     {i.needsReorder&&<div style={{background:"#7c2d12",color:"#fca5a5",borderRadius:6,padding:"2px 8px",fontSize:9,fontWeight:800,marginTop:4}}>🔴 REORDER</div>}
                   </div>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
-                  {[["Received",i.received,T.blue],["Used",i.usedInAsm,T.muted],["Damaged",i.damaged,i.damaged>0?T.red:T.muted],["Can Build",i.canBuild,i.canBuild>0?T.green:T.red]].map(([l,v,c])=>(
+                <div style={{display:"grid",gridTemplateColumns:i.adjusted?"1fr 1fr 1fr 1fr 1fr":"1fr 1fr 1fr 1fr",gap:6}}>
+                  {[["Received",i.received,T.blue],
+                    ...(i.adjusted?[["Adjusted",(i.adjusted>0?"+":"")+i.adjusted,i.adjusted<0?T.red:T.green]]:[]),
+                    ["Used",i.usedInAsm,T.muted],
+                    ["Damaged",i.damaged,i.damaged>0?T.red:T.muted],
+                    ["Can Build",i.canBuild,i.canBuild>0?T.green:T.red]].map(([l,v,c])=>(
                     <div key={l} style={{background:T.surface,borderRadius:6,padding:"6px",textAlign:"center"}}>
                       <div style={{fontSize:15,fontWeight:800,color:c}}>{v}</div>
                       <div style={{fontSize:8,color:T.muted,textTransform:"uppercase"}}>{l}</div>
                     </div>
                   ))}
                 </div>
+
+                {adjItem&&adjItem.id===item.id&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                  <div style={{fontSize:12,fontWeight:800,color:T.blue,marginBottom:9}}>
+                    ✏️ Count {item.component_part_number}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"110px 1fr",gap:8,marginBottom:9}}>
+                    <div><label style={lbl}>Count on hand</label>
+                      <input type="number" value={adjTo} onChange={e=>setAdjTo(e.target.value)}
+                        style={{...inp,textAlign:"center",fontSize:16,fontWeight:800}} autoFocus/></div>
+                    <div><label style={lbl}>Reason</label>
+                      <input value={adjReason} onChange={e=>setAdjReason(e.target.value)}
+                        placeholder="e.g. physical count, scrapped, miscount" style={inp}/></div>
+                  </div>
+                  {(()=>{
+                    const target=parseFloat(adjTo);
+                    const d=isNaN(target)?0:target-i.onHand;
+                    return d!==0&&!isNaN(target)?(
+                      <div style={{fontSize:11.5,color:d>0?T.green:T.red,marginBottom:9}}>
+                        {d>0?"+":""}{d} against the current {i.onHand} on hand
+                      </div>
+                    ):null;
+                  })()}
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={saveAdjustment} disabled={saving}
+                      style={{...primBtn,flex:2,borderRadius:10,fontSize:13,background:T.blue}}>
+                      {saving?"Saving…":"Set Count"}
+                    </button>
+                    <button onClick={()=>setAdjItem(null)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>Cancel</button>
+                  </div>
+                </div>}
               </div>
             );
           })}
@@ -10545,15 +10623,19 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           </div>}
 
           {/* Running receipt list */}
-          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10,marginTop:4}}>Receipt History</div>
-          {receipts.filter(r=>r.transaction_type==="Received").length===0&&<div style={{textAlign:"center",padding:30,color:T.muted,fontSize:12}}>No receipts logged yet. Use the form above to log incoming parts.</div>}
-          {receipts.filter(r=>r.transaction_type==="Received").map((r,i)=>{
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10,marginTop:4}}>Receipt &amp; Adjustment History</div>
+          {receipts.filter(r=>["Received","Adjustment"].includes(r.transaction_type)).length===0&&<div style={{textAlign:"center",padding:30,color:T.muted,fontSize:12}}>Nothing logged yet. Use the form above to log incoming parts.</div>}
+          {receipts.filter(r=>["Received","Adjustment"].includes(r.transaction_type)).map((r,i)=>{
             const bomItem=allBomItems.find(b=>b.id===r.bom_id);
             return(
               <div key={i} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
-                  <div style={{fontSize:13,fontWeight:700,color:T.green}}>+{r.qty_received} — <span style={{color:T.orange}}>{bomItem?.component_part_number||"—"}</span> <span style={{color:T.sub,fontWeight:400}}>{bomItem?.material||""}</span></div>
+                  <div style={{fontSize:13,fontWeight:700,color:r.transaction_type==="Adjustment"?(r.qty_received<0?T.red:T.blue):T.green}}>
+                    {r.qty_received>0?"+":""}{r.qty_received} — <span style={{color:T.orange}}>{bomItem?.component_part_number||"—"}</span> <span style={{color:T.sub,fontWeight:400}}>{bomItem?.material||""}</span>
+                    {r.transaction_type==="Adjustment"&&<span style={{fontSize:9,background:T.blueLow,color:T.blue,borderRadius:4,padding:"1px 6px",marginLeft:6,fontWeight:800}}>COUNT</span>}
+                  </div>
                   <div style={{fontSize:11,color:T.muted}}>{r.received_date}{r.received_by?" · "+r.received_by:""}{r.job_number?" · "+r.job_number:""}{r.reference_bol?" · BOL: "+r.reference_bol:""}</div>
+                  {r.notes&&<div style={{fontSize:10.5,color:T.sub,marginTop:2,fontStyle:"italic"}}>{r.notes}</div>}
                 </div>
                 {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete this receipt?"))try{await sb(`/mfg_receipts?id=eq.${r.id}`,{method:"DELETE"});await load();}catch(e){}}} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:8,padding:"4px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>}
               </div>
