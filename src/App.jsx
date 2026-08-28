@@ -12077,46 +12077,51 @@ function QCForm({job,parts,user,record,onBack,onSaved,onErr}){
 
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
 <title>QC Checklist — ${esc(f.part_label||job.job_number)}</title><style>
-@page{size:letter portrait;margin:0.4in}
+/* Tuned to fit one Letter page. Ten inspection rows plus two signature
+   blocks is a lot of vertical space, so row height and padding carry most
+   of the saving — font sizes stay legible. */
+@page{size:letter portrait;margin:0.3in}
 *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
-body{font-size:8.5pt;color:#000}
-.frame{border:2px solid #1F3864}
-.head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:2px solid #1F3864}
-.logo{font-family:Arial Black,Arial,sans-serif;font-size:30pt;font-weight:900;color:#1F3864;letter-spacing:2px;line-height:1}
-.logosub{font-size:6.5pt;color:#333;margin-top:2px}
+body{font-size:8pt;color:#000}
+.frame{border:1.5px solid #1F3864}
+.head{display:flex;justify-content:space-between;align-items:center;padding:5px 10px;border-bottom:1.5px solid #1F3864}
+.logo{font-family:Arial Black,Arial,sans-serif;font-size:21pt;font-weight:900;color:#1F3864;letter-spacing:1.5px;line-height:1}
+.logosub{font-size:5.5pt;color:#333;margin-top:1px}
 .title{text-align:right}
-.title .t1{font-size:19pt;font-weight:900;color:#1F3864;letter-spacing:0.5px}
-.title .t2{font-size:14pt;font-weight:800;color:#1F3864;margin-top:2px}
-.meta{padding:8px 14px;border-bottom:2px solid #1F3864}
-.mrow{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-bottom:7px}
+.title .t1{font-size:15pt;font-weight:900;color:#1F3864;letter-spacing:0.5px;line-height:1.1}
+.title .t2{font-size:11pt;font-weight:800;color:#1F3864}
+.meta{padding:4px 10px;border-bottom:1.5px solid #1F3864}
+.mrow{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:3px}
 .mrow:last-child{margin-bottom:0}
-.fld{display:flex;align-items:baseline;gap:8px}
-.fld .k{font-weight:700;font-size:9pt;white-space:nowrap}
-.fld .v{flex:1;border-bottom:1px solid #666;min-height:15px;padding:0 4px;font-size:9pt}
-.band{background:#1F3864;color:#fff;text-align:center;font-size:11pt;font-weight:800;padding:5px;letter-spacing:1px}
+.fld{display:flex;align-items:baseline;gap:6px}
+.fld .k{font-weight:700;font-size:8pt;white-space:nowrap}
+.fld .v{flex:1;border-bottom:1px solid #666;min-height:12px;padding:0 3px;font-size:8.5pt}
+.band{background:#1F3864;color:#fff;text-align:center;font-size:9pt;font-weight:800;padding:3px;letter-spacing:1px}
 table.insp{width:100%;border-collapse:collapse}
-table.insp th{border:1px solid #000;padding:5px 4px;font-size:7.5pt;font-weight:800;text-transform:uppercase;background:#fff}
-table.insp td{border:1px solid #000;padding:6px 5px;font-size:8.5pt;height:26px}
+table.insp th{border:1px solid #000;padding:2px 3px;font-size:6.5pt;font-weight:800;text-transform:uppercase;background:#fff;line-height:1.15}
+table.insp td{border:1px solid #000;padding:3px 4px;font-size:8pt;height:17px}
 .c{text-align:center}
-.item{font-weight:700}
-.cmt{font-size:8pt}
-.corr{padding:8px 12px;border-left:1px solid #000;border-right:1px solid #000;border-bottom:1px solid #000}
-.corrlbl{font-weight:800;font-size:8.5pt;text-transform:uppercase}
-.corrbox{border-bottom:1px solid #666;min-height:26px;margin-top:5px;font-size:9pt;line-height:1.5}
-.confirm{padding:6px 12px;font-size:8pt;font-style:italic;border-left:1px solid #000;border-right:1px solid #000}
-.sigs{display:grid;grid-template-columns:1fr 1fr;gap:26px;padding:9px 14px;border:1px solid #000;border-top:none}
-.sigfld{display:flex;align-items:flex-end;gap:8px;margin-bottom:9px}
+.item{font-weight:700;font-size:7.5pt}
+.cmt{font-size:7.5pt}
+.corr{padding:4px 10px;border-left:1px solid #000;border-right:1px solid #000;border-bottom:1px solid #000}
+.corrlbl{font-weight:800;font-size:7.5pt;text-transform:uppercase}
+.corrbox{border-bottom:1px solid #666;min-height:16px;margin-top:2px;font-size:8pt;line-height:1.35}
+.confirm{padding:3px 10px;font-size:7pt;font-style:italic;border-left:1px solid #000;border-right:1px solid #000}
+.sigs{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:5px 10px;border:1px solid #000;border-top:none}
+.sigfld{display:flex;align-items:flex-end;gap:6px;margin-bottom:4px}
 .sigfld:last-child{margin-bottom:0}
-.sigfld .k{font-weight:700;font-size:9pt;white-space:nowrap}
-.sigfld .v{flex:1;border-bottom:1px solid #666;min-height:17px;font-size:9pt;padding:0 4px}
-.sigimg{max-height:34px;max-width:160px;display:block}
-.disp{display:grid;grid-template-columns:0.9fr 1.4fr;border:1px solid #000;border-top:none}
-.dispL{padding:9px 12px;border-right:1px solid #000}
-.dispT{font-size:11pt;font-weight:900;color:#1F3864;margin-bottom:7px}
-.dispO{font-size:8.5pt;margin-bottom:5px}
-.dispR{padding:9px 12px}
-.foot{display:flex;justify-content:space-between;padding:5px 14px;border-top:2px solid #1F3864;font-size:7.5pt;font-weight:700;letter-spacing:1px;color:#1F3864}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+.sigfld .k{font-weight:700;font-size:8pt;white-space:nowrap}
+.sigfld .v{flex:1;border-bottom:1px solid #666;min-height:14px;font-size:8.5pt;padding:0 3px}
+.sigimg{max-height:24px;max-width:135px;display:block}
+.disp{display:grid;grid-template-columns:0.85fr 1.5fr;border:1px solid #000;border-top:none}
+.dispL{padding:5px 10px;border-right:1px solid #000}
+.dispT{font-size:9pt;font-weight:900;color:#1F3864;margin-bottom:3px}
+.dispO{font-size:7.5pt;margin-bottom:2px}
+.dispR{padding:5px 10px}
+.foot{display:flex;justify-content:space-between;padding:3px 10px;border-top:1.5px solid #1F3864;font-size:6.5pt;font-weight:700;letter-spacing:1px;color:#1F3864}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  /* Nothing should ever break across a page. */
+  .frame,table.insp,.sigs,.disp{page-break-inside:avoid}}
 </style></head><body>
 <div class="frame">
 
