@@ -10446,7 +10446,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
-        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"12px 4px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -10459,6 +10459,9 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
         {!loading&&tab==="time"&&<MfgTimeTab job={job} parts={parts} user={user} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="qc"&&<QCTab job={job} parts={parts} user={user} onErr={m=>setFormErr(m)}/>}
+
+        {!loading&&tab==="report"&&<MfgProductionReport job={job} parts={parts} user={user}
+          onBack={()=>setTab("overview")} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="billing"&&canAdmin&&<MfgBillingTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
 
@@ -12402,6 +12405,291 @@ table.insp td{border:1px solid #000;padding:3px 4px;font-size:8pt;height:17px}
           setSigning(null);
         }}
         onCancel={()=>setSigning(null)}/>}
+    </div>
+  );
+}
+
+
+/* ── Production report ──
+   Units built and shipped over a date range, for one manufacturing job. */
+function MfgProductionReport({job,parts,user,onBack,onErr}){
+  const iso=(d)=>d.toISOString().slice(0,10);
+  const monthStart=()=>{const n=new Date();return iso(new Date(n.getFullYear(),n.getMonth(),1));};
+
+  const [from,setFrom]=useState(monthStart());
+  const [to,setTo]=useState(iso(new Date()));
+  const [partId,setPartId]=useState("");     // empty = every part
+  const [asm,setAsm]=useState(null);
+  const [ship,setShip]=useState(null);
+  const [running,setRunning]=useState(false);
+  const [err,setErr]=useState("");
+
+  const quick=(days)=>{const d=new Date();d.setDate(d.getDate()-days);setFrom(iso(d));setTo(iso(new Date()));};
+  const thisMonth=()=>{const n=new Date();setFrom(iso(new Date(n.getFullYear(),n.getMonth(),1)));setTo(iso(n));};
+  const lastMonth=()=>{const n=new Date();
+    setFrom(iso(new Date(n.getFullYear(),n.getMonth()-1,1)));
+    setTo(iso(new Date(n.getFullYear(),n.getMonth(),0)));};
+
+  async function run(){
+    if(!from||!to){setErr("Pick a start and end date.");return;}
+    if(from>to){setErr("The start date is after the end date.");return;}
+    setRunning(true);setErr("");
+    try{
+      const [a,s]=await Promise.all([
+        API.mfg.assemblyLog.forJob(job.id).catch(()=>[]),
+        API.mfg.shippingLog.forJob(job.id).catch(()=>[]),
+      ]);
+      const inRange=(d)=>d&&d>=from&&d<=to;
+      const mine=(r)=>!partId||r.part_id===partId;
+      setAsm((a||[]).filter(r=>inRange(r.completion_date)&&mine(r)));
+      setShip((s||[]).filter(r=>inRange(r.ship_date)&&mine(r)));
+    }catch(e){setErr(e.message);}
+    setRunning(false);
+  }
+  useEffect(()=>{run();},[]);   // open with this month already loaded
+
+  const partOf=(id)=>(parts||[]).find(p=>p.id===id);
+  const partName=(id)=>partOf(id)?.part_number||"—";
+
+  const built=(asm||[]).reduce((s,r)=>s+(parseInt(r.qty_completed)||0),0);
+  const shipped=(ship||[]).reduce((s,r)=>s+(parseInt(r.qty_shipped)||0),0);
+
+  // Per part, so a job running several parts can be read at a glance.
+  const byPart={};
+  (asm||[]).forEach(r=>{
+    const k=r.part_id||"none";
+    (byPart[k]||=({built:0,shipped:0})).built+=parseInt(r.qty_completed)||0;
+  });
+  (ship||[]).forEach(r=>{
+    const k=r.part_id||"none";
+    (byPart[k]||=({built:0,shipped:0})).shipped+=parseInt(r.qty_shipped)||0;
+  });
+  const partRows=Object.entries(byPart)
+    .map(([id,v])=>({id,name:partName(id),...v}))
+    .sort((a,b)=>b.built-a.built);
+
+  // Weekly split — shows the run rate rather than just a single total.
+  const weekOf=(d)=>{
+    const x=new Date(d+"T12:00:00");
+    const day=x.getDay();
+    x.setDate(x.getDate()-(day===0?6:day-1));
+    return x.toISOString().slice(0,10);
+  };
+  const byWeek={};
+  (asm||[]).forEach(r=>{(byWeek[weekOf(r.completion_date)]||=({built:0,shipped:0})).built+=parseInt(r.qty_completed)||0;});
+  (ship||[]).forEach(r=>{(byWeek[weekOf(r.ship_date)]||=({built:0,shipped:0})).shipped+=parseInt(r.qty_shipped)||0;});
+  const weekRows=Object.entries(byWeek).map(([w,v])=>({week:w,...v})).sort((a,b)=>a.week.localeCompare(b.week));
+
+  const days=Math.max(1,Math.round((new Date(to)-new Date(from))/86400000)+1);
+  const perDay=built/days;
+
+  function exportXlsx(){
+    try{
+      const out=[["AIME Field Pro — Production Report"],
+        ["Job",job.job_number||""],["Customer",job.customer||""],
+        ["Part",partId?partName(partId):"All parts"],
+        ["Period",from+" to "+to],[],
+        ["SUMMARY"],
+        ["Units built",built],["Units shipped",shipped],
+        ["Built but not shipped",built-shipped],
+        ["Average built per day",Number(perDay.toFixed(2))],[],
+        ["BY PART"],["Part","Built","Shipped","Difference"]];
+      partRows.forEach(r=>out.push([r.name,r.built,r.shipped,r.built-r.shipped]));
+      out.push([],["BY WEEK"],["Week of","Built","Shipped"]);
+      weekRows.forEach(r=>out.push([r.week,r.built,r.shipped]));
+      out.push([],["ASSEMBLY ENTRIES"],["Date","Part","Qty Built","Entered By","Notes"]);
+      (asm||[]).forEach(r=>out.push([r.completion_date,partName(r.part_id),
+        parseInt(r.qty_completed)||0,r.entered_by||"",r.notes||""]));
+      out.push([],["SHIPPING ENTRIES"],["Date","Part","Qty Shipped","Carrier","BOL","Notes"]);
+      (ship||[]).forEach(r=>out.push([r.ship_date,partName(r.part_id),
+        parseInt(r.qty_shipped)||0,r.carrier||"",r.bol_number||"",r.notes||""]));
+
+      const ws=XLSX.utils.aoa_to_sheet(out);
+      ws["!cols"]=[{wch:22},{wch:22},{wch:12},{wch:16},{wch:30},{wch:26}];
+      const wb=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb,ws,"Production");
+      XLSX.writeFile(wb,`AIME_Production_${job.job_number||"job"}_${from}_to_${to}.xlsx`);
+    }catch(e){setErr("Excel export failed: "+e.message);}
+  }
+
+  function printReport(){
+    const w=window.open("","_blank");
+    if(!w){setErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const dt=(d)=>{if(!d)return "";const[y,m,dd]=d.split("-");return `${m}/${dd}/${y}`;};
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Production Report — ${esc(job.job_number)}</title><style>
+@page{size:letter portrait;margin:0.5in}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+body{font-size:9pt;color:#111}
+.hd{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #1F3864;padding-bottom:10px;margin-bottom:14px}
+.brand{font-family:Arial Black,Arial,sans-serif;font-size:22pt;font-weight:900;color:#1F3864;letter-spacing:1.5px}
+h1{font-size:15pt;color:#1F3864;text-align:right}
+.sub{font-size:8.5pt;color:#555;text-align:right;margin-top:3px;line-height:1.5}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+.kpi{border:1px solid #d5dae5;border-radius:6px;padding:10px;text-align:center}
+.kpi .v{font-size:20pt;font-weight:900;color:#1F3864;line-height:1}
+.kpi .l{font-size:7pt;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px}
+h2{font-size:9.5pt;color:#1F3864;text-transform:uppercase;letter-spacing:0.6px;margin:14px 0 6px}
+table{width:100%;border-collapse:collapse;margin-bottom:6px}
+th{background:#1F3864;color:#fff;padding:5px 7px;text-align:left;font-size:7.5pt;text-transform:uppercase}
+td{padding:4px 7px;border-bottom:1px solid #e5e7eb;font-size:8.5pt}
+tr:nth-child(even) td{background:#fafbff}
+.n{text-align:right}
+tfoot td{background:#eef2f8;font-weight:800;border-top:1px solid #99a}
+.foot{margin-top:20px;padding-top:7px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="hd">
+  <div><div class="brand">AIME</div>
+    <div style="font-size:7.5pt;color:#555">Atlantic Industrial Mechanical &amp; Environmental Inc.</div></div>
+  <div><h1>PRODUCTION REPORT</h1>
+    <div class="sub">Job ${esc(job.job_number)}${job.customer?" · "+esc(job.customer):""}<br/>
+      ${esc(partId?partName(partId):"All parts")}<br/>
+      ${dt(from)} – ${dt(to)}</div></div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="v">${built}</div><div class="l">Units Built</div></div>
+  <div class="kpi"><div class="v">${shipped}</div><div class="l">Units Shipped</div></div>
+  <div class="kpi"><div class="v">${built-shipped}</div><div class="l">Built, Not Shipped</div></div>
+  <div class="kpi"><div class="v">${perDay.toFixed(1)}</div><div class="l">Avg / Day</div></div>
+</div>
+
+<h2>By Part</h2>
+<table><thead><tr><th>Part</th><th class="n">Built</th><th class="n">Shipped</th><th class="n">Difference</th></tr></thead>
+<tbody>${partRows.map(r=>`<tr><td>${esc(r.name)}</td><td class="n">${r.built}</td>
+  <td class="n">${r.shipped}</td><td class="n">${r.built-r.shipped}</td></tr>`).join("")||
+  '<tr><td colspan="4" style="text-align:center;color:#888">No activity in this period</td></tr>'}</tbody>
+<tfoot><tr><td>TOTAL</td><td class="n">${built}</td><td class="n">${shipped}</td><td class="n">${built-shipped}</td></tr></tfoot></table>
+
+<h2>By Week</h2>
+<table><thead><tr><th>Week Of</th><th class="n">Built</th><th class="n">Shipped</th></tr></thead>
+<tbody>${weekRows.map(r=>`<tr><td>${dt(r.week)}</td><td class="n">${r.built}</td>
+  <td class="n">${r.shipped}</td></tr>`).join("")||
+  '<tr><td colspan="3" style="text-align:center;color:#888">No activity in this period</td></tr>'}</tbody></table>
+
+<h2>Shipments</h2>
+<table><thead><tr><th>Date</th><th>Part</th><th class="n">Qty</th><th>Carrier</th><th>BOL</th></tr></thead>
+<tbody>${(ship||[]).map(r=>`<tr><td>${dt(r.ship_date)}</td><td>${esc(partName(r.part_id))}</td>
+  <td class="n">${parseInt(r.qty_shipped)||0}</td><td>${esc(r.carrier||"")}</td>
+  <td>${esc(r.bol_number||"")}</td></tr>`).join("")||
+  '<tr><td colspan="5" style="text-align:center;color:#888">No shipments in this period</td></tr>'}</tbody></table>
+
+<div class="foot"><span>AIME · ${esc(job.job_number)} · Production ${dt(from)}–${dt(to)}</span>
+  <span>${new Date().toLocaleString()}</span></div>
+</body></html>`);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},350);
+  }
+
+  const chip=(on)=>({flexShrink:0,padding:"7px 13px",borderRadius:16,cursor:"pointer",fontFamily:"inherit",
+    fontSize:12,fontWeight:on?800:600,background:on?T.purple:T.surface,color:on?"#000":T.sub,
+    border:`1px solid ${on?T.purple:T.border}`});
+  const ri={...inp,fontSize:13,padding:"8px 10px"};
+
+  return(
+    <div>
+      <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:0,marginBottom:14}}>← Back</button>
+
+      {err&&<div onClick={()=>setErr("")} style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.red,cursor:"pointer"}}>{err} ✕</div>}
+
+      <div style={{...cardS,marginBottom:12}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>From</label><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>To</label><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={ri}/></div>
+        </div>
+        <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,marginBottom:10}}>
+          <button onClick={()=>quick(7)} style={chip(false)}>Last 7 days</button>
+          <button onClick={()=>quick(30)} style={chip(false)}>Last 30 days</button>
+          <button onClick={thisMonth} style={chip(false)}>This month</button>
+          <button onClick={lastMonth} style={chip(false)}>Last month</button>
+        </div>
+        <div style={{marginBottom:10}}>
+          <label style={lbl}>Part</label>
+          <select value={partId} onChange={e=>setPartId(e.target.value)} style={inpSel}>
+            <option value="">All parts</option>
+            {(parts||[]).map(p=><option key={p.id} value={p.id}>{p.part_number}{p.description?` · ${p.description}`:""}</option>)}
+          </select>
+        </div>
+        <button onClick={run} disabled={running}
+          style={{...primBtn,borderRadius:12,background:T.purple,opacity:running?0.6:1}}>
+          {running?"Pulling…":"📊 Run Report"}
+        </button>
+      </div>
+
+      {asm!==null&&<>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          {[["Built",built,T.purple],["Shipped",shipped,T.blue]].map(([l,v,c])=>(
+            <div key={l} style={{...cardS,textAlign:"center",padding:"16px 8px"}}>
+              <div style={{fontSize:32,fontWeight:900,color:c,lineHeight:1}}>{v}</div>
+              <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",marginTop:5}}>{l}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          {[["Built, not shipped",built-shipped,(built-shipped)>0?T.yellow:T.muted],
+            ["Avg per day",perDay.toFixed(1),T.sub]].map(([l,v,c])=>(
+            <div key={l} style={{...cardS,textAlign:"center",padding:"12px 8px"}}>
+              <div style={{fontSize:18,fontWeight:800,color:c}}>{v}</div>
+              <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:3}}>{l}</div>
+            </div>
+          ))}
+        </div>
+
+        {partRows.length===0&&<div style={{...cardS,textAlign:"center",padding:"30px 16px",color:T.muted}}>
+          <div style={{fontSize:32,marginBottom:8}}>📭</div>
+          <div style={{fontSize:13,fontWeight:700,color:T.sub}}>Nothing built or shipped in this period</div>
+        </div>}
+
+        {partRows.length>0&&<>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>By Part</div>
+          {partRows.map(r=>(
+            <div key={r.id} style={{...cardS,marginBottom:7,padding:"11px 13px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.purple}}>{r.name}</div>
+                {r.built-r.shipped>0&&<div style={{fontSize:11,color:T.yellow}}>{r.built-r.shipped} awaiting shipment</div>}
+              </div>
+              <div style={{display:"flex",gap:18,flexShrink:0,textAlign:"center"}}>
+                <div><div style={{fontSize:16,fontWeight:900,color:T.purple}}>{r.built}</div>
+                  <div style={{fontSize:8.5,color:T.muted,textTransform:"uppercase"}}>built</div></div>
+                <div><div style={{fontSize:16,fontWeight:900,color:T.blue}}>{r.shipped}</div>
+                  <div style={{fontSize:8.5,color:T.muted,textTransform:"uppercase"}}>shipped</div></div>
+              </div>
+            </div>
+          ))}
+
+          {weekRows.length>1&&<>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 8px"}}>By Week</div>
+            <div style={{...cardS,padding:"6px 14px",marginBottom:14}}>
+              {weekRows.map((r,i)=>{
+                const max=Math.max(...weekRows.map(x=>Math.max(x.built,x.shipped)),1);
+                return(
+                  <div key={r.week} style={{padding:"9px 0",borderBottom:i<weekRows.length-1?`1px solid ${T.border}`:"none"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,marginBottom:5}}>
+                      <span style={{color:T.sub}}>Week of {r.week}</span>
+                      <span><span style={{color:T.purple,fontWeight:700}}>{r.built}</span>
+                        <span style={{color:T.muted}}> built · </span>
+                        <span style={{color:T.blue,fontWeight:700}}>{r.shipped}</span>
+                        <span style={{color:T.muted}}> shipped</span></span>
+                    </div>
+                    <div style={{display:"flex",gap:3,height:5}}>
+                      <div style={{flex:1,background:T.border,borderRadius:3,overflow:"hidden"}}>
+                        <div style={{height:5,width:`${(r.built/max)*100}%`,background:T.purple}}/></div>
+                      <div style={{flex:1,background:T.border,borderRadius:3,overflow:"hidden"}}>
+                        <div style={{height:5,width:`${(r.shipped/max)*100}%`,background:T.blue}}/></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>}
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <button onClick={printReport} style={{...primBtn,borderRadius:12,background:"#1f3864",fontSize:13}}>🖨️ Print</button>
+            <button onClick={exportXlsx} style={{...primBtn,borderRadius:12,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,fontSize:13}}>📥 Excel</button>
+          </div>
+        </>}
+      </>}
     </div>
   );
 }
