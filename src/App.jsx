@@ -7041,6 +7041,407 @@ const BID_STAGES=[
 ];
 const stageOf=(id)=>BID_STAGES.find(s=>s.id===id)||BID_STAGES[1];
 
+/* ── Estimating report ──
+   Every bid across every stage in a date range, so you can answer "what did
+   we bid in July and what came of it". */
+function BidReport({bids,user,onBack,onOpen}){
+  const iso=(d)=>d.toISOString().slice(0,10);
+  const yearStart=()=>iso(new Date(new Date().getFullYear(),0,1));
+
+  const [from,setFrom]=useState(yearStart());
+  const [to,setTo]=useState(iso(new Date()));
+  const [dateField,setDateField]=useState("created_at");  // created_at | due_date
+  const [division,setDivision]=useState("");
+  const [estimator,setEstimator]=useState("");
+  const [stages,setStages]=useState(BID_STAGES.map(s=>s.id));
+  const [err,setErr]=useState("");
+
+  const quick=(days)=>{const d=new Date();d.setDate(d.getDate()-days);setFrom(iso(d));setTo(iso(new Date()));};
+  const thisMonth=()=>{const n=new Date();setFrom(iso(new Date(n.getFullYear(),n.getMonth(),1)));setTo(iso(n));};
+  const lastMonth=()=>{const n=new Date();
+    setFrom(iso(new Date(n.getFullYear(),n.getMonth()-1,1)));
+    setTo(iso(new Date(n.getFullYear(),n.getMonth(),0)));};
+  const ytd=()=>{setFrom(yearStart());setTo(iso(new Date()));};
+
+  const toggleStage=(id)=>setStages(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+  const allStages=()=>setStages(BID_STAGES.map(s=>s.id));
+  const noStages=()=>setStages([]);
+
+  const dateOf=(b)=>{
+    const v=dateField==="due_date"?b.due_date:b.created_at;
+    return v?String(v).slice(0,10):null;
+  };
+
+  const estimators=[...new Set((bids||[]).map(b=>b.estimator).filter(Boolean))].sort();
+
+  const rows=(bids||[]).filter(b=>{
+    const d=dateOf(b);
+    if(!d)return false;                       // undated rows can't sit in a period
+    if(d<from||d>to)return false;
+    if(!stages.includes(b.status||"estimating"))return false;
+    if(division&&b.division!==division)return false;
+    if(estimator&&b.estimator!==estimator)return false;
+    return true;
+  }).sort((a,b)=>(dateOf(b)||"").localeCompare(dateOf(a)||""));
+
+  const undated=(bids||[]).filter(b=>!dateOf(b)).length;
+  const val=(b)=>Number(b.total_sales)||0;
+  const total=rows.reduce((s,b)=>s+val(b),0);
+
+  const byStage={};
+  BID_STAGES.forEach(s=>byStage[s.id]={n:0,total:0});
+  rows.forEach(b=>{const k=byStage[b.status]||byStage.estimating;k.n++;k.total+=val(b);});
+
+  // Win rate only counts bids that actually reached a decision.
+  const won=byStage.portfolio;
+  const lost=byStage.lost;
+  const decided=won.n+lost.n;
+  const winRate=decided>0?(won.n/decided)*100:null;
+  const winRateValue=(won.total+lost.total)>0?(won.total/(won.total+lost.total))*100:null;
+  const open=rows.filter(b=>!["portfolio","lost","archived"].includes(b.status||"estimating"));
+  const openValue=open.reduce((s,b)=>s+val(b),0);
+
+  const byEstimator={};
+  rows.forEach(b=>{
+    const k=b.estimator||"Unassigned";
+    (byEstimator[k]||=({n:0,total:0,won:0,lost:0})).n++;
+    byEstimator[k].total+=val(b);
+    if(b.status==="portfolio")byEstimator[k].won++;
+    if(b.status==="lost")byEstimator[k].lost++;
+  });
+  const estRows=Object.entries(byEstimator).map(([k,v])=>({name:k,...v}))
+    .sort((a,b)=>b.total-a.total);
+
+  const byMonth={};
+  rows.forEach(b=>{const m=(dateOf(b)||"").slice(0,7);if(!m)return;
+    (byMonth[m]||=({n:0,total:0,won:0})).n++;byMonth[m].total+=val(b);
+    if(b.status==="portfolio")byMonth[m].won++;});
+  const monthRows=Object.entries(byMonth).map(([m,v])=>({month:m,...v}))
+    .sort((a,b)=>a.month.localeCompare(b.month));
+
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});
+  const moneyK=(n)=>{
+    const v=Number(n||0);
+    return v>=1000000?"$"+(v/1000000).toFixed(2)+"M":v>=1000?"$"+(v/1000).toFixed(1)+"K":money(v);
+  };
+
+  function exportXlsx(){
+    try{
+      const out=[["AIME Field Pro — Estimating Report"],
+        ["Period",`${from} to ${to}`],
+        ["Dated by",dateField==="due_date"?"Bid due date":"Date created"],
+        ["Division",division||"All"],["Estimator",estimator||"All"],
+        ["Stages",stages.length===BID_STAGES.length?"All":stages.map(id=>stageOf(id).label).join(", ")],[],
+        ["SUMMARY"],
+        ["Bids in period",rows.length],
+        ["Total value",total],
+        ["Open (undecided)",open.length],["Open value",openValue],
+        ["Won",won.n],["Won value",won.total],
+        ["Lost",lost.n],["Lost value",lost.total],
+        ["Win rate by count",winRate===null?"n/a":Math.round(winRate)+"%"],
+        ["Win rate by value",winRateValue===null?"n/a":Math.round(winRateValue)+"%"],[],
+        ["BY STAGE"],["Stage","Count","Value"]];
+      BID_STAGES.forEach(s=>{const v=byStage[s.id];
+        if(v.n||stages.includes(s.id))out.push([s.label,v.n,v.total]);});
+      out.push([],["BY ESTIMATOR"],["Estimator","Bids","Value","Won","Lost"]);
+      estRows.forEach(r=>out.push([r.name,r.n,r.total,r.won,r.lost]));
+      out.push([],["BY MONTH"],["Month","Bids","Value","Won"]);
+      monthRows.forEach(r=>out.push([r.month,r.n,r.total,r.won]));
+      out.push([],["ALL BIDS"],
+        ["Date","Bid #","Name","Company","Division","Estimator","Stage","Due","Value"]);
+      rows.forEach(b=>out.push([dateOf(b),b.bid_number||"",b.name||"",b.requester_company||"",
+        b.division||"",b.estimator||"",stageOf(b.status).label,b.due_date||"",val(b)]));
+
+      const ws=XLSX.utils.aoa_to_sheet(out);
+      ws["!cols"]=[{wch:13},{wch:14},{wch:32},{wch:24},{wch:14},{wch:18},{wch:19},{wch:12},{wch:14}];
+      const wb=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb,ws,"Estimating");
+      XLSX.writeFile(wb,`AIME_Estimating_${from}_to_${to}.xlsx`);
+    }catch(e){setErr("Excel export failed: "+e.message);}
+  }
+
+  function printReport(){
+    const w=window.open("","_blank");
+    if(!w){setErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const dt=(d)=>{if(!d)return "";const[y,m,dd]=String(d).slice(0,10).split("-");return `${m}/${dd}/${y}`;};
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Estimating Report ${esc(from)} – ${esc(to)}</title><style>
+@page{size:letter landscape;margin:0.45in}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+body{font-size:8.5pt;color:#111}
+.hd{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #1F3864;padding-bottom:9px;margin-bottom:13px}
+.brand{font-family:Arial Black,Arial,sans-serif;font-size:21pt;font-weight:900;color:#1F3864;letter-spacing:1.5px}
+h1{font-size:14pt;color:#1F3864;text-align:right}
+.sub{font-size:8pt;color:#555;text-align:right;margin-top:3px;line-height:1.5}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px}
+.kpi{border:1px solid #d5dae5;border-radius:5px;padding:8px 6px;text-align:center}
+.kpi .v{font-size:14pt;font-weight:900;color:#1F3864;line-height:1.1}
+.kpi .l{font-size:6.5pt;color:#6b7280;text-transform:uppercase;letter-spacing:0.4px;margin-top:3px}
+h2{font-size:9pt;color:#1F3864;text-transform:uppercase;letter-spacing:0.6px;margin:12px 0 5px}
+table{width:100%;border-collapse:collapse;margin-bottom:5px}
+th{background:#1F3864;color:#fff;padding:4px 6px;text-align:left;font-size:7pt;text-transform:uppercase}
+td{padding:3px 6px;border-bottom:1px solid #e5e7eb;font-size:8pt}
+tr:nth-child(even) td{background:#fafbff}
+.n{text-align:right}
+tfoot td{background:#eef2f8;font-weight:800;border-top:1px solid #99a}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.foot{margin-top:16px;padding-top:6px;border-top:1px solid #e5e7eb;font-size:7pt;color:#9ca3af;display:flex;justify-content:space-between}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div class="hd">
+  <div><div class="brand">AIME</div>
+    <div style="font-size:7.5pt;color:#555">Atlantic Industrial Mechanical &amp; Environmental Inc.</div></div>
+  <div><h1>ESTIMATING REPORT</h1>
+    <div class="sub">${dt(from)} – ${dt(to)} · by ${dateField==="due_date"?"bid due date":"date created"}<br/>
+      ${esc(division||"All divisions")}${estimator?" · "+esc(estimator):""}</div></div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><div class="v">${rows.length}</div><div class="l">Bids</div></div>
+  <div class="kpi"><div class="v">${moneyK(total)}</div><div class="l">Total Value</div></div>
+  <div class="kpi"><div class="v">${open.length}</div><div class="l">Still Open</div></div>
+  <div class="kpi"><div class="v">${moneyK(openValue)}</div><div class="l">Open Value</div></div>
+  <div class="kpi"><div class="v">${won.n}</div><div class="l">Won</div></div>
+  <div class="kpi"><div class="v">${winRate===null?"—":Math.round(winRate)+"%"}</div><div class="l">Win Rate</div></div>
+</div>
+
+<div class="two">
+  <div>
+    <h2>By Stage</h2>
+    <table><thead><tr><th>Stage</th><th class="n">Count</th><th class="n">Value</th></tr></thead>
+    <tbody>${BID_STAGES.filter(s=>byStage[s.id].n>0).map(s=>`<tr>
+      <td>${esc(s.label)}</td><td class="n">${byStage[s.id].n}</td>
+      <td class="n">${money(byStage[s.id].total)}</td></tr>`).join("")||
+      '<tr><td colspan="3" style="text-align:center;color:#888">No bids in this period</td></tr>'}</tbody>
+    <tfoot><tr><td>TOTAL</td><td class="n">${rows.length}</td><td class="n">${money(total)}</td></tr></tfoot></table>
+  </div>
+  <div>
+    <h2>By Estimator</h2>
+    <table><thead><tr><th>Estimator</th><th class="n">Bids</th><th class="n">Value</th><th class="n">W</th><th class="n">L</th></tr></thead>
+    <tbody>${estRows.map(r=>`<tr><td>${esc(r.name)}</td><td class="n">${r.n}</td>
+      <td class="n">${money(r.total)}</td><td class="n">${r.won}</td><td class="n">${r.lost}</td></tr>`).join("")||
+      '<tr><td colspan="5" style="text-align:center;color:#888">—</td></tr>'}</tbody></table>
+  </div>
+</div>
+
+<h2>All Bids</h2>
+<table><thead><tr><th>Date</th><th>Bid #</th><th>Name</th><th>Company</th>
+<th>Division</th><th>Estimator</th><th>Stage</th><th>Due</th><th class="n">Value</th></tr></thead>
+<tbody>${rows.map(b=>`<tr>
+  <td>${dt(dateOf(b))}</td><td>${esc(b.bid_number||"")}</td>
+  <td>${esc((b.name||"").slice(0,42))}</td><td>${esc((b.requester_company||"").slice(0,26))}</td>
+  <td>${esc(b.division||"")}</td><td>${esc(b.estimator||"")}</td>
+  <td>${esc(stageOf(b.status).label)}</td><td>${dt(b.due_date)}</td>
+  <td class="n">${money(val(b))}</td></tr>`).join("")||
+  '<tr><td colspan="9" style="text-align:center;color:#888">No bids match these filters</td></tr>'}</tbody>
+<tfoot><tr><td colspan="8">TOTAL</td><td class="n">${money(total)}</td></tr></tfoot></table>
+
+<div class="foot"><span>AIME · Estimating ${dt(from)}–${dt(to)}</span><span>${new Date().toLocaleString()}</span></div>
+</body></html>`);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},400);
+  }
+
+  const chip=(on,color)=>({flexShrink:0,padding:"6px 12px",borderRadius:15,cursor:"pointer",fontFamily:"inherit",
+    fontSize:11.5,fontWeight:on?800:600,whiteSpace:"nowrap",
+    background:on?(color||T.orange):T.surface,color:on?"#000":T.sub,
+    border:`1px solid ${on?(color||T.orange):T.border}`});
+  const ri={...inp,fontSize:13,padding:"8px 10px"};
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+      <TopBar title="📊 Estimating Report" sub={`${rows.length} bids · ${money(total)}`} onBack={onBack}/>
+      <div style={{padding:"14px 16px 60px"}}>
+        {err&&<div onClick={()=>setErr("")} style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.red,cursor:"pointer"}}>{err} ✕</div>}
+
+        {/* Filters */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>From</label><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>To</label><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={ri}/></div>
+          </div>
+          <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,marginBottom:10}}>
+            <button onClick={()=>quick(30)} style={chip(false)}>Last 30 days</button>
+            <button onClick={thisMonth} style={chip(false)}>This month</button>
+            <button onClick={lastMonth} style={chip(false)}>Last month</button>
+            <button onClick={ytd} style={chip(false)}>Year to date</button>
+          </div>
+          <div style={{marginBottom:10}}>
+            <label style={lbl}>Date the bid by</label>
+            <div style={{display:"flex",gap:6}}>
+              {[["created_at","Date created"],["due_date","Bid due date"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setDateField(v)} style={{...chip(dateField===v),flex:1}}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><label style={lbl}>Division</label>
+              <select value={division} onChange={e=>setDivision(e.target.value)} style={inpSel}>
+                <option value="">All divisions</option>
+                {DIVISIONS.map(d=><option key={d}>{d}</option>)}
+              </select></div>
+            <div><label style={lbl}>Estimator</label>
+              <select value={estimator} onChange={e=>setEstimator(e.target.value)} style={inpSel}>
+                <option value="">All estimators</option>
+                {estimators.map(n=><option key={n}>{n}</option>)}
+              </select></div>
+          </div>
+        </div>
+
+        {/* Stage filter */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+            <div style={{fontSize:12,fontWeight:800,color:T.text}}>Stages</div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={allStages} style={{background:"none",border:"none",color:T.orange,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>All</button>
+              <button onClick={noStages} style={{background:"none",border:"none",color:T.muted,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>None</button>
+            </div>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {BID_STAGES.map(s=>(
+              <button key={s.id} onClick={()=>toggleStage(s.id)} style={chip(stages.includes(s.id),s.color)}>
+                {s.label} ({byStage[s.id].n})
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {undated>0&&<div style={{fontSize:11,color:T.muted,marginBottom:12,lineHeight:1.6,background:T.surface,borderRadius:10,padding:"9px 12px"}}>
+          {undated} bid{undated!==1?"s have":" has"} no {dateField==="due_date"?"due date":"created date"} and can't be placed in a period.
+          {dateField==="due_date"?" Switch to date created to include them.":""}
+        </div>}
+
+        {/* Headline */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          {[["Bids",rows.length,T.orange],["Total Value",moneyK(total),T.green]].map(([l,v,c])=>(
+            <div key={l} style={{...cardS,textAlign:"center",padding:"16px 8px"}}>
+              <div style={{fontSize:28,fontWeight:900,color:c,lineHeight:1}}>{v}</div>
+              <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",marginTop:5}}>{l}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+          {[["Still Open",open.length,T.blue],
+            ["Won",won.n,T.green],
+            ["Win Rate",winRate===null?"—":Math.round(winRate)+"%",winRate===null?T.muted:winRate>=50?T.green:T.yellow]].map(([l,v,c])=>(
+            <div key={l} style={{...cardS,textAlign:"center",padding:"12px 6px"}}>
+              <div style={{fontSize:17,fontWeight:900,color:c}}>{v}</div>
+              <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:3}}>{l}</div>
+            </div>
+          ))}
+        </div>
+
+        {winRate!==null&&<div style={{...cardS,marginBottom:14,fontSize:11.5,color:T.muted,lineHeight:1.6}}>
+          Win rate counts only decided bids — {won.n} won against {lost.n} lost.
+          By value it's {Math.round(winRateValue)}% ({moneyK(won.total)} of {moneyK(won.total+lost.total)}).
+        </div>}
+
+        {/* By stage */}
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>By Stage</div>
+        <div style={{...cardS,padding:"6px 14px",marginBottom:14}}>
+          {BID_STAGES.filter(s=>byStage[s.id].n>0).map((s,i,a)=>{
+            const v=byStage[s.id];
+            const pct=total>0?(v.total/total)*100:0;
+            return(
+              <div key={s.id} style={{padding:"9px 0",borderBottom:i<a.length-1?`1px solid ${T.border}`:"none"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                  <span style={{fontSize:12.5,color:T.text}}>
+                    <span style={{display:"inline-block",width:8,height:8,borderRadius:2,background:s.color,marginRight:7}}/>
+                    {s.label} <span style={{color:T.muted}}>({v.n})</span>
+                  </span>
+                  <span style={{fontSize:13,fontWeight:800,color:T.green}}>{money(v.total)}</span>
+                </div>
+                <div style={{height:4,background:T.border,borderRadius:3}}>
+                  <div style={{height:4,borderRadius:3,background:s.color,width:`${pct}%`}}/>
+                </div>
+              </div>
+            );
+          })}
+          {rows.length===0&&<div style={{padding:"18px 0",textAlign:"center",color:T.muted,fontSize:12}}>
+            No bids match these filters.
+          </div>}
+        </div>
+
+        {/* By estimator */}
+        {estRows.length>0&&<>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>By Estimator</div>
+          {estRows.map(r=>(
+            <div key={r.name} style={{...cardS,marginBottom:7,padding:"11px 13px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{r.name}</div>
+                <div style={{fontSize:11,color:T.muted}}>
+                  {r.n} bid{r.n!==1?"s":""}
+                  {(r.won||r.lost)?` · ${r.won}W / ${r.lost}L`:""}
+                </div>
+              </div>
+              <div style={{fontSize:14,fontWeight:800,color:T.green}}>{money(r.total)}</div>
+            </div>
+          ))}
+        </>}
+
+        {/* By month */}
+        {monthRows.length>1&&<>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 8px"}}>By Month</div>
+          <div style={{...cardS,padding:"6px 14px",marginBottom:14}}>
+            {monthRows.map((r,i)=>{
+              const max=Math.max(...monthRows.map(x=>x.total),1);
+              return(
+                <div key={r.month} style={{padding:"9px 0",borderBottom:i<monthRows.length-1?`1px solid ${T.border}`:"none"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:5}}>
+                    <span style={{color:T.sub}}>{r.month} <span style={{color:T.muted}}>({r.n})</span></span>
+                    <span style={{fontWeight:700,color:T.green}}>{money(r.total)}</span>
+                  </div>
+                  <div style={{height:4,background:T.border,borderRadius:3}}>
+                    <div style={{height:4,borderRadius:3,background:T.blue,width:`${(r.total/max)*100}%`}}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>}
+
+        {/* The bids themselves */}
+        {rows.length>0&&<>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+            All Bids ({rows.length})
+          </div>
+          {rows.map(b=>{
+            const st=stageOf(b.status);
+            return(
+              <div key={b.id} onClick={()=>onOpen&&onOpen(b.id)}
+                style={{...cardS,marginBottom:7,padding:"11px 13px",cursor:"pointer",borderLeft:`3px solid ${st.color}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:T.text}}>{b.name||"Untitled bid"}</div>
+                    <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                      {dateOf(b)}
+                      {b.bid_number?` · ${b.bid_number}`:""}
+                      {b.requester_company?` · ${b.requester_company}`:""}
+                    </div>
+                    <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>
+                      {b.division||"—"}{b.estimator?` · ${b.estimator}`:""}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:14,fontWeight:800,color:T.green}}>{money(val(b))}</div>
+                    <span style={{fontSize:9.5,color:st.color,textTransform:"uppercase",letterSpacing:"0.4px"}}>{st.label}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </>}
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:14}}>
+          <button onClick={printReport} style={{...primBtn,borderRadius:12,background:"#1f3864",fontSize:13}}>🖨️ Print</button>
+          <button onClick={exportXlsx} style={{...primBtn,borderRadius:12,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,fontSize:13}}>📥 Excel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function dueMeta(due){
   if(!due)return{text:"To be determined",tone:"muted"};
   const d=new Date(due+"T00:00:00");
@@ -7063,6 +7464,7 @@ function BidBoard({user,onBack}){
   const [openId,setOpenId]=useState(null);    // bid being viewed
   const [reviewBid,setReviewBid]=useState(null);
   const [creating,setCreating]=useState(false);
+  const [showReport,setShowReport]=useState(false);
   const [err,setErr]=useState("");
 
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});
@@ -7105,6 +7507,13 @@ function BidBoard({user,onBack}){
 
   const counts={};BID_STAGES.forEach(s=>counts[s.id]={n:0,total:0});
   bids.forEach(b=>{const k=counts[b.status]||counts.estimating;k.n++;k.total+=Number(b.total_sales)||0;});
+
+  // The report reads every bid, not just the visible stage.
+  if(showReport)return(
+    <BidReport bids={bids} user={user}
+      onBack={()=>setShowReport(false)}
+      onOpen={(id)=>{setShowReport(false);setOpenId(id);}}/>
+  );
 
   const rows=bids
     .filter(b=>(b.status||"estimating")===stage)
@@ -7149,6 +7558,11 @@ function BidBoard({user,onBack}){
       <div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:16}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:0}}>← Back</button>
         <div style={{fontSize:20,fontWeight:900,color:T.text,flex:1}}>📊 Bid Board</div>
+        <button onClick={()=>setShowReport(true)}
+          style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"10px 16px",
+            color:T.blue,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+          📈 Report
+        </button>
         <button onClick={createBid} disabled={creating} style={{...primBtn,width:"auto",padding:"10px 18px",fontSize:13,borderRadius:10,background:T.orange,color:"#000",opacity:creating?0.6:1}}>{creating?"Creating…":"+ Create New Bid"}</button>
       </div>
 
