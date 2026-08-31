@@ -264,6 +264,13 @@ const API={
     pending:()=>sb("/time_cards?status=eq.pending&select=*,projects(id,name,division)&order=date.desc,worker_name.asc"),
     pendingForProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&status=eq.pending&order=date.desc,worker_name.asc`),
   },
+  myTime:{
+    cards:(name,from,to)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=gte.${from}&date=lte.${to}&select=*,projects(id,name,division)&order=date.asc`),
+    shop:(name,from,to)=>sb(`/mfg_labor?worker_name=eq.${encodeURIComponent(name)}&work_date=gte.${from}&work_date=lte.${to}&select=*,mfg_jobs(id,job_number,description)&order=work_date.asc`),
+    reports:(name,limit=15)=>sb(`/daily_reports?submitted_by=eq.${encodeURIComponent(name)}&select=id,date,report_no,status,project_id,projects(name)&order=date.desc&limit=${limit}`),
+    tickets:(name,limit=15)=>sb(`/tm_tickets?submitted_by=eq.${encodeURIComponent(name)}&select=id,ticket_date,ticket_no,status,grand_total,client_signature,projects(name)&order=ticket_date.desc&limit=${limit}`),
+    crew:(name)=>sb(`/crew_members?name=eq.${encodeURIComponent(name)}&limit=1`),
+  },
   timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
@@ -869,7 +876,413 @@ function QueueBanner({onSync}){
   );
 }
 
-function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,isOnline,pendingCount,onSync}){
+
+/* ══════════════ MY HOURS — employee dashboard ══════════════
+   Crew can clock in but had no way to see their own hours. Payroll runs
+   weekly, so this is week-based: crew see four weeks back, PM and admin
+   see everything. */
+
+const WEEKS_BACK_CREW=4;
+
+function mondayOf(d){
+  const x=new Date(typeof d==="string"?d+"T12:00:00":d);
+  const day=x.getDay();
+  x.setDate(x.getDate()-(day===0?6:day-1));
+  x.setHours(12,0,0,0);
+  return x;
+}
+function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
+const isoOf=(d)=>d.toISOString().slice(0,10);
+
+function MyHoursScreen({user,onBack}){
+  const [weekStart,setWeekStart]=useState(()=>mondayOf(new Date()));
+  const [cards,setCards]=useState([]);
+  const [shop,setShop]=useState([]);
+  const [reports,setReports]=useState([]);
+  const [tickets,setTickets]=useState([]);
+  const [crew,setCrew]=useState(null);
+  const [openPunch,setOpenPunch]=useState(null);
+  const [shopPunch,setShopPunch]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+  const [tab,setTab]=useState("hours");
+  const [now,setNow]=useState(Date.now());
+
+  const unlimited=user.role==="admin"||user.role==="pm";
+  const thisMonday=mondayOf(new Date());
+  const earliest=addDays(thisMonday,-7*WEEKS_BACK_CREW);
+  const from=isoOf(weekStart), to=isoOf(addDays(weekStart,6));
+
+  useEffect(()=>{
+    const t=setInterval(()=>setNow(Date.now()),1000);
+    return()=>clearInterval(t);
+  },[]);
+
+  async function load(){
+    setLoading(true);setErr("");
+    try{
+      const [c,sh,op,sp]=await Promise.all([
+        API.myTime.cards(user.name,from,to).catch(()=>[]),
+        API.myTime.shop(user.name,from,to).catch(()=>[]),
+        API.punches.open(user.name).catch(()=>[]),
+        API.mfg.labor.openFor(user.name).catch(()=>[]),
+      ]);
+      setCards(c||[]);setShop(sh||[]);
+      setOpenPunch(Array.isArray(op)&&op.length?op[0]:null);
+      setShopPunch(Array.isArray(sp)&&sp.length?sp[0]:null);
+    }catch(e){setErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[from]);
+
+  useEffect(()=>{
+    API.myTime.crew(user.name).then(r=>setCrew(Array.isArray(r)&&r.length?r[0]:null)).catch(()=>{});
+    API.myTime.reports(user.name).then(r=>setReports(r||[])).catch(()=>{});
+    API.myTime.tickets(user.name).then(r=>setTickets(r||[])).catch(()=>{});
+  },[user.name]);
+
+  /* ── Clock out from here, rather than navigating into the job ── */
+  async function clockOut(){
+    const punch=openPunch||shopPunch;
+    if(!punch)return;
+    setBusy(true);setErr("");
+    try{
+      const pos=await new Promise(res=>{
+        if(!navigator.geolocation)return res({lat:null,lng:null});
+        navigator.geolocation.getCurrentPosition(
+          p=>res({lat:p.coords.latitude,lng:p.coords.longitude}),
+          ()=>res({lat:null,lng:null}),{timeout:6000,maximumAge:60000});
+      });
+      const at=new Date();
+      const hrs=Math.max(0,Math.round(((at-new Date(punch.clock_in_at))/3600000)*4)/4);
+      if(openPunch){
+        const ot=Math.max(0,hrs-8);
+        await API.timeCards.update(punch.id,{
+          clock_out_at:at.toISOString(),clock_out_lat:pos.lat,clock_out_lng:pos.lng,
+          reg_hours:hrs-ot,ot_hours:ot,total_hours:hrs,original_hours:hrs,status:"pending"});
+      }else{
+        await API.mfg.labor.update(punch.id,{
+          clock_out_at:at.toISOString(),clock_out_lat:pos.lat,clock_out_lng:pos.lng,
+          hours:hrs,original_hours:hrs,status:"pending"});
+      }
+      await load();
+    }catch(e){setErr(e.message);}
+    setBusy(false);
+  }
+
+  /* ── Combine field and shop into one weekly picture ── */
+  const entries=[
+    ...cards.map(c=>({
+      id:"f"+c.id,kind:"field",date:c.date,
+      job:c.projects?.name||"—",
+      reg:parseFloat(c.reg_hours)||0,ot:parseFloat(c.ot_hours)||0,travel:parseFloat(c.travel_hours)||0,
+      total:c.total_hours!=null&&c.total_hours!==""?parseFloat(c.total_hours)
+            :(parseFloat(c.reg_hours)||0)+(parseFloat(c.ot_hours)||0)+(parseFloat(c.travel_hours)||0),
+      status:c.status||"approved",
+      inAt:c.clock_in_at,outAt:c.clock_out_at,
+      note:c.classification||"",
+      edited:c.edited_by&&c.original_hours!=null&&Number(c.original_hours)!==Number(c.total_hours)
+        ?{by:c.edited_by,was:Number(c.original_hours),why:c.edit_reason}:null,
+    })),
+    ...shop.map(l=>({
+      id:"s"+l.id,kind:"shop",date:l.work_date,
+      job:l.mfg_jobs?.job_number||"Shop",
+      reg:parseFloat(l.hours)||0,ot:0,travel:0,total:parseFloat(l.hours)||0,
+      status:l.status||"approved",
+      inAt:l.clock_in_at,outAt:l.clock_out_at,
+      note:l.operation||"",
+      edited:l.edited_by&&l.original_hours!=null&&Number(l.original_hours)!==Number(l.hours)
+        ?{by:l.edited_by,was:Number(l.original_hours),why:l.edit_reason}:null,
+    })),
+  ].filter(e=>e.status!=="open")     // an open punch has no hours yet
+   .sort((a,b)=>a.date.localeCompare(b.date));
+
+  const tot=entries.reduce((s,e)=>({
+    reg:s.reg+e.reg,ot:s.ot+e.ot,travel:s.travel+e.travel,total:s.total+e.total,
+  }),{reg:0,ot:0,travel:0,total:0});
+  const pendingHrs=entries.filter(e=>e.status==="pending").reduce((s,e)=>s+e.total,0);
+
+  // One row per day, Monday to Sunday
+  const dayRows=[...Array(7)].map((_,i)=>{
+    const d=isoOf(addDays(weekStart,i));
+    const list=entries.filter(e=>e.date===d);
+    return{date:d,list,total:list.reduce((s,e)=>s+e.total,0),
+      label:addDays(weekStart,i).toLocaleDateString("en-US",{weekday:"short"})};
+  });
+
+  const byJob={};
+  entries.forEach(e=>{byJob[e.job]=(byJob[e.job]||0)+e.total;});
+  const jobRows=Object.entries(byJob).sort((a,b)=>b[1]-a[1]);
+
+  const certs=(crew?.certifications||[]).map(c=>{
+    const days=c.expiry?Math.ceil((new Date(c.expiry+"T12:00:00")-new Date())/86400000):null;
+    return{...c,days};
+  }).sort((a,b)=>(a.days??9999)-(b.days??9999));
+  const certAlerts=certs.filter(c=>c.days!==null&&c.days<=60);
+
+  const canGoBack=unlimited||weekStart>earliest;
+  const canGoFwd=weekStart<thisMonday;
+  const isThisWeek=isoOf(weekStart)===isoOf(thisMonday);
+  const weekLabel=isThisWeek?"This week"
+    :`${weekStart.toLocaleDateString("en-US",{month:"short",day:"numeric"})} – ${addDays(weekStart,6).toLocaleDateString("en-US",{month:"short",day:"numeric"})}`;
+
+  const punch=openPunch||shopPunch;
+  const elapsed=()=>{
+    if(!punch?.clock_in_at)return "0:00:00";
+    const ms=Math.max(0,now-new Date(punch.clock_in_at).getTime());
+    const h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000),sec=Math.floor(ms%60000/1000);
+    return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+  };
+  const hhmm=(iso)=>iso?new Date(iso).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):null;
+  const h1=(n)=>Number(n||0).toFixed(2);
+
+  const statusMeta={pending:{c:T.yellow,l:"pending"},approved:{c:T.green,l:"approved"}};
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+      <TopBar title="⏱️ My Hours" sub={user.name} onBack={onBack}/>
+      <div style={{padding:"14px 16px 60px"}}>
+        {err&&<div onClick={()=>setErr("")} style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:T.red,cursor:"pointer"}}>{err} ✕</div>}
+
+        {/* On the clock */}
+        {punch&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`,background:T.greenLow}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px"}}>● On the clock</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginTop:3}}>
+                {openPunch?(openPunch.projects?.name||"Field job"):(shopPunch?.mfg_jobs?.job_number||"Shop")}
+              </div>
+              <div style={{fontSize:11,color:T.muted}}>since {hhmm(punch.clock_in_at)}</div>
+            </div>
+            <div style={{fontSize:26,fontWeight:900,color:T.green,fontVariantNumeric:"tabular-nums",letterSpacing:"-1px",flexShrink:0}}>
+              {elapsed()}
+            </div>
+          </div>
+          <button onClick={clockOut} disabled={busy}
+            style={{...primBtn,borderRadius:14,padding:"16px",fontSize:16,background:T.red,color:"#fff",opacity:busy?0.6:1}}>
+            {busy?"…":"⏹ Clock Out"}
+          </button>
+        </div>}
+
+        {/* Expiring certs — a lapsed cert is a licence to work */}
+        {certAlerts.length>0&&<div style={{background:certAlerts[0].days<=0?T.redLow:T.yellowLow||T.surface,
+          border:`1px solid ${certAlerts[0].days<=0?T.red:T.yellow}40`,borderRadius:12,padding:"10px 14px",marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:800,color:certAlerts[0].days<=0?T.red:T.yellow,marginBottom:5}}>
+            ⚠️ {certAlerts.length} certification{certAlerts.length!==1?"s":""} need{certAlerts.length===1?"s":""} attention
+          </div>
+          {certAlerts.map((c,i)=>(
+            <div key={i} style={{fontSize:11.5,color:c.days<=0?T.red:T.yellow,marginBottom:2}}>
+              {c.name} — {c.days<=0?`expired ${c.expiry}`:`${c.days} days left`}
+            </div>
+          ))}
+        </div>}
+
+        {/* Tabs */}
+        <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4}}>
+          {[["hours","⏱️ Hours"],["submitted","📋 My Submissions"],["certs","🎓 Certifications"]].map(([id,l])=>(
+            <button key={id} onClick={()=>setTab(id)}
+              style={{flex:1,padding:"9px 6px",background:tab===id?T.orange:"transparent",
+                color:tab===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:11.5,fontWeight:700,
+                cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{l}</button>
+          ))}
+        </div>
+
+        {tab==="hours"&&<>
+          {/* Week picker */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,gap:10}}>
+            <button onClick={()=>canGoBack&&setWeekStart(addDays(weekStart,-7))} disabled={!canGoBack}
+              style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 14px",
+                color:canGoBack?T.text:T.muted,fontSize:16,cursor:canGoBack?"pointer":"default",
+                fontFamily:"inherit",opacity:canGoBack?1:0.35}}>←</button>
+            <div style={{textAlign:"center",flex:1,minWidth:0}}>
+              <div style={{fontSize:14,fontWeight:800,color:T.text}}>{weekLabel}</div>
+              <div style={{fontSize:10.5,color:T.muted}}>{from} → {to}</div>
+            </div>
+            <button onClick={()=>canGoFwd&&setWeekStart(addDays(weekStart,7))} disabled={!canGoFwd}
+              style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"9px 14px",
+                color:canGoFwd?T.text:T.muted,fontSize:16,cursor:canGoFwd?"pointer":"default",
+                fontFamily:"inherit",opacity:canGoFwd?1:0.35}}>→</button>
+          </div>
+
+          {!canGoBack&&!unlimited&&<div style={{fontSize:11,color:T.muted,textAlign:"center",marginBottom:12,lineHeight:1.5}}>
+            You can look back {WEEKS_BACK_CREW} weeks. For anything older, ask your PM.
+          </div>}
+
+          {loading&&<Spinner/>}
+
+          {!loading&&<>
+            {/* Week total */}
+            <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div>
+                  <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Total hours</div>
+                  <div style={{fontSize:36,fontWeight:900,color:T.blue,lineHeight:1.1}}>{h1(tot.total)}</div>
+                </div>
+                {tot.ot>0&&<div style={{textAlign:"right"}}>
+                  <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Overtime</div>
+                  <div style={{fontSize:22,fontWeight:900,color:T.yellow}}>{h1(tot.ot)}</div>
+                </div>}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                {[["Regular",tot.reg,T.sub],["OT",tot.ot,tot.ot>0?T.yellow:T.muted],["Travel",tot.travel,T.sub]].map(([l,v,c])=>(
+                  <div key={l} style={{textAlign:"center"}}>
+                    <div style={{fontSize:15,fontWeight:800,color:c}}>{h1(v)}</div>
+                    <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:2}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+              {pendingHrs>0&&<div style={{fontSize:11.5,color:T.yellow,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                ⏳ {h1(pendingHrs)} hours still waiting on a PM to approve
+              </div>}
+            </div>
+
+            {/* Day by day */}
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Day by Day</div>
+            {dayRows.map(d=>(
+              <div key={d.date} style={{...cardS,marginBottom:7,padding:"11px 13px",
+                opacity:d.list.length?1:0.45,borderLeft:`3px solid ${d.total>0?T.blue:T.border}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <span style={{fontSize:13,fontWeight:800,color:T.text}}>{d.label}</span>
+                    <span style={{fontSize:11,color:T.muted,marginLeft:8}}>{d.date.slice(5)}</span>
+                  </div>
+                  <div style={{fontSize:16,fontWeight:900,color:d.total>0?T.blue:T.muted}}>{h1(d.total)}</div>
+                </div>
+                {d.list.map(e=>(
+                  <div key={e.id} style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:600,color:T.sub}}>
+                          {e.kind==="shop"?"🏭 ":"🔧 "}{e.job}
+                        </div>
+                        <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>
+                          {e.inAt?`${hhmm(e.inAt)} → ${hhmm(e.outAt)||"—"}`:"entered by hand"}
+                          {e.note?` · ${e.note}`:""}
+                        </div>
+                      </div>
+                      <div style={{textAlign:"right",flexShrink:0}}>
+                        <div style={{fontSize:13,fontWeight:800,color:T.text}}>{h1(e.total)}</div>
+                        <span style={{fontSize:9,color:statusMeta[e.status]?.c||T.muted,
+                          textTransform:"uppercase",letterSpacing:"0.5px"}}>
+                          {statusMeta[e.status]?.l||e.status}
+                        </span>
+                      </div>
+                    </div>
+                    {e.edited&&<div style={{fontSize:10.5,color:T.blue,marginTop:4,lineHeight:1.5}}>
+                      ✏️ adjusted by {e.edited.by} — was {h1(e.edited.was)}
+                      {e.edited.why?` · ${e.edited.why}`:""}
+                    </div>}
+                  </div>
+                ))}
+              </div>
+            ))}
+
+            {/* By job */}
+            {jobRows.length>0&&<>
+              <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 8px"}}>
+                Hours by Job
+              </div>
+              <div style={{...cardS,padding:"6px 14px"}}>
+                {jobRows.map(([job,hrs],i)=>(
+                  <div key={job} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",
+                    borderBottom:i<jobRows.length-1?`1px solid ${T.border}`:"none",fontSize:12.5}}>
+                    <span style={{color:T.sub}}>{job}</span>
+                    <span style={{fontWeight:700,color:T.blue}}>{h1(hrs)}</span>
+                  </div>
+                ))}
+              </div>
+            </>}
+          </>}
+        </>}
+
+        {tab==="submitted"&&<>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
+            My Daily Reports
+          </div>
+          {reports.length===0&&<div style={{...cardS,textAlign:"center",padding:"22px",color:T.muted,fontSize:12,marginBottom:14}}>
+            You haven't submitted any daily reports.
+          </div>}
+          {reports.map(r=>{
+            const c={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green,draft:T.muted}[r.status]||T.muted;
+            return(
+              <div key={r.id} style={{...cardS,marginBottom:7,padding:"10px 13px",borderLeft:`3px solid ${c}`,
+                display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:12.5,fontWeight:700,color:T.orange}}>{r.projects?.name||"—"}</div>
+                  <div style={{fontSize:11,color:T.muted}}>{r.date}{r.report_no?` · #${r.report_no}`:""}</div>
+                </div>
+                <span style={pill(c)}>{r.status}</span>
+              </div>
+            );
+          })}
+
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"16px 0 8px"}}>
+            My T&M Tickets
+          </div>
+          {tickets.length===0&&<div style={{...cardS,textAlign:"center",padding:"22px",color:T.muted,fontSize:12}}>
+            You haven't submitted any T&M tickets.
+          </div>}
+          {tickets.map(t=>{
+            const c={submitted:T.yellow,approved:T.green,draft:T.muted}[t.status]||T.muted;
+            return(
+              <div key={t.id} style={{...cardS,marginBottom:7,padding:"10px 13px",borderLeft:`3px solid ${c}`,
+                display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:12.5,fontWeight:700,color:T.orange}}>{t.projects?.name||"—"}</div>
+                  <div style={{fontSize:11,color:T.muted}}>
+                    {t.ticket_date}{t.ticket_no?` · #${t.ticket_no}`:""}{t.client_signature?" · ✍️ signed":""}
+                  </div>
+                </div>
+                <span style={pill(c)}>{t.status}</span>
+              </div>
+            );
+          })}
+        </>}
+
+        {tab==="certs"&&<>
+          {!crew&&<div style={{...cardS,textAlign:"center",padding:"26px 16px",color:T.muted}}>
+            <div style={{fontSize:30,marginBottom:8}}>🎓</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.sub}}>No crew record</div>
+            <div style={{fontSize:11.5,marginTop:4,lineHeight:1.6}}>
+              Ask your PM to add you to the crew directory so your certifications show here.
+            </div>
+          </div>}
+          {crew&&certs.length===0&&<div style={{...cardS,textAlign:"center",padding:"26px 16px",color:T.muted,fontSize:12}}>
+            No certifications on file.
+          </div>}
+          {certs.map((c,i)=>{
+            const col=c.days===null?T.muted:c.days<=0?T.red:c.days<=30?T.yellow:c.days<=60?T.orange:T.green;
+            return(
+              <div key={i} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${col}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:T.text}}>{c.name}</div>
+                    {c.issuer&&<div style={{fontSize:11,color:T.muted}}>{c.issuer}</div>}
+                    {c.number&&<div style={{fontSize:11,color:T.muted}}>#{c.number}</div>}
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontSize:12.5,fontWeight:800,color:col}}>
+                      {c.days===null?"no expiry":c.days<=0?"EXPIRED":`${c.days}d`}
+                    </div>
+                    {c.expiry&&<div style={{fontSize:10.5,color:T.muted}}>{c.expiry}</div>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {crew&&<div style={{...cardS,marginTop:12,fontSize:11.5,color:T.muted,lineHeight:1.6}}>
+            {crew.classification?`Classification: ${crew.classification}`:""}
+            {crew.phone?`${crew.classification?" · ":""}${crew.phone}`:""}
+            <div style={{marginTop:6}}>Something wrong here? Ask your PM to update the crew directory.</div>
+          </div>}
+        </>}
+      </div>
+    </div>
+  );
+}
+
+function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onMyHours,isOnline,pendingCount,onSync}){
   // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
   // by division always returned zero for that card.
   const [mfgStats,setMfgStats]=useState(null);
@@ -932,6 +1345,20 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
         </div>
       </div>
       <div style={{padding:"20px 16px 80px"}}>
+
+        {/* Everyone gets this — crew could clock in but had no way to see
+            their own hours. */}
+        <button onClick={onMyHours} style={{width:"100%",background:T.blueLow,
+          border:`1px solid ${T.blue}40`,borderRadius:14,padding:"14px 16px",marginBottom:20,
+          display:"flex",justifyContent:"space-between",alignItems:"center",
+          cursor:"pointer",fontFamily:"inherit"}}>
+          <div style={{textAlign:"left"}}>
+            <div style={{fontSize:15,fontWeight:800,color:T.blue}}>⏱️ My Hours</div>
+            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>This week's time, past weeks, and your certifications</div>
+          </div>
+          <span style={{color:T.blue,fontSize:18,flexShrink:0}}>→</span>
+        </button>
+
         <div style={{marginBottom:24}}>
           <div style={{fontSize:22,fontWeight:900,color:T.text,letterSpacing:"-0.5px",marginBottom:4}}>Select Division</div>
           <div style={{fontSize:13,color:T.muted}}>Choose the division you are working in today</div>
@@ -13595,7 +14022,11 @@ function AppInner(){
         <DivisionScreen user={user} projects={projects} onSelect={handleDivisionSelect} onLogout={handleLogout}
           onCrew={()=>setScreen("crewDirectory")} onDash={()=>setScreen("pmDashboard")}
           onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")}
+          onMyHours={()=>setScreen("myHours")}
           isOnline={isOnline} pendingCount={pendingCount} onSync={syncQueue}/>
+      )}
+      {user&&screen==="myHours"&&(
+        <MyHoursScreen user={user} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="estimating"&&canEstimate(user)&&(
         <BidBoard user={user} onBack={()=>setScreen("division")}/>
