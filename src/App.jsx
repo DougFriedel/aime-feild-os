@@ -574,7 +574,12 @@ if(typeof document!=="undefined"){
   // Paint the notch strip the app's background rather than white.
   document.documentElement.style.background="#0D0D0F";
   const st=document.createElement("style");
-  st.textContent="body{background:#0D0D0F;overscroll-behavior-y:none}";
+  st.textContent=
+    "body{background:#0D0D0F;overscroll-behavior-y:none}"+
+    // The open dropdown list is drawn by the OS, not the page, so it ignores
+    // a select's own styling and lands white-on-white in a dark theme.
+    "select{color-scheme:dark}"+
+    "select option{background:#17171C;color:#F0F4FF}";
   document.head.appendChild(st);
 }
 
@@ -9007,11 +9012,12 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                                 title="Move this line to another category"
                                 style={{width:"100%",background:"transparent",border:"1px solid transparent",
                                   borderRadius:6,color:T.muted,fontSize:10,padding:"2px 4px",fontFamily:"inherit",
-                                  outline:"none",cursor:"pointer",marginTop:2}}
+                                  outline:"none",cursor:"pointer",marginTop:2,colorScheme:"dark"}}
                                 onFocus={e=>{e.target.style.border=`1px solid ${T.orange}`;e.target.style.color=T.text;}}
                                 onBlur={e=>{e.target.style.border="1px solid transparent";e.target.style.color=T.muted;}}>
                                 {["Materials","Labor","Equipment","Subcontractor","Other"].map(c=>
-                                  <option key={c} value={c}>{c}</option>)}
+                                  <option key={c} value={c}
+                                    style={{background:T.card,color:T.text}}>{c}</option>)}
                               </select>
                             </td>
                             <td style={{...td,textAlign:"right",minWidth:90}}>
