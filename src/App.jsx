@@ -8974,7 +8974,18 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                             <td style={{...td,minWidth:190}}>
                               <div style={{display:"flex",alignItems:"center",gap:8}}>
                                 <span style={{width:9,height:9,borderRadius:"50%",background:l.color||"#60A5FA",flexShrink:0}}/>
-                                <span style={{fontWeight:600}}>{l.name}</span>
+                                <input defaultValue={l.name??""} type="text"
+                                  onBlur={e=>{const v=e.target.value.trim();
+                                    if(v&&v!==(l.name||""))patchLine(l,{name:v});
+                                    else if(!v)e.target.value=l.name||"";}}
+                                  onKeyDown={e=>{if(e.key==="Enter")e.target.blur();
+                                    if(e.key==="Escape"){e.target.value=l.name||"";e.target.blur();}}}
+                                  title="Click to rename"
+                                  style={{flex:1,minWidth:0,background:"transparent",border:"1px solid transparent",
+                                    borderRadius:6,color:T.text,fontSize:12,fontWeight:600,padding:"4px 6px",
+                                    fontFamily:"inherit",outline:"none"}}
+                                  onFocus={e=>{e.target.style.border=`1px solid ${T.orange}`;e.target.style.background=T.surface;}}
+                                  onBlurCapture={e=>{e.target.style.border="1px solid transparent";e.target.style.background="transparent";}}/>
                                 {l.takeoff_item_id&&(linked(l)
                                   ?<span title="Quantity comes from the takeoff"
                                      style={{fontSize:9,background:T.blueLow,color:T.blue,borderRadius:4,padding:"1px 5px",fontWeight:800}}>TO</span>
@@ -8989,8 +9000,19 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                                 </div>
                               )}
                             </td>
-                            <td style={{...td,minWidth:150}}>
+                            <td style={{...td,minWidth:170}}>
                               {cellInput(l.description,v=>patchLine(l,{description:v}),{type:"text",align:"left"})}
+                              <select value={l.category||"Other"}
+                                onChange={e=>patchLine(l,{category:e.target.value})}
+                                title="Move this line to another category"
+                                style={{width:"100%",background:"transparent",border:"1px solid transparent",
+                                  borderRadius:6,color:T.muted,fontSize:10,padding:"2px 4px",fontFamily:"inherit",
+                                  outline:"none",cursor:"pointer",marginTop:2}}
+                                onFocus={e=>{e.target.style.border=`1px solid ${T.orange}`;e.target.style.color=T.text;}}
+                                onBlur={e=>{e.target.style.border="1px solid transparent";e.target.style.color=T.muted;}}>
+                                {["Materials","Labor","Equipment","Subcontractor","Other"].map(c=>
+                                  <option key={c} value={c}>{c}</option>)}
+                              </select>
                             </td>
                             <td style={{...td,textAlign:"right",minWidth:90}}>
                               {linked(l)?(
