@@ -5127,6 +5127,10 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
       active,
       daily:pending.filter(r=>ids.has(r.project_id)).length,
       tm:tmPending.filter(t=>ids.has(t.project_id)).length,
+      // What the waiting tickets are actually worth — a count alone doesn't
+      // tell you whether it's $400 or $40,000 sitting unapproved.
+      tmValue:tmPending.filter(t=>ids.has(t.project_id))
+        .reduce((sum,t)=>sum+(parseFloat(t.grand_total)||0),0),
     };
   };
 
@@ -5171,10 +5175,12 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
                   borderTop:`1px solid ${T.border}`,padding:"12px 8px"}}>
                   {[["ACTIVE JOBS",s.active,m.color],
                     ["DAILY TO APPROVE",s.daily,s.daily>0?T.yellow:T.muted],
-                    ["T&M TO APPROVE",s.tm,s.tm>0?T.orange:T.muted]].map(([label,val,col])=>(
+                    ["T&M TO APPROVE",s.tm,s.tm>0?T.orange:T.muted,
+                      s.tmValue>0?"$"+Math.round(s.tmValue).toLocaleString():null]].map(([label,val,col,sub])=>(
                     <div key={label} style={{textAlign:"center"}}>
                       <div style={{fontSize:20,fontWeight:900,color:col}}>{val}</div>
                       <div style={{fontSize:9.5,color:T.muted,letterSpacing:"0.5px",marginTop:2}}>{label}</div>
+                      {sub&&<div style={{fontSize:10.5,fontWeight:800,color:T.green,marginTop:2}}>{sub}</div>}
                     </div>
                   ))}
                 </div>
@@ -5193,6 +5199,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const scopedReports=reports.filter(r=>divIds.has(r.project_id));
   const scopedPending=pending.filter(r=>divIds.has(r.project_id));
   const scopedTmPending=tmPending.filter(t=>divIds.has(t.project_id));
+  const tmPendingValue=scopedTmPending.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
 
   const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
@@ -5420,8 +5427,8 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
           {/* Waiting on approval */}
           <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Waiting on Approval</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-            {[["📋",scopedPending.length,"Daily Reports",T.yellow],
-              ["🧾",scopedTmPending.length,"T&M Tickets",T.orange]].map(([icon,v,l,c])=>(
+            {[["📋",scopedPending.length,"Daily Reports",T.yellow,null],
+              ["🧾",scopedTmPending.length,"T&M Tickets",T.orange,tmPendingValue]].map(([icon,v,l,c,value])=>(
               <div key={l} onClick={()=>setPmTab("approvals")}
                 style={{...cardS,textAlign:"center",cursor:"pointer",
                   border:`1px solid ${v>0?c+"55":T.border}`,
@@ -5429,6 +5436,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
                 <div style={{fontSize:16,marginBottom:2}}>{icon}</div>
                 <div style={{fontSize:30,fontWeight:900,color:v>0?c:T.muted,lineHeight:1}}>{v}</div>
                 <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",marginTop:4}}>{l}</div>
+                {value>0&&<div style={{fontSize:12,fontWeight:800,color:T.green,marginTop:3}}>{fmt(value)}</div>}
               </div>
             ))}
           </div>
@@ -5547,7 +5555,9 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
             </div>);
           })}
 
-          {scopedTmPending.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"18px 0 8px"}}>🧾 T&M Tickets ({scopedTmPending.length})</div>}
+          {scopedTmPending.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"18px 0 8px"}}>
+            🧾 T&M Tickets ({scopedTmPending.length}) · <span style={{color:T.green}}>{fmt(tmPendingValue)}</span>
+          </div>}
           {scopedTmPending.map(t=>{
             const proj=projects.find(p=>p.id===t.project_id)||t.projects||{name:"Unknown"};
             return(<div key={t.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}>
@@ -16937,6 +16947,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
 
   async function save(newStatus){
     setSaving(true);
+    if(newStatus)setStatus(newStatus);
     const data={
       project_id:project.id,
       ticket_no:ticketNo,ticket_date:ticketDate,description,
@@ -17437,16 +17448,28 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
           </div>
         </div>}
 
-        {/* Action buttons */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:16}}>
+        {/* Action buttons.
+            A ticket used to save as "draft" and stay there — nothing ever set
+            it to "submitted", so it never reached a PM's approval queue. */}
+        {status!=="approved"&&<button onClick={()=>save("submitted")} disabled={saving}
+          style={{...primBtn,borderRadius:14,background:T.green,color:"#000",
+            opacity:saving?0.5:1,fontSize:15,marginTop:16}}>
+          {saving?"Saving…":status==="submitted"?"✓ Update & Keep Submitted":"📤 Submit for Approval"}
+        </button>}
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:10}}>
           <button onClick={()=>save()} disabled={saving}
             style={{...primBtn,borderRadius:14,background:T.orange,color:"#000",opacity:saving?0.5:1,fontSize:15}}>
-            {saving?"Saving…":"💾 Save"}
+            {saving?"Saving…":status==="draft"?"💾 Save Draft":"💾 Save"}
           </button>
           <button onClick={printTicket} style={{...primBtn,borderRadius:14,background:"#1f3864",fontSize:15}}>
             🖨️ Print
           </button>
         </div>
+
+        {status==="draft"&&<div style={{fontSize:11.5,color:T.yellow,marginTop:8,lineHeight:1.6,textAlign:"center"}}>
+          This is a draft — it won't reach a PM until you submit it.
+        </div>}
         {!isNew&&canEdit&&<button onClick={async()=>{if(window.confirm("Delete this ticket?"))try{await API.tmTickets.remove(ticket.id);onBack();}catch(e){}}}
           style={{...primBtn,borderRadius:14,background:T.redLow,color:T.red,border:`1px solid ${T.red}30`,marginTop:8,width:"100%",fontSize:13}}>
           🗑 Delete Ticket
