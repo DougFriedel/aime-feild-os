@@ -5888,6 +5888,8 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 function CrewDirectoryScreen({onBack,user}){
   const [members,setMembers]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
   const [mode,setMode]=useState("list");const [active,setActive]=useState(null);const [saving,setSaving]=useState(false);
+  const canTypeName=user?.role==="admin"||user?.role==="pm";
+  const [typeName,setTypeName]=useState(false);
   const blank={name:"",classification:"",phone:"",email:"",emergency_contact_name:"",emergency_contact_phone:"",certifications:[],notes:"",active:true};
   const [f,setF]=useState({...blank});const set=(k,v)=>setF(x=>({...x,[k]:v}));
   async function load(){setLoading(true);try{setMembers(await API.crew.list()||[]);}catch(e){setErr(e.message);}setLoading(false);}
@@ -5905,7 +5907,27 @@ function CrewDirectoryScreen({onBack,user}){
       <TopBar title={mode==="edit"?"Edit Member":"Add Member"} onBack={()=>{setMode("list");setActive(null);setF({...blank});}}/>
       <div style={{padding:"16px 16px 100px"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
-        <div style={{marginBottom:12}}><label style={lbl}>Full Name *</label><select value={f.name} onChange={e=>set("name",e.target.value)} style={inp}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
+        {/* The dropdown is the roster in the code. A new hire is not in it
+            until the app is rebuilt, so admins and PMs can type a name. */}
+        <div style={{marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <label style={{...lbl,marginBottom:0}}>Full Name *</label>
+            {canTypeName&&<button onClick={()=>{setTypeName(t=>!t);set("name","");}}
+              style={{background:"none",border:"none",color:T.orange,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              {typeName?"↩ Pick from list":"✏️ Type a new name"}
+            </button>}
+          </div>
+          {typeName
+            ?<input value={f.name} onChange={e=>set("name",e.target.value)}
+               placeholder="First Last" style={inp} autoFocus/>
+            :<select value={f.name} onChange={e=>set("name",e.target.value)} style={inp}>
+               <option value="">— Select —</option>
+               {NAMES.map(n=><option key={n}>{n}</option>)}
+             </select>}
+          {typeName&&<div style={{fontSize:11,color:T.muted,marginTop:5,lineHeight:1.5}}>
+            Typed names aren't added to the app's dropdowns — for that, the roster in the code needs updating.
+          </div>}
+        </div>
         <div style={{marginBottom:12}}><label style={lbl}>Classification</label><select value={f.classification} onChange={e=>set("classification",e.target.value)} style={inp}><option value="">— Select —</option>{POSITIONS.map(p=><option key={p.name}>{p.name}</option>)}</select></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}><div><label style={lbl}>Cell Phone</label><input type="tel" placeholder="555-555-5555" value={f.phone} onChange={e=>set("phone",e.target.value)} style={inp}/></div><div><label style={lbl}>Email</label><input type="email" placeholder="email@example.com" value={f.email} onChange={e=>set("email",e.target.value)} style={inp}/></div></div>
         <div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🆘 Emergency Contact</div><div style={{marginBottom:10}}><label style={lbl}>Name</label><input type="text" placeholder="Spouse, parent…" value={f.emergency_contact_name} onChange={e=>set("emergency_contact_name",e.target.value)} style={inp}/></div><div><label style={lbl}>Phone</label><input type="tel" placeholder="555-555-5555" value={f.emergency_contact_phone} onChange={e=>set("emergency_contact_phone",e.target.value)} style={inp}/></div></div>
@@ -5984,6 +6006,7 @@ function UserManagementScreen({onBack,currentUser,user}){
   const blank={name:"",role:"crew",division:null,pin:"",active:true};
   const [f,setF]=useState({...blank});
   const [adminPin,setAdminPin]=useState("");   // proves the caller is an admin
+  const [typeName,setTypeName]=useState(false);
   const [pinStatus,setPinStatus]=useState({}); // name -> has_pin
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
 
@@ -6027,7 +6050,25 @@ function UserManagementScreen({onBack,currentUser,user}){
       <TopBar title={active?"Edit User":"Add User"} onBack={()=>{setMode("list");setActive(null);setF({...blank});}}/>
       <div style={{padding:"16px 16px 100px"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
-        {!active&&<div style={{marginBottom:14}}><label style={lbl}>Name</label><select value={f.name} onChange={e=>set("name",e.target.value)} style={inp}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>}
+        {!active&&<div style={{marginBottom:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <label style={{...lbl,marginBottom:0}}>Name</label>
+            <button onClick={()=>{setTypeName(t=>!t);set("name","");}}
+              style={{background:"none",border:"none",color:T.orange,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              {typeName?"↩ Pick from list":"✏️ Type a new name"}
+            </button>
+          </div>
+          {typeName
+            ?<input value={f.name} onChange={e=>set("name",e.target.value)}
+               placeholder="First Last" style={inp} autoFocus/>
+            :<select value={f.name} onChange={e=>set("name",e.target.value)} style={inp}>
+               <option value="">— Select —</option>
+               {NAMES.map(n=><option key={n}>{n}</option>)}
+             </select>}
+          {typeName&&<div style={{fontSize:11,color:T.muted,marginTop:5,lineHeight:1.5}}>
+            The name must match exactly how they'll appear on reports and time cards.
+          </div>}
+        </div>}
         {active&&<div style={{...cardS,marginBottom:14}}><div style={{fontSize:16,fontWeight:800}}>{active.name}</div><div style={{fontSize:12,color:T.muted}}>Editing permissions</div></div>}
 
         <div style={{marginBottom:14}}>
@@ -8037,7 +8078,12 @@ const DEFAULT_GENERAL_NOTES=[
 
 // Shared by the Proposal tab and the public link, so the client sees exactly
 // what the estimator previewed.
-function buildProposalHtml(bid,f,total){
+function buildProposalHtml(bid,f,total,breakdown,show){
+  /* `show` decides what the client sees. A lump sum is the default because
+     itemised costs invite line-by-line negotiation, but some clients require
+     a breakdown, so it's a per-proposal choice. */
+  show=show||{lump_sum:true};
+  breakdown=breakdown||{};
   const asList=(v)=>{
     if(Array.isArray(v))return v;
     if(typeof v==="string"){try{const p=JSON.parse(v);return Array.isArray(p)?p:[];}catch{return [];}}
@@ -8131,7 +8177,27 @@ function buildProposalHtml(bid,f,total){
 
   <hr class="rule" style="margin-top:14px"/>
   <div class="sumwrap">
-    <div class="sumrow"><span>Subtotal</span><span>${money(total)}</span></div>
+    ${(()=>{
+      const rows=[
+        ["materials","Materials",breakdown.materials],
+        ["labor","Labor",breakdown.labor],
+        ["equipment","Equipment",breakdown.equipment],
+        ["subcontractor","Subcontractor",breakdown.subcontractor],
+        ["other","Other",breakdown.other],
+      ].filter(([k,,v])=>show[k]&&Number(v)>0);
+      const shown=[];
+      rows.forEach(([k,l,v])=>shown.push(`<div class="sumrow"><span>${l}</span><span>${money(v)}</span></div>`));
+      if(show.overhead&&Number(breakdown.overhead)>0)
+        shown.push(`<div class="sumrow"><span>Overhead</span><span>${money(breakdown.overhead)}</span></div>`);
+      if(show.markup&&Number(breakdown.markup)>0)
+        shown.push(`<div class="sumrow"><span>Markup</span><span>${money(breakdown.markup)}</span></div>`);
+      if(show.discount&&Number(breakdown.discount)>0)
+        shown.push(`<div class="sumrow"><span>Discount</span><span>-${money(breakdown.discount)}</span></div>`);
+      if(shown.length)shown.push(`<div class="sumrow" style="border-top:1px solid #999;padding-top:4px;margin-top:2px"><span>Subtotal</span><span>${money(total)}</span></div>`);
+      if(show.tax&&Number(breakdown.tax)>0)
+        shown.push(`<div class="sumrow"><span>Tax${bid.tax_pct?` (${bid.tax_pct}%)`:""}</span><span>${money(breakdown.tax)}</span></div>`);
+      return shown.join("");
+    })()}
     <div style="display:flex;gap:36px;align-items:flex-end;margin-top:8px">
       <div class="totalbox">${money(total)}</div>
       <div class="accept">
@@ -8162,7 +8228,18 @@ function PublicProposalView({estimateId}){
         prepared_email:bid.prepared_email||"",customer_address:bid.customer_address||"",
         general_notes:bid.general_notes||"",
       };
-      setHtml(buildProposalHtml(bid,f,Number(bid.total_sales)||0));
+      // The client's copy must match what the estimator previewed, so the
+      // display choices and the breakdown are read back off the bid.
+      let show={lump_sum:true},breakdown={};
+      try{
+        if(bid.proposal_show)show=typeof bid.proposal_show==="string"
+          ?JSON.parse(bid.proposal_show):bid.proposal_show;
+      }catch{}
+      try{
+        if(bid.proposal_breakdown)breakdown=typeof bid.proposal_breakdown==="string"
+          ?JSON.parse(bid.proposal_breakdown):bid.proposal_breakdown;
+      }catch{}
+      setHtml(buildProposalHtml(bid,f,Number(bid.total_sales)||0,breakdown,show));
     }catch(e){ setErr("Could not load this proposal."); }
     setLoading(false);
   })();},[estimateId]);
@@ -8214,7 +8291,17 @@ function ProposalTab({bid,user,onErr,onSaved}){
     prepared_email:bid.prepared_email||"",
     customer_address:bid.customer_address||"",
     general_notes:bid.general_notes||DEFAULT_GENERAL_NOTES,
+    tax_pct:bid.tax_pct??"",
   });
+  /* What appears on the client's copy. Lump sum by default — itemised costs
+     invite line-by-line negotiation — but some clients require a breakdown. */
+  const [show,setShow]=useState(()=>{
+    const raw=bid.proposal_show;
+    if(raw){try{return typeof raw==="string"?JSON.parse(raw):raw;}catch{}}
+    return {lump_sum:true};
+  });
+  const toggleShow=(k)=>{setShow(v=>({...v,[k]:!v[k]}));setDirty(true);};
+  const [breakdown,setBreakdown]=useState({});
   const [dirty,setDirty]=useState(false);
   const [saving,setSaving]=useState(false);
   const [total,setTotal]=useState(Number(bid.total_sales)||0);
@@ -8262,6 +8349,23 @@ function ProposalTab({bid,user,onErr,onSaved}){
       const discount=(marked+overhead)*((Number(bid.discount_pct)||0)/100);
       const t=marked+overhead-discount;
       if(t>0)setTotal(t);
+
+      // Keep the category split so the proposal can show a breakdown. Costs
+      // are grouped the way the estimate categorises them.
+      const bucket=(name)=>{
+        const n=String(name||"").toLowerCase();
+        if(n.includes("labor"))return "labor";
+        if(n.includes("equip"))return "equipment";
+        if(n.includes("sub"))return "subcontractor";
+        if(n.includes("material"))return "materials";
+        return "other";
+      };
+      const split={materials:0,labor:0,equipment:0,subcontractor:0,other:0};
+      Object.entries(cat).forEach(([c,v])=>{
+        const key=MARKUP_KEY[c];
+        split[bucket(c)]+=v*(1+(key?Number(rates[key])||0:0)/100);
+      });
+      setBreakdown({...split,overhead,discount,markup:marked-Object.values(cat).reduce((a,b)=>a+b,0)});
     }catch(e){ /* fall back to the figure stored on the bid */ }
   })();},[bid.id]);
 
@@ -8271,7 +8375,12 @@ function ProposalTab({bid,user,onErr,onSaved}){
       // Store the computed total alongside the header fields. The public link
       // reads total_sales, so saving keeps what the client sees identical to
       // what was previewed here.
-      await API.estimates.update(bid.id,{...f,total_sales:total,updated_at:new Date().toISOString()});
+      await API.estimates.update(bid.id,{...f,
+        tax_pct:parseFloat(f.tax_pct)||0,
+        proposal_show:show,
+        proposal_breakdown:{...breakdown,tax:taxAmt},
+        total_sales:show.tax?grand:total,
+        updated_at:new Date().toISOString()});
       setDirty(false); onSaved&&onSaved();
     }
     catch(e){onErr&&onErr(e.message);}
@@ -8282,7 +8391,11 @@ function ProposalTab({bid,user,onErr,onSaved}){
   const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const lines=(s)=>esc(s).split("\n").map(l=>l.trim()).filter(Boolean);
 
-  const buildHtml=()=>buildProposalHtml(bid,f,total);
+  const taxAmt=total*(parseFloat(f.tax_pct)||0)/100;
+  const grand=total+(show.tax?taxAmt:0);
+  const buildHtml=()=>buildProposalHtml(
+    {...bid,tax_pct:f.tax_pct},f,show.tax?grand:total,
+    {...breakdown,tax:taxAmt},show);
 
   const proposalLink=()=>`${window.location.origin}${window.location.pathname}?proposal=${bid.id}`;
 
@@ -8380,12 +8493,76 @@ function ProposalTab({bid,user,onErr,onSaved}){
 
       </div>
 
+      {/* What the client sees. Lump sum by default — an itemised proposal
+          invites line-by-line negotiation — but some clients require one. */}
+      <div style={card}>
+        <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:4}}>What the Client Sees</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:12}}>
+          Tap what should be itemised on the proposal. Anything left off is still in the total.
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
+          {[["materials","Material Cost",breakdown.materials],
+            ["labor","Labor Cost",breakdown.labor],
+            ["equipment","Equipment Cost",breakdown.equipment],
+            ["subcontractor","Subcontractor Cost",breakdown.subcontractor],
+            ["other","Other Costs",breakdown.other],
+            ["overhead","Overhead",breakdown.overhead],
+            ["markup","Markup",breakdown.markup],
+            ["discount","Discount",breakdown.discount]].map(([k,l,amt])=>{
+            const on=!!show[k];
+            const has=Number(amt)>0;
+            return(
+              <button key={k} onClick={()=>toggleShow(k)}
+                style={{padding:"10px 9px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",textAlign:"left",
+                  fontSize:11.5,fontWeight:on?800:600,
+                  background:on?T.orange:T.surface,color:on?"#000":T.sub,
+                  border:`1px solid ${on?T.orange:T.border}`,opacity:has?1:0.45}}>
+                <div>{on?"☑ ":"☐ "}{l}</div>
+                {has&&<div style={{fontSize:10,fontWeight:600,marginTop:2,opacity:0.75}}>{money(amt)}</div>}
+              </button>
+            );
+          })}
+        </div>
+
+        <button onClick={()=>toggleShow("lump_sum")}
+          style={{width:"100%",padding:"11px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",
+            fontSize:12.5,fontWeight:show.lump_sum?800:600,marginBottom:10,
+            background:show.lump_sum?T.green:T.surface,color:show.lump_sum?"#000":T.sub,
+            border:`1px solid ${show.lump_sum?T.green:T.border}`}}>
+          {show.lump_sum?"☑ ":"☐ "}Lump Sum — one price, no breakdown
+        </button>
+
+        <div style={{display:"flex",alignItems:"center",gap:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+          <button onClick={()=>toggleShow("tax")}
+            style={{padding:"9px 14px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",
+              fontSize:12,fontWeight:show.tax?800:600,
+              background:show.tax?T.orange:T.surface,color:show.tax?"#000":T.sub,
+              border:`1px solid ${show.tax?T.orange:T.border}`}}>
+            {show.tax?"☑ ":"☐ "}Tax
+          </button>
+          {show.tax&&<>
+            <input type="number" step="0.001" value={f.tax_pct} onChange={e=>set("tax_pct",e.target.value)}
+              placeholder="0" style={{...inp,width:80,textAlign:"center",fontSize:13}}/>
+            <span style={{fontSize:12,color:T.muted}}>%</span>
+            <span style={{marginLeft:"auto",fontSize:13,fontWeight:800,color:T.green}}>{money(taxAmt)}</span>
+          </>}
+        </div>
+
+        {show.lump_sum&&Object.keys(show).filter(k=>show[k]&&k!=="lump_sum"&&k!=="tax").length>0&&
+          <div style={{fontSize:11,color:T.yellow,marginTop:9,lineHeight:1.6}}>
+            Lump sum is on alongside itemised lines — the client will see both the breakdown and the single total.
+          </div>}
+      </div>
+
       <div style={{...card,borderLeft:`3px solid ${T.green}`}}>
         <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
           <div style={{flex:1,minWidth:200}}>
             <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Proposal Total</div>
-            <div style={{fontSize:26,fontWeight:900,color:T.green,marginTop:2}}>{money(total)}</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:2}}>Calculated from the Estimating tab</div>
+            <div style={{fontSize:26,fontWeight:900,color:T.green,marginTop:2}}>{money(show.tax?grand:total)}</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+              Calculated from the Estimating tab{show.tax&&taxAmt>0?` · includes ${money(taxAmt)} tax`:""}
+            </div>
           </div>
           <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
             <button onClick={printProposal}
