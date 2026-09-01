@@ -394,6 +394,24 @@ const API={
   },
 };
 
+/* ── Roster ──
+   NAMES is the list baked into the bundle. Anyone added through the crew
+   directory only exists in the database, so a typed name never reached the
+   worker dropdowns until the app was rebuilt. ROSTER merges the two and is
+   refreshed at login, so a new hire is usable straight away. */
+let EXTRA_NAMES=[];
+function ROSTER(){
+  return [...new Set([...NAMES,...EXTRA_NAMES])]
+    .filter(Boolean)
+    .sort((a,b)=>a.localeCompare(b));
+}
+async function refreshRoster(){
+  try{
+    const rows=await sb("/crew_members?select=name,active&order=name.asc");
+    EXTRA_NAMES=(rows||[]).filter(r=>r.active!==false).map(r=>r.name).filter(Boolean);
+  }catch{ /* offline or not deployed — the built-in list still works */ }
+}
+
 const T={bg:"#0D0D0F",surface:"#141418",card:"#1A1A20",border:"#26262E",orange:"#60A5FA",orangeLow:"#60A5FA14",orangeMid:"#60A5FA30",green:"#34D399",greenLow:"#34D39914",red:"#FC8181",redLow:"#FC818114",yellow:"#FBBF24",yellowLow:"#FBBF2414",blue:"#60A5FA",blueLow:"#60A5FA14",purple:"#A78BFA",purpleLow:"#A78BFA14",teal:"#2DD4BF",text:"#F0F4FF",sub:"#C8D4F0",muted:"#7080A0"};
 const inp={width:"100%",boxSizing:"border-box",background:"#0C0C0F",border:`1px solid ${T.border}`,borderRadius:12,color:T.text,fontSize:15,padding:"13px 14px",outline:"none",fontFamily:"inherit",appearance:"none",WebkitAppearance:"none"};
 const inpSel={...inp,color:T.orange,background:T.card,colorScheme:"dark"};
@@ -585,7 +603,7 @@ if(typeof document!=="undefined"){
 
 function TopBar({title,sub,onBack,right}){return(<div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50}}>{onBack&&<button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>}<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{title}</div>{sub&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{sub}</div>}</div>{right&&<div style={{flexShrink:0,marginLeft:12}}>{right}</div>}</div></div>);}
 
-function LaborCard({row,onChange,onRemove,division}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
+function LaborCard({row,onChange,onRemove,division}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{ROSTER().map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
 function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>set("qty",e.target.value)} style={inp}/></div><div>
               <label style={lbl}>
                 {eq
@@ -757,7 +775,7 @@ function LoginScreen({onLogin}){
           <label style={{...lbl,color:"#C8D4F0"}}>Select Your Name</label>
           <select value={name} onChange={e=>handleNameChange(e.target.value)} style={{...inp,color:T.orange,background:T.card}}>
             <option value="" style={{background:T.card,color:T.muted}}>— Select your name —</option>
-            {NAMES.map(n=><option key={n} style={{background:T.card,color:T.text}}>{n}</option>)}
+            {ROSTER().map(n=><option key={n} style={{background:T.card,color:T.text}}>{n}</option>)}
             <option value="Admin" style={{background:T.card,color:T.orange}}>Admin</option>
           </select>
         </div>
@@ -3559,7 +3577,7 @@ function TimeCardsTab({projectId,user,project,onErr}){
       <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"⏱️ Log Time by Hand"}</button>
     </>}
     {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`}}>
-      <div style={{marginBottom:10}}><label style={lbl}>Worker</label><select value={f.worker_name} onChange={e=>setF(x=>({...x,worker_name:e.target.value}))} style={inpSel}>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Worker</label><select value={f.worker_name} onChange={e=>setF(x=>({...x,worker_name:e.target.value}))} style={inpSel}>{ROSTER().map(n=><option key={n}>{n}</option>)}</select></div>
       <div style={{marginBottom:10}}><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))} style={inp}/></div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><div><label style={lbl}>Clock In</label><input type="time" value={f.clock_in} onChange={e=>setF(x=>({...x,clock_in:e.target.value}))} style={inp}/></div><div><label style={lbl}>Clock Out</label><input type="time" value={f.clock_out} onChange={e=>setF(x=>({...x,clock_out:e.target.value}))} style={inp}/></div></div>
       {f.clock_in&&f.clock_out&&(()=>{const h=calcHours(f.clock_in,f.clock_out);const ot=Math.max(0,h-8);return h>0&&(<div style={{background:T.greenLow,borderRadius:10,padding:"10px 12px",marginBottom:10,display:"flex",gap:16}}><div><div style={{fontSize:18,fontWeight:900,color:T.green}}>{h.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Total</div></div><div><div style={{fontSize:18,fontWeight:900,color:ot>0?T.yellow:T.muted}}>{Math.min(h,8).toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Regular</div></div>{ot>0&&<div><div style={{fontSize:18,fontWeight:900,color:T.yellow}}>{ot.toFixed(2)}h</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>OT</div></div>}</div>);})()}
@@ -3592,7 +3610,7 @@ function CrewEquipTab({projectId,user,onErr}){
     {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.yellow}`}}>
       <div style={{marginBottom:10}}><label style={lbl}>Equipment</label><select value={f.equipment_name} onChange={e=>setF(x=>({...x,equipment_name:e.target.value}))} style={inpSel}><option value="">— Select —</option>{EQUIP_LIST.filter(e=>!e.section).map(e=><option key={e.name} value={e.name}>{e.name}</option>)}</select></div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><div><label style={lbl}>Quantity</label><input type="number" min="1" value={f.quantity} onChange={e=>setF(x=>({...x,quantity:e.target.value}))} style={inp}/></div><div><label style={lbl}>Hours Used</label><input type="number" min="0" step="0.5" placeholder="0" value={f.hours_used} onChange={e=>setF(x=>({...x,hours_used:e.target.value}))} style={inp}/></div></div>
-      <div style={{marginBottom:10}}><label style={lbl}>Operator</label><select value={f.operator_name} onChange={e=>setF(x=>({...x,operator_name:e.target.value}))} style={inpSel}><option value="">— Optional —</option>{NAMES.map(n=><option key={n}>{n}</option>)}</select></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Operator</label><select value={f.operator_name} onChange={e=>setF(x=>({...x,operator_name:e.target.value}))} style={inpSel}><option value="">— Optional —</option>{ROSTER().map(n=><option key={n}>{n}</option>)}</select></div>
       <div style={{marginBottom:10}}><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>setF(x=>({...x,date:e.target.value}))} style={inp}/></div>
       <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input type="text" placeholder="Condition, issues…" value={f.notes} onChange={e=>setF(x=>({...x,notes:e.target.value}))} style={inp}/></div>
       <button onClick={save} style={{...primBtn,background:T.yellow,color:"#0D0D0F",borderRadius:12}}>{saving?"Saving…":"Save Entry"}</button>
@@ -5899,7 +5917,18 @@ function CrewDirectoryScreen({onBack,user}){
   const [f,setF]=useState({...blank});const set=(k,v)=>setF(x=>({...x,[k]:v}));
   async function load(){setLoading(true);try{setMembers(await API.crew.list()||[]);}catch(e){setErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[]);
-  async function save(){if(!f.name.trim())return;setSaving(true);try{if(active){await API.crew.update(active.id,f);setActive({...active,...f});}else{await API.crew.create(f);}await load();setMode("list");setActive(null);setF({...blank});}catch(e){setErr(e.message);}setSaving(false);}
+  async function save(){
+    if(!f.name.trim())return;
+    setSaving(true);
+    try{
+      if(active){await API.crew.update(active.id,f);setActive({...active,...f});}
+      else{await API.crew.create(f);}
+      await load();
+      await refreshRoster();   // so a new name reaches the worker dropdowns now
+      setMode("list");setActive(null);setF({...blank});setTypeName(false);
+    }catch(e){setErr(e.message);}
+    setSaving(false);
+  }
   async function remove(id){if(!window.confirm("Remove crew member?"))return;try{await API.crew.remove(id);await load();setMode("list");setActive(null);}catch(e){setErr(e.message);}}
   function addCert(){set("certifications",[...(f.certifications||[]),{id:uid(),name:"",expiry:"",cert_number:""}]);}
   function updateCert(i,k,v){const c=[...(f.certifications||[])];c[i]={...c[i],[k]:v};set("certifications",c);}
@@ -5927,10 +5956,10 @@ function CrewDirectoryScreen({onBack,user}){
                placeholder="First Last" style={inp} autoFocus/>
             :<select value={f.name} onChange={e=>set("name",e.target.value)} style={inp}>
                <option value="">— Select —</option>
-               {NAMES.map(n=><option key={n}>{n}</option>)}
+               {ROSTER().map(n=><option key={n}>{n}</option>)}
              </select>}
           {typeName&&<div style={{fontSize:11,color:T.muted,marginTop:5,lineHeight:1.5}}>
-            Typed names aren't added to the app's dropdowns — for that, the roster in the code needs updating.
+            Saving adds this person to the worker dropdowns on daily reports, T&amp;M tickets and time cards.
           </div>}
         </div>
         <div style={{marginBottom:12}}><label style={lbl}>Classification</label><select value={f.classification} onChange={e=>set("classification",e.target.value)} style={inp}><option value="">— Select —</option>{POSITIONS.map(p=><option key={p.name}>{p.name}</option>)}</select></div>
@@ -6068,7 +6097,7 @@ function UserManagementScreen({onBack,currentUser,user}){
                placeholder="First Last" style={inp} autoFocus/>
             :<select value={f.name} onChange={e=>set("name",e.target.value)} style={inp}>
                <option value="">— Select —</option>
-               {NAMES.map(n=><option key={n}>{n}</option>)}
+               {ROSTER().map(n=><option key={n}>{n}</option>)}
              </select>}
           {typeName&&<div style={{fontSize:11,color:T.muted,marginTop:5,lineHeight:1.5}}>
             The name must match exactly how they'll appear on reports and time cards.
@@ -12933,7 +12962,7 @@ function MfgTimeTab({job,parts,user,onErr}){
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
             <div><label style={lbl}>Worker</label>
               <select value={mf.worker_name} onChange={e=>setMf(x=>({...x,worker_name:e.target.value}))} style={inpSel}>
-                {NAMES.map(n=><option key={n}>{n}</option>)}
+                {ROSTER().map(n=><option key={n}>{n}</option>)}
               </select></div>
             <div><label style={lbl}>Date</label>
               <input type="date" value={mf.work_date} onChange={e=>setMf(x=>({...x,work_date:e.target.value}))} style={ri}/></div>
@@ -13360,7 +13389,7 @@ table.insp td{border:1px solid #000;padding:3px 4px;font-size:8pt;height:17px}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
           <div><label style={lbl}>Inspector / Employee</label>
             <select value={f.inspector} onChange={e=>{set("inspector",e.target.value);set("employee_name",e.target.value);}} style={inpSel}>
-              {NAMES.map(n=><option key={n}>{n}</option>)}
+              {ROSTER().map(n=><option key={n}>{n}</option>)}
             </select></div>
           <div><label style={lbl}>Part (optional)</label>
             <select value={f.part_id} onChange={e=>set("part_id",e.target.value)} style={inpSel}>
@@ -14535,7 +14564,7 @@ function AppInner(){
     (async()=>{
       const p=await restoreSession();
       if(cancelled)return;
-      if(p){setAuditUser(p.name);setUser(p);}
+      if(p){setAuditUser(p.name);setUser(p);refreshRoster();}
       setRestoring(false);
     })();
     return()=>{cancelled=true;};
@@ -14663,7 +14692,10 @@ function AppInner(){
     setPendingCount(getQueue().length);
   }
 
-  function handleLogin(profile,token){saveSession(token);setAuditUser(profile.name);setUser(profile);}
+  function handleLogin(profile,token){
+    saveSession(token);setAuditUser(profile.name);setUser(profile);
+    refreshRoster();   // pick up anyone added to the crew directory
+  }
   async function handleLogout(){
     await clearSession();          // ends the session server-side too
     setAuditUser(null);
@@ -17503,7 +17535,7 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
                 <label style={lbl}>Name</label>
                 <select value={r.name} onChange={e=>updateRow(setLabor,r.id,"name",e.target.value)} style={{...ri,width:"100%"}}>
                   <option value="">— Select Worker —</option>
-                  {NAMES.map(n=><option key={n} value={n}>{n}</option>)}
+                  {ROSTER().map(n=><option key={n} value={n}>{n}</option>)}
                   <option value="__other">Other (type below)</option>
                 </select>
                 {r.name==="__other"&&<input value={r.customName||""} onChange={e=>updateRow(setLabor,r.id,"customName",e.target.value)} placeholder="Enter name" style={{...ri,marginTop:6}}/>}
