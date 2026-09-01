@@ -10843,6 +10843,22 @@ function PublicTMSignForm({ticketId}){
           {sec("Materials",(ticket?.materials||[]).map(r=>({label:`${r.description||"—"} · ${r.qty||0}`,amt:money((parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0))})))}
           {sec("Other",(ticket?.other_charges||[]).map(r=>({label:r.description||"—",amt:money(r.amount)})))}
 
+          {/* Show what makes up the total — a client signing for it should
+              see the markup and tax, not just the bottom line. */}
+          {[(parseFloat(ticket?.markup_pct)||0)>0&&["Markup ("+ticket.markup_pct+"%)",
+              (parseFloat(ticket?.labor_total)||0)+(parseFloat(ticket?.equipment_total)||0)
+              +(parseFloat(ticket?.materials_total)||0)+(parseFloat(ticket?.other_total)||0)
+              ? ((parseFloat(ticket.labor_total)||0)+(parseFloat(ticket.equipment_total)||0)
+                +(parseFloat(ticket.materials_total)||0)+(parseFloat(ticket.other_total)||0))
+                *(parseFloat(ticket.markup_pct)||0)/100 : 0],
+            (parseFloat(ticket?.tax_pct)||0)>0&&["Tax ("+ticket.tax_pct+"%)",parseFloat(ticket?.tax_amount)||0],
+          ].filter(Boolean).map(([l,v])=>(
+            <div key={l} style={{marginTop:8,display:"flex",justifyContent:"space-between",fontSize:12}}>
+              <span style={{color:"#7080A0"}}>{l}</span>
+              <span style={{color:"#C8D4F0",fontWeight:700}}>{money(v)}</span>
+            </div>
+          ))}
+
           <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid #26262E",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span style={{fontSize:13,fontWeight:800,color:"#F0F4FF"}}>Grand Total</span>
             <span style={{fontSize:20,fontWeight:900,color:"#34D399"}}>{money(ticket?.grand_total)}</span>
@@ -16834,6 +16850,11 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
     }).catch(()=>{});
   },[project.id]);
   const [markupPct,setMarkupPct]=useState(String(ticket?.markup_pct||"0"));
+  // Tax rate varies by jurisdiction and by what's taxable, so it's typed per
+  // ticket rather than fixed.
+  const [taxPct,setTaxPct]=useState(String(ticket?.tax_pct??""));
+  // Most states tax materials but not labour, so this is a choice, not a rule.
+  const [taxBasis,setTaxBasis]=useState(ticket?.tax_basis||"materials");
   const [notes,setNotes]=useState(ticket?.notes||"");
   const [status,setStatus]=useState(ticket?.status||"draft");
 
@@ -16959,7 +16980,12 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const otherTotal=other.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
   const subtotal=laborTotal+equipTotal+matsTotal+otherTotal;
   const markupAmt=subtotal*(parseFloat(markupPct)||0)/100;
-  const grandTotal=subtotal+markupAmt;
+  // Tax applies after markup, on whichever base the ticket specifies.
+  const taxBase=taxBasis==="all"?subtotal+markupAmt
+    :taxBasis==="materials_other"?matsTotal+otherTotal
+    :matsTotal;
+  const taxAmt=taxBase*(parseFloat(taxPct)||0)/100;
+  const grandTotal=subtotal+markupAmt+taxAmt;
 
   async function uploadMaterialAttachment(file,matId){
     setMatUploading(true);
@@ -16982,6 +17008,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       ticket_no:ticketNo,ticket_date:ticketDate,description,
       po_number:poNumber,afe_number:afeNumber,work_order:workOrder,
       location,notes,markup_pct:parseFloat(markupPct)||0,
+      tax_pct:parseFloat(taxPct)||0,tax_amount:taxAmt,tax_basis:taxBasis,
       status:newStatus||status,
       submitted_by:ticket?.submitted_by||user.name,
       labor,equipment,materials,other_charges:other,
@@ -17083,7 +17110,7 @@ ${other.length?`<div style="margin-bottom:8px"><div style="background:#6B7280;co
 ${other.map(r=>`<tr><td style="${tdStyle}left">${r.description||""}</td><td style="${tdStyle}right">${fmt(r.amount)}</td></tr>`).join("")}
 </tbody></table></div>`:""}
 <table style="width:260px;margin-left:auto;border-collapse:collapse;border:1px solid #e5e7eb;margin-bottom:10px">
-  ${[["Labor",fmt(laborTotal)],["Equipment",fmt(equipTotal)],["Materials",fmt(matsTotal)],["Other",fmt(otherTotal)],["Subtotal",fmt(subtotal)],...(parseFloat(markupPct)>0?[[`Markup (${markupPct}%)`,fmt(markupAmt)]]:[])].map(([l,v])=>`<tr><td style="padding:4px 8px;font-size:8.5pt;border-bottom:1px solid #e5e7eb">${l}</td><td style="padding:4px 8px;font-size:8.5pt;text-align:right;border-bottom:1px solid #e5e7eb">${v}</td></tr>`).join("")}
+  ${[["Labor",fmt(laborTotal)],["Equipment",fmt(equipTotal)],["Materials",fmt(matsTotal)],["Other",fmt(otherTotal)],["Subtotal",fmt(subtotal)],...(parseFloat(markupPct)>0?[[`Markup (${markupPct}%)`,fmt(markupAmt)]]:[]),...(parseFloat(taxPct)>0?[[`Tax (${taxPct}%)`,fmt(taxAmt)]]:[])].map(([l,v])=>`<tr><td style="padding:4px 8px;font-size:8.5pt;border-bottom:1px solid #e5e7eb">${l}</td><td style="padding:4px 8px;font-size:8.5pt;text-align:right;border-bottom:1px solid #e5e7eb">${v}</td></tr>`).join("")}
   <tr style="background:#1f3864;color:#fff"><td style="padding:6px 8px;font-size:10pt;font-weight:900">GRAND TOTAL</td><td style="padding:6px 8px;font-size:10pt;font-weight:900;text-align:right">${fmt(grandTotal)}</td></tr>
 </table>
 ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px;font-size:8.5pt"><b>Notes:</b> ${notes}</div>`:""}
@@ -17401,6 +17428,37 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
               </div>
               <span style={{fontSize:13,fontWeight:700,color:T.orange}}>{fmt(markupAmt)}</span>
             </div>
+
+            {/* Tax — typed per ticket, since the rate and what's taxable both
+                vary by job and jurisdiction. */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:13,color:T.sub}}>Tax %</span>
+                <input type="number" step="0.001" value={taxPct} onChange={e=>setTaxPct(e.target.value)}
+                  style={{...inp,width:75,textAlign:"center",fontSize:14}} placeholder="0"/>
+              </div>
+              <span style={{fontSize:13,fontWeight:700,color:taxAmt>0?T.orange:T.muted}}>{fmt(taxAmt)}</span>
+            </div>
+
+            {(parseFloat(taxPct)||0)>0&&<div style={{padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+              <div style={{fontSize:11,color:T.muted,marginBottom:6}}>Tax applies to</div>
+              <div style={{display:"flex",gap:6}}>
+                {[["materials","Materials"],["materials_other","Materials + Other"],["all","Everything"]].map(([v,l])=>{
+                  const on=taxBasis===v;
+                  return(
+                    <button key={v} onClick={()=>setTaxBasis(v)}
+                      style={{flex:1,padding:"7px 4px",borderRadius:9,cursor:"pointer",fontFamily:"inherit",
+                        fontSize:11,fontWeight:on?800:600,
+                        background:on?T.orange:T.surface,color:on?"#000":T.sub,
+                        border:`1px solid ${on?T.orange:T.border}`}}>{l}</button>
+                  );
+                })}
+              </div>
+              <div style={{fontSize:10.5,color:T.muted,marginTop:5}}>
+                Taxing {fmt(taxBase)} at {taxPct}%
+              </div>
+            </div>}
+
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderTop:`2px solid ${T.border}`,marginTop:4}}>
               <span style={{fontSize:17,fontWeight:900}}>GRAND TOTAL</span>
               <span style={{fontSize:26,fontWeight:900,color:T.green}}>{fmt(grandTotal)}</span>
