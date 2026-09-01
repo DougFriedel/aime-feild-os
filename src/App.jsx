@@ -16857,8 +16857,17 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   // Tax rate varies by jurisdiction and by what's taxable, so it's typed per
   // ticket rather than fixed.
   const [taxPct,setTaxPct]=useState(String(ticket?.tax_pct??""));
-  // Most states tax materials but not labour, so this is a choice, not a rule.
-  const [taxBasis,setTaxBasis]=useState(ticket?.tax_basis||"materials");
+  // Which categories are taxed, stored as a comma list. Older tickets used
+  // three fixed presets, so those are translated on load.
+  const [taxOn,setTaxOn]=useState(()=>{
+    const raw=ticket?.tax_basis||"materials";
+    if(raw==="all")return ["labor","equipment","materials","other"];
+    if(raw==="materials_other")return ["materials","other"];
+    return raw.split(",").map(x=>x.trim()).filter(Boolean);
+  });
+  const toggleTaxOn=(k)=>setTaxOn(v=>v.includes(k)?v.filter(x=>x!==k):[...v,k]);
+  const taxOnAll=()=>setTaxOn(
+    taxOn.length===4?[]:["labor","equipment","materials","other"]);
   const [notes,setNotes]=useState(ticket?.notes||"");
   const [status,setStatus]=useState(ticket?.status||"draft");
 
@@ -16994,9 +17003,13 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const markupAmt=mkLaborAmt+mkEquipAmt+mkMatsAmt+mkOtherAmt;
   // Tax applies after markup, on whichever base the ticket specifies.
   // Tax is charged on the marked-up figure, since that's what's invoiced.
-  const taxBase=taxBasis==="all"?subtotal+markupAmt
-    :taxBasis==="materials_other"?matsTotal+mkMatsAmt+otherTotal+mkOtherAmt
-    :matsTotal+mkMatsAmt;
+  const taxParts={
+    labor:laborTotal+mkLaborAmt,
+    equipment:equipTotal+mkEquipAmt,
+    materials:matsTotal+mkMatsAmt,
+    other:otherTotal+mkOtherAmt,
+  };
+  const taxBase=taxOn.reduce((s,k)=>s+(taxParts[k]||0),0);
   const taxAmt=taxBase*(parseFloat(taxPct)||0)/100;
   const grandTotal=subtotal+markupAmt+taxAmt;
 
@@ -17024,7 +17037,8 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       markup_pct:pct(markupPct),
       markup_equip_pct:pct(mkEquip),markup_mats_pct:pct(mkMats),markup_other_pct:pct(mkOther),
       markup_amount:markupAmt,
-      tax_pct:pct(taxPct),tax_amount:taxAmt,tax_basis:taxBasis,
+      tax_pct:pct(taxPct),tax_amount:taxAmt,
+      tax_basis:taxOn.length===4?"all":(taxOn.join(",")||"none"),
       status:newStatus||status,
       submitted_by:ticket?.submitted_by||user.name,
       labor,equipment,materials,other_charges:other,
@@ -17483,21 +17497,37 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
             </div>
 
             {(parseFloat(taxPct)||0)>0&&<div style={{padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
-              <div style={{fontSize:11,color:T.muted,marginBottom:6}}>Tax applies to</div>
-              <div style={{display:"flex",gap:6}}>
-                {[["materials","Materials"],["materials_other","Materials + Other"],["all","Everything"]].map(([v,l])=>{
-                  const on=taxBasis===v;
+              <div style={{fontSize:11,color:T.muted,marginBottom:6}}>
+                Tax applies to <span style={{color:T.sub}}>— tap any combination</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                {[["materials","Materials",matsTotal+mkMatsAmt],
+                  ["equipment","Equipment",equipTotal+mkEquipAmt],
+                  ["other","Other",otherTotal+mkOtherAmt],
+                  ["labor","Labor",laborTotal+mkLaborAmt]].map(([k,l,amt])=>{
+                  const on=taxOn.includes(k);
                   return(
-                    <button key={v} onClick={()=>setTaxBasis(v)}
-                      style={{flex:1,padding:"7px 4px",borderRadius:9,cursor:"pointer",fontFamily:"inherit",
-                        fontSize:11,fontWeight:on?800:600,
+                    <button key={k} onClick={()=>toggleTaxOn(k)}
+                      style={{padding:"9px 8px",borderRadius:9,cursor:"pointer",fontFamily:"inherit",
+                        fontSize:11.5,fontWeight:on?800:600,textAlign:"left",
                         background:on?T.orange:T.surface,color:on?"#000":T.sub,
-                        border:`1px solid ${on?T.orange:T.border}`}}>{l}</button>
+                        border:`1px solid ${on?T.orange:T.border}`,opacity:amt>0?1:0.5}}>
+                      {on?"☑ ":"☐ "}{l}
+                    </button>
                   );
                 })}
               </div>
-              <div style={{fontSize:10.5,color:T.muted,marginTop:5}}>
-                Taxing {fmt(taxBase)} at {taxPct}%
+              <button onClick={taxOnAll}
+                style={{width:"100%",marginTop:6,padding:"8px",borderRadius:9,cursor:"pointer",fontFamily:"inherit",
+                  fontSize:11.5,fontWeight:taxOn.length===4?800:600,
+                  background:taxOn.length===4?T.orange:T.surface,color:taxOn.length===4?"#000":T.sub,
+                  border:`1px solid ${taxOn.length===4?T.orange:T.border}`}}>
+                {taxOn.length===4?"☑ Everything":"☐ Everything"}
+              </button>
+              <div style={{fontSize:10.5,color:taxOn.length?T.muted:T.yellow,marginTop:6}}>
+                {taxOn.length
+                  ?`Taxing ${fmt(taxBase)} at ${taxPct}% — ${taxOn.length===4?"everything":taxOn.join(", ")}`
+                  :"Nothing selected, so no tax will be charged."}
               </div>
             </div>}
 
