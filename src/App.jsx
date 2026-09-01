@@ -11259,7 +11259,14 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
     if(!sf.qty||!sf.part_id)return;
     setSaving(true);
     try{
-      await API.mfg.shippingLog.create({part_id:sf.part_id,job_id:job.id,qty_shipped:parseInt(sf.qty),ship_date:sf.date,customer:sf.customer||null,bol_number:sf.bol||null,entered_by:sf.by});
+      const qty=parseInt(sf.qty)||0;
+      await API.mfg.shippingLog.create({part_id:sf.part_id,job_id:job.id,qty_shipped:qty,ship_date:sf.date,customer:sf.customer||null,bol_number:sf.bol||null,entered_by:sf.by});
+      // mfg_parts.qty_shipped is a cached total the manufacturing dashboard
+      // reads. The packing slip flow updates it; this one did not, so the
+      // dashboard showed 0 shipped while the job showed 40.
+      const part=parts.find(x=>x.id===sf.part_id);
+      await API.mfg.parts.update(sf.part_id,
+        {qty_shipped:(parseInt(part?.qty_shipped)||0)+qty}).catch(()=>{});
       setShowShipForm(false);setSf({part_id:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
       await load();
     }catch(e){alert(e.message);}
@@ -11635,7 +11642,14 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
                 <div style={{fontSize:14,fontWeight:800,color:T.blue}}>{s.qty_shipped} shipped — {part?.part_number||"—"}</div>
                 <div style={{fontSize:11,color:T.muted}}>{s.ship_date}{s.customer?" · "+s.customer:""}{s.bol_number?" · BOL: "+s.bol_number:""}</div>
               </div>
-              {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete?"))try{await sb(`/mfg_shipping_log?id=eq.${s.id}`,{method:"DELETE"});await load();}catch(e){}}} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:8,padding:"4px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>}
+              {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete?"))try{
+                await sb(`/mfg_shipping_log?id=eq.${s.id}`,{method:"DELETE"});
+                // Wind the cached part total back too, or the dashboard keeps
+                // counting a shipment that no longer exists.
+                const pt=parts.find(x=>x.id===s.part_id);
+                if(pt)await API.mfg.parts.update(s.part_id,
+                  {qty_shipped:Math.max(0,(parseInt(pt.qty_shipped)||0)-(parseInt(s.qty_shipped)||0))}).catch(()=>{});
+                await load();}catch(e){}}} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:8,padding:"4px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>}
             </div>);
           })}
           {shippingLogs.length===0&&<div style={{textAlign:"center",padding:30,color:T.muted,fontSize:12}}>No shipments logged yet.</div>}
@@ -13777,6 +13791,8 @@ function NcrTab({job,parts,ncrs,user,canAdmin,onRefresh}){
 function ManufacturingDashboard({jobs,user,onSelectJob}){
   const [allParts,setAllParts]=useState([]);
   const [travelers,setTravelers]=useState({});
+  const [shippedByPart,setShippedByPart]=useState({});
+  const [builtByPart,setBuiltByPart]=useState({});
   const [ncrs,setNcrs]=useState([]);
   const [loading,setLoading]=useState(true);
 
@@ -13792,12 +13808,24 @@ function ManufacturingDashboard({jobs,user,onSelectJob}){
       setAllParts(parts);
       const travMap={};
       const ncrAll=[];
+      const shipMap={};
+      const builtMap={};
       await Promise.all(parts.map(async p=>{
-        const [t,n]=await Promise.all([API.mfg.travelers.forPart(p.id).catch(()=>[]),API.mfg.ncr.forPart(p.id).catch(()=>[])]);
+        const [t,n,sh,asm]=await Promise.all([
+          API.mfg.travelers.forPart(p.id).catch(()=>[]),
+          API.mfg.ncr.forPart(p.id).catch(()=>[]),
+          API.mfg.shippingLog.forPart(p.id).catch(()=>[]),
+          API.mfg.assemblyLog.forPart(p.id).catch(()=>[]),
+        ]);
         travMap[p.id]=Array.isArray(t)&&t.length>0?t[0]:null;
         if(Array.isArray(n))ncrAll.push(...n);
+        // The logs are the record; mfg_parts.qty_shipped is only a cache, and
+        // it drifted when shipments were logged from the Shipping Log tab.
+        shipMap[p.id]=(sh||[]).reduce((a,r)=>a+(parseInt(r.qty_shipped)||0),0);
+        builtMap[p.id]=(asm||[]).reduce((a,r)=>a+(parseInt(r.qty_completed)||0),0);
       }));
       setTravelers(travMap);setNcrs(ncrAll);
+      setShippedByPart(shipMap);setBuiltByPart(builtMap);
     }catch(e){console.error("MFG error:",e.message||e);}
     setLoading(false);
   }
@@ -13810,7 +13838,8 @@ function ManufacturingDashboard({jobs,user,onSelectJob}){
   const complete=allParts.filter(p=>getStage(p)>=7);
   const openNcrs=ncrs.filter(n=>n.status==="Open");
   const totalOrdered=allParts.reduce((s,p)=>s+(p.qty_ordered||0),0);
-  const totalShipped=allParts.reduce((s,p)=>s+(p.qty_shipped||0),0);
+  const totalShipped=allParts.reduce((s,p)=>s+(shippedByPart[p.id]??(parseInt(p.qty_shipped)||0)),0);
+  const totalBuilt=allParts.reduce((s,p)=>s+(builtByPart[p.id]||0),0);
 
   return(
     <div style={{padding:"0 0 20px"}}>
