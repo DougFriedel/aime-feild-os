@@ -11203,7 +11203,9 @@ function PublicTMSignForm({ticketId}){
           {[
             // markup_amount is stored on save, so the client sees exactly what
             // was calculated rather than a figure recomputed here.
-            (parseFloat(ticket?.markup_amount)||0)>0&&["Markup",parseFloat(ticket.markup_amount)||0],
+            // Only if the ticket was saved with markup shown.
+            ticket?.show_markup===true&&(parseFloat(ticket?.markup_amount)||0)>0
+              &&["Markup",parseFloat(ticket.markup_amount)||0],
             (parseFloat(ticket?.tax_pct)||0)>0&&["Tax ("+ticket.tax_pct+"%)",parseFloat(ticket?.tax_amount)||0],
           ].filter(Boolean).map(([l,v])=>(
             <div key={l} style={{marginTop:8,display:"flex",justifyContent:"space-between",fontSize:12}}>
@@ -17217,6 +17219,10 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const [taxPct,setTaxPct]=useState(String(ticket?.tax_pct??""));
   // Which categories are taxed, stored as a comma list. Older tickets used
   // three fixed presets, so those are translated on load.
+  /* Whether the client's copy itemises markup. Off by default — a T&M ticket
+     showing "Markup — Materials 35%" invites an argument about the rate. The
+     money is in the total either way; this only controls what is printed. */
+  const [showMarkup,setShowMarkup]=useState(ticket?.show_markup===true);
   const [taxOn,setTaxOn]=useState(()=>{
     const raw=ticket?.tax_basis||"materials";
     if(raw==="all")return ["labor","equipment","materials","other"];
@@ -17316,9 +17322,14 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
           materialsTotal:m(matsTotal),
           otherTotal:m(otherTotal),
           subtotal:m(subtotal),
-          markupPct:markupPct||"0",
-          markupEquipPct:mkEquip||"0",markupMatsPct:mkMats||"0",markupOtherPct:mkOther||"0",
-          markupAmount:m(markupAmt),
+          // The Box Sign document is a client-facing copy, so it follows the
+          // same choice as the printed ticket.
+          showMarkup,
+          ...(showMarkup?{
+            markupPct:markupPct||"0",
+            markupEquipPct:mkEquip||"0",markupMatsPct:mkMats||"0",markupOtherPct:mkOther||"0",
+            markupAmount:m(markupAmt),
+          }:{}),
           taxPct:taxPct||"0",taxAmount:m(taxAmt),
           grandTotal:m(grandTotal),
         }),
@@ -17413,6 +17424,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       submitted_by:ticket?.submitted_by||user.name,
       labor,equipment,materials,other_charges:other,
       client_email:bsEmail||null,client_contact:(clientName||bsName)||null,
+      show_markup:showMarkup,
       reg_hours:totalRegHrs,ot_hours:totalOtHrs,
       labor_total:laborTotal,equipment_total:equipTotal,
       materials_total:matsTotal,other_total:otherTotal,
@@ -17519,10 +17531,12 @@ ${other.length?`<div style="margin-bottom:8px"><div style="background:#6B7280;co
 ${other.map(r=>`<tr><td style="${tdStyle}left">${r.description||""}</td><td style="${tdStyle}right">${fmt(r.amount)}</td></tr>`).join("")}
 </tbody></table></div>`:""}
 <table style="width:260px;margin-left:auto;border-collapse:collapse;border:1px solid #e5e7eb;margin-bottom:10px">
-  ${[["Labor",fmt(laborTotal)],["Equipment",fmt(equipTotal)],["Materials",fmt(matsTotal)],["Other",fmt(otherTotal)],["Subtotal",fmt(subtotal)],...(mkLaborAmt>0?[[`Markup — Labor (${markupPct}%)`,fmt(mkLaborAmt)]]:[]),
-    ...(mkEquipAmt>0?[[`Markup — Equipment (${mkEquip}%)`,fmt(mkEquipAmt)]]:[]),
-    ...(mkMatsAmt>0?[[`Markup — Materials (${mkMats}%)`,fmt(mkMatsAmt)]]:[]),
-    ...(mkOtherAmt>0?[[`Markup — Other (${mkOther}%)`,fmt(mkOtherAmt)]]:[]),
+  ${[["Labor",fmt(laborTotal)],["Equipment",fmt(equipTotal)],["Materials",fmt(matsTotal)],["Other",fmt(otherTotal)],["Subtotal",fmt(subtotal)],...(showMarkup?[
+      ...(mkLaborAmt>0?[[`Markup — Labor (${markupPct}%)`,fmt(mkLaborAmt)]]:[]),
+      ...(mkEquipAmt>0?[[`Markup — Equipment (${mkEquip}%)`,fmt(mkEquipAmt)]]:[]),
+      ...(mkMatsAmt>0?[[`Markup — Materials (${mkMats}%)`,fmt(mkMatsAmt)]]:[]),
+      ...(mkOtherAmt>0?[[`Markup — Other (${mkOther}%)`,fmt(mkOtherAmt)]]:[]),
+    ]:[]),
     ...(parseFloat(taxPct)>0?[[`Tax (${taxPct}%)`,fmt(taxAmt)]]:[])].map(([l,v])=>`<tr><td style="padding:4px 8px;font-size:8.5pt;border-bottom:1px solid #e5e7eb">${l}</td><td style="padding:4px 8px;font-size:8.5pt;text-align:right;border-bottom:1px solid #e5e7eb">${v}</td></tr>`).join("")}
   <tr style="background:#1f3864;color:#fff"><td style="padding:6px 8px;font-size:10pt;font-weight:900">GRAND TOTAL</td><td style="padding:6px 8px;font-size:10pt;font-weight:900;text-align:right">${fmt(grandTotal)}</td></tr>
 </table>
@@ -17885,6 +17899,21 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
                   </button>
                   <span style={{fontSize:13,fontWeight:800,color:markupAmt>0?T.orange:T.muted}}>{fmt(markupAmt)}</span>
                 </div>
+              </div>
+
+              {/* The rates below are always used in the total. This only
+                  decides whether the client's copy itemises them. */}
+              <button onClick={()=>setShowMarkup(v=>!v)}
+                style={{width:"100%",padding:"9px",borderRadius:9,cursor:"pointer",fontFamily:"inherit",
+                  fontSize:11.5,fontWeight:showMarkup?800:600,marginBottom:9,textAlign:"left",
+                  background:showMarkup?T.orange:T.surface,color:showMarkup?"#000":T.sub,
+                  border:`1px solid ${showMarkup?T.orange:T.border}`}}>
+                {showMarkup?"☑ ":"☐ "}Show markup on the printed ticket
+              </button>
+              <div style={{fontSize:10.5,color:T.muted,marginBottom:9,lineHeight:1.5}}>
+                {showMarkup
+                  ?"The client will see each markup line and its percentage."
+                  :"Markup is included in the total but not itemised for the client."}
               </div>
               {[["Labor",markupPct,setMarkupPct,laborTotal,mkLaborAmt],
                 ["Equipment",mkEquip,setMkEquip,equipTotal,mkEquipAmt],
