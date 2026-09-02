@@ -7591,7 +7591,11 @@ function BidBoard({user,onBack}){
   }
 
   const counts={};BID_STAGES.forEach(s=>counts[s.id]={n:0,total:0});
-  bids.forEach(b=>{const k=counts[b.status]||counts.estimating;k.n++;k.total+=Number(b.total_sales)||0;});
+  /* A bid whose status isn't one of the nine stages used to be counted under
+     Estimating but matched no tab's filter, so it was invisible everywhere.
+     Both now use the same rule. */
+  const stageIdOf=(b)=>BID_STAGES.some(st=>st.id===b.status)?b.status:"estimating";
+  bids.forEach(b=>{const k=counts[stageIdOf(b)];k.n++;k.total+=Number(b.total_sales)||0;});
 
   // The report reads every bid, not just the visible stage.
   if(showReport)return(
@@ -7601,7 +7605,7 @@ function BidBoard({user,onBack}){
   );
 
   const rows=bids
-    .filter(b=>(b.status||"estimating")===stage)
+    .filter(b=>stageIdOf(b)===stage)
     .filter(b=>{
       if(!q.trim())return true;
       const s=q.toLowerCase();
