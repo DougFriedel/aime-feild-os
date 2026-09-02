@@ -5075,6 +5075,61 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
     }).finally(()=>setBillLoading(false));
   },[pmTab,billPeriod]);
 
+  /* ── Contracts tab ──
+     Spend against contract has to cover the life of the job, so this loads
+     everything for the division rather than reusing the billing period. */
+  const [conRows,setConRows]=useState([]);
+  const [conLoading,setConLoading]=useState(false);
+  const [conLoaded,setConLoaded]=useState(false);
+
+  useEffect(()=>{
+    if(pmTab!=="contracts"||conLoaded)return;
+    setConLoading(true);
+    (async()=>{
+      const jobs=scopedProjects.filter(p=>
+        p.status==="active"&&((parseFloat(p.contract_value)||0)>0||(parseFloat(p.contract_hours)||0)>0
+          ||(parseFloat(p.estimated_budget)||0)>0));
+      const out=await Promise.all(jobs.map(async p=>{
+        const [reps,tix,cos]=await Promise.all([
+          API.reports.forProject(p.id).catch(()=>[]),
+          API.tmTickets.forProject(p.id).catch(()=>[]),
+          API.changeOrders.forProject(p.id).catch(()=>[]),
+        ]);
+        let spent=0,hrs=0,lastDate=null;
+        (reps||[]).forEach(r=>{
+          const t=reportTotals(r,p.division);
+          const subs=(r.subcontractors||[]).reduce((a,x)=>a+subLineTotal(x),0);
+          spent+=t.grand+subs; hrs+=t.labor_hrs;
+          if(r.date&&(!lastDate||r.date>lastDate))lastDate=r.date;
+        });
+        (tix||[]).forEach(t=>{
+          spent+=parseFloat(t.grand_total)||0;
+          hrs+=(t.labor||[]).reduce((a,l)=>a+(parseFloat(l.hours)||0)+(parseFloat(l.ot_hours)||0),0);
+          if(t.ticket_date&&(!lastDate||t.ticket_date>lastDate))lastDate=t.ticket_date;
+        });
+        // Approved change orders raise the contract, so burn is measured
+        // against the revised value rather than the original.
+        const coApproved=(cos||[]).filter(c=>c.status==="Approved")
+          .reduce((a,c)=>a+(parseFloat(c.amount)||0),0);
+        const base=parseFloat(p.contract_value)||parseFloat(p.estimated_budget)||0;
+        const value=base+coApproved;
+        const contractHrs=parseFloat(p.contract_hours)||0;
+        return{...p,spent,hrs,lastDate,coApproved,value,contractHrs,
+          pctValue:value>0?(spent/value)*100:null,
+          pctHours:contractHrs>0?(hrs/contractHrs)*100:null,
+          isContract:(parseFloat(p.contract_value)||0)>0};
+      }));
+      setConRows(out.sort((a,b)=>(b.pctValue??-1)-(a.pctValue??-1)));
+      setConLoading(false);setConLoaded(true);
+    })();
+  },[pmTab,conLoaded]);
+
+  // Reload when the division changes, since the job set changes with it.
+  useEffect(()=>{setConLoaded(false);},[pmDiv]);
+
+  const overBudgetCount=conRows.filter(r=>
+    (r.pctValue!==null&&r.pctValue>=90)||(r.pctHours!==null&&r.pctHours>=90)).length;
+
   /* ── Workers tab: time cards are the authoritative hours record.
      Dailies auto-populate them and foremen add manual entries, so
      reading report labor rows alone misses real worked time. */
@@ -5224,7 +5279,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const scopedTmPending=tmPending.filter(t=>divIds.has(t.project_id));
   const tmPendingValue=scopedTmPending.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
 
-  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
+  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"contracts",l:`📐 Contracts${overBudgetCount>0?" ("+overBudgetCount+")":""}`},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
   const divOf=(r)=>(projects.find(p=>p.id===r.project_id)||r.projects||{}).division;
   const allTot=scopedReports.reduce((s,r)=>{const t=reportTotals(r,divOf(r));return{l:s.l+t.labor,e:s.e+t.equip,g:s.g+t.grand};},{l:0,e:0,g:0});
@@ -5741,6 +5796,134 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
               style={{...primBtn,borderRadius:12,marginTop:14,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`}}>
               📥 Export Payroll Hours
             </button>}
+          </>}
+        </div>}
+
+        {/* CONTRACTS — spend against contract value and contract hours */}
+        {pmTab==="contracts"&&!loading&&<div>
+          {conLoading&&<div style={{textAlign:"center",padding:24,color:T.muted,fontSize:13}}>Loading contracts…</div>}
+
+          {!conLoading&&conRows.length===0&&<div style={{...cardS,textAlign:"center",padding:"34px 18px",color:T.muted}}>
+            <div style={{fontSize:36,marginBottom:10}}>📐</div>
+            <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No contract jobs</div>
+            <div style={{fontSize:12,lineHeight:1.6}}>
+              Set a contract value or contract hours on a job — under the Info tab — and it will show up here.
+            </div>
+          </div>}
+
+          {!conLoading&&conRows.length>0&&<>
+            {(()=>{
+              const tv=conRows.reduce((s,r)=>s+r.value,0);
+              const ts=conRows.reduce((s,r)=>s+r.spent,0);
+              const pct=tv>0?(ts/tv)*100:0;
+              const over=conRows.filter(r=>(r.pctValue??0)>=100).length;
+              return(
+                <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${pct>=90?T.red:T.green}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                    <div>
+                      <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Contract value under management</div>
+                      <div style={{fontSize:26,fontWeight:900,color:T.text,lineHeight:1.15}}>{fmt(tv)}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Spent</div>
+                      <div style={{fontSize:20,fontWeight:900,color:pct>=90?T.red:T.green}}>{fmt(ts)}</div>
+                    </div>
+                  </div>
+                  <div style={{height:7,background:T.border,borderRadius:4}}>
+                    <div style={{height:7,borderRadius:4,width:`${Math.min(100,pct)}%`,
+                      background:pct>=100?T.red:pct>=90?T.yellow:T.green,transition:"width 0.3s"}}/>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",marginTop:6,fontSize:11.5,color:T.muted}}>
+                    <span>{Math.round(pct)}% of contract</span>
+                    <span>{conRows.length} job{conRows.length!==1?"s":""}{over>0?` · ${over} over`:""}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {overBudgetCount>0&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,
+              padding:"10px 14px",marginBottom:14,fontSize:12,color:T.red,lineHeight:1.6}}>
+              ⚠️ {overBudgetCount} job{overBudgetCount!==1?"s are":" is"} at 90% or more of contract value or hours.
+            </div>}
+
+            {conRows.map(r=>{
+              const pv=r.pctValue, ph=r.pctHours;
+              const worst=Math.max(pv??0,ph??0);
+              const col=worst>=100?T.red:worst>=90?T.yellow:worst>=75?T.orange:T.green;
+              const remaining=r.value-r.spent;
+              const hrsLeft=r.contractHrs-r.hrs;
+              const quiet=r.lastDate
+                ?Math.floor((Date.now()-new Date(r.lastDate+"T12:00:00").getTime())/86400000):null;
+              return(
+                <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${col}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                    <div style={{minWidth:0,paddingRight:10}}>
+                      <div style={{fontSize:14,fontWeight:800,color:T.orange}}>{r.name}</div>
+                      <div style={{fontSize:11,color:T.muted,marginTop:1}}>
+                        {r.client||"No client"}
+                        {!r.isContract&&<span style={{color:T.muted}}> · est. budget</span>}
+                      </div>
+                      {r.coApproved!==0&&<div style={{fontSize:10.5,color:T.blue,marginTop:2}}>
+                        includes {fmt(r.coApproved)} in approved change orders
+                      </div>}
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontSize:20,fontWeight:900,color:col}}>
+                        {pv===null?"—":Math.round(pv)+"%"}
+                      </div>
+                      <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px"}}>of value</div>
+                    </div>
+                  </div>
+
+                  {/* Value */}
+                  {pv!==null&&<div style={{marginBottom:9}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted,marginBottom:4}}>
+                      <span>{fmt(r.spent)} of {fmt(r.value)}</span>
+                      <span style={{color:remaining<0?T.red:T.sub}}>
+                        {remaining<0?`${fmt(Math.abs(remaining))} over`:`${fmt(remaining)} left`}
+                      </span>
+                    </div>
+                    <div style={{height:6,background:T.border,borderRadius:4}}>
+                      <div style={{height:6,borderRadius:4,width:`${Math.min(100,pv)}%`,
+                        background:pv>=100?T.red:pv>=90?T.yellow:T.green,transition:"width 0.3s"}}/>
+                    </div>
+                  </div>}
+
+                  {/* Hours */}
+                  {ph!==null&&<div style={{marginBottom:9}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.muted,marginBottom:4}}>
+                      <span>{fmtH(r.hrs)} of {fmtH(r.contractHrs)} hrs</span>
+                      <span style={{color:hrsLeft<0?T.red:T.sub}}>
+                        {hrsLeft<0?`${fmtH(Math.abs(hrsLeft))} over`:`${fmtH(hrsLeft)} left`}
+                        {" · "}{Math.round(ph)}%
+                      </span>
+                    </div>
+                    <div style={{height:6,background:T.border,borderRadius:4}}>
+                      <div style={{height:6,borderRadius:4,width:`${Math.min(100,ph)}%`,
+                        background:ph>=100?T.red:ph>=90?T.yellow:T.blue,transition:"width 0.3s"}}/>
+                    </div>
+                  </div>}
+
+                  {ph===null&&pv!==null&&r.hrs>0&&<div style={{fontSize:11,color:T.muted,marginBottom:9}}>
+                    {fmtH(r.hrs)} hours worked · no contract hours set
+                  </div>}
+
+                  {/* Value and hours out of step is the early warning: burning
+                      hours faster than value means the job is losing money. */}
+                  {pv!==null&&ph!==null&&Math.abs(ph-pv)>=15&&
+                    <div style={{fontSize:11,color:ph>pv?T.red:T.green,lineHeight:1.5,
+                      paddingTop:8,borderTop:`1px solid ${T.border}`}}>
+                      {ph>pv
+                        ?`⚠️ Hours are ${Math.round(ph-pv)}% ahead of value — this job is burning labor faster than it's earning.`
+                        :`Value is ${Math.round(pv-ph)}% ahead of hours — running efficiently.`}
+                    </div>}
+
+                  {quiet!==null&&quiet>=7&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>
+                    Last activity {quiet} days ago
+                  </div>}
+                </div>
+              );
+            })}
           </>}
         </div>}
 
