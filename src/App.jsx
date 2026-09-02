@@ -8859,6 +8859,10 @@ function EstimatingTab({bid,user,onErr,onTotal}){
     markup_travel:bid.markup_travel??0,
     markup_perdiem:bid.markup_perdiem??0,
     overhead_pct:bid.overhead_pct??5,
+    tax_pct:bid.tax_pct??0,
+    tax_on:bid.tax_on||"Materials",
+    bond_pct:bid.bond_pct??0,
+    permits_amt:bid.permits_amt??0,
     discount_pct:bid.discount_pct??0,
   });
   const [ratesDirty,setRatesDirty]=useState(false);
@@ -8957,7 +8961,24 @@ function EstimatingTab({bid,user,onErr,onTotal}){
   const totalHrs=Object.values(catTotals).reduce((s,t)=>s+t.hrs,0);
   const overhead=afterMarkup*((Number(rates.overhead_pct)||0)/100);
   const discount=(afterMarkup+overhead)*((Number(rates.discount_pct)||0)/100);
-  const estimateTotal=afterMarkup+overhead-discount;
+  const preTaxTotal=afterMarkup+overhead-discount;
+
+  /* Post-tax. Which categories are taxable is a choice — most states tax
+     materials but not labour — so it's stored per bid, same as the T&M
+     ticket. Bonds and permits are billed on the taxed figure, so they sit
+     after tax rather than before. */
+  const taxableCats=(()=>{
+    const raw=rates.tax_on||"Materials";
+    if(raw==="all")return Object.keys(catTotals);
+    return String(raw).split(",").map(x=>x.trim()).filter(Boolean);
+  })();
+  const taxBase=Object.entries(catTotals)
+    .filter(([c])=>taxableCats.includes(c))
+    .reduce((s,[,t])=>s+t.marked,0);
+  const salesTax=taxBase*((Number(rates.tax_pct)||0)/100);
+  const bond=(preTaxTotal+salesTax)*((Number(rates.bond_pct)||0)/100);
+  const permits=Number(rates.permits_amt)||0;
+  const estimateTotal=preTaxTotal+salesTax+bond+permits;
 
   async function saveRates(){
     setSaving(true);
@@ -9223,6 +9244,68 @@ function EstimatingTab({bid,user,onErr,onTotal}){
             <span style={{width:96,textAlign:"right",fontSize:12,color:amt<0?T.red:T.sub}}>{money(amt)}</span>
           </div>
         ))}
+
+        {/* Post-tax. Bonds are usually a percentage of the taxed contract
+            value, so they come after tax rather than before. */}
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",margin:"14px 0 8px"}}>Post-Tax</div>
+
+        <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderTop:`1px solid ${T.border}`,fontSize:12}}>
+          <span style={{color:T.sub}}>Pre-tax subtotal</span>
+          <span style={{fontWeight:700,color:T.text}}>{money(preTaxTotal)}</span>
+        </div>
+
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:`1px solid ${T.border}`}}>
+          <span style={{flex:1,fontSize:12,color:T.text}}>Sales Tax</span>
+          <input type="number" step="0.001" value={rates.tax_pct}
+            onChange={e=>{setRates(r=>({...r,tax_pct:e.target.value}));setRatesDirty(true);}}
+            style={{width:52,background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,color:T.text,
+              fontSize:11,padding:"3px 5px",textAlign:"right",fontFamily:"inherit"}}/>
+          <span style={{fontSize:11,color:T.muted}}>%</span>
+          <span style={{width:96,textAlign:"right",fontSize:12,color:T.sub}}>{money(salesTax)}</span>
+        </div>
+
+        {(Number(rates.tax_pct)||0)>0&&<div style={{padding:"6px 0 8px"}}>
+          <div style={{fontSize:10.5,color:T.muted,marginBottom:5}}>Taxable categories</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+            {Object.keys(catTotals).sort().map(c=>{
+              const on=taxableCats.includes(c);
+              return(
+                <button key={c} onClick={()=>{
+                  const next=on?taxableCats.filter(x=>x!==c):[...taxableCats,c];
+                  setRates(r=>({...r,tax_on:next.join(",")}));setRatesDirty(true);
+                }} style={{padding:"4px 9px",borderRadius:12,cursor:"pointer",fontFamily:"inherit",
+                  fontSize:10.5,fontWeight:on?800:600,
+                  background:on?T.orange:T.surface,color:on?"#000":T.sub,
+                  border:`1px solid ${on?T.orange:T.border}`}}>
+                  {on?"☑ ":"☐ "}{c}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{fontSize:10,color:T.muted,marginTop:5}}>
+            Taxing {money(taxBase)} at {rates.tax_pct}%
+          </div>
+        </div>}
+
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:`1px solid ${T.border}`}}>
+          <span style={{flex:1,fontSize:12,color:T.text}}>Bond</span>
+          <input type="number" step="0.01" value={rates.bond_pct}
+            onChange={e=>{setRates(r=>({...r,bond_pct:e.target.value}));setRatesDirty(true);}}
+            style={{width:52,background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,color:T.text,
+              fontSize:11,padding:"3px 5px",textAlign:"right",fontFamily:"inherit"}}/>
+          <span style={{fontSize:11,color:T.muted}}>%</span>
+          <span style={{width:96,textAlign:"right",fontSize:12,color:T.sub}}>{money(bond)}</span>
+        </div>
+
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:`1px solid ${T.border}`}}>
+          <span style={{flex:1,fontSize:12,color:T.text}}>Permits &amp; Fees</span>
+          <span style={{fontSize:11,color:T.muted}}>$</span>
+          <input type="number" step="0.01" value={rates.permits_amt}
+            onChange={e=>{setRates(r=>({...r,permits_amt:e.target.value}));setRatesDirty(true);}}
+            style={{width:80,background:T.surface,border:`1px solid ${T.border}`,borderRadius:6,color:T.text,
+              fontSize:11,padding:"3px 5px",textAlign:"right",fontFamily:"inherit"}}/>
+          <span style={{width:96,textAlign:"right",fontSize:12,color:T.sub}}>{money(permits)}</span>
+        </div>
 
         <div style={{border:`1px solid ${T.green}55`,background:T.greenLow,borderRadius:12,padding:"14px 16px",textAlign:"center",marginTop:16}}>
           <div style={{fontSize:11,color:T.sub,textTransform:"uppercase",letterSpacing:"1px",marginBottom:4}}>Estimate Total</div>
@@ -17201,14 +17284,16 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
           submittedBy:user.name,
           lineItems:{
             labor:labor.map(r=>({
-              name:r.name||"",
+              name:laborName(r),
               classification:r.classification||"",
               hours:r.hours||0,
               rate:m(r.rate),
-              amount:m((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)),
+              otHours:r.ot_hours||0,
+              otRate:m(r.ot_rate),
+              amount:m(laborRowAmt(r)),
             })),
             equipment:equipment.map(r=>({
-              description:r.description||"",
+              description:equipName(r),
               unit:r.unit||"",
               qty:r.qty||0,
               rate:m(r.rate),
@@ -17264,7 +17349,17 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const removeRow=(setter,id)=>setter(rows=>rows.filter(r=>r.id!==id));
 
   // Live totals (computed from state every render)
-  const laborTotal=labor.reduce((s,r)=>s+((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)),0);
+  // Regular plus overtime, each at its own rate.
+  const labelOf=(r,key,custom)=>
+    r[key]==="__other"?(r[custom]||"").trim()||"Other":(r[key]||"");
+  const laborName=(r)=>labelOf(r,"name","customName");
+  const equipName=(r)=>labelOf(r,"description","customDesc");
+
+  const laborRowAmt=(r)=>(parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)
+                        +(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0);
+  const laborTotal=labor.reduce((s,r)=>s+laborRowAmt(r),0);
+  const totalRegHrs=labor.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
+  const totalOtHrs =labor.reduce((s,r)=>s+(parseFloat(r.ot_hours)||0),0);
   const equipTotal=equipment.reduce((s,r)=>s+((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)),0);
   const matsTotal=materials.reduce((s,r)=>s+((parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0)),0);
   const otherTotal=other.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
@@ -17318,6 +17413,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       submitted_by:ticket?.submitted_by||user.name,
       labor,equipment,materials,other_charges:other,
       client_email:bsEmail||null,client_contact:(clientName||bsName)||null,
+      reg_hours:totalRegHrs,ot_hours:totalOtHrs,
       labor_total:laborTotal,equipment_total:equipTotal,
       materials_total:matsTotal,other_total:otherTotal,
       subtotal,markup_amount:markupAmt,grand_total:grandTotal,
@@ -17389,16 +17485,24 @@ ${description?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-botto
 ${labor.length?`<div style="margin-bottom:8px"><div style="background:#1f3864;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Labor</div>
 <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
   <th style="${thStyle}left">Name</th><th style="${thStyle}left">Classification</th>
-  <th style="${thStyle}center">Hours</th><th style="${thStyle}right">Rate/Hr</th><th style="${thStyle}right">Amount</th>
+  <th style="${thStyle}center">Reg Hrs</th><th style="${thStyle}right">Reg Rate</th>
+  <th style="${thStyle}center">OT Hrs</th><th style="${thStyle}right">OT Rate</th><th style="${thStyle}right">Amount</th>
 </tr></thead><tbody>
-${labor.map(r=>`<tr><td style="${tdStyle}left">${r.name||""}</td><td style="${tdStyle}left">${r.classification||""}</td><td style="${tdStyle}center">${r.hours||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td><td style="${tdStyle}right">${fmt((r.hours||0)*(r.rate||0))}</td></tr>`).join("")}
-<tr style="font-weight:700;background:#f9fafb"><td colspan="4" style="${tdStyle}right">Labor Total</td><td style="${tdStyle}right">${fmt(laborTotal)}</td></tr>
+${labor.map(r=>`<tr><td style="${tdStyle}left">${laborName(r)}</td><td style="${tdStyle}left">${r.classification||""}</td>
+  <td style="${tdStyle}center">${r.hours||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td>
+  <td style="${tdStyle}center">${r.ot_hours||""}</td><td style="${tdStyle}right">${(parseFloat(r.ot_hours)||0)>0?fmt(r.ot_rate):""}</td>
+  <td style="${tdStyle}right">${fmt(laborRowAmt(r))}</td></tr>`).join("")}
+<tr style="font-weight:700;background:#f9fafb">
+  <td colspan="2" style="${tdStyle}right">Labor Total</td>
+  <td style="${tdStyle}center">${totalRegHrs||0}</td><td></td>
+  <td style="${tdStyle}center">${totalOtHrs||""}</td><td></td>
+  <td style="${tdStyle}right">${fmt(laborTotal)}</td></tr>
 </tbody></table></div>`:""}
 ${equipment.length?`<div style="margin-bottom:8px"><div style="background:#374151;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Equipment</div>
 <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
   <th style="${thStyle}left">Equipment</th><th style="${thStyle}center">Unit</th><th style="${thStyle}center">Qty</th><th style="${thStyle}right">Rate</th><th style="${thStyle}right">Amount</th>
 </tr></thead><tbody>
-${equipment.map(r=>`<tr><td style="${tdStyle}left">${r.description||""}</td><td style="${tdStyle}center">${r.unit||""}</td><td style="${tdStyle}center">${r.qty||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td><td style="${tdStyle}right">${fmt((r.qty||0)*(r.rate||0))}</td></tr>`).join("")}
+${equipment.map(r=>`<tr><td style="${tdStyle}left">${equipName(r)}</td><td style="${tdStyle}center">${r.unit||""}</td><td style="${tdStyle}center">${r.qty||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td><td style="${tdStyle}right">${fmt((r.qty||0)*(r.rate||0))}</td></tr>`).join("")}
 <tr style="font-weight:700;background:#f9fafb"><td colspan="4" style="${tdStyle}right">Equipment Total</td><td style="${tdStyle}right">${fmt(equipTotal)}</td></tr>
 </tbody></table></div>`:""}
 ${materials.length?`<div style="margin-bottom:8px"><div style="background:#4B5563;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Materials</div>
@@ -17558,14 +17662,14 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
 
         {/* ── LABOR TAB ── */}
         {tab==="labor"&&<div>
-          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:""})}
+          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:"",ot_hours:"",ot_rate:""})}
             style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Worker</button>
           {labor.map(r=>(
             <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:12,fontWeight:700,color:T.blue}}>{r.name||"New Worker"}</div>
+                <div style={{fontSize:12,fontWeight:700,color:T.blue}}>{laborName(r)||"New Worker"}</div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:15,fontWeight:900,color:T.green}}>{fmt((r.hours||0)*(r.rate||0))}</span>
+                  <span style={{fontSize:15,fontWeight:900,color:T.green}}>{fmt(laborRowAmt(r))}</span>
                   <button onClick={()=>removeRow(setLabor,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
                 </div>
               </div>
@@ -17576,7 +17680,14 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
                   {ROSTER().map(n=><option key={n} value={n}>{n}</option>)}
                   <option value="__other">Other (type below)</option>
                 </select>
-                {r.name==="__other"&&<input value={r.customName||""} onChange={e=>updateRow(setLabor,r.id,"customName",e.target.value)} placeholder="Enter name" style={{...ri,marginTop:6}}/>}
+                {r.name==="__other"&&<>
+                  <input value={r.customName||""} autoFocus
+                    onChange={e=>updateRow(setLabor,r.id,"customName",e.target.value)}
+                    placeholder="Type the worker's name" style={{...ri,marginTop:6,border:`1px solid ${T.blue}`}}/>
+                  {!(r.customName||"").trim()&&<div style={{fontSize:11,color:T.yellow,marginTop:4}}>
+                    Type a name, or this prints as "Other".
+                  </div>}
+                </>}
               </div>
               <div style={{marginBottom:8}}>
                 <label style={lbl}>Classification</label>
@@ -17585,14 +17696,39 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
                   {positions.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
                 </select>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                <div><label style={lbl}>Hours</label>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
+                <div><label style={lbl}>Reg Hours</label>
                   <input type="number" step="0.5" value={r.hours} onChange={e=>updateRow(setLabor,r.id,"hours",e.target.value)} placeholder="0" style={ri}/>
                 </div>
-                <div><label style={lbl}>Rate / Hr ($) — manual</label>
+                <div><label style={lbl}>Reg Rate / Hr ($)</label>
                   <input type="number" step="0.01" value={r.rate} onChange={e=>updateRow(setLabor,r.id,"rate",e.target.value)} placeholder="0.00" style={ri}/>
                 </div>
               </div>
+              {/* OT is billed at its own rate, so it is entered separately
+                  rather than assumed to be 1.5x. Leave blank if there is none. */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div><label style={{...lbl,color:T.yellow}}>OT Hours</label>
+                  <input type="number" step="0.5" value={r.ot_hours||""}
+                    onChange={e=>{
+                      const v=e.target.value;
+                      updateRow(setLabor,r.id,"ot_hours",v);
+                      // Default OT to 1.5x the regular rate the first time
+                      // hours are entered, still editable afterwards.
+                      if(v&&!r.ot_rate&&r.rate)
+                        updateRow(setLabor,r.id,"ot_rate",(parseFloat(r.rate)*1.5).toFixed(2));
+                    }}
+                    placeholder="0" style={ri}/>
+                </div>
+                <div><label style={{...lbl,color:T.yellow}}>OT Rate / Hr ($)</label>
+                  <input type="number" step="0.01" value={r.ot_rate||""}
+                    onChange={e=>updateRow(setLabor,r.id,"ot_rate",e.target.value)}
+                    placeholder="0.00" style={ri}/>
+                </div>
+              </div>
+              {(parseFloat(r.ot_hours)||0)>0&&<div style={{fontSize:11,color:T.muted,marginTop:6,display:"flex",justifyContent:"space-between"}}>
+                <span>{r.hours||0}h reg + <span style={{color:T.yellow}}>{r.ot_hours}h OT</span></span>
+                <span>{fmt((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))} + <span style={{color:T.yellow}}>{fmt((parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0))}</span></span>
+              </div>}
             </div>
           ))}
           {labor.length===0&&<div style={{textAlign:"center",padding:"24px",color:T.muted,fontSize:12}}>No workers added — tap + Add Worker</div>}
@@ -17606,7 +17742,7 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
           {equipment.map(r=>(
             <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:12,fontWeight:700,color:T.orange}}>{r.description||"New Equipment"}</div>
+                <div style={{fontSize:12,fontWeight:700,color:T.orange}}>{equipName(r)||"New Equipment"}</div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:15,fontWeight:900,color:T.green}}>{fmt((r.qty||0)*(r.rate||0))}</span>
                   <button onClick={()=>removeRow(setEquipment,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
@@ -17623,7 +17759,14 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
                   {equipList.filter(e=>e.name).map(e=><option key={e.name} value={e.name}>{e.name}</option>)}
                   <option value="__other">Other (type below)</option>
                 </select>
-                {r.description==="__other"&&<input value={r.customDesc||""} onChange={e=>updateRow(setEquipment,r.id,"customDesc",e.target.value)} placeholder="Describe equipment" style={{...ri,marginTop:6}}/>}
+                {r.description==="__other"&&<>
+                  <input value={r.customDesc||""} autoFocus
+                    onChange={e=>updateRow(setEquipment,r.id,"customDesc",e.target.value)}
+                    placeholder="Type the equipment name" style={{...ri,marginTop:6,border:`1px solid ${T.orange}`}}/>
+                  {!(r.customDesc||"").trim()&&<div style={{fontSize:11,color:T.yellow,marginTop:4}}>
+                    Type a name, or this prints as "Other".
+                  </div>}
+                </>}
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
                 <div><label style={lbl}>Unit</label>
