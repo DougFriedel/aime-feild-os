@@ -8651,6 +8651,10 @@ function ProposalTab({bid,user,onErr,onSaved}){
 }
 
 /* ── ESTIMATING: Scope, inclusions, exclusions, notes ────────── */
+const COMMON_INCLUSIONS=[
+  "Materials","Labor","Equipment","Per Diem","Travel",
+  "Detailing","Engineering","PE Stamp","Paint","Galvanizing",
+];
 const COMMON_EXCLUSIONS=[
   "Permits and permit fees","Engineering and design","Bonds","Overtime or premium time",
   "Painting and coatings","Insulation","Electrical work","Concrete and foundations",
@@ -8748,12 +8752,30 @@ function ScopeTab({bid,user,onErr}){
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}}>
-        <ListEditor title="Inclusions" keyName="inclusions" accent={T.green}
-          placeholder="Add an inclusion and press Enter"
-          hint="Nothing listed yet. Spell out what the price covers."/>
-        <ListEditor title="Exclusions" keyName="exclusions" accent={T.red}
-          placeholder="Add an exclusion and press Enter"
-          hint="Nothing listed yet. Exclusions are what protect the number."/>
+        {/* Called, not rendered as <ListEditor/>. Declared inside this
+            component, it counts as a new component type on every render, so
+            React would remount the input and drop focus after one keystroke. */}
+        {ListEditor({title:"Inclusions",keyName:"inclusions",accent:T.green,
+          placeholder:"Add an inclusion and press Enter",
+          hint:"Nothing listed yet. Spell out what the price covers."})}
+        {ListEditor({title:"Exclusions",keyName:"exclusions",accent:T.red,
+          placeholder:"Add an exclusion and press Enter",
+          hint:"Nothing listed yet. Exclusions are what protect the number."})}
+      </div>
+
+      <div style={{...cardS,padding:"14px 16px",marginBottom:16}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:8}}>
+          Common inclusions — click to add
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
+          {COMMON_INCLUSIONS.filter(x=>!f.inclusions.includes(x)).map(x=>(
+            <button key={x} onClick={()=>set("inclusions",[...f.inclusions,x])}
+              style={{background:T.surface,border:`1px solid ${T.green}30`,borderRadius:14,padding:"5px 11px",
+                color:T.green,fontSize:11.5,cursor:"pointer",fontFamily:"inherit"}}>+ {x}</button>
+          ))}
+          {COMMON_INCLUSIONS.every(x=>f.inclusions.includes(x))&&
+            <span style={{fontSize:11.5,color:T.muted}}>All of the common ones are already listed.</span>}
+        </div>
       </div>
 
       <div style={{...cardS,padding:"14px 16px",marginBottom:16}}>
@@ -13420,7 +13442,7 @@ table.insp td{border:1px solid #000;padding:3px 4px;font-size:8pt;height:17px}
         fontSize:12.5,fontWeight:800,letterSpacing:"1px",marginBottom:8}}>
         EMPLOYEE INSPECTION
       </div>
-      <ItemRows who="employee" items={empItems} locked={!!empSig}/>
+      {ItemRows({who:"employee",items:empItems,locked:!!empSig})}
 
       <div style={{...cardS,marginBottom:12}}>
         <label style={lbl}>Employee Corrective Action, If Required</label>
@@ -13465,7 +13487,7 @@ table.insp td{border:1px solid #000;padding:3px 4px;font-size:8pt;height:17px}
         {!empSig&&<div style={{...cardS,marginBottom:8,fontSize:11.5,color:T.yellow,lineHeight:1.6}}>
           The employee hasn't signed yet. The form is designed for them to inspect and sign first.
         </div>}
-        <ItemRows who="manager" items={mgrItems} locked={!!mgrSig}/>
+        {ItemRows({who:"manager",items:mgrItems,locked:!!mgrSig})}
 
         <div style={{...cardS,marginBottom:12}}>
           <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:9}}>Final Disposition</div>
