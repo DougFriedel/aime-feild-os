@@ -8217,6 +8217,8 @@ function buildProposalHtml(bid,f,total,breakdown,show){
         ["labor","Labor",breakdown.labor],
         ["equipment","Equipment",breakdown.equipment],
         ["subcontractor","Subcontractor",breakdown.subcontractor],
+        ["travel","Travel",breakdown.travel],
+        ["perdiem","Per Diem",breakdown.perdiem],
         ["other","Other",breakdown.other],
       ].filter(([k,,v])=>show[k]&&Number(v)>0);
       const shown=[];
@@ -8364,7 +8366,9 @@ function ProposalTab({bid,user,onErr,onSaved}){
       };
       const rates={markup_materials:bid.markup_materials??12,markup_equip_owned:bid.markup_equip_owned??12,
         markup_equip_rented:bid.markup_equip_rented??12,markup_equipment:bid.markup_equipment??12,
-        markup_labor:bid.markup_labor??0,markup_sub:bid.markup_sub??10};
+        markup_labor:bid.markup_labor??0,markup_sub:bid.markup_sub??10,
+        // Travel and per diem are usually passed through at cost.
+        markup_travel:bid.markup_travel??0,markup_perdiem:bid.markup_perdiem??0};
       const cat={};
       (lines||[]).forEach(l=>{
         const qty=qtyFor(l), wpu=weightOf(l);
@@ -8392,9 +8396,11 @@ function ProposalTab({bid,user,onErr,onSaved}){
         if(n.includes("equip"))return "equipment";
         if(n.includes("sub"))return "subcontractor";
         if(n.includes("material"))return "materials";
+        if(n.includes("travel"))return "travel";
+        if(n.includes("diem"))return "perdiem";
         return "other";
       };
-      const split={materials:0,labor:0,equipment:0,subcontractor:0,other:0};
+      const split={materials:0,labor:0,equipment:0,subcontractor:0,travel:0,perdiem:0,other:0};
       Object.entries(cat).forEach(([c,v])=>{
         const key=MARKUP_KEY[c];
         split[bucket(c)]+=v*(1+(key?Number(rates[key])||0:0)/100);
@@ -8540,6 +8546,8 @@ function ProposalTab({bid,user,onErr,onSaved}){
             ["labor","Labor Cost",breakdown.labor],
             ["equipment","Equipment Cost",breakdown.equipment],
             ["subcontractor","Subcontractor Cost",breakdown.subcontractor],
+            ["travel","Travel",breakdown.travel],
+            ["perdiem","Per Diem",breakdown.perdiem],
             ["other","Other Costs",breakdown.other],
             ["overhead","Overhead",breakdown.overhead],
             ["markup","Markup",breakdown.markup],
@@ -8793,7 +8801,7 @@ function ScopeTab({bid,user,onErr}){
 }
 
 /* ── ESTIMATING: priced line items ───────────────────────────── */
-const EST_CATEGORIES=["Materials","Equipment — Owned","Equipment — Rented","Labor","Subcontractor","Paint","Detailing","Other"];
+const EST_CATEGORIES=["Materials","Equipment — Owned","Equipment — Rented","Labor","Subcontractor","Travel","Per Diem","Paint","Detailing","Other"];
 const MARKUP_KEY={
   Materials:"markup_materials",
   "Equipment — Owned":"markup_equip_owned",
@@ -8801,6 +8809,8 @@ const MARKUP_KEY={
   Equipment:"markup_equipment",          // legacy rows created before the split
   Labor:"markup_labor",
   Subcontractor:"markup_sub",
+  Travel:"markup_travel",
+  "Per Diem":"markup_perdiem",
 };
 
 function EstimatingTab({bid,user,onErr,onTotal}){
@@ -8820,6 +8830,8 @@ function EstimatingTab({bid,user,onErr,onTotal}){
     markup_equip_rented:bid.markup_equip_rented??12,
     markup_labor:bid.markup_labor??0,
     markup_sub:bid.markup_sub??10,
+    markup_travel:bid.markup_travel??0,
+    markup_perdiem:bid.markup_perdiem??0,
     overhead_pct:bid.overhead_pct??5,
     discount_pct:bid.discount_pct??0,
   });
