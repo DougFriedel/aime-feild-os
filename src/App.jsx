@@ -1305,7 +1305,214 @@ function MyHoursScreen({user,onBack}){
   );
 }
 
-function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onMyHours,isOnline,pendingCount,onSync}){
+
+/* ── Presence ──
+   Nothing is locked. Two people can still edit the same bid — this just makes
+   that visible so they talk to each other instead of silently overwriting. */
+function usePresence(scope,recordId,user){
+  const [others,setOthers]=useState([]);
+  useEffect(()=>{
+    if(!recordId||!user?.name)return;
+    let alive=true;
+    const ping=async()=>{
+      try{
+        const r=await rpc("presence_ping",
+          {p_scope:scope,p_record:String(recordId),p_user:user.name,p_screen:null});
+        if(alive)setOthers(Array.isArray(r)?r:[]);
+      }catch{ /* view not deployed, or offline — presence is optional */ }
+    };
+    ping();
+    const t=setInterval(ping,30000);
+    const leave=()=>{rpc("presence_leave",
+      {p_scope:scope,p_record:String(recordId),p_user:user.name}).catch(()=>{});};
+    window.addEventListener("beforeunload",leave);
+    return()=>{
+      alive=false;clearInterval(t);
+      window.removeEventListener("beforeunload",leave);
+      leave();
+    };
+  },[scope,recordId,user?.name]);
+  return others;
+}
+
+function PresenceBar({others}){
+  if(!others.length)return null;
+  const names=others.map(o=>o.user_name);
+  return(
+    <div style={{background:T.yellowLow||T.surface,border:`1px solid ${T.yellow}40`,borderRadius:10,
+      padding:"9px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
+      <span style={{fontSize:15}}>👀</span>
+      <div style={{fontSize:12,color:T.yellow,lineHeight:1.5}}>
+        <strong>{names.join(", ")}</strong> {names.length===1?"is":"are"} also in here right now.
+        <div style={{fontSize:11,color:T.muted,marginTop:1}}>
+          Whoever saves last wins — check with them before making changes.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Activity log ──
+   The audit trail has been recording since it was added, but there was no way
+   to browse it — only per-document history. */
+function ActivityScreen({user,onBack}){
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState("");
+  const [who,setWho]=useState("");
+  const [what,setWhat]=useState("");
+  const [action,setAction]=useState("");
+  const [days,setDays]=useState(7);
+  const [limit,setLimit]=useState(200);
+
+  async function load(){
+    setLoading(true);setErr("");
+    try{
+      const since=new Date(Date.now()-days*86400000).toISOString();
+      let q=`/audit_feed?changed_at=gte.${since}&order=changed_at.desc&limit=${limit}`;
+      if(who)    q+=`&changed_by=eq.${encodeURIComponent(who)}`;
+      if(what)   q+=`&table_name=eq.${what}`;
+      if(action) q+=`&action=eq.${action}`;
+      setRows(await sb(q)||[]);
+    }catch(e){
+      setErr(String(e.message||"").includes("audit_feed")
+        ?"The activity log isn't set up yet — run AIME_presence_activity.sql."
+        :e.message);
+      setRows([]);
+    }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[who,what,action,days,limit]);
+
+  const people=[...new Set(rows.map(r=>r.changed_by).filter(Boolean))].sort();
+  const kinds=[...new Set(rows.map(r=>r.table_name).filter(Boolean))].sort();
+  const labelOf=(r)=>r.label||r.table_name;
+
+  const meta={INSERT:{icon:"➕",c:T.green,verb:"created"},
+              UPDATE:{icon:"✏️",c:T.yellow,verb:"changed"},
+              DELETE:{icon:"🗑",c:T.red,verb:"deleted"}};
+
+  const pretty=(v)=>{
+    if(v===null||v===undefined)return "—";
+    if(typeof v==="object")return Array.isArray(v)?`${v.length} item${v.length!==1?"s":""}`:"…";
+    const s=String(v);
+    return s.length>44?s.slice(0,44)+"…":(s||"—");
+  };
+  const fieldName=(k)=>k.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase());
+
+  // Group by day, so the feed reads as a diary rather than a wall.
+  const byDay={};
+  rows.forEach(r=>{
+    const d=new Date(r.changed_at).toDateString();
+    (byDay[d]||=[]).push(r);
+  });
+
+  const deletes=rows.filter(r=>r.action==="DELETE").length;
+
+  const chip=(on)=>({flexShrink:0,padding:"6px 12px",borderRadius:15,cursor:"pointer",fontFamily:"inherit",
+    fontSize:11.5,fontWeight:on?800:600,whiteSpace:"nowrap",
+    background:on?T.orange:T.surface,color:on?"#000":T.sub,
+    border:`1px solid ${on?T.orange:T.border}`});
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+      <TopBar title="🕓 Activity Log" sub={`${rows.length} changes`} onBack={onBack}/>
+      <div style={{padding:"14px 16px 60px"}}>
+        {err&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,
+          padding:"10px 14px",marginBottom:12,fontSize:12,color:T.red,lineHeight:1.6}}>{err}</div>}
+
+        {/* Filters */}
+        <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,marginBottom:10}}>
+          {[[1,"Today"],[7,"7 days"],[30,"30 days"],[90,"90 days"]].map(([d,l])=>(
+            <button key={d} onClick={()=>setDays(d)} style={chip(days===d)}>{l}</button>
+          ))}
+        </div>
+
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Who</label>
+              <select value={who} onChange={e=>setWho(e.target.value)} style={inpSel}>
+                <option value="">Everyone</option>
+                {people.map(p=><option key={p} value={p}>{p}</option>)}
+              </select></div>
+            <div><label style={lbl}>What</label>
+              <select value={what} onChange={e=>setWhat(e.target.value)} style={inpSel}>
+                <option value="">Everything</option>
+                {kinds.map(k=><option key={k} value={k}>
+                  {(rows.find(r=>r.table_name===k)||{}).label||k}</option>)}
+              </select></div>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            {[["","All actions"],["INSERT","➕ Created"],["UPDATE","✏️ Changed"],["DELETE","🗑 Deleted"]].map(([v,l])=>(
+              <button key={v||"all"} onClick={()=>setAction(v)} style={{...chip(action===v),flex:1,textAlign:"center"}}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        {deletes>0&&action!=="DELETE"&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,
+          borderRadius:10,padding:"9px 13px",marginBottom:12,fontSize:12,color:T.red,cursor:"pointer"}}
+          onClick={()=>setAction("DELETE")}>
+          🗑 {deletes} deletion{deletes!==1?"s":""} in this period — tap to see them
+        </div>}
+
+        {loading&&<Spinner/>}
+
+        {!loading&&rows.length===0&&!err&&<div style={{...cardS,textAlign:"center",padding:"34px 16px",color:T.muted}}>
+          <div style={{fontSize:34,marginBottom:10}}>🕓</div>
+          <div style={{fontSize:13.5,fontWeight:700,color:T.sub}}>Nothing in this period</div>
+          <div style={{fontSize:11.5,marginTop:4}}>Try a wider date range, or clear the filters.</div>
+        </div>}
+
+        {Object.entries(byDay).map(([day,list])=>(
+          <div key={day} style={{marginBottom:16}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",
+              letterSpacing:"1px",marginBottom:8}}>{day} · {list.length}</div>
+            {list.map(r=>{
+              const m=meta[r.action]||{icon:"•",c:T.muted,verb:r.action};
+              const changed=r.changes&&typeof r.changes==="object"?Object.entries(r.changes):[];
+              return(
+                <div key={r.id} style={{...cardS,marginBottom:7,padding:"10px 13px",
+                  borderLeft:`3px solid ${m.c}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:10}}>
+                    <div style={{fontSize:12.5,color:T.text,minWidth:0}}>
+                      <span style={{marginRight:6}}>{m.icon}</span>
+                      <strong style={{color:T.orange}}>{r.changed_by||"unknown"}</strong>
+                      <span style={{color:T.muted}}> {m.verb} a </span>
+                      <strong style={{color:m.c}}>{labelOf(r)}</strong>
+                    </div>
+                    <span style={{fontSize:10.5,color:T.muted,whiteSpace:"nowrap",flexShrink:0}}>
+                      {new Date(r.changed_at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}
+                    </span>
+                  </div>
+                  {changed.length>0&&<div style={{marginTop:5,paddingLeft:20}}>
+                    {changed.slice(0,4).map(([k,v])=>(
+                      <div key={k} style={{fontSize:11,color:T.sub,padding:"1px 0",lineHeight:1.5}}>
+                        <span style={{color:T.muted}}>{fieldName(k)}:</span>{" "}
+                        <span style={{color:T.red,textDecoration:"line-through"}}>{pretty(v?.from)}</span>
+                        {" → "}
+                        <span style={{color:T.green}}>{pretty(v?.to)}</span>
+                      </div>
+                    ))}
+                    {changed.length>4&&<div style={{fontSize:10.5,color:T.muted,marginTop:2}}>
+                      +{changed.length-4} more field{changed.length-4!==1?"s":""}
+                    </div>}
+                  </div>}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+
+        {rows.length>=limit&&<button onClick={()=>setLimit(l=>l+200)}
+          style={{...ghostBtn,width:"100%",textAlign:"center",fontSize:13,marginTop:8}}>
+          Load more
+        </button>}
+      </div>
+    </div>
+  );
+}
+
+function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onMyHours,onActivity,isOnline,pendingCount,onSync}){
   // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
   // by division always returned zero for that card.
   const [mfgStats,setMfgStats]=useState(null);
@@ -1365,6 +1572,9 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
             {(user.role==="admin"||user.role==="pm")&&<button onClick={onTimeCards} style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",color:T.green,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⏱️</button>}
             {can(user,"crew_directory")&&<button onClick={onCrew} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"8px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>👥</button>}
             {canEstimate(user)&&<button onClick={onEstimating} style={{background:`${T.purple}15`,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"8px 12px",color:T.purple,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
+            {can(user,"view_dashboard")&&<button onClick={onActivity} title="Activity log"
+              style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 12px",
+                color:T.sub,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🕓</button>}
             <button onClick={onLogout} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>Out</button>
           </div>
         </div>
@@ -8102,6 +8312,9 @@ const BID_TABS=[
 ];
 
 function BidDetail({bidId,user,onBack,onChanged}){
+  // Two people in the same bid overwrite each other silently — last save wins.
+  // This does not lock anything, it just makes the overlap visible.
+  const othersHere=usePresence("estimate",bidId,user);
   const [bid,setBid]=useState(null);
   const [tab,setTab]=useState("overview");
   const [loading,setLoading]=useState(true);
@@ -8156,6 +8369,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
             {BID_STAGES.map(s=><option key={s.id} value={s.id} style={{background:T.card,color:T.text,textTransform:"none"}}>{s.label}</option>)}
           </select>
         </div>
+        <div style={{marginTop:10}}><PresenceBar others={othersHere}/></div>
       </div>
 
       {/* Tabs */}
@@ -15093,8 +15307,11 @@ function AppInner(){
         <DivisionScreen user={user} projects={projects} onSelect={handleDivisionSelect} onLogout={handleLogout}
           onCrew={()=>setScreen("crewDirectory")} onDash={()=>setScreen("pmDashboard")}
           onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")}
-          onMyHours={()=>setScreen("myHours")}
+          onMyHours={()=>setScreen("myHours")} onActivity={()=>setScreen("activity")}
           isOnline={isOnline} pendingCount={pendingCount} onSync={syncQueue}/>
+      )}
+      {user&&screen==="activity"&&can(user,"view_dashboard")&&(
+        <ActivityScreen user={user} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="myHours"&&(
         <MyHoursScreen user={user} onBack={()=>setScreen("division")}/>
