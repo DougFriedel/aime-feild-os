@@ -7727,6 +7727,26 @@ function dueMeta(due){
   return{text:label,sub:"",tone:"muted"};
 }
 
+/* ── Quote numbers ──
+   Format is YY-NNNN. The sequence continues from the highest number already
+   issued rather than restarting, so a quote number is never reused — existing
+   plain numbers like "2741" are read as 2741 and the next becomes 26-2742. */
+function nextQuoteNumber(existing){
+  const yy=String(new Date().getFullYear()).slice(-2);
+  let max=0;
+  (existing||[]).forEach(q=>{
+    const str=String(q||"").trim();
+    if(!str)return;
+    // "26-0741" -> 741, "2741" -> 2741. The largest number wins either way.
+    const m=/^(?:(\d{2})-)?(\d+)$/.exec(str);
+    if(m){ const n=parseInt(m[2],10); if(!isNaN(n)&&n>max)max=n; return; }
+    // Anything else: take the last run of digits, so odd formats still count.
+    const tail=str.match(/(\d+)\s*$/);
+    if(tail){ const n=parseInt(tail[1],10); if(!isNaN(n)&&n>max)max=n; }
+  });
+  return `${yy}-${String(max+1).padStart(4,"0")}`;
+}
+
 function BidBoard({user,onBack}){
   const [bids,setBids]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -7765,11 +7785,21 @@ function BidBoard({user,onBack}){
   async function createBid(){
     setCreating(true);
     try{
+      // Read the sequence immediately before inserting, so two people
+      // creating a bid at once do not land on the same number.
+      let quoteNo="";
+      try{
+        const all=await API.estimates.list();
+        quoteNo=nextQuoteNumber((all||[]).map(b=>b.quote_number));
+      }catch{ /* leave blank rather than risk a duplicate */ }
+
       const res=await API.estimates.create({
         name:"New Bid",status:"estimating",estimator:user.name,
         division:"Mechanical",total_sales:0,
         office:"Atlantic Industrial Mechanical & Environmental",
         measurement_system:"US",
+        quote_number:quoteNo||null,
+        quote_date:today(),
       });
       const row=Array.isArray(res)?res[0]:res;
       await load();
@@ -7901,6 +7931,9 @@ function BidBoard({user,onBack}){
                           style={{fontSize:13.5,fontWeight:700,color:"#60A5FA",cursor:"pointer",lineHeight:1.35}}>
                           {b.name||"Untitled bid"}
                         </div>
+                        {b.quote_number&&<div style={{fontSize:11,color:T.sub,marginTop:2,fontWeight:600}}>
+                          Quote {b.quote_number}
+                        </div>}
                         {b.description&&<div style={{fontSize:11.5,color:T.muted,marginTop:3,lineHeight:1.45}}>{b.description}</div>}
                       </td>
                       <td style={{padding:"12px",verticalAlign:"top",minWidth:180}}>
@@ -8690,7 +8723,18 @@ function ProposalTab({bid,user,onErr,onSaved}){
           <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:14}}>Quote Header</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
             <div><label style={lbl}>Quote #</label>
-              <input value={f.quote_number} onChange={e=>set("quote_number",e.target.value)} placeholder="2741" style={inp}/></div>
+              <input value={f.quote_number} onChange={e=>set("quote_number",e.target.value)}
+                placeholder="26-0001" style={inp}/>
+              {!f.quote_number&&<button onClick={async()=>{
+                try{
+                  const all=await API.estimates.list();
+                  set("quote_number",nextQuoteNumber((all||[]).map(b=>b.quote_number)));
+                }catch(e){ onErr&&onErr(e.message); }
+              }} style={{background:"none",border:"none",color:T.orange,fontSize:11.5,fontWeight:700,
+                cursor:"pointer",fontFamily:"inherit",padding:"5px 0 0"}}>
+                Assign the next quote number
+              </button>}
+            </div>
             <div><label style={lbl}>Quote Date</label>
               <input type="date" value={f.quote_date} onChange={e=>set("quote_date",e.target.value)} style={inp}/></div>
           </div>
