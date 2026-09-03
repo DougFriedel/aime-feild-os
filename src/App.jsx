@@ -8668,9 +8668,14 @@ function buildProposalHtml(bid,f,total,breakdown,show){
         shown.push(`<div class="sumrow"><span>Markup</span><span>${money(breakdown.markup)}</span></div>`);
       if(show.discount&&Number(breakdown.discount)>0)
         shown.push(`<div class="sumrow"><span>Discount</span><span>-${money(breakdown.discount)}</span></div>`);
-      if(shown.length)shown.push(`<div class="sumrow" style="border-top:1px solid #999;padding-top:4px;margin-top:2px"><span>Subtotal</span><span>${money(total)}</span></div>`);
+      const post=(Number(breakdown.tax)||0)+(Number(breakdown.bond)||0)+(Number(breakdown.permits)||0);
+      if(shown.length)shown.push(`<div class="sumrow" style="border-top:1px solid #999;padding-top:4px;margin-top:2px"><span>Subtotal</span><span>${money(total-post)}</span></div>`);
       if(show.tax&&Number(breakdown.tax)>0)
-        shown.push(`<div class="sumrow"><span>Tax${bid.tax_pct?` (${bid.tax_pct}%)`:""}</span><span>${money(breakdown.tax)}</span></div>`);
+        shown.push(`<div class="sumrow"><span>Sales Tax${bid.tax_pct?` (${bid.tax_pct}%)`:""}</span><span>${money(breakdown.tax)}</span></div>`);
+      if(show.bond&&Number(breakdown.bond)>0)
+        shown.push(`<div class="sumrow"><span>Bond${bid.bond_pct?` (${bid.bond_pct}%)`:""}</span><span>${money(breakdown.bond)}</span></div>`);
+      if(show.permits&&Number(breakdown.permits)>0)
+        shown.push(`<div class="sumrow"><span>Permits &amp; Fees</span><span>${money(breakdown.permits)}</span></div>`);
       return shown.join("");
     })()}
     <div style="display:flex;gap:36px;align-items:flex-end;margin-top:8px">
@@ -8700,7 +8705,8 @@ function PublicProposalView({estimateId}){
       const f={
         quote_number:bid.quote_number||"",quote_date:bid.quote_date||"",
         prepared_by:bid.prepared_by||"",prepared_phone:bid.prepared_phone||"",
-        prepared_email:bid.prepared_email||"",customer_address:bid.customer_address||"",
+        prepared_email:bid.prepared_email||"",
+        customer_address:bid.customer_address||bid.contact_address||"",
         general_notes:bid.general_notes||"",
       };
       // The client's copy must match what the estimator previewed, so the
@@ -8715,6 +8721,8 @@ function PublicProposalView({estimateId}){
           ?JSON.parse(bid.proposal_breakdown):bid.proposal_breakdown;
       }catch{}
       setHtml(buildProposalHtml(bid,f,Number(bid.total_sales)||0,breakdown,show));
+      // breakdown carries tax, bond and permits from the saved proposal, so
+      // the client's copy matches what the estimator previewed.
     }catch(e){ setErr("Could not load this proposal."); }
     setLoading(false);
   })();},[estimateId]);
@@ -8764,9 +8772,8 @@ function ProposalTab({bid,user,onErr,onSaved}){
     prepared_by:bid.prepared_by||user.name||"",
     prepared_phone:bid.prepared_phone||"",
     prepared_email:bid.prepared_email||"",
-    customer_address:bid.customer_address||"",
+    customer_address:bid.customer_address||bid.contact_address||"",
     general_notes:bid.general_notes||DEFAULT_GENERAL_NOTES,
-    tax_pct:bid.tax_pct??"",
   });
   /* What appears on the client's copy. Lump sum by default — itemised costs
      invite line-by-line negotiation — but some clients require a breakdown. */
@@ -8777,6 +8784,8 @@ function ProposalTab({bid,user,onErr,onSaved}){
   });
   const toggleShow=(k)=>{setShow(v=>({...v,[k]:!v[k]}));setDirty(true);};
   const [breakdown,setBreakdown]=useState({});
+  // Pulled from the estimate so the proposal cannot drift from it.
+  const [postTax,setPostTax]=useState({preTax:0,tax:0,bond:0,permits:0});
   const [dirty,setDirty]=useState(false);
   const [saving,setSaving]=useState(false);
   const [total,setTotal]=useState(Number(bid.total_sales)||0);
@@ -8824,8 +8833,29 @@ function ProposalTab({bid,user,onErr,onSaved}){
       },0);
       const overhead=marked*((Number(bid.overhead_pct)||0)/100);
       const discount=(marked+overhead)*((Number(bid.discount_pct)||0)/100);
-      const t=marked+overhead-discount;
+      const preTax=marked+overhead-discount;
+
+      /* Post-tax comes from the estimate, not from this tab. The proposal used
+         to stop at the pre-tax figure and carry its own separate tax field, so
+         a bid with 6% tax showed $1,433.94 on Estimating and $1,361.02 on the
+         proposal. Same rule, one place. */
+      const taxableCats=(()=>{
+        const raw=bid.tax_on||"Materials";
+        if(raw==="all")return Object.keys(cat);
+        return String(raw).split(",").map(x=>x.trim()).filter(Boolean);
+      })();
+      const taxBase=Object.entries(cat)
+        .filter(([c])=>taxableCats.includes(c))
+        .reduce((s2,[c,v])=>{
+          const key=MARKUP_KEY[c];
+          return s2+v*(1+(key?Number(rates[key])||0:0)/100);
+        },0);
+      const estTax=taxBase*((Number(bid.tax_pct)||0)/100);
+      const estBond=(preTax+estTax)*((Number(bid.bond_pct)||0)/100);
+      const estPermits=Number(bid.permits_amt)||0;
+      const t=preTax+estTax+estBond+estPermits;
       if(t>0)setTotal(t);
+      setPostTax({preTax,tax:estTax,bond:estBond,permits:estPermits});
 
       // Keep the category split so the proposal can show a breakdown. Costs
       // are grouped the way the estimate categorises them.
@@ -8855,10 +8885,9 @@ function ProposalTab({bid,user,onErr,onSaved}){
       // reads total_sales, so saving keeps what the client sees identical to
       // what was previewed here.
       await API.estimates.update(bid.id,{...f,
-        tax_pct:parseFloat(f.tax_pct)||0,
         proposal_show:show,
         proposal_breakdown:{...breakdown,tax:taxAmt},
-        total_sales:show.tax?grand:total,
+        total_sales:total,
         updated_at:new Date().toISOString()});
       setDirty(false); onSaved&&onSaved();
     }
@@ -8870,11 +8899,11 @@ function ProposalTab({bid,user,onErr,onSaved}){
   const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const lines=(s)=>esc(s).split("\n").map(l=>l.trim()).filter(Boolean);
 
-  const taxAmt=total*(parseFloat(f.tax_pct)||0)/100;
-  const grand=total+(show.tax?taxAmt:0);
+  const taxAmt=postTax.tax;
+  const grand=total;                    // total already includes tax, bond, permits
   const buildHtml=()=>buildProposalHtml(
-    {...bid,tax_pct:f.tax_pct},f,show.tax?grand:total,
-    {...breakdown,tax:taxAmt},show);
+    bid,f,total,
+    {...breakdown,tax:postTax.tax,bond:postTax.bond,permits:postTax.permits},show);
 
   const proposalLink=()=>`${window.location.origin}${window.location.pathname}?proposal=${bid.id}`;
 
@@ -8965,13 +8994,27 @@ function ProposalTab({bid,user,onErr,onSaved}){
         <div style={card}>
           <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:14}}>Customer Block</div>
           <div style={{fontSize:12,color:T.muted,marginBottom:8}}>
-            Company and contact come from the Overview tab. Add the mailing address here — one line each.
+            Filled in from the Overview tab. Edit here if the mailing address differs from the contact address.
           </div>
-          <div style={{fontSize:13,fontWeight:700,color:T.orange,marginBottom:8}}>{bid.requester_company||"— no company set —"}</div>
-          <label style={lbl}>Address</label>
+          <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{bid.requester_company||"— no company set —"}</div>
+          {bid.requester_name&&<div style={{fontSize:12,color:T.sub,marginBottom:8}}>{bid.requester_name}</div>}
+
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+            <label style={{...lbl,marginBottom:0}}>Address</label>
+            {bid.contact_address&&f.customer_address!==bid.contact_address&&
+              <button onClick={()=>set("customer_address",bid.contact_address)}
+                style={{background:"none",border:"none",color:T.orange,fontSize:11.5,fontWeight:700,
+                  cursor:"pointer",fontFamily:"inherit",padding:0}}>
+                ↺ Use the Overview address
+              </button>}
+          </div>
           <textarea value={f.customer_address} onChange={e=>set("customer_address",e.target.value)} rows={4}
             placeholder={"10330 Old Columbia Rd Ste 102\nColumbia, Maryland\n21046, United States"}
-            style={{...inp,resize:"vertical",lineHeight:1.6}}/>
+            style={{...inp,resize:"vertical",lineHeight:1.6,marginTop:6}}/>
+          {!f.customer_address&&!bid.contact_address&&
+            <div style={{fontSize:11,color:T.yellow,marginTop:5,lineHeight:1.5}}>
+              No address on the Overview tab either — add one there and it will appear here.
+            </div>}
         </div>
       </div>
 
@@ -9025,20 +9068,35 @@ function ProposalTab({bid,user,onErr,onSaved}){
           {show.lump_sum?"☑ ":"☐ "}Lump Sum — one price, no breakdown
         </button>
 
-        <div style={{display:"flex",alignItems:"center",gap:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-          <button onClick={()=>toggleShow("tax")}
-            style={{padding:"9px 14px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",
-              fontSize:12,fontWeight:show.tax?800:600,
-              background:show.tax?T.orange:T.surface,color:show.tax?"#000":T.sub,
-              border:`1px solid ${show.tax?T.orange:T.border}`}}>
-            {show.tax?"☑ ":"☐ "}Tax
-          </button>
-          {show.tax&&<>
-            <input type="number" step="0.001" value={f.tax_pct} onChange={e=>set("tax_pct",e.target.value)}
-              placeholder="0" style={{...inp,width:80,textAlign:"center",fontSize:13}}/>
-            <span style={{fontSize:12,color:T.muted}}>%</span>
-            <span style={{marginLeft:"auto",fontSize:13,fontWeight:800,color:T.green}}>{money(taxAmt)}</span>
-          </>}
+        {/* Tax, bond and permits are set on the Estimating tab — they belong
+            to the job, not to this document. These only decide whether the
+            client's copy itemises them; all three are in the total either way. */}
+        <div style={{paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+          <div style={{fontSize:10.5,color:T.muted,marginBottom:7}}>
+            Set on the Estimating tab · always included in the total
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7}}>
+            {[["tax","Tax",postTax.tax,bid.tax_pct],
+              ["bond","Bond",postTax.bond,bid.bond_pct],
+              ["permits","Permits",postTax.permits,null]].map(([k,l,amt,pct])=>{
+              const on=!!show[k];
+              const has=Number(amt)>0;
+              return(
+                <button key={k} onClick={()=>toggleShow(k)}
+                  style={{padding:"9px 8px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",textAlign:"left",
+                    fontSize:11.5,fontWeight:on?800:600,
+                    background:on?T.orange:T.surface,color:on?"#000":T.sub,
+                    border:`1px solid ${on?T.orange:T.border}`,opacity:has?1:0.45}}>
+                  <div>{on?"☑ ":"☐ "}{l}{pct?` ${pct}%`:""}</div>
+                  {has&&<div style={{fontSize:10,fontWeight:600,marginTop:2,opacity:0.75}}>{money(amt)}</div>}
+                </button>
+              );
+            })}
+          </div>
+          {postTax.tax===0&&postTax.bond===0&&postTax.permits===0&&
+            <div style={{fontSize:10.5,color:T.muted,marginTop:6,lineHeight:1.5}}>
+              None set. Add a tax rate, bond or permits under Post-Tax on the Estimating tab.
+            </div>}
         </div>
 
         {show.lump_sum&&Object.keys(show).filter(k=>show[k]&&k!=="lump_sum"&&k!=="tax").length>0&&
@@ -9051,9 +9109,11 @@ function ProposalTab({bid,user,onErr,onSaved}){
         <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
           <div style={{flex:1,minWidth:200}}>
             <div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Proposal Total</div>
-            <div style={{fontSize:26,fontWeight:900,color:T.green,marginTop:2}}>{money(show.tax?grand:total)}</div>
+            <div style={{fontSize:26,fontWeight:900,color:T.green,marginTop:2}}>{money(total)}</div>
             <div style={{fontSize:11,color:T.muted,marginTop:2}}>
-              Calculated from the Estimating tab{show.tax&&taxAmt>0?` · includes ${money(taxAmt)} tax`:""}
+              Calculated from the Estimating tab
+              {(postTax.tax||postTax.bond||postTax.permits)
+                ?` · includes ${money(postTax.tax+postTax.bond+postTax.permits)} tax, bond and permits`:""}
             </div>
           </div>
           <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
