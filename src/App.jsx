@@ -1338,7 +1338,9 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
     const divProjects=projects.filter(p=>p.division===div&&p.status==="active");
     const totalBilled=divProjects.reduce((s,p)=>s+(p._billed||0),0);
     const totalReports=divProjects.reduce((s,p)=>s+(p._reports||0),0);
-    return{div,count:divProjects.length,billed:totalBilled,reports:totalReports};
+    const totalTm=divProjects.reduce((s,p)=>s+(p._tmCount||0),0);
+    return{div,count:divProjects.length,billed:totalBilled,
+      reports:totalReports+totalTm,dailies:totalReports,tm:totalTm};
   });
 
   return(
@@ -1421,8 +1423,10 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
                   {[["Active Jobs",stats?.count||0,divColor],
                     // A shop job logs labour entries, not daily reports.
-                    [stats?.mfg?"Labor Logs":"Reports",stats?.reports||0,T.green],
-                    ["Billed","$"+(stats?.billed>=1000?(stats.billed/1000).toFixed(1)+"k":fmt(stats?.billed||0)),T.blue]].map(([l,v,c])=>(
+                    [stats?.mfg?"Labor Logs":(stats?.tm>0?"Reports + T&M":"Reports"),stats?.reports||0,T.green],
+                    // Dailies plus submitted T&M tickets. Not invoiced money —
+                    // Billing is where that lives.
+                    ["Work Logged","$"+(stats?.billed>=1000?(stats.billed/1000).toFixed(1)+"k":fmt(stats?.billed||0)),T.blue]].map(([l,v,c])=>(
                     <div key={l} style={{textAlign:"center"}}>
                       <div style={{fontSize:15,fontWeight:800,color:c}}>{v}</div>
                       <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.6px",marginTop:2}}>{l}</div>
@@ -1581,7 +1585,7 @@ function JobCard({p,onSelect,divColor}){
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div style={{fontSize:20,fontWeight:900,color:T.green,letterSpacing:"-0.5px"}}>${billedFmt}</div>
-            <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:1}}>Billed</div>
+            <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:1}}>Work Logged</div>
           </div>
         </div>
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
@@ -1593,6 +1597,7 @@ function JobCard({p,onSelect,divColor}){
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:10}}>
           {[
             [p._reports||0,"📋","Reports",c],
+            ...((p._tmCount||0)>0?[[p._tmCount,"🧾","T&M",c]]:[]),
             [p._photos||0,"📷","Photos",T.blue],
             [p._openRfis||0,"📝","Open RFIs",p._openRfis>0?T.yellow:T.muted],
             [p._pendingCOs||0,"📋","Pending COs",p._pendingCOs>0?T.orange:T.muted],
@@ -14907,32 +14912,44 @@ function AppInner(){
       const ps=Array.isArray(r)?r:[];
       const enriched=await Promise.all(ps.map(async p=>{
         try{
-          const [reps,rfis,cos,photos]=await Promise.all([
+          const [reps,rfis,cos,photos,tix]=await Promise.all([
             API.reports.forProject(p.id).catch(()=>[]),
             API.rfis.forProject(p.id).catch(()=>[]),
             API.changeOrders.forProject(p.id).catch(()=>[]),
             API.photos.forProject(p.id).catch(()=>[]),
+            API.tmTickets.forProject(p.id).catch(()=>[]),
           ]);
           const repList=Array.isArray(reps)?reps:[];
           const rfiList=Array.isArray(rfis)?rfis:[];
           const coList=Array.isArray(cos)?cos:[];
           const photoList=Array.isArray(photos)?photos:[];
+          const tixList=Array.isArray(tix)?tix:[];
           // daily_reports has no labor_total / equipment_total columns — the
           // figures are derived from the labor and equipment JSON, which is
           // why every division read $0.00 before.
-          const billed=repList.reduce((s,r)=>{
+          const dailyTotal=repList.reduce((s,r)=>{
             const t=reportTotals(r,p.division);
             const subs=(r.subcontractors||[]).reduce((a,x)=>a+subLineTotal(x),0);
             return s+t.grand+subs;
           },0);
+          // T&M tickets are work logged the same as a daily report, and were
+          // contributing nothing — a job billed entirely on T&M read as $0.
+          // Drafts are excluded: they have not been submitted to anyone.
+          const tmTotal=tixList
+            .filter(t=>(t.status||"draft")!=="draft")
+            .reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
+          const billed=dailyTotal+tmTotal;
           const lastRep=repList.length>0?repList.sort((a,b)=>b.date?.localeCompare(a.date))[0].date:null;
           const openRfis=rfiList.filter(r=>r.status==="Open"||r.status==="Overdue").length;
           const pendingCOs=coList.filter(c=>c.status==="Pending");
           const pendingCOTotal=pendingCOs.reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
           return{...p,_reports:repList.length,_billed:billed,_lastReport:lastRep,
+            _dailyTotal:dailyTotal,_tmTotal:tmTotal,
+            _tmCount:tixList.filter(t=>(t.status||"draft")!=="draft").length,
             _openRfis:openRfis,_pendingCOs:pendingCOs.length,_pendingCOTotal:pendingCOTotal,
             _photos:photoList.length};
-        }catch{return{...p,_reports:0,_billed:0,_openRfis:0,_pendingCOs:0,_pendingCOTotal:0,_photos:0};}
+        }catch{return{...p,_reports:0,_billed:0,_dailyTotal:0,_tmTotal:0,_tmCount:0,
+          _openRfis:0,_pendingCOs:0,_pendingCOTotal:0,_photos:0};}
       }));
       setProjects(enriched);
     }catch(e){setErr(e.message);}
