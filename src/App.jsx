@@ -7162,10 +7162,14 @@ function NotificationsPanel({onCountChange}){
     </div>);
   }
 
-function printEmployeeTimecards(cards,from,to,selectedJobs,projects,preOpenedWin=null){
+function printEmployeeTimecards(cards,from,to,selectedJobs,projects,preOpenedWin=null,mfgJobs=[]){
   const filtered=cards.filter(c=>{
     if(!c.date||c.date<from||c.date>to)return false;
-    if(selectedJobs&&selectedJobs.length>0&&!selectedJobs.includes(c.project_id))return false;
+    // Shop cards carry mfg_job_id, so filtering on project_id alone dropped
+    // every hour worked in the shop off the printed timecard.
+    if(selectedJobs&&selectedJobs.length>0
+       &&!selectedJobs.includes(c.project_id)
+       &&!selectedJobs.includes(c.mfg_job_id))return false;
     return true;
   });
   const byEmployee={};
@@ -7177,7 +7181,12 @@ function printEmployeeTimecards(cards,from,to,selectedJobs,projects,preOpenedWin
     const travel=parseFloat(c.travel_hours)||0;
     const total=c.total_hours?parseFloat(c.total_hours):reg+ot+travel;
     const proj=projects.find(p=>p.id===c.project_id);
-    byEmployee[name].entries.push({...c,reg,ot,travel,total,projName:proj?.name||"General",projAfe:proj?.afe||""});
+    const shop=c.mfg_job_id?(mfgJobs||[]).find(j=>j.id===c.mfg_job_id):null;
+    const shopName=shop?.job_number
+      ||(c.source==="shop"?String(c.notes||"").match(/Shop labor — ([^\s·]+)/)?.[1]:null);
+    byEmployee[name].entries.push({...c,reg,ot,travel,total,
+      projName:proj?.name||shopName||"General",
+      projAfe:proj?.afe||(shopName?"Shop":"")});
     byEmployee[name].reg+=reg;byEmployee[name].ot+=ot;byEmployee[name].travel+=travel;byEmployee[name].total+=total;
   });
   const employees=Object.values(byEmployee).sort((a,b)=>a.name.localeCompare(b.name));
@@ -7371,7 +7380,30 @@ function TimeCardsScreen({user,projects,onBack}){
   const [showJobFilter,setShowJobFilter]=useState(false);
   const [printing,setPrinting]=useState(false);
 
-  useEffect(()=>{(async()=>{setLoading(true);try{const r=await API.timeCards.all();setCards(Array.isArray(r)?r:[]);}catch(e){setErr(e.message);}setLoading(false);})();},[]);
+  // Shop cards carry mfg_job_id rather than project_id, so the manufacturing
+  // jobs have to be loaded as well or they show with no job at all.
+  const [mfgJobs,setMfgJobs]=useState([]);
+  useEffect(()=>{(async()=>{
+    setLoading(true);
+    try{
+      const [r,m]=await Promise.all([
+        API.timeCards.all(),
+        API.mfg.jobs.list().catch(()=>[]),
+      ]);
+      setCards(Array.isArray(r)?r:[]);
+      setMfgJobs(Array.isArray(m)?m:[]);
+    }catch(e){setErr(e.message);}
+    setLoading(false);
+  })();},[]);
+
+  /* One lookup for both kinds of card. */
+  const jobOf=(c)=>{
+    if(c.project_id)return (projects.find(p=>p.id===c.project_id)||{}).name||null;
+    if(c.mfg_job_id)return (mfgJobs.find(j=>j.id===c.mfg_job_id)||{}).job_number||"Shop";
+    // Backfilled cards predate mfg_job_id being set; the note carries the job.
+    if(c.source==="shop")return String(c.notes||"").match(/Shop labor — ([^\s·]+)/)?.[1]||"Shop";
+    return null;
+  };
 
   async function remove(id){try{await API.timeCards.remove(id);setCards(c=>c.filter(x=>x.id!==id));}catch(e){setErr(e.message);}}
 
@@ -7383,7 +7415,7 @@ function TimeCardsScreen({user,projects,onBack}){
     }
     setPrinting(true);
     try{
-      printEmployeeTimecards(cards,fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects,win);
+      printEmployeeTimecards(cards,fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects,win,mfgJobs);
     }catch(e){
       win.close();
       alert("Error generating report: "+e.message);
@@ -7391,7 +7423,8 @@ function TimeCardsScreen({user,projects,onBack}){
     setTimeout(()=>setPrinting(false),1000);
   }
 
-  const filtered=cards.filter(c=>c.date&&c.date>=fromDate&&c.date<=toDate&&(selectedJobs.length===0||selectedJobs.includes(c.project_id)));
+  const filtered=cards.filter(c=>c.date&&c.date>=fromDate&&c.date<=toDate
+    &&(selectedJobs.length===0||selectedJobs.includes(c.project_id)||selectedJobs.includes(c.mfg_job_id)));
   const byWorker={};
   filtered.forEach(c=>{
     const n=c.worker_name||'?';
@@ -7438,6 +7471,16 @@ function TimeCardsScreen({user,projects,onBack}){
             <span style={{color:T.muted}}>{showJobFilter?'▲':'▼'}</span>
           </button>
           {showJobFilter&&<div style={{marginTop:10,display:'flex',flexDirection:'column',gap:6}}>
+            {mfgJobs.filter(j=>j.status==='active').map(j=>(
+              <button key={j.id} onClick={()=>setSelectedJobs(s=>s.includes(j.id)?s.filter(x=>x!==j.id):[...s,j.id])}
+                style={{padding:'6px 12px',borderRadius:15,cursor:'pointer',fontFamily:'inherit',fontSize:11.5,
+                  fontWeight:selectedJobs.includes(j.id)?800:600,
+                  background:selectedJobs.includes(j.id)?T.purple:T.surface,
+                  color:selectedJobs.includes(j.id)?'#000':T.sub,
+                  border:`1px solid ${selectedJobs.includes(j.id)?T.purple:T.border}`}}>
+                🏭 {j.job_number}
+              </button>
+            ))}
             {projects.filter(p=>p.status==='active').map(p=>(
               <label key={p.id} style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:13,color:T.sub}}>
                 <input type="checkbox" checked={selectedJobs.includes(p.id)}
@@ -7490,11 +7533,13 @@ function TimeCardsScreen({user,projects,onBack}){
           {filtered.sort((a,b)=>b.date?.localeCompare(a.date)).map(c=>{
             const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
             const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
-            const proj=projects.find(p=>p.id===c.project_id);
+            const jobName=jobOf(c);
             return(<div key={c.id} style={{...cardS,marginBottom:6,display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{c.worker_name}</div>
-                <div style={{fontSize:11,color:T.muted}}>{c.date}{proj?` · ${proj.name}`:''}</div>
+                <div style={{fontSize:11,color:T.muted}}>
+                  {c.date}{jobName?` · ${c.mfg_job_id||c.source==="shop"?"🏭 ":""}${jobName}`:''}
+                </div>
                 {c.notes&&<div style={{fontSize:10,color:T.muted,fontStyle:'italic',marginTop:1}}>{c.notes}</div>}
               </div>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
