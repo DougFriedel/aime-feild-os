@@ -7384,6 +7384,8 @@ function TimeCardsScreen({user,projects,onBack}){
   // jobs have to be loaded as well or they show with no job at all.
   const [mfgJobs,setMfgJobs]=useState([]);
   useEffect(()=>{(async()=>{
+    // A half-typed or cleared date box sends "" and Postgres rejects it.
+    if(!fromDate||!toDate)return;
     setLoading(true);
     try{
       // byRange, not all() — all() caps at 500 rows ordered by date, so on a
