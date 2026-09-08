@@ -8621,7 +8621,7 @@ function buildProposalHtml(bid,f,total,breakdown,show){
     const running=`Quote: ${esc(f.quote_number||"—")} / Date: ${esc(dateStr)}`;
 
     const bulletBlock=(arr)=>arr.length
-      ? `<ol class="numlist"><li>${arr.map(x=>esc(x)).join("<br/>")}</li></ol>`
+      ? `<ol class="numlist">${arr.map(x=>`<li>${esc(x)}</li>`).join("")}</ol>`
       : `<div class="muted">None listed.</div>`;
 
     return `<!DOCTYPE html><html><head><meta charset="utf-8"/>
@@ -8646,7 +8646,8 @@ function buildProposalHtml(bid,f,total,breakdown,show){
   .proj span{color:#555}
   h2{font-size:10pt;margin:10px 0 4px}
   h3{font-size:8.5pt;margin:9px 0 3px}
-  .numlist{margin:0;padding-left:16px;font-size:7.5pt;line-height:1.3}
+  .numlist{margin:0;padding-left:16px;font-size:7.5pt;line-height:1.35}
+  .numlist li{margin-bottom:3px;text-align:justify}
   .muted{color:#777;font-size:9pt}
   ul.scope{margin:3px 0 0;padding-left:18px}
   ul.scope li{margin-bottom:2px}
@@ -9212,12 +9213,36 @@ const COMMON_INCLUSIONS=[
   "Materials","Labor","Equipment","Per Diem","Travel",
   "Detailing","Engineering","PE Stamp","Paint","Galvanizing",
 ];
+/* Short entries are their own chip label. The two subsurface clauses run to a
+   paragraph, so they carry a short label and add the full wording to the list. */
 const COMMON_EXCLUSIONS=[
   "Permits and permit fees","Engineering and design","Bonds","Overtime or premium time",
   "Painting and coatings","Insulation","Electrical work","Concrete and foundations",
   "Temporary heat or power","Removal of hazardous material","Third-party testing / X-ray",
   "Work not shown on the drawings listed above",
+  {
+    label:"Subsurface structures & utilities",
+    text:"All subsurface structures, services and utilities, and protection of same and "+
+      "responsibility for any damage to or repair of same that the exact locations and "+
+      "existence had not previously been established and made known to AIME prior to start "+
+      "of our work.",
+  },
+  {
+    label:"Rock clause",
+    text:"Rock Clause. In the event Contractor encounters unanticipated underground "+
+      "impediments to the work, including rock formations, water, pipes or conduits, then "+
+      "(i) Contractor and Owner shall confer and mutually determine a course of action to "+
+      "address the situation in a time-efficient and cost-effective manner in compliance "+
+      "with the Agreement and applicable laws and permits; (ii) to the extent such "+
+      "impediment causes delay, Contractor's time for completion of the work shall be "+
+      "extended to account for such delay; and (iii) to the extent Contractor incurs "+
+      "additional cost or expense to overcome such impediments, Owner shall reimburse "+
+      "Contractor for all reasonably incurred costs and expenses on a time and materials "+
+      "basis. AIME is not responsible for all or any subsurface soil conditions.",
+  },
 ];
+const exclLabel=(x)=>typeof x==="string"?x:x.label;
+const exclText =(x)=>typeof x==="string"?x:x.text;
 
 function ScopeTab({bid,user,onErr}){
   const asList=(v)=>{
@@ -9340,12 +9365,19 @@ function ScopeTab({bid,user,onErr}){
           Common exclusions — click to add
         </div>
         <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
-          {COMMON_EXCLUSIONS.filter(x=>!f.exclusions.includes(x)).map(x=>(
-            <button key={x} onClick={()=>set("exclusions",[...f.exclusions,x])}
-              style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:"5px 11px",
-                color:T.sub,fontSize:11.5,cursor:"pointer",fontFamily:"inherit"}}>+ {x}</button>
-          ))}
-          {COMMON_EXCLUSIONS.every(x=>f.exclusions.includes(x))&&
+          {COMMON_EXCLUSIONS.filter(x=>!f.exclusions.includes(exclText(x))).map(x=>{
+            const long=typeof x!=="string";
+            return(
+              <button key={exclLabel(x)} onClick={()=>set("exclusions",[...f.exclusions,exclText(x)])}
+                title={long?exclText(x):undefined}
+                style={{background:T.surface,border:`1px solid ${long?T.orange+"40":T.border}`,borderRadius:14,
+                  padding:"5px 11px",color:long?T.orange:T.sub,fontSize:11.5,cursor:"pointer",
+                  fontFamily:"inherit"}}>
+                + {exclLabel(x)}{long?" ¶":""}
+              </button>
+            );
+          })}
+          {COMMON_EXCLUSIONS.every(x=>f.exclusions.includes(exclText(x)))&&
             <span style={{fontSize:11.5,color:T.muted}}>All of the common ones are already listed.</span>}
         </div>
       </div>
