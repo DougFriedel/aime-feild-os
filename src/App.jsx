@@ -5573,7 +5573,9 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
       wkScoped.forEach(c=>{
         const reg=parseFloat(c.reg_hours)||0,ot=parseFloat(c.ot_hours)||0,tr=parseFloat(c.travel_hours)||0;
         const name=c.worker_name||"",week=c.date?weekOf(c.date):"",
-          job=(projects.find(x=>x.id===c.project_id)||{}).name||"Unassigned",
+          job=(projects.find(x=>x.id===c.project_id)||{}).name
+            ||(c.source==="shop"?(String(c.notes||"").match(/Shop labor — ([^\s·]+)/)?.[1]||"Shop"):null)
+            ||"Unassigned",
           cls=c.classification||"";
         const k=[name,week,job,cls].join("|");
         if(!grouped[k])grouped[k]={name,week,job,cls,reg:0,ot:0,tr:0,tot:0};
@@ -13230,6 +13232,37 @@ function ManufacturingTraveler({part,job,user,onBack}){
 }
 
 
+/* Mirror a shop labour entry into time_cards. Kept in one place so the clock,
+   the manual entry form and the approval screen cannot drift apart. */
+async function createShopTimeCard(laborRow,job,hours,user){
+  const h=parseFloat(hours)||0;
+  if(h<=0)return null;
+  // Shop labour records one hours figure; anything past 8 in a day is
+  // overtime, matching how the field clock splits it.
+  const ot=Math.max(0,h-8);
+  const body={
+    worker_name:laborRow.worker_name,
+    mfg_job_id:job?.id||laborRow.job_id,
+    project_id:null,
+    date:laborRow.work_date||today(),
+    division:"Manufacturing",
+    classification:laborRow.operation||null,
+    reg_hours:h-ot,ot_hours:ot,travel_hours:0,total_hours:h,
+    notes:`Shop labor — ${job?.job_number||""}${laborRow.operation?" · "+laborRow.operation:""}`.trim(),
+    source:"shop",status:"pending",
+  };
+  try{
+    if(laborRow.time_card_id){
+      await API.timeCards.update(laborRow.time_card_id,body);
+      return laborRow.time_card_id;
+    }
+    const r=await API.timeCards.create(body);
+    const id=Array.isArray(r)?r[0]?.id:r?.id;
+    if(id)await API.mfg.labor.update(laborRow.id,{time_card_id:id}).catch(()=>{});
+    return id;
+  }catch(e){ console.warn("shop time card failed:",e.message); return null; }
+}
+
 /* ── Shop time clock ──
    Writes to mfg_labor rather than time_cards, because that is what the
    manufacturing invoice pulls from. A worker cannot be on the shop clock and
@@ -13312,6 +13345,10 @@ function MfgClockCard({job,parts,user,onChange}){
         clock_out_lat:lat,clock_out_lng:lng,
         hours:hrs,original_hours:hrs,status:"pending",
       });
+      // mfg_labor bills the customer; time_cards pays the worker. Shop hours
+      // were only ever written to the first, so anyone working in the shop was
+      // missing from the Workers tab and the payroll export.
+      await createShopTimeCard(open,job,hrs,user).catch(()=>{});
       await load();onChange&&onChange();
     }catch(e){ setErr(e.message); }
     setBusy(false);
@@ -13447,9 +13484,14 @@ function MfgTimeTab({job,parts,user,onErr}){
   async function approve(ids){
     setSaving(true);
     try{
-      await Promise.all(ids.map(id=>API.mfg.labor.update(id,{
-        status:"approved",approved_by:user.name,approved_at:new Date().toISOString(),
-      })));
+      const stamp={status:"approved",approved_by:user.name,approved_at:new Date().toISOString()};
+      await Promise.all(ids.map(async id=>{
+        await API.mfg.labor.update(id,stamp);
+        const row=(pendRows.find(x=>x.id===id)||{});
+        // Approve the payroll card at the same time, so a supervisor does not
+        // have to sign the same hours off twice.
+        if(row.time_card_id)await API.timeCards.update(row.time_card_id,stamp).catch(()=>{});
+      }));
       await load();
     }catch(e){ onErr&&onErr(e.message); }
     setSaving(false);
@@ -13458,12 +13500,24 @@ function MfgTimeTab({job,parts,user,onErr}){
   async function saveEdit(r){
     setSaving(true);
     try{
+      const newHrs=parseFloat(draft.hours)||0;
       await API.mfg.labor.update(r.id,{
-        hours:parseFloat(draft.hours)||0,
+        hours:newHrs,
         original_hours:r.original_hours??r.hours,
         edited_by:user.name,edited_at:new Date().toISOString(),
         edit_reason:draft.edit_reason||null,
       });
+      // Keep the payroll card in step — otherwise the invoice and the
+      // timecard would disagree about the same hours.
+      if(r.time_card_id){
+        const ot=Math.max(0,newHrs-8);
+        await API.timeCards.update(r.time_card_id,{
+          reg_hours:newHrs-ot,ot_hours:ot,total_hours:newHrs,
+          original_hours:r.original_hours??r.hours,
+          edited_by:user.name,edited_at:new Date().toISOString(),
+          edit_reason:draft.edit_reason||null,
+        }).catch(()=>{});
+      }
       setEdit(null);await load();
     }catch(e){ onErr&&onErr(e.message); }
     setSaving(false);
@@ -13473,10 +13527,12 @@ function MfgTimeTab({job,parts,user,onErr}){
     if(!mf.worker_name||!mf.hours)return;
     setSaving(true);
     try{
-      await API.mfg.labor.create({...mf,job_id:job.id,
+      const r=await API.mfg.labor.create({...mf,job_id:job.id,
         hours:parseFloat(mf.hours)||0,part_id:mf.part_id||null,
         source:"manual",status:"approved",
         approved_by:user.name,approved_at:new Date().toISOString()});
+      const row=Array.isArray(r)?r[0]:r;
+      if(row)await createShopTimeCard(row,job,mf.hours,user).catch(()=>{});
       setShowManual(false);
       setMf({worker_name:user.name,work_date:today(),hours:"",operation:"",part_id:"",notes:""});
       await load();
