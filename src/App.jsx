@@ -235,7 +235,7 @@ const API={
   },
   reports:{
     forProject:(pid)=>sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`),
-    all:()=>sb("/daily_reports?select=*,projects(id,name,division)&order=date.desc&limit=300"),
+    all:()=>sb("/daily_reports?select=*,projects(id,name,division)&order=date.desc&limit=3000"),
     // Ranged pull for the report builder. all() caps at 300 rows, which would
     // silently drop older reports from a wide date range.
     inRange:(from,to)=>sb(`/daily_reports?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`),
@@ -248,7 +248,7 @@ const API={
     forProject:(pid)=>sb(`/tm_tickets?project_id=eq.${pid}&order=created_at.desc`),
     byId:(id)=>sb(`/tm_tickets?id=eq.${id}&limit=1`),
     // Awaiting PM approval across every job — used by the dashboard snapshot.
-    pending:()=>sb("/tm_tickets?status=eq.submitted&select=*,projects(id,name,division)&order=ticket_date.desc&limit=500"),
+    pending:()=>sb("/tm_tickets?status=eq.submitted&select=*,projects(id,name,division)&order=ticket_date.desc&limit=2000"),
     // Ranged pull for the T&M report builder.
     inRange:(from,to)=>sb(`/tm_tickets?select=*,projects(id,name,division)&ticket_date=gte.${from}&ticket_date=lte.${to}&order=ticket_date.asc&limit=2000`),
     create:(d)=>sb('/tm_tickets',{method:'POST',body:d,prefer:'return=representation'}),
@@ -271,7 +271,7 @@ const API={
     tickets:(name,limit=15)=>sb(`/tm_tickets?submitted_by=eq.${encodeURIComponent(name)}&select=id,ticket_date,ticket_no,status,grand_total,client_signature,projects(name)&order=ticket_date.desc&limit=${limit}`),
     crew:(name)=>sb(`/crew_members?name=eq.${encodeURIComponent(name)}&limit=1`),
   },
-  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
+  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc&limit=5000`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
@@ -7386,15 +7386,17 @@ function TimeCardsScreen({user,projects,onBack}){
   useEffect(()=>{(async()=>{
     setLoading(true);
     try{
+      // byRange, not all() — all() caps at 500 rows ordered by date, so on a
+      // busy month the oldest cards silently vanished from the report.
       const [r,m]=await Promise.all([
-        API.timeCards.all(),
+        API.timeCards.byRange(fromDate,toDate),
         API.mfg.jobs.list().catch(()=>[]),
       ]);
       setCards(Array.isArray(r)?r:[]);
       setMfgJobs(Array.isArray(m)?m:[]);
     }catch(e){setErr(e.message);}
     setLoading(false);
-  })();},[]);
+  })();},[fromDate,toDate]);
 
   /* One lookup for both kinds of card. */
   const jobOf=(c)=>{
