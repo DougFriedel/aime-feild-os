@@ -8876,8 +8876,13 @@ function ProposalTab({bid,user,onErr,onSaved}){
         const eff=byWeight?(Number(l.price_per_weight)||0)*wpu:(Number(l.unit_cost)||0);
         const mat=qty*eff*(1+(Number(l.waste_pct)||0)/100);
         const rate=l.labor_rate!=null&&l.labor_rate!==""?Number(l.labor_rate):Number(bid.labor_cost_rate)||102;
-        const cost=mat+qty*(Number(l.labor_hours)||0)*rate;
-        cat[l.category||"Other"]=(cat[l.category||"Other"]||0)+cost;
+        const lab=qty*(Number(l.labor_hours)||0)*rate;
+        const c=l.category||"Other";
+        // Material stays with its category; labour goes to Labor wherever it
+        // was entered, so it is not marked up at the materials rate. Same rule
+        // as the Estimating tab, or the two totals disagree.
+        cat[c]=(cat[c]||0)+mat;
+        if(lab>0)cat.Labor=(cat.Labor||0)+lab;
       });
       const marked=Object.entries(cat).reduce((s,[c,v])=>{
         const key=MARKUP_KEY[c];
