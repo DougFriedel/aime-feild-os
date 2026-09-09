@@ -9538,11 +9538,33 @@ function EstimatingTab({bid,user,onErr,onTotal}){
 
   const catTotals={};
   Object.entries(byCat).forEach(([cat,ls])=>{
-    const t={cost:0,hrs:0};
-    ls.forEach(l=>{const c=calc(l);t.cost+=c.total;t.hrs+=c.hrs;});
+    const t={cost:0,hrs:0,labor:0,material:0};
+    ls.forEach(l=>{
+      const c=calc(l);
+      t.material+=c.matCost;
+      t.labor   +=c.laborCost;
+      t.hrs     +=c.hrs;
+    });
+    t.cost=t.material+t.labor;
+    catTotals[cat]=t;
+  });
+
+  /* Labour is labour wherever it was entered. A line categorised as Materials
+     that carries 8 hours is 8 hours of labour, and belongs in the Labor row —
+     otherwise the Materials figure includes wages and gets marked up at the
+     materials rate. */
+  Object.entries(catTotals).forEach(([cat,t])=>{
+    if(cat==="Labor"||t.labor<=0)return;
+    (catTotals.Labor||=({cost:0,hrs:0,labor:0,material:0}));
+    catTotals.Labor.labor+=t.labor;
+    catTotals.Labor.hrs  +=t.hrs;
+    catTotals.Labor.cost +=t.labor;
+    t.cost-=t.labor; t.labor=0; t.hrs=0;
+  });
+
+  Object.entries(catTotals).forEach(([cat,t])=>{
     const mk=Number(rates[MARKUP_KEY[cat]]??0)||0;
     t.markup=mk; t.marked=t.cost*(1+mk/100);
-    catTotals[cat]=t;
   });
 
   const directCost=Object.values(catTotals).reduce((s,t)=>s+t.cost,0);
@@ -9634,7 +9656,14 @@ function EstimatingTab({bid,user,onErr,onTotal}){
               </tr></thead>
               <tbody>
                 {Object.keys(byCat).sort().map(cat=>{
-                  const t=catTotals[cat];
+                  // Split, so a Materials group shows the cost of materials
+                  // rather than materials plus wages. The labour is still
+                  // shown, but as its own figure — it belongs to the Labor
+                  // row in the Summary.
+                  const t=byCat[cat].reduce((a,l)=>{const c=calc(l);
+                    return{hrs:a.hrs+c.hrs,material:a.material+c.matCost,
+                           labor:a.labor+c.laborCost,cost:a.cost+c.total};},
+                    {hrs:0,material:0,labor:0,cost:0});
                   return(
                     <React.Fragment key={cat}>
                       <tr onClick={()=>setCollapsed(c=>({...c,[cat]:!c[cat]}))}
@@ -9645,8 +9674,16 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                         <td style={{...td,textAlign:"right",fontWeight:700,color:T.sub}}>—</td>
                         <td style={{...td}}/>
                         <td style={{...td}}/>
-                        <td style={{...td,textAlign:"right",fontWeight:700,color:T.sub}}>{num(t.hrs,1)} hrs</td>
-                        <td style={{...td,textAlign:"right",fontWeight:800,color:T.green}}>{money(t.cost)}</td>
+                        <td style={{...td,textAlign:"right",fontWeight:700,color:T.sub}}>
+                          {t.hrs>0?`${num(t.hrs,1)} hrs`:"—"}
+                          {t.labor>0&&cat!=="Labor"&&
+                            <div style={{fontSize:10,color:T.muted,fontWeight:600}}>{money(t.labor)} labor</div>}
+                        </td>
+                        <td style={{...td,textAlign:"right",fontWeight:800,color:T.green}}>
+                          {money(cat==="Labor"?t.cost:t.material)}
+                          {t.labor>0&&cat!=="Labor"&&
+                            <div style={{fontSize:10,color:T.muted,fontWeight:600}}>material only</div>}
+                        </td>
                         <td style={{...td}}/>
                       </tr>
                       {!collapsed[cat]&&byCat[cat].map(l=>{
@@ -9798,7 +9835,11 @@ function EstimatingTab({bid,user,onErr,onTotal}){
               const t=catTotals[cat], key=MARKUP_KEY[cat];
               return(
                 <tr key={cat} style={{borderTop:`1px solid ${T.border}`}}>
-                  <td style={{padding:"7px 4px",fontSize:12,color:T.text}}>{cat}</td>
+                  <td style={{padding:"7px 4px",fontSize:12,color:T.text}}>
+                    {cat}
+                    {cat==="Labor"&&t.hrs>0&&
+                      <span style={{fontSize:10,color:T.muted,marginLeft:6}}>{num(t.hrs,1)} hrs</span>}
+                  </td>
                   <td style={{padding:"7px 4px",fontSize:12,textAlign:"right",color:T.sub}}>{money(t.cost)}</td>
                   <td style={{padding:"7px 4px",textAlign:"right"}}>
                     {key?(
