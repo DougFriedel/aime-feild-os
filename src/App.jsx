@@ -431,7 +431,8 @@ const dangerBtn={background:T.redLow,border:`1px solid ${T.red}30`,borderRadius:
 
 const POSITIONS_PIPELINE=[{name:"Project Manager",rate:64.50},{name:"Foreman",rate:63.25},{name:"Technician",rate:60.75},{name:"Inspector",rate:53.75},{name:"Certified Welder",rate:60.75},{name:"Fitter",rate:58.50},{name:"Mechanic",rate:58.50},{name:"Operator",rate:58.50},{name:"Truck Driver",rate:58.50},{name:"Helper (Welder)",rate:57.25},{name:"Laborer",rate:51.00},{name:"Foreman (Elect)",rate:82.25},{name:"Electrician",rate:82.25},{name:"Helper (Elect)",rate:45.50},{name:"Per Diem",rate:190.00,flat:true}];
 const NAMES=["Amanda Harvey","Alan Fairbrother","Alan Robinson","Doug Friedel","Jaden Pugh","Brandon Milano","Charles Acree","Charles Dovel","Chris Utz","Christopher Dean","Chuck Dean","Clay Lau","Connor Kestner","Morgan Schramek","Eric Bowens","Eric Shumate","Jackson Fama","Howard Lau","Jeff White","Jessica Vance","John Baier","John P. Cosner Jr.","Jordan Gorwell","Joseph Lau","Josh Gladhill","Kevin Gabrish","Kurt Batterton","Leo Velez","Edgrado Ruiz","Mark Hamilton","Alejandro Figueroa","Matthew Custis","Matthew Linton","Mike Gamble","Mike Gamble III","Mike Seiler","Pat Gorman","Paul Howard","Rich Raborg","Robert Neslein","Roland Long","Shane Hower","Steve Kestner","Tom Hatfield","Troy Strother","Tyrone Davis","Walter Chicas-Luna","Will Wychulis","Wyatt Gill","Peggy Carver","Jacob Geiman"].sort();
-const EQUIP_LIST_PIPELINE=[{section:"Trucks & Trailers"},{name:"Truck - 1 Ton",rate:21.50,unit:"Hours"},{name:"Truck - 3/4 Ton w/ Snow Plow",rate:350,unit:"Days"},{name:"Truck - 1/2 Ton",rate:18.50,unit:"Hours"},{name:"Truck - Boom (20-29 Ton)",rate:65,unit:"Hours"},{name:"Truck - Bucket",rate:45,unit:"Hours"},{name:"Truck - Dump Truck (3 Axle)",rate:35,unit:"Hours"},{name:"Truck - Haul Truck - No Trailer",rate:70,unit:"Hours"},{name:"Truck - Tru-Vac",rate:13500,unit:"Month"},{name:"Truck - Welding Rig",rate:35,unit:"Hours"},{name:"Trailer - Electrical - Colonial",rate:147,unit:"Month"},{name:"Trailer - Lowboy - 2 Axle",rate:28,unit:"Hours"},{name:"Trailer - Tag Along",rate:50,unit:"Days"},{name:"Trailer - Tool Trailer - 18-25ft",rate:175,unit:"Days"},{name:"Trailer - Tool Trailer - 26-40ft",rate:200,unit:"Days"},{section:"Earthmoving & ROW"},{name:"ATV - 4 Wheel",rate:125,unit:"Days"},{name:"Backhoe Loader - 80-105 HP",rate:62.45,unit:"Hours"},{name:"Excavator - Mini - 2-8K LB",rate:299,unit:"Days"},{name:"Excavator - Mini - 9K LB",rate:335,unit:"Days"},{name:"Excavator - Mini - 12-16K LB",rate:475,unit:"Days"},{name:"Excavator - Small - 21-29K LB",rate:565,unit:"Days"},{name:"Excavator - Small - 30-33K LB",rate:632,unit:"Days"},{name:"Excavator - Medium - 48-55K LB",rate:852,unit:"Days"},{name:"Excavator - Large - 80-89K LB",rate:1050,unit:"Days"},{name:"Excavator - Large - 90-119K LB",rate:1350,unit:"Days"},{name:"Skidsteer Loader - 70-80 HP",rate:440,unit:"Days"},{name:"Skidsteer Loader - 81-100 HP",rate:475,unit:"Days"},{name:"Tractor - 50 HP 4x4 w/ Bush Hog",rate:36.50,unit:"Hours"},{name:"Mower - Riding/Zero Turn",rate:175,unit:"Days"},{section:"Air, Compressors & Blast"},{name:"Air Compressor - 185 CFM",rate:195,unit:"Days"},{name:"Air Compressor - 375 CFM",rate:275,unit:"Days"},{name:"Air Impact Wrench - 1in",rate:50,unit:"Days"},{name:"Air Spade / Knife",rate:55,unit:"Days"},{name:"Blast Rig - 4 Bag Pot w/ 185 CFM AC",rate:55.50,unit:"Hours"},{name:"Blast Rig - 1 Pot w/ 375 CFM AC",rate:500,unit:"Days"},{section:"Testing & Misc. Tools"},{name:"Holiday Detector / Pipe Jeep",rate:72,unit:"Days"},{name:"Hydraulic Torque",rate:200,unit:"Days"},{name:"Hydro Test Pump",rate:60,unit:"Days"},{name:"Hydrotest - High Pressure",rate:3800,unit:"Days"},{name:"Jack Hammer",rate:72,unit:"Days"},{name:"LEL/Gas Monitor - 4 Gas",rate:50,unit:"Days"},{name:"Line Locator",rate:50,unit:"Days"},{name:"HEPA Vacuum",rate:100,unit:"Days"},{name:"Torque Wrench w/Sockets Hyd/Pneu",rate:195,unit:"Days"},{name:"Pipe Beveling Machine 16-22in",rate:100,unit:"Days"}];
+// Pipeline rate sheet — synced with AIME_CPC_Master_Daily (WORK tab). Names must stay stable: saved reports and T&M tickets look rates up by name.
+const EQUIP_LIST_PIPELINE=[{section:"Trucks & Trailers"},{name:"Truck - 1 Ton",rate:21.5,unit:"Hours"},{name:"Truck - 3/4 Ton w/ Snow Plow",rate:350,unit:"Days"},{name:"Truck - 1/2 Ton",rate:18.5,unit:"Hours"},{name:"Truck - Boom (20-29 Ton)",rate:65,unit:"Hours"},{name:"Truck - Bucket",rate:45,unit:"Hours"},{name:"Truck - Dump Truck (3 Axle)",rate:35,unit:"Hours"},{name:"Truck - Haul Truck - No Trailer",rate:70,unit:"Hours"},{name:"Truck - Tru-Vac",rate:13500,unit:"Month"},{name:"Truck - Welding Rig",rate:35,unit:"Hours"},{name:"Trailer - Electrical - Colonial",rate:147,unit:"Month"},{name:"Trailer - Lowboy - 2 Axle",rate:28,unit:"Hours"},{name:"Trailer - Tag Along",rate:50,unit:"Days"},{name:"Trailer - Tool Trailer - 18-25ft",rate:175,unit:"Days"},{name:"Trailer - Tool Trailer - 26-40ft",rate:200,unit:"Days"},{section:"Earthmoving & ROW"},{name:"ATV - 4 Wheel",rate:125,unit:"Days"},{name:"Backhoe Loader - 80-105 HP",rate:62.45,unit:"Hours"},{name:"Excavator - Mini - 2-8K LB",rate:299,unit:"Days"},{name:"Excavator - Mini - 9K LB",rate:335,unit:"Days"},{name:"Excavator - Mini - 10-11K LB",rate:335,unit:"Days"},{name:"Excavator - Mini - 12-16K LB",rate:475,unit:"Days"},{name:"Excavator - Mini - 17-20K LB",rate:540,unit:"Days"},{name:"Excavator - Small - 21-29K LB",rate:565,unit:"Days"},{name:"Excavator - Small - 30-33K LB",rate:632,unit:"Days"},{name:"Excavator - Small - 34-37K LB",rate:687,unit:"Days"},{name:"Excavator - Small - 38-42K LB",rate:742,unit:"Days"},{name:"Excavator - Small - 43-47K LB",rate:797,unit:"Days"},{name:"Excavator - Medium - 48-55K LB",rate:852,unit:"Days"},{name:"Excavator - Medium - 56-64K LB",rate:935,unit:"Days"},{name:"Excavator - Medium - 65-79K LB",rate:975,unit:"Days"},{name:"Excavator - Large - 80-89K LB",rate:1050,unit:"Days"},{name:"Excavator - Large - 90-119K LB",rate:1350,unit:"Days"},{name:"Excavator - Large - 120-175K LB",rate:1750,unit:"Days"},{name:"Excavator - Large - 176-225K LB",rate:1925,unit:"Days"},{name:"Mower - Riding/Zero Turn",rate:175,unit:"Days"},{name:"Skidsteer Loader - 70-80 HP",rate:440,unit:"Days"},{name:"Skidsteer Loader - 81-100 HP",rate:475,unit:"Days"},{name:"Tractor - 50 HP 4x4 w/ Bush Hog",rate:36.5,unit:"Hours"},{name:"Tractor - Farm w/ Bush Hog 26-40 HP",rate:27.5,unit:"Hours"},{section:"Air, Compressors & Blast"},{name:"Air Compressor - 185 CFM",rate:195,unit:"Days"},{name:"Air Compressor - 375 CFM",rate:275,unit:"Days"},{name:"Air Impact Wrench - 1in",rate:50,unit:"Days"},{name:"Air Spade / Knife",rate:55,unit:"Days"},{name:"Blast Rig - 4 Bag Pot w/ 185 CFM AC",rate:55.5,unit:"Hours"},{name:"Blast Rig - 1 Pot w/ 375 CFM AC",rate:500,unit:"Days"},{section:"Testing & Misc. Tools"},{name:"Bench & Volt Meter",rate:875.5,unit:"Month"},{name:"Beveling Band - 30in",rate:25,unit:"Days"},{name:"Dearman Pipe Clamps",rate:25,unit:"Days"},{name:"FL-9 Fiat-Allis",rate:41.05,unit:"Hours"},{name:"Gasoline Emergency Response Equipment",rate:5000,unit:"Week"},{name:"Grove Man Lift 40ft",rate:29.95,unit:"Hours"},{name:"HEPA Vacuum",rate:100,unit:"Days"},{name:"Holiday Detector / Pipe Jeep",rate:72,unit:"Days"},{name:"Hydraulic Torque",rate:200,unit:"Days"},{name:"Hydro Test Pump",rate:60,unit:"Days"},{name:"Hydrotest - High Pressure",rate:3800,unit:"Days"},{name:"Jack Hammer",rate:72,unit:"Days"},{name:"Laser Pump Aligner",rate:50,unit:"Hours"},{name:"LEL/Gas Monitor - 4 Gas",rate:50,unit:"Days"},{name:"Line Locator",rate:50,unit:"Days"},{name:"Pipe Band Crawler",rate:25,unit:"Days"},{name:"Pipe Beveling Machine 1-1/2-3in",rate:25,unit:"Days"},{name:"Pipe Beveling Machine 10-14in",rate:40,unit:"Days"},{name:"Pipe Beveling Machine 16-22in",rate:100,unit:"Days"},{name:"Tap Machine - 2in",rate:190,unit:"Days"},{name:"Torque Wrench - Pneumatic J5",rate:175,unit:"Days"},{name:"Torque Wrench w/Multiplier Hand",rate:25,unit:"Days"},{name:"Torque Wrench w/Sockets Hyd/Pneu",rate:195,unit:"Days"},{name:"Wach Pipe Cutting Saw",rate:30,unit:"Hours"}];
 
 const POSITIONS_MECHANICAL=[
   {name:"Project Manager",rate:93.00},
@@ -18850,16 +18851,26 @@ ${(()=>{
               </div>
               <div style={{marginBottom:8}}>
                 <label style={lbl}>Classification</label>
-                <select value={r.classification} onChange={e=>updateRow(setLabor,r.id,"classification",e.target.value)} style={{...ri,width:"100%"}}>
+                <select value={r.classification} onChange={e=>{
+                  const v=e.target.value;
+                  const p=positions.find(x=>x.name===v);
+                  // Same behaviour as the Daily Report: picking a classification
+                  // pulls the contract rate from the division rate sheet. Rates
+                  // stay editable for one-off pricing.
+                  setLabor(rows=>rows.map(x=>x.id!==r.id?x:{...x,classification:v,
+                    ...(p?{rate:p.rate.toFixed(2),ot_rate:p.flat?"":(p.rate*1.5).toFixed(2),
+                          ...(p.flat&&!x.hours?{hours:"1"}:{})}:{})}));
+                }} style={{...ri,width:"100%"}}>
                   <option value="">— Select —</option>
-                  {positions.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
+                  {positions.map(p=><option key={p.name} value={p.name}>{p.name}{p.flat?" (flat)":""}</option>)}
                 </select>
+                {(()=>{const p=positions.find(x=>x.name===r.classification);return p?<div style={{fontSize:10.5,color:T.muted,marginTop:4}}>Rate sheet: ${p.rate.toFixed(2)}{p.flat?" flat / day":"/hr · OT "+(p.rate*1.5).toFixed(2)+"/hr"}</div>:null;})()}
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
                 <div><label style={lbl}>Reg Hours</label>
                   <input type="number" step="0.5" value={r.hours} onChange={e=>updateRow(setLabor,r.id,"hours",e.target.value)} placeholder="0" style={ri}/>
                 </div>
-                <div><label style={lbl}>Reg Rate / Hr ($)</label>
+                <div><label style={lbl}>Reg Rate / Hr ($) <span style={{color:T.muted,fontWeight:400}}>auto</span></label>
                   <input type="number" step="0.01" value={r.rate} onChange={e=>updateRow(setLabor,r.id,"rate",e.target.value)} placeholder="0.00" style={ri}/>
                 </div>
               </div>
@@ -18910,9 +18921,12 @@ ${(()=>{
               <div style={{marginBottom:8}}>
                 <label style={lbl}>Equipment</label>
                 <select value={r.description} onChange={e=>{
-                  const item=equipList.find(i=>i.name===e.target.value);
-                  updateRow(setEquipment,r.id,"description",e.target.value);
-                  if(item){updateRow(setEquipment,r.id,"unit",item.unit||"Hours");}
+                  const v=e.target.value;
+                  const item=equipList.find(i=>i.name===v);
+                  // Pull unit and contract rate from the division rate sheet
+                  // (same as the Daily Report). Rate stays editable.
+                  setEquipment(rows=>rows.map(x=>x.id!==r.id?x:{...x,description:v,
+                    ...(item?{unit:item.unit||"Hours",rate:Number(item.rate).toFixed(2)}:{})}));
                 }} style={{...ri,width:"100%"}}>
                   <option value="">— Select Equipment —</option>
                   {equipList.filter(e=>e.name).map(e=><option key={e.name} value={e.name}>{e.name}</option>)}
@@ -18930,13 +18944,13 @@ ${(()=>{
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
                 <div><label style={lbl}>Unit</label>
                   <select value={r.unit} onChange={e=>updateRow(setEquipment,r.id,"unit",e.target.value)} style={{...ri,width:"100%"}}>
-                    {["Hours","Days","Weeks","Miles","EA"].map(u=><option key={u}>{u}</option>)}
+                    {["Hours","Days","Week","Weeks","Month","Miles","EA"].map(u=><option key={u}>{u}</option>)}
                   </select>
                 </div>
                 <div><label style={lbl}>Qty</label>
                   <input type="number" step="0.5" value={r.qty} onChange={e=>updateRow(setEquipment,r.id,"qty",e.target.value)} placeholder="1" style={ri}/>
                 </div>
-                <div><label style={lbl}>Rate ($) — manual</label>
+                <div><label style={lbl}>Rate ($) <span style={{color:T.muted,fontWeight:400}}>auto</span></label>
                   <input type="number" step="0.01" value={r.rate} onChange={e=>updateRow(setEquipment,r.id,"rate",e.target.value)} placeholder="0.00" style={ri}/>
                 </div>
               </div>
