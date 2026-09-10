@@ -11855,6 +11855,31 @@ function PublicTMSignForm({ticketId}){
           </div>
         </div>
 
+        {(()=>{
+          let pics=ticket?.photos;
+          if(typeof pics==="string"){try{pics=JSON.parse(pics);}catch{pics=[];}}
+          pics=(Array.isArray(pics)?pics:[]).filter(p=>p.print!==false&&p.url);
+          if(!pics.length)return null;
+          return(
+            <div style={{background:s.card,borderRadius:16,padding:20,border:"1px solid #26262E",marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:800,color:"#60A5FA",marginBottom:12}}>
+                📷 Site Photos ({pics.length})
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:10}}>
+                {pics.map((p,i)=>(
+                  <a key={p.id||i} href={p.url} target="_blank" rel="noreferrer"
+                    style={{textDecoration:"none",display:"block"}}>
+                    <img src={p.url} alt={p.caption||`Photo ${i+1}`}
+                      style={{width:"100%",height:110,objectFit:"cover",borderRadius:8,
+                        border:"1px solid #26262E",display:"block"}}/>
+                    {p.caption&&<div style={{fontSize:11,color:"#C8D4F0",marginTop:4,lineHeight:1.4}}>{p.caption}</div>}
+                  </a>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {err&&<div style={{background:"#FC818120",border:"1px solid #FC8181",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#FC8181"}}>{err}</div>}
 
         <div style={{background:s.card,borderRadius:16,padding:20,border:"1px solid #26262E"}}>
@@ -17953,6 +17978,19 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const [sigAt,setSigAt]=useState(ticket?.inspector_signed_at||null);
   const [matUploading,setMatUploading]=useState(false);
   const fileInputRef=useRef(null);
+  /* Site photos. A T&M ticket is a billing document the client signs, so
+     photos of what was found and what was done are what settle a dispute.
+     Stored in the documents bucket rather than as base64 in the row — a few
+     phone photos would bloat the ticket beyond what the API will return. */
+  const [photos,setPhotos]=useState(()=>{
+    const p=ticket?.photos;
+    if(Array.isArray(p))return p;
+    if(typeof p==="string"){try{const j=JSON.parse(p);return Array.isArray(j)?j:[];}catch{return [];}}
+    return [];
+  });
+  const [photoUploading,setPhotoUploading]=useState(false);
+  const [photoErr,setPhotoErr]=useState("");
+
   const [showBoxSignModal,setShowBoxSignModal]=useState(false);
   const [bsEmail,setBsEmail]=useState(ticket?.client_email||project.client_email||"");
   const [bsName,setBsName]=useState(ticket?.client_contact||"");
@@ -18098,6 +18136,29 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const taxAmt=taxBase*(parseFloat(taxPct)||0)/100;
   const grandTotal=subtotal+markupAmt+taxAmt;
 
+  async function addPhotos(files){
+    if(!files||!files.length)return;
+    setPhotoUploading(true);setPhotoErr("");
+    try{
+      for(const file of Array.from(files)){
+        if(!file.type.startsWith("image/"))continue;
+        const small=await compressImg(file,1200,0.7);
+        const ext=(file.name.split(".").pop()||"jpg").toLowerCase();
+        const path=`tm-photos/${project.id}/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`;
+        const url=await storageUpload("documents",path,small,small.type||"image/jpeg");
+        setPhotos(ps=>[...ps,{
+          id:Math.random().toString(36).slice(2,10),
+          url,caption:"",
+          taken_at:new Date().toISOString(),
+          taken_by:user.name,
+        }]);
+      }
+    }catch(e){ setPhotoErr("Upload failed: "+e.message); }
+    setPhotoUploading(false);
+  }
+  const setPhoto=(id,k,v)=>setPhotos(ps=>ps.map(p=>p.id===id?{...p,[k]:v}:p));
+  const delPhoto=(id)=>setPhotos(ps=>ps.filter(p=>p.id!==id));
+
   async function uploadMaterialAttachment(file,matId){
     setMatUploading(true);
     try{
@@ -18129,6 +18190,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       labor,equipment,materials,other_charges:other,
       client_email:bsEmail||null,client_contact:(clientName||bsName)||null,
       show_markup:showMarkup,
+      photos,
       reg_hours:totalRegHrs,ot_hours:totalOtHrs,
       labor_total:laborTotal,equipment_total:equipTotal,
       materials_total:matsTotal,other_total:otherTotal,
@@ -18262,6 +18324,24 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
     <div style="font-size:7.5pt;color:#555">Date / Title</div>`}
   </div>
 </div>
+${(()=>{
+  const pics=(photos||[]).filter(p=>p.print!==false&&p.url);
+  if(!pics.length)return "";
+  return `<div style="page-break-before:always;padding-top:6px">
+    <div style="font-size:11pt;font-weight:800;color:#1F3864;border-bottom:2px solid #1F3864;padding-bottom:4px;margin-bottom:10px">
+      SITE PHOTOS — T&amp;M #${ticketNo}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${pics.map((p,i)=>`<div style="page-break-inside:avoid">
+        <img src="${p.url}" style="width:100%;height:210px;object-fit:cover;border:1px solid #ccc;border-radius:4px;display:block"/>
+        <div style="font-size:8pt;margin-top:3px;line-height:1.35">
+          <strong>${i+1}.</strong> ${String(p.caption||"").replace(/&/g,"&amp;").replace(/</g,"&lt;")||"&nbsp;"}
+        </div>
+        <div style="font-size:6.5pt;color:#888">${p.taken_by||""}${p.taken_at?" · "+new Date(p.taken_at).toLocaleDateString():""}</div>
+      </div>`).join("")}
+    </div>
+  </div>`;
+})()}
 <div style="text-align:center;margin-top:8px;font-size:6.5pt;color:#999;border-top:1px solid #eee;padding-top:5px">AIME Field Pro · ${project.name} · T&M #${ticketNo} · Generated ${new Date().toLocaleString()}</div>
 </body></html>`;
     const win=window.open("","_blank","width=950,height=800");
@@ -18371,7 +18451,8 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
 
         {/* Tab bar */}
         <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:12,gap:3,overflowX:"auto"}}>
-          {[["labor","👷 Labor"],["equipment","🚜 Equip"],["materials","🔩 Materials"],["other","➕ Other"],["summary","📊 Summary"]].map(([id,label])=>(
+          {[["labor","👷 Labor"],["equipment","🚜 Equip"],["materials","🔩 Materials"],["other","➕ Other"],
+            ["photos",`📷 Photos${photos.length?" ("+photos.length+")":""}`],["summary","📊 Summary"]].map(([id,label])=>(
             <button key={id} onClick={()=>setTab(id)} style={{flexShrink:0,padding:"8px 10px",background:tab===id?T.orange:"transparent",color:tab===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               {label}
             </button>
@@ -18572,6 +18653,73 @@ ${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px
         </div>}
 
         {/* ── SUMMARY TAB ── */}
+        {/* ── PHOTOS TAB ── */}
+        {tab==="photos"&&<div>
+          {photoErr&&<div onClick={()=>setPhotoErr("")}
+            style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,padding:"10px 14px",
+              marginBottom:12,fontSize:12,color:T.red,cursor:"pointer"}}>{photoErr} ✕</div>}
+
+          <label style={{...primBtn,borderRadius:14,background:T.blue,display:"block",textAlign:"center",
+            cursor:photoUploading?"default":"pointer",marginBottom:12,opacity:photoUploading?0.6:1}}>
+            {photoUploading?"Uploading…":"📷 Add Site Photos"}
+            <input type="file" accept="image/*" multiple capture="environment" style={{display:"none"}}
+              disabled={photoUploading}
+              onChange={async e=>{await addPhotos(e.target.files);e.target.value="";}}/>
+          </label>
+
+          {photos.length===0&&<div style={{...cardS,textAlign:"center",padding:"34px 18px",color:T.muted}}>
+            <div style={{fontSize:38,marginBottom:10}}>📷</div>
+            <div style={{fontSize:13.5,fontWeight:700,color:T.sub,marginBottom:5}}>No photos yet</div>
+            <div style={{fontSize:12,lineHeight:1.6}}>
+              Photograph what you found and what you did. Anything added here can go on the printed ticket.
+            </div>
+          </div>}
+
+          {photos.length>0&&<div style={{fontSize:11.5,color:T.muted,marginBottom:10,lineHeight:1.5}}>
+            Tick a photo to include it on the printed ticket. Captions print underneath.
+          </div>}
+
+          {photos.map((ph,i)=>{
+            const on=ph.print!==false;   // included unless turned off
+            return(
+              <div key={ph.id} style={{...cardS,marginBottom:10,padding:"11px 13px",
+                borderLeft:`3px solid ${on?T.green:T.border}`}}>
+                <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                  <a href={ph.url} target="_blank" rel="noreferrer" style={{flexShrink:0}}>
+                    <img src={ph.url} alt={ph.caption||`Photo ${i+1}`}
+                      style={{width:96,height:96,objectFit:"cover",borderRadius:9,
+                        border:`1px solid ${T.border}`,display:"block"}}/>
+                  </a>
+                  <div style={{flex:1,minWidth:0}}>
+                    <input value={ph.caption||""} placeholder="Caption — what this shows"
+                      onChange={e=>setPhoto(ph.id,"caption",e.target.value)}
+                      style={{...inp,fontSize:13,padding:"8px 10px",marginBottom:7}}/>
+                    <div style={{fontSize:10.5,color:T.muted,marginBottom:8}}>
+                      {ph.taken_by||""}{ph.taken_at?` · ${new Date(ph.taken_at).toLocaleString()}`:""}
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>setPhoto(ph.id,"print",!on)}
+                        style={{flex:1,padding:"7px",borderRadius:9,cursor:"pointer",fontFamily:"inherit",
+                          fontSize:11.5,fontWeight:on?800:600,
+                          background:on?T.green:T.surface,color:on?"#000":T.sub,
+                          border:`1px solid ${on?T.green:T.border}`}}>
+                        {on?"☑ On the printout":"☐ Not printed"}
+                      </button>
+                      <button onClick={()=>{if(window.confirm("Remove this photo?"))delPhoto(ph.id);}}
+                        style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:9,
+                          padding:"7px 11px",color:T.red,fontSize:11.5,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {photos.length>0&&<div style={{fontSize:11.5,color:T.muted,marginTop:4}}>
+            {photos.filter(p=>p.print!==false).length} of {photos.length} will print.
+          </div>}
+        </div>}
+
         {tab==="summary"&&<div>
           {/* Full totals breakdown - always live */}
           <div style={{...cardS,marginBottom:12,border:`1px solid ${T.green}30`}}>
