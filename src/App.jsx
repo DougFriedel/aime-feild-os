@@ -535,7 +535,14 @@ const fmt=(n)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maxi
 const fmtDate=(d)=>d?new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—";
 const fmtShort=(d)=>d?new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}):"—";
 const daysUntil=(d)=>{if(!d)return null;const diff=new Date(d+"T12:00:00")-new Date();return Math.ceil(diff/86400000);};
-function laborAmt(r,division){const positions=getPositions(division);const p=positions.find(x=>x.name===r.classification);if(!p)return 0;if(p.flat)return p.rate;return p.rate*((parseFloat(r.regHrs)||0)+(parseFloat(r.otHrs)||0)*1.5+(parseFloat(r.travelHrs)||0));}
+// Per diem is one flat-rate labor row per report ("Per Diem" classification)
+// with a headcount, not one row per employee. Older reports that used a
+// Per Diem row per person still compute correctly (count defaults to 1).
+const PER_DIEM_CLASS="Per Diem";
+const isPerDiemRow=(r)=>r&&r.classification===PER_DIEM_CLASS;
+function perDiemRate(division){const p=getPositions(division).find(x=>x.name===PER_DIEM_CLASS);return p?p.rate:190;}
+function perDiemCount(r){const n=parseFloat(r&&r.perDiemCount);return n>0?n:1;}
+function laborAmt(r,division){const positions=getPositions(division);const p=positions.find(x=>x.name===r.classification);if(!p)return 0;if(p.flat){const rate=parseFloat(r.rate)>0?parseFloat(r.rate):p.rate;return rate*perDiemCount(r);}return p.rate*((parseFloat(r.regHrs)||0)+(parseFloat(r.otHrs)||0)*1.5+(parseFloat(r.travelHrs)||0));}
 function equipAmt(r,division){
   let rate=parseFloat(r.rate)||0;
   if(!rate&&r.description){
@@ -568,7 +575,7 @@ function rentalLineTotal(x){
   return base+mk+(parseFloat(x.tax_amount)||0);
 }
 
-function reportTotals(r,division){const labor=(r.labor||[]).reduce((s,x)=>s+laborAmt(x,division),0);const equip=(r.equipment||[]).reduce((s,x)=>s+equipAmt(x,division),0);const rental=(r.rental_equipment||[]).reduce((s,x)=>s+rentalLineTotal(x),0);const mats=(r.materials||[]).reduce((s,x)=>s+matLineTotal(x),0);const labor_hrs=(r.labor||[]).reduce((s,x)=>s+(parseFloat(x.regHrs)||0)+(parseFloat(x.otHrs)||0)+(parseFloat(x.travelHrs)||0),0);return{labor,equip,rental,mats,labor_hrs,grand:labor+equip+rental+mats};}
+function reportTotals(r,division){const labor=(r.labor||[]).reduce((s,x)=>s+laborAmt(x,division),0);const perdiem=(r.labor||[]).filter(isPerDiemRow).reduce((s,x)=>s+laborAmt(x,division),0);const perdiem_count=(r.labor||[]).filter(isPerDiemRow).reduce((s,x)=>s+perDiemCount(x),0);const equip=(r.equipment||[]).reduce((s,x)=>s+equipAmt(x,division),0);const rental=(r.rental_equipment||[]).reduce((s,x)=>s+rentalLineTotal(x),0);const mats=(r.materials||[]).reduce((s,x)=>s+matLineTotal(x),0);const labor_hrs=(r.labor||[]).reduce((s,x)=>s+(parseFloat(x.regHrs)||0)+(parseFloat(x.otHrs)||0)+(parseFloat(x.travelHrs)||0),0);return{labor,perdiem,perdiem_count,equip,rental,mats,labor_hrs,grand:labor+equip+rental+mats};}
 function calcHours(ci,co){if(!ci||!co)return 0;const[ih,im]=ci.split(":").map(Number);const[oh,om]=co.split(":").map(Number);const diff=(oh*60+om)-(ih*60+im);return diff>0?Math.round(diff/60*100)/100:0;}
 function getWeekStart(){const d=new Date();const day=d.getDay();d.setDate(d.getDate()-(day===0?6:day-1));return d.toISOString().split("T")[0];}
 async function compressImg(file,maxW=900,q=0.65){return new Promise(res=>{const rd=new FileReader();rd.onload=ev=>{const img=new Image();img.onload=()=>{const sc=Math.min(1,maxW/img.width);const c=document.createElement("canvas");c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);c.getContext("2d").drawImage(img,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",q));};img.src=ev.target.result;};rd.readAsDataURL(file);});}
@@ -613,7 +620,37 @@ if(typeof document!=="undefined"){
 
 function TopBar({title,sub,onBack,right}){return(<div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50}}>{onBack&&<button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>}<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{title}</div>{sub&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{sub}</div>}</div>{right&&<div style={{flexShrink:0,marginLeft:12}}>{right}</div>}</div></div>);}
 
-function LaborCard({row,onChange,onRemove,division}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{ROSTER().map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
+function PerDiemCard({labor,onChangeLabor,division}){
+  const row=(labor||[]).find(isPerDiemRow);
+  const count=row?(row.perDiemCount??1):"";
+  const rate=row&&parseFloat(row.rate)>0?row.rate:perDiemRate(division);
+  const total=row?laborAmt(row,division):0;
+  const others=(labor||[]).filter(r=>!isPerDiemRow(r));
+  function setCount(v){
+    const n=parseFloat(v);
+    if(!v||!(n>0)){onChangeLabor(others);return;}
+    const next={...(row||{id:uid(),name:"",classification:PER_DIEM_CLASS,regHrs:"",otHrs:"",travelHrs:""}),perDiemCount:v,rate:row&&parseFloat(row.rate)>0?row.rate:perDiemRate(division)};
+    onChangeLabor([...others,next]);
+  }
+  function setRate(v){ if(!row)return; onChangeLabor([...others,{...row,rate:v}]); }
+  return(
+    <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.purple}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div style={{fontSize:13,fontWeight:800,color:T.text}}>🏨 Per Diem</div>
+        {total>0&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(total)}</div>}
+      </div>
+      <div style={{fontSize:11,color:T.muted,marginBottom:10}}>How many employees are out of town on this report? Leave blank if none.</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <div><label style={lbl}># Employees</label>
+          <input type="number" inputMode="numeric" min="0" step="1" placeholder="0" value={count} onChange={e=>setCount(e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Rate / Person / Day</label>
+          <input type="number" min="0" step="0.01" value={rate} disabled={!row} onChange={e=>setRate(e.target.value)} style={{...inp,opacity:row?1:0.5}}/></div>
+      </div>
+      {row&&<div style={{fontSize:11,color:T.muted,marginTop:8}}>{perDiemCount(row)} × ${fmt(rate)} = <span style={{color:T.green,fontWeight:700}}>${fmt(total)}</span></div>}
+    </div>
+  );
+}
+function LaborCard({row,onChange,onRemove,division}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{ROSTER().map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().filter(p=>!p.flat).map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
 function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr",gap:8,marginBottom:8}}><div>
               <label style={lbl}>
                 {eq
@@ -2254,7 +2291,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
             <textarea placeholder="Describe the work performed today… or tap 🎤 to speak" value={rpt.description||""} onChange={e=>setR("description",e.target.value)} rows={4} style={{...inp,resize:"vertical",lineHeight:1.5}}/>
           </div>
         </div>)}
-        {step===2&&(<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontSize:17,fontWeight:800}}>👷 Labor</div>{tot.labor>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.labor)}</div>}</div>{rpt.labor.map((row,i)=><LaborCard key={row.id} row={row} onChange={r=>upd("labor",i,r)} onRemove={()=>del("labor",i)} division={project.division}/>)}<DashedAdd label="+ Add Worker" onClick={()=>add("labor",{id:uid(),name:"",classification:"",regHrs:"",otHrs:"",travelHrs:""})} color={T.orange}/></div>)}
+        {step===2&&(<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontSize:17,fontWeight:800}}>👷 Labor</div>{tot.labor>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.labor)}</div>}</div>{rpt.labor.map((row,i)=>isPerDiemRow(row)?null:<LaborCard key={row.id} row={row} onChange={r=>upd("labor",i,r)} onRemove={()=>del("labor",i)} division={project.division}/>)}<DashedAdd label="+ Add Worker" onClick={()=>add("labor",{id:uid(),name:"",classification:"",regHrs:"",otHrs:"",travelHrs:""})} color={T.orange}/><div style={{height:14}}/><PerDiemCard labor={rpt.labor} onChangeLabor={l=>setRpt(r=>({...r,labor:l}))} division={project.division}/></div>)}
         {step===3&&(<div>
           {/* Company Equipment */}
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
@@ -2356,9 +2393,11 @@ function printReport(report, project){
   const dateStr = `${mo}/${dy}/${yr}`;
   const fmt2 = n => (parseFloat(n)||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2});
 
-  const laborRows = [...(report.labor||[]).filter(l=>l.classification!=='Per Diem')];
+  const laborRows = [...(report.labor||[]).filter(l=>!isPerDiemRow(l))];
   while(laborRows.length<14) laborRows.push(null);
-  const perDiemEntry = (report.labor||[]).find(l=>l.classification==='Per Diem');
+  const perDiemEntries = (report.labor||[]).filter(isPerDiemRow);
+  const perDiemTotal = perDiemEntries.reduce((s,l)=>s+laborAmt(l,project.division),0);
+  const perDiemHeads = perDiemEntries.reduce((s,l)=>s+perDiemCount(l),0);
   const equipRows = [...(report.equipment||[])];
   while(equipRows.length<15) equipRows.push(null);
   const mats = report.materials||[];
@@ -2493,9 +2532,10 @@ function printReport(report, project){
   <!-- Per Diem row -->
   <tr>
     <td></td>
-    <td colspan="2" style="font-style:italic">Per Diem</td>
-    <td></td><td></td><td></td><td></td>
-    <td class="num amt">${fmt2(perDiemEntry?laborAmt(perDiemEntry,project.division):0)}</td>
+    <td colspan="2" style="font-style:italic">Per Diem${perDiemHeads>0?` — ${perDiemHeads} employee${perDiemHeads!==1?'s':''}`:''}</td>
+    <td class="num">${perDiemHeads>0?perDiemHeads:''}</td><td></td><td></td>
+    <td class="num">${perDiemHeads>0?(perDiemTotal/perDiemHeads).toFixed(2):''}</td>
+    <td class="num amt">${fmt2(perDiemTotal)}</td>
   </tr>
   <tr class="total-row">
     <td colspan="7" style="text-align:right;padding-right:6px">TOTAL LABOR</td>
@@ -2734,9 +2774,10 @@ ${sections.weather&&report.site_conditions?`<div class="section"><h2>Site Condit
 
 ${sections.description&&report.description?`<div class="section"><h2>Description of Work</h2><div class="desc-box">${report.description.replace(/\n/g,'<br/>')}</div></div>`:''}
 
-${sections.labor&&(report.labor||[]).length>0?`<div class="section"><h2>Labor — ${(report.labor||[]).length} Workers · ${fmtH(tot.labor_hrs||0)} Total Hrs${tot.labor>0?' · '+fmt2(tot.labor):''}</h2>
+${sections.labor&&(report.labor||[]).length>0?`<div class="section"><h2>Labor — ${(report.labor||[]).filter(l=>!isPerDiemRow(l)).length} Workers · ${fmtH(tot.labor_hrs||0)} Total Hrs${tot.labor>0?' · '+fmt2(tot.labor):''}</h2>
 <table><thead><tr><th>Name</th><th>Classification</th><th style="text-align:center">Reg Hrs</th><th style="text-align:center">OT Hrs</th><th style="text-align:center">Travel</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.labor||[]).filter(l=>l.name||l.classification||parseFloat(l.regHrs)||parseFloat(l.otHrs)||parseFloat(l.travelHrs)).map(l=>`<tr><td>${l.name||'—'}</td><td>${l.classification||'—'}</td><td style="text-align:center">${l.regHrs||0}</td><td style="text-align:center">${l.otHrs||0}</td><td style="text-align:center">${l.travelHrs||0}</td><td style="text-align:right">${fmt2(laborAmt(l,division))}</td></tr>`).join('')}
+<tbody>${(report.labor||[]).filter(l=>!isPerDiemRow(l)).filter(l=>l.name||l.classification||parseFloat(l.regHrs)||parseFloat(l.otHrs)||parseFloat(l.travelHrs)).map(l=>`<tr><td>${l.name||'—'}</td><td>${l.classification||'—'}</td><td style="text-align:center">${l.regHrs||0}</td><td style="text-align:center">${l.otHrs||0}</td><td style="text-align:center">${l.travelHrs||0}</td><td style="text-align:right">${fmt2(laborAmt(l,division))}</td></tr>`).join('')}
+${tot.perdiem>0?`<tr><td colspan="2"><em>Per Diem</em></td><td colspan="3" style="text-align:center">${tot.perdiem_count} employee${tot.perdiem_count!==1?'s':''} × ${fmt2(tot.perdiem/tot.perdiem_count)}</td><td style="text-align:right">${fmt2(tot.perdiem)}</td></tr>`:''}
 </tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL LABOR</strong></td><td style="text-align:right"><strong>${fmt2(tot.labor||0)}</strong></td></tr></tfoot></table></div>`:''}
 
 ${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>Equipment — ${(report.equipment||[]).length} Items${tot.equip>0?' · '+fmt2(tot.equip):''}</h2>
@@ -3152,7 +3193,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       put('B7', report.description||'');
 
       /* labor — 14 rows, then Per Diem on row 24 */
-      const labor=(report.labor||[]).filter(l=>l.name||l.classification||num(l.regHrs)||num(l.otHrs)||num(l.travelHrs));
+      const labor=(report.labor||[]).filter(l=>!isPerDiemRow(l)).filter(l=>l.name||l.classification||num(l.regHrs)||num(l.otHrs)||num(l.travelHrs));
       labor.slice(0,14).forEach((l,i)=>{
         const r=10+i;
         put('B'+r, l.name||'');
@@ -3164,7 +3205,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
         put('I'+r, pos?num(pos.rate):0, $);
         put('J'+r, num(laborAmt(l,div)), $);
       });
-      const perDiem=labor.reduce((s,l)=>s+num(l.perDiem),0);
+      const perDiem=(report.labor||[]).filter(isPerDiemRow).reduce((s,l)=>s+laborAmt(l,div),0);
       if(perDiem) put('J24', perDiem, $);
       put('J25', num(tot.labor), $);
 
@@ -3487,7 +3528,9 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       {report.submitted_by&&<div style={{fontSize:12,color:T.muted,marginBottom:14}}>by {report.submitted_by}</div>}
       {report.pm_notes&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.red}`,background:T.redLow}}><div style={{fontSize:11,color:T.red,fontWeight:700,marginBottom:4}}>🚩 PM NOTE</div><div style={{fontSize:13,color:T.sub}}>{report.pm_notes}</div></div>}
       {report.description&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Work Done</div><div style={{fontSize:14,color:T.sub,lineHeight:1.6}}>{report.description}</div></div>}
-      {(report.labor||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Labor{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.labor)}</span>}</div>{report.labor.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.labor.length-1?`1px solid ${T.border}`:"none"}}><div><div style={{fontSize:14,fontWeight:600,color:T.text}}>{r.name||"—"}</div><div style={{fontSize:11,color:T.muted}}>{r.classification} · {r.regHrs||0}reg {r.otHrs||0}OT {r.travelHrs||0}tr</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(laborAmt(r))}</div>}</div>))}</div>}
+      {(report.labor||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Labor{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.labor)}</span>}</div>{report.labor.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.labor.length-1?`1px solid ${T.border}`:"none"}}>{isPerDiemRow(r)
+  ?<div><div style={{fontSize:14,fontWeight:600,color:T.text}}>🏨 Per Diem</div><div style={{fontSize:11,color:T.muted}}>{perDiemCount(r)} employee{perDiemCount(r)!==1?"s":""} × ${fmt(parseFloat(r.rate)>0?r.rate:perDiemRate(project.division))}</div></div>
+  :<div><div style={{fontSize:14,fontWeight:600,color:T.text}}>{r.name||"—"}</div><div style={{fontSize:11,color:T.muted}}>{r.classification} · {r.regHrs||0}reg {r.otHrs||0}OT {r.travelHrs||0}tr</div></div>}{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(laborAmt(r,project.division))}</div>}</div>))}</div>}
       {(report.equipment||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.equip)}</span>}</div>{report.equipment.map((r,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty} x {r.usage} {r.unit}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(equipAmt(r,project.division))}</div>}</div>))}</div>}
       {(report.subcontractors||[]).filter(s=>s.company||s.description).length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.orange}`}}>
         <div style={{fontSize:12,color:T.orange,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🏢 Subcontractors</div>
