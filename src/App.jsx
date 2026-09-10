@@ -309,7 +309,7 @@ const API={
   notifications:{
     // `to` null means everyone; otherwise only that person sees it.
     list:(name)=>sb(`/notifications?or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc&limit=50`),
-    unread:(name)=>sb(`/notifications?read=eq.false&or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc`),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:()=>sb("/notifications?read=eq.false",{method:"PATCH",body:{read:true}}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
+    unread:(name)=>sb(`/notifications?read=eq.false&or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc`),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:()=>sb("/notifications?read=eq.false",{method:"PATCH",body:{read:true}}),removeMany:(ids)=>sb(`/notifications?id=in.(${ids.map(encodeURIComponent).join(",")})`,{method:"DELETE"}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
   notifSettings:{get:(name)=>sb(`/notification_settings?pm_name=eq.${encodeURIComponent(name)}&limit=1`),upsert:(d)=>sb("/notification_settings",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"})},
   userProfiles:{
     list:()=>sb("/user_profiles?order=name.asc"),
@@ -7400,6 +7400,9 @@ tfoot td{background:#1F3864;color:#fff;font-weight:700}
 
 function NotificationsPanel({onCountChange,user}){
     const [notifs,setNotifs]=useState([]);const [nl,setNl]=useState(true);
+    const [selectMode,setSelectMode]=useState(false);
+    const [selected,setSelected]=useState([]);
+    const [deleting,setDeleting]=useState(false);
     async function loadN(){
       setNl(true);
       try{
@@ -7412,11 +7415,61 @@ function NotificationsPanel({onCountChange,user}){
     useEffect(()=>{loadN();},[]);
     const unread=notifs.filter(n=>!n.read).length;
     const typeIcon={report_submitted:"📋",report_flagged:"🚩",report_approved:"✅",bid_review:"📊"};
-    return(<div style={{padding:"14px 16px 80px"}}>
-      {unread>0&&<button onClick={async()=>{await API.notifications.markAllRead();await loadN();}} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:14}}>Mark all read</button>}
+    const toggleSel=(id)=>setSelected(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+    const exitSelect=()=>{setSelectMode(false);setSelected([]);};
+    async function deleteSelected(){
+      if(selected.length===0)return;
+      if(!window.confirm(`Delete ${selected.length} alert${selected.length!==1?"s":""}? This can't be undone.`))return;
+      setDeleting(true);
+      try{
+        await API.notifications.removeMany(selected);
+        exitSelect();
+        await loadN();
+      }catch(e){alert("Delete failed: "+e.message);}
+      setDeleting(false);
+    }
+    return(<div style={{padding:"14px 16px 120px"}}>
+      {!nl&&notifs.length>0&&<div style={{display:"flex",gap:8,marginBottom:14}}>
+        {!selectMode&&unread>0&&<button onClick={async()=>{await API.notifications.markAllRead();await loadN();}} style={{...ghostBtn,flex:1,textAlign:"center"}}>Mark all read</button>}
+        {!selectMode&&<button onClick={()=>setSelectMode(true)} style={{...ghostBtn,flex:1,textAlign:"center",color:T.red,border:`1px solid ${T.red}40`}}>🗑️ Select to delete</button>}
+        {selectMode&&<>
+          <button onClick={()=>setSelected(notifs.map(n=>n.id))} style={{...ghostBtn,fontSize:11,padding:"6px 10px",color:T.green,border:`1px solid ${T.green}40`}}>✓ All ({notifs.length})</button>
+          <button onClick={()=>setSelected(notifs.filter(n=>n.read).map(n=>n.id))} style={{...ghostBtn,fontSize:11,padding:"6px 10px",color:T.blue,border:`1px solid ${T.blue}40`}}>Read only ({notifs.filter(n=>n.read).length})</button>
+          <button onClick={()=>setSelected([])} style={{...ghostBtn,fontSize:11,padding:"6px 10px"}}>Clear</button>
+          <button onClick={exitSelect} style={{...ghostBtn,fontSize:11,padding:"6px 10px",marginLeft:"auto"}}>Cancel</button>
+        </>}
+      </div>}
       {nl&&<Spinner/>}
       {!nl&&notifs.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:36,marginBottom:8}}>🔔</div><div>No notifications yet.</div></div>}
-      {!nl&&notifs.map(n=>(<div key={n.id} onClick={async()=>{if(!n.read){await API.notifications.markRead(n.id);await loadN();}}} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${n.read?T.border:T.orange}`,opacity:n.read?0.6:1,cursor:n.read?"default":"pointer"}}><div style={{display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:18,flexShrink:0}}>{typeIcon[n.type]||"📬"}</span><div style={{flex:1}}><div style={{fontSize:14,fontWeight:700}}>{n.title}</div>{n.body&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{n.body}</div>}<div style={{fontSize:11,color:T.muted,marginTop:4}}>{n.created_at?new Date(n.created_at).toLocaleString():""}</div></div>{!n.read&&<div style={{width:8,height:8,borderRadius:"50%",background:T.orange,flexShrink:0,marginTop:4}}/>}</div></div>))}
+      {!nl&&notifs.map(n=>{
+        const sel=selected.includes(n.id);
+        return(<div key={n.id}
+          onClick={async()=>{
+            if(selectMode){toggleSel(n.id);return;}
+            if(!n.read){await API.notifications.markRead(n.id);await loadN();}
+          }}
+          style={{...cardS,marginBottom:8,borderLeft:`3px solid ${selectMode&&sel?T.red:n.read?T.border:T.orange}`,
+            background:selectMode&&sel?T.redLow:cardS.background,
+            opacity:selectMode?1:(n.read?0.6:1),cursor:selectMode||!n.read?"pointer":"default",transition:"all 0.15s"}}>
+          <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+            {selectMode&&<div style={{width:22,height:22,borderRadius:6,flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",
+              background:sel?T.red:"transparent",border:`2px solid ${sel?T.red:T.border}`,color:"#fff",fontSize:12,fontWeight:800}}>{sel?"✓":""}</div>}
+            <span style={{fontSize:18,flexShrink:0}}>{typeIcon[n.type]||"📬"}</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:14,fontWeight:700}}>{n.title}</div>
+              {n.body&&<div style={{fontSize:12,color:T.sub,marginTop:2}}>{n.body}</div>}
+              <div style={{fontSize:11,color:T.muted,marginTop:4}}>{n.created_at?new Date(n.created_at).toLocaleString():""}{n.read?" · read":""}</div>
+            </div>
+            {!n.read&&<div style={{width:8,height:8,borderRadius:"50%",background:T.orange,flexShrink:0,marginTop:4}}/>}
+          </div>
+        </div>);
+      })}
+      {selectMode&&<div style={{position:"fixed",left:0,right:0,bottom:0,padding:"12px 16px",paddingBottom:"max(12px, env(safe-area-inset-bottom))",background:T.surface,borderTop:`1px solid ${T.border}`,zIndex:60}}>
+        <button onClick={deleteSelected} disabled={selected.length===0||deleting}
+          style={{...primBtn,background:selected.length?T.red:T.border,color:"#fff",opacity:deleting?0.6:1,cursor:selected.length?"pointer":"not-allowed"}}>
+          {deleting?"Deleting…":`🗑️ Delete ${selected.length>0?`${selected.length} alert${selected.length!==1?"s":""}`:"selected"}`}
+        </button>
+      </div>}
     </div>);
   }
 
