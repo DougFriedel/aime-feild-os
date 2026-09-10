@@ -4822,8 +4822,11 @@ function SignaturePackageScreen({project,user,onBack,onErr}){
         description:row.description||"",reportNo:row.ticket_no||"",reportDate:row.ticket_date||"",
         submittedBy:row.submitted_by||"",
         lineItems:{
-          labor:(row.labor||[]).map(r=>({name:r.name||"",classification:r.classification||"",
-            hours:r.hours||0,rate:m(r.rate),amount:m((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))})),
+          labor:(row.labor||[]).map(r=>isPerDiemRow(r)
+            ?{name:`Per Diem (${perDiemCount(r)} employee${perDiemCount(r)!==1?"s":""})`,classification:r.classification,
+              hours:perDiemCount(r),rate:m(r.rate),amount:m(perDiemCount(r)*(parseFloat(r.rate)||0))}
+            :{name:r.name||"",classification:r.classification||"",
+            hours:r.hours||0,rate:m(r.rate),amount:m((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))}),
           equipment:(row.equipment||[]).map(r=>({description:r.description||"",unit:r.unit||"",
             qty:r.qty||0,rate:m(r.rate),amount:m((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0))})),
           rental:[],
@@ -18395,9 +18398,9 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
           submittedBy:user.name,
           lineItems:{
             labor:labor.map(r=>({
-              name:laborName(r),
+              name:isPerDiemRow(r)?`Per Diem (${perDiemCount(r)} employee${perDiemCount(r)!==1?"s":""})`:laborName(r),
               classification:r.classification||"",
-              hours:r.hours||0,
+              hours:isPerDiemRow(r)?perDiemCount(r):(r.hours||0),
               rate:m(r.rate),
               otHours:r.ot_hours||0,
               otRate:m(r.ot_rate),
@@ -18471,11 +18474,25 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const laborName=(r)=>labelOf(r,"name","customName");
   const equipName=(r)=>labelOf(r,"description","customDesc");
 
-  const laborRowAmt=(r)=>(parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)
-                        +(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0);
+  // Per diem is one flat row per ticket (headcount × rate), same as the Daily Report.
+  const laborRowAmt=(r)=>isPerDiemRow(r)
+    ?perDiemCount(r)*(parseFloat(r.rate)||0)
+    :(parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)
+     +(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0);
+  const workers=labor.filter(r=>!isPerDiemRow(r));
+  const perDiemRow=labor.find(isPerDiemRow);
+  const perDiemAmt=perDiemRow?laborRowAmt(perDiemRow):0;
+  const perDiemHeads=perDiemRow?perDiemCount(perDiemRow):0;
   const laborTotal=labor.reduce((s,r)=>s+laborRowAmt(r),0);
-  const totalRegHrs=labor.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
-  const totalOtHrs =labor.reduce((s,r)=>s+(parseFloat(r.ot_hours)||0),0);
+  const totalRegHrs=workers.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
+  const totalOtHrs =workers.reduce((s,r)=>s+(parseFloat(r.ot_hours)||0),0);
+  function setPerDiem(count,rate){
+    const others=labor.filter(r=>!isPerDiemRow(r));
+    const n=parseFloat(count);
+    if(!count||!(n>0)){setLabor(others);return;}
+    setLabor([...others,{...(perDiemRow||{id:uid(),name:"",classification:PER_DIEM_CLASS,hours:"",ot_hours:"",ot_rate:""}),
+      perDiemCount:count,rate:rate!=null?rate:(perDiemRow&&parseFloat(perDiemRow.rate)>0?perDiemRow.rate:perDiemRate(division).toFixed(2))}]);
+  }
   const equipTotal=equipment.reduce((s,r)=>s+((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)),0);
   const matsTotal=materials.reduce((s,r)=>s+((parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0)),0);
   const otherTotal=other.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
@@ -18627,10 +18644,13 @@ ${labor.length?`<div style="margin-bottom:8px"><div style="background:#1f3864;co
   <th style="${thStyle}center">Reg Hrs</th><th style="${thStyle}right">Reg Rate</th>
   <th style="${thStyle}center">OT Hrs</th><th style="${thStyle}right">OT Rate</th><th style="${thStyle}right">Amount</th>
 </tr></thead><tbody>
-${labor.map(r=>`<tr><td style="${tdStyle}left">${laborName(r)}</td><td style="${tdStyle}left">${r.classification||""}</td>
+${workers.map(r=>`<tr><td style="${tdStyle}left">${laborName(r)}</td><td style="${tdStyle}left">${r.classification||""}</td>
   <td style="${tdStyle}center">${r.hours||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td>
   <td style="${tdStyle}center">${r.ot_hours||""}</td><td style="${tdStyle}right">${(parseFloat(r.ot_hours)||0)>0?fmt(r.ot_rate):""}</td>
   <td style="${tdStyle}right">${fmt(laborRowAmt(r))}</td></tr>`).join("")}
+${perDiemRow?`<tr><td style="${tdStyle}left"><em>Per Diem</em></td><td style="${tdStyle}left">${perDiemHeads} employee${perDiemHeads!==1?"s":""}</td>
+  <td style="${tdStyle}center">${perDiemHeads}</td><td style="${tdStyle}right">${fmt(perDiemRow.rate)}</td><td></td><td></td>
+  <td style="${tdStyle}right">${fmt(perDiemAmt)}</td></tr>`:""}
 <tr style="font-weight:700;background:#f9fafb">
   <td colspan="2" style="${tdStyle}right">Labor Total</td>
   <td style="${tdStyle}center">${totalRegHrs||0}</td><td></td>
@@ -18824,7 +18844,7 @@ ${(()=>{
         {tab==="labor"&&<div>
           <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:"",ot_hours:"",ot_rate:""})}
             style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Worker</button>
-          {labor.map(r=>(
+          {workers.map(r=>(
             <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div style={{fontSize:12,fontWeight:700,color:T.blue}}>{laborName(r)||"New Worker"}</div>
@@ -18862,7 +18882,7 @@ ${(()=>{
                           ...(p.flat&&!x.hours?{hours:"1"}:{})}:{})}));
                 }} style={{...ri,width:"100%"}}>
                   <option value="">— Select —</option>
-                  {positions.map(p=><option key={p.name} value={p.name}>{p.name}{p.flat?" (flat)":""}</option>)}
+                  {positions.filter(p=>!p.flat).map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
                 </select>
                 {(()=>{const p=positions.find(x=>x.name===r.classification);return p?<div style={{fontSize:10.5,color:T.muted,marginTop:4}}>Rate sheet: ${p.rate.toFixed(2)}{p.flat?" flat / day":"/hr · OT "+(p.rate*1.5).toFixed(2)+"/hr"}</div>:null;})()}
               </div>
@@ -18901,7 +18921,25 @@ ${(()=>{
               </div>}
             </div>
           ))}
-          {labor.length===0&&<div style={{textAlign:"center",padding:"24px",color:T.muted,fontSize:12}}>No workers added — tap + Add Worker</div>}
+          {workers.length===0&&<div style={{textAlign:"center",padding:"24px",color:T.muted,fontSize:12}}>No workers added — tap + Add Worker</div>}
+          {/* Per Diem — headcount × rate, one line for the whole ticket */}
+          <div style={{...cardS,marginTop:14,marginBottom:10,borderLeft:`3px solid ${T.purple}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:13,fontWeight:800,color:T.text}}>🏨 Per Diem</div>
+              {perDiemAmt>0&&<span style={{fontSize:15,fontWeight:900,color:T.green}}>{fmt(perDiemAmt)}</span>}
+            </div>
+            <div style={{fontSize:11,color:T.muted,marginBottom:10}}>How many employees are out of town on this ticket? Leave blank if none.</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div><label style={lbl}># Employees</label>
+                <input type="number" inputMode="numeric" min="0" step="1" placeholder="0" value={perDiemRow?(perDiemRow.perDiemCount??1):""}
+                  onChange={e=>setPerDiem(e.target.value,null)} style={ri}/></div>
+              <div><label style={lbl}>Rate / Person / Day ($) <span style={{color:T.muted,fontWeight:400}}>auto</span></label>
+                <input type="number" min="0" step="0.01" disabled={!perDiemRow}
+                  value={perDiemRow?perDiemRow.rate:perDiemRate(division).toFixed(2)}
+                  onChange={e=>setPerDiem(perDiemRow?.perDiemCount,e.target.value)} style={{...ri,opacity:perDiemRow?1:0.5}}/></div>
+            </div>
+            {perDiemRow&&<div style={{fontSize:11,color:T.muted,marginTop:8}}>{perDiemHeads} × {fmt(perDiemRow.rate)} = <span style={{color:T.green,fontWeight:700}}>{fmt(perDiemAmt)}</span></div>}
+          </div>
           <div style={{textAlign:"right",fontWeight:900,color:T.green,fontSize:15,marginTop:6}}>Labor Total: {fmt(laborTotal)}</div>
         </div>}
 
@@ -19098,7 +19136,7 @@ ${(()=>{
           {/* Full totals breakdown - always live */}
           <div style={{...cardS,marginBottom:12,border:`1px solid ${T.green}30`}}>
             <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:12}}>💰 Cost Summary</div>
-            {[["👷 Labor",laborTotal,labor.length+" worker"+(labor.length!==1?"s":"")],
+            {[["👷 Labor",laborTotal,workers.length+" worker"+(workers.length!==1?"s":"")+(perDiemHeads?` · ${perDiemHeads} per diem`:"")],
               ["🚜 Equipment",equipTotal,equipment.length+" item"+(equipment.length!==1?"s":"")],
               ["🔩 Materials",matsTotal,materials.length+" item"+(materials.length!==1?"s":"")],
               ["➕ Other",otherTotal,other.length+" charge"+(other.length!==1?"s":"")]
