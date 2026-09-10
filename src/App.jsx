@@ -2952,16 +2952,34 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[report.status]||T.muted;
   const divColor=DIV_META[project.division]?.color||T.orange;
 
+  // Pictures saved INSIDE this daily report (receipt / item photos on
+  // Materials rows). They live in report.materials[].receipts, not in the
+  // project_photos table, so they're folded into the photo picker here.
+  function receiptsFromReport(){
+    return (report.materials||[]).flatMap((row,ri)=>(row.receipts||[]).filter(r=>r&&r.src).map((r,i)=>({
+      id:`rcpt_${row.id||ri}_${r.id||i}`,
+      src:r.src,
+      category:"Receipt",
+      caption:row.description?`${row.description}`:"Material / item photo",
+      date:report.date,
+      _fromReport:true,
+    })));
+  }
+
   async function loadPhotosForPrint(){
     setPhotosLoading(true);
+    const receipts=receiptsFromReport();
     try{
       const p=await API.photos.forProject(project.id);
       const list=Array.isArray(p)?p:[];
       const onDate=list.filter(ph=>ph.date===report.date);
       const others=list.filter(ph=>ph.date!==report.date);
-      setReportPhotos([...onDate,...others]);
-      setSelectedPhotos(onDate.map(ph=>ph.id));
-    }catch(e){}
+      setReportPhotos([...receipts,...onDate,...others]);
+      setSelectedPhotos([...receipts,...onDate].map(ph=>ph.id));
+    }catch(e){
+      setReportPhotos(receipts);
+      setSelectedPhotos(receipts.map(ph=>ph.id));
+    }
     setPhotosLoading(false);
   }
 
@@ -3248,7 +3266,8 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     };
     const attachCount=selectedPhotos.length+selectedDocs.length;
 
-    const catColor={Progress:T.blue,Safety:T.red,Equipment:T.yellow,"Issue/Deficiency":T.red,Before:T.purple,After:T.green,Inspection:T.orange,Other:T.muted};
+    const catColor={Progress:T.blue,Safety:T.red,Equipment:T.yellow,"Issue/Deficiency":T.red,Before:T.purple,After:T.green,Inspection:T.orange,Receipt:T.green,Other:T.muted};
+    const fromReportCount=reportPhotos.filter(p=>p._fromReport).length;
 
     async function generate(){
       if(printBusy)return;
@@ -3323,7 +3342,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
             <div style={{fontSize:12,fontWeight:800,color:T.text,textTransform:"uppercase",letterSpacing:"1px",marginBottom:4}}>
               📷 Photos ({selectedPhotos.length}/{reportPhotos.length} selected)
             </div>
-            <div style={{fontSize:11,color:T.muted,marginBottom:12}}>Tap photos to include/exclude from PDF</div>
+            <div style={{fontSize:11,color:T.muted,marginBottom:12}}>Tap photos to include/exclude from PDF{fromReportCount>0?` · ${fromReportCount} attached to this report, plus job site photos`:""}</div>
 
             {photosLoading&&<div style={{textAlign:"center",padding:"20px 0",color:T.muted}}>Loading photos...</div>}
 
@@ -3346,7 +3365,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
                       style={{position:"relative",borderRadius:8,overflow:"hidden",aspectRatio:"4/3",cursor:"pointer",border:`2px solid ${sel?T.green:T.border}`,transition:"border-color 0.15s"}}>
                       <img src={ph.src} alt={ph.caption} style={{width:"100%",height:"100%",objectFit:"cover",display:"block",opacity:sel?1:0.4,transition:"opacity 0.15s"}}/>
                       {sel&&<div style={{position:"absolute",top:4,right:4,background:T.green,borderRadius:"50%",width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#000",fontWeight:800}}>✓</div>}
-                      {ph.category&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.7)",padding:"3px 5px",fontSize:8,color:catColor[ph.category]||T.muted,fontWeight:700}}>{ph.category}{ph.date===report.date?" · Today":ph.date?" · "+ph.date:""}</div>}
+                      {ph.category&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,0.7)",padding:"3px 5px",fontSize:8,color:catColor[ph.category]||T.muted,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ph._fromReport?`📎 ${ph.category} · ${ph.caption}`:ph.category+(ph.date===report.date?" · Today":ph.date?" · "+ph.date:"")}</div>}
                     </div>
                   );
                 })}
