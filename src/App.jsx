@@ -1515,7 +1515,7 @@ function ActivityScreen({user,onBack}){
   );
 }
 
-function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onMyHours,onActivity,isOnline,pendingCount,onSync}){
+function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onMyHours,onActivity,onNotifications,notifCount,isOnline,pendingCount,onSync}){
   // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
   // by division always returned zero for that card.
   const [mfgStats,setMfgStats]=useState(null);
@@ -1575,6 +1575,14 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
             {(user.role==="admin"||user.role==="pm")&&<button onClick={onTimeCards} style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",color:T.green,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⏱️</button>}
             {can(user,"crew_directory")&&<button onClick={onCrew} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"8px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>👥</button>}
             {canEstimate(user)&&<button onClick={onEstimating} style={{background:`${T.purple}15`,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"8px 12px",color:T.purple,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
+            <button onClick={onNotifications} title="Notifications"
+              style={{position:"relative",background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,
+                padding:"8px 12px",color:T.sub,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>
+              {notifCount>0?"🔔":"🔕"}
+              {notifCount>0&&<span style={{position:"absolute",top:-5,right:-5,background:T.red,color:"#fff",
+                borderRadius:9,minWidth:17,height:17,fontSize:10,fontWeight:800,display:"flex",
+                alignItems:"center",justifyContent:"center",padding:"0 4px"}}>{notifCount}</span>}
+            </button>
             {can(user,"view_dashboard")&&<button onClick={onActivity} title="Activity log"
               style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 12px",
                 color:T.sub,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🕓</button>}
@@ -15435,6 +15443,7 @@ function AppInner(){
   const [selectedMfgPart,setSelectedMfgPart] = useState(null);
   const [isOnline,setIsOnline]   = useState(navigator.onLine);
   const [pendingCount,setPendingCount] = useState(0);
+  const [notifCount,setNotifCount]=useState(0);
   const [syncMsg,setSyncMsg]     = useState("");
   const [err,setErr]             = useState("");
 
@@ -15464,11 +15473,21 @@ function AppInner(){
     // thread a callback through every form.
     setPendingCount(getQueue().length);
     const tick=setInterval(()=>setPendingCount(getQueue().length),3000);
+    // Unread badge, so a notification is visible without opening the panel.
+    const pollNotifs=async()=>{
+      if(!user?.name)return;
+      try{
+        const r=await API.notifications.unread(user.name);
+        setNotifCount(Array.isArray(r)?r.length:0);
+      }catch{}
+    };
+    pollNotifs();
+    const ntick=setInterval(pollNotifs,60000);
     return()=>{
-      clearInterval(tick);
+      clearInterval(tick);clearInterval(ntick);
       window.removeEventListener("online",onOnline);window.removeEventListener("offline",onOffline);
     };
-  },[]);
+  },[user?.name]);
 
   useEffect(()=>{
     if(user) loadProjects();
@@ -15618,7 +15637,16 @@ function AppInner(){
           onCrew={()=>setScreen("crewDirectory")} onDash={()=>setScreen("pmDashboard")}
           onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")}
           onMyHours={()=>setScreen("myHours")} onActivity={()=>setScreen("activity")}
+          onNotifications={()=>setScreen("notifications")} notifCount={notifCount}
           isOnline={isOnline} pendingCount={pendingCount} onSync={syncQueue}/>
+      )}
+      {user&&screen==="notifications"&&(
+        <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+          <TopBar title="🔔 Notifications" onBack={()=>setScreen("division")}/>
+          <div style={{padding:"14px 16px 60px"}}>
+            <NotificationsPanel user={user} onCountChange={setNotifCount}/>
+          </div>
+        </div>
       )}
       {user&&screen==="activity"&&can(user,"view_dashboard")&&(
         <ActivityScreen user={user} onBack={()=>setScreen("division")}/>
