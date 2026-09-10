@@ -2621,10 +2621,11 @@ function printReportWithOptions(report, project, sections, photos, photoLayout, 
   let photoHTML = '';
   if(photos&&photos.length>0){
     if(photoLayout==='full'){
-      photoHTML = photos.map(ph=>`
+      photoHTML = photos.map((ph,pi)=>`
         <div style="page-break-before:always;padding:20px;">
+          <div style="font-size:10pt;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#1f3864;border-bottom:1.5px solid #1f3864;padding-bottom:5px;margin-bottom:10px;">📷 Attachment ${pi+1} of ${photos.length}</div>
           <div style="font-size:9pt;color:#555;margin-bottom:8px;font-weight:700">${ph.category||'Photo'} ${ph.date?'· '+ph.date:''} ${ph.caption?'· '+ph.caption:''}</div>
-          <img src="${ph.src}" style="width:100%;max-height:650px;object-fit:contain;display:block;border-radius:6px;border:1px solid #e5e7eb"/>
+          <img src="${ph.src}" style="width:100%;max-height:8.6in;object-fit:contain;display:block;border-radius:6px;border:1px solid #e5e7eb"/>
           ${ph.lat?`<div style="font-size:8pt;color:#6b7280;margin-top:6px">📍 GPS: ${ph.lat.toFixed(5)}, ${ph.lng.toFixed(5)}</div>`:''}
         </div>`).join('');
     }else{
@@ -2945,7 +2946,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     weather:true,description:true,labor:true,equipment:true,
     rental:true,materials:true,visitors:true,delays:true,signature:true
   });
-  const [photoLayout,setPhotoLayout]=useState("grid"); // grid | full
+  const [photoLayout]=useState("full"); // every selected attachment prints on its own page
   // Editing is delegated to DailyReportForm, which owns the save.
   const [editing,setEditing]=useState(false);
   const tot=reportTotals(report,project.division);
@@ -3370,20 +3371,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
                   );
                 })}
               </div>
-              {selectedPhotos.length>0&&<div>
-                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Photo Layout in PDF</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  {[["grid","2×2 Grid (compact)"],["full","Full Page (large)"]].map(([val,label])=>(
-                    <button key={val} onClick={()=>setPhotoLayout(val)}
-                      style={{...ghostBtn,padding:"10px",textAlign:"center",fontSize:12,fontWeight:700,
-                        background:photoLayout===val?T.blueLow:T.surface,
-                        color:photoLayout===val?T.blue:T.muted,
-                        border:`1px solid ${photoLayout===val?T.blue:T.border}`}}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>}
+              {selectedPhotos.length>0&&<div style={{fontSize:11,color:T.muted}}>Each selected photo prints on its own page.</div>}
             </>}
           </div>
 
