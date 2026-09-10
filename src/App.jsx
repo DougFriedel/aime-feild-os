@@ -8914,7 +8914,7 @@ function buildProposalHtml(bid,f,total,breakdown,show){
 
   <div class="cols">
     <div class="from">
-      ${AIME_ADDRESS.map(l=>esc(l)).join("<br/>")}
+      ${AIME_ADDRESS.slice(1).map(l=>esc(l)).join("<br/>")}
       <br/><br/>Prepared By:<br/>
       ${esc(f.prepared_by)}<br/>${esc(f.prepared_phone)}<br/>${esc(f.prepared_email)}
     </div>
