@@ -1567,33 +1567,42 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
         {/* Offline / pending banner */}
         {!isOnline&&<div style={{background:"#7c2d12",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:16}}>📡</span><div><div style={{fontSize:13,fontWeight:700,color:"#fed7aa"}}>No Connection</div><div style={{fontSize:11,color:"#fdba74"}}>{pendingCount>0?`${pendingCount} report${pendingCount!==1?'s':''} will sync when back online`:"Reports will save locally until reconnected"}</div></div></div>}
         {isOnline&&pendingCount>0&&<QueueBanner onSync={onSync}/>}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0,flexShrink:1}}>
-            <img src={AIME_LOGO} alt="AIME" style={{height:34,width:"auto",display:"block",flexShrink:0}}/>
-            <div style={{fontSize:8,color:T.muted,letterSpacing:"2px",textTransform:"uppercase",fontWeight:700,whiteSpace:"nowrap"}}>Field Pro</div>
+        {/* Row 1: logo + account. Row 2: labeled nav toolbar. Nothing shares a row with the logo any more. */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:12}}>
+          <img src={AIME_LOGO} alt="AIME" style={{height:46,width:"auto",display:"block",flexShrink:0}}/>
+          <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+            <div style={{textAlign:"right",minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:700,color:T.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{user.name}</div>
+              <div style={{fontSize:10,color:T.muted,whiteSpace:"nowrap"}}>
+                {user.role==="admin"?"🔴":user.role==="pm"?"🟠":user.role==="foreman"?"🟡":"🟢"} {ROLE_META[user.role]?.label} · {isOnline?<span style={{color:T.green}}>● online</span>:<span style={{color:"#f97316"}}>● offline</span>}
+              </div>
+            </div>
+            <button onClick={onLogout} style={{...ghostBtn,padding:"8px 12px",fontSize:12,flexShrink:0}}>Out</button>
           </div>
-          <div style={{display:"flex",gap:6,flexShrink:0}}>
-            {can(user,"view_dashboard")&&<button onClick={onDash} style={{background:T.orangeLow,border:`1px solid ${T.orange}40`,borderRadius:10,padding:"8px 10px",color:T.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
-            {(user.role==="admin"||user.role==="pm")&&<button onClick={onTimeCards} style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"8px 12px",color:T.green,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⏱️</button>}
-            {can(user,"crew_directory")&&<button onClick={onCrew} style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"8px 12px",color:T.blue,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>👥</button>}
-            {canEstimate(user)&&<button onClick={onEstimating} style={{background:`${T.purple}15`,border:`1px solid ${T.purple}40`,borderRadius:10,padding:"8px 12px",color:T.purple,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>📊</button>}
-            <button onClick={onNotifications} title="Notifications"
-              style={{position:"relative",background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,
-                padding:"8px 12px",color:T.sub,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>
-              {notifCount>0?"🔔":"🔕"}
-              {notifCount>0&&<span style={{position:"absolute",top:-5,right:-5,background:T.red,color:"#fff",
-                borderRadius:9,minWidth:17,height:17,fontSize:10,fontWeight:800,display:"flex",
-                alignItems:"center",justifyContent:"center",padding:"0 4px"}}>{notifCount}</span>}
+        </div>
+        {(()=>{
+          const navBtn=(onClick,icon,label,color,bg,extra)=>(
+            <button onClick={onClick} title={label}
+              style={{flex:1,minWidth:0,position:"relative",background:bg,border:`1px solid ${color}40`,borderRadius:12,
+                padding:"8px 4px",color,cursor:"pointer",fontFamily:"inherit",display:"flex",flexDirection:"column",
+                alignItems:"center",gap:3}}>
+              <span style={{fontSize:16,lineHeight:1}}>{icon}</span>
+              <span style={{fontSize:9,fontWeight:700,letterSpacing:"0.3px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{label}</span>
+              {extra}
             </button>
-            {can(user,"view_dashboard")&&<button onClick={onActivity} title="Activity log"
-              style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 12px",
-                color:T.sub,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🕓</button>}
-            <button onClick={onLogout} style={{...ghostBtn,padding:"8px 10px",fontSize:12}}>Out</button>
-          </div>
-        </div>
-        <div style={{fontSize:11,color:T.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-          {user.role==="admin"?"🔴":user.role==="pm"?"🟠":user.role==="foreman"?"🟡":"🟢"} {user.name} · {ROLE_META[user.role]?.label} {isOnline?<span style={{color:T.green,fontSize:10}}>● online</span>:<span style={{color:"#f97316",fontSize:10}}>● offline</span>}
-        </div>
+          );
+          const items=[];
+          if(can(user,"view_dashboard"))items.push(navBtn(onDash,"📊","Dashboard",T.orange,T.orangeLow));
+          if(user.role==="admin"||user.role==="pm")items.push(navBtn(onTimeCards,"⏱️","Time Cards",T.green,T.greenLow));
+          if(can(user,"crew_directory"))items.push(navBtn(onCrew,"👥","Crew",T.blue,T.blueLow));
+          if(canEstimate(user))items.push(navBtn(onEstimating,"📐","Estimating",T.purple,`${T.purple}15`));
+          items.push(navBtn(onNotifications,notifCount>0?"🔔":"🔕","Alerts",T.sub,T.surface,
+            notifCount>0&&<span style={{position:"absolute",top:-6,right:-6,background:T.red,color:"#fff",
+              borderRadius:9,minWidth:17,height:17,fontSize:10,fontWeight:800,display:"flex",
+              alignItems:"center",justifyContent:"center",padding:"0 4px"}}>{notifCount}</span>));
+          if(can(user,"view_dashboard"))items.push(navBtn(onActivity,"🕓","Activity",T.sub,T.surface));
+          return <div style={{display:"flex",gap:6}}>{items.map((b,i)=><React.Fragment key={i}>{b}</React.Fragment>)}</div>;
+        })()}
       </div>
       <div style={{padding:"20px 16px 80px"}}>
 
