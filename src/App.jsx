@@ -302,7 +302,10 @@ const API={
     forRecord:(table,id)=>sb(`/audit_recent?table_name=eq.${table}&record_id=eq.${id}&order=changed_at.desc`),
     recent:(limit=100)=>sb(`/audit_recent?order=changed_at.desc&limit=${limit}`),
   },
-  notifications:{list:()=>sb("/notifications?order=created_at.desc&limit=50"),unread:()=>sb("/notifications?read=eq.false&order=created_at.desc"),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:()=>sb("/notifications?read=eq.false",{method:"PATCH",body:{read:true}}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
+  notifications:{
+    // `to` null means everyone; otherwise only that person sees it.
+    list:(name)=>sb(`/notifications?or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc&limit=50`),
+    unread:(name)=>sb(`/notifications?read=eq.false&or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc`),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:()=>sb("/notifications?read=eq.false",{method:"PATCH",body:{read:true}}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
   notifSettings:{get:(name)=>sb(`/notification_settings?pm_name=eq.${encodeURIComponent(name)}&limit=1`),upsert:(d)=>sb("/notification_settings",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"})},
   userProfiles:{
     list:()=>sb("/user_profiles?order=name.asc"),
@@ -5404,7 +5407,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
       onOpenReport={(r,p)=>{setActiveReport(r);setActiveProject(p);}}/>
   );
 
-  if(showNotifs)return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}><TopBar title="🔔 Notifications" onBack={()=>{setShowNotifs(false);load();}}/><NotificationsPanel onCountChange={setUnread} onClose={()=>{setShowNotifs(false);load();}}/></div>);
+  if(showNotifs)return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}><TopBar title="🔔 Notifications" onBack={()=>{setShowNotifs(false);load();}}/><NotificationsPanel user={user} onCountChange={setUnread} onClose={()=>{setShowNotifs(false);load();}}/></div>);
 
   if(activeReport&&activeProject)return(<ReportDetail report={activeReport} project={activeProject} user={user} onBack={()=>{setActiveReport(null);setActiveProject(null);load();}} onDelete={async(id)=>{await API.reports.remove(id);setActiveReport(null);setActiveProject(null);load();}} onApprove={approve} onFlag={flag}
     onArchive={async(id,archived)=>{await API.reports.update(id,{archived});setActiveReport(null);setActiveProject(null);load();}}/>);
@@ -7140,12 +7143,12 @@ tfoot td{background:#1F3864;color:#fff;font-weight:700}
   );
 }
 
-function NotificationsPanel({onCountChange}){
+function NotificationsPanel({onCountChange,user}){
     const [notifs,setNotifs]=useState([]);const [nl,setNl]=useState(true);
     async function loadN(){
       setNl(true);
       try{
-        const rows=await API.notifications.list()||[];
+        const rows=await API.notifications.list(user?.name)||[];
         setNotifs(rows);
         onCountChange&&onCountChange(rows.filter(n=>!n.read).length);
       }catch{}
@@ -8008,6 +8011,35 @@ function nextQuoteNumber(existing){
   return `${yy}-${String(max+1).padStart(4,"0")}`;
 }
 
+/* When a bid moves out of Ready For Review, the person who sent it there is
+   waiting on the answer. Nothing told them — they had to keep checking the
+   board. `requested_review_by` is stamped when review is requested, so we
+   know exactly who to tell. */
+const STAGE_OUTCOME={
+  bid_approved:{icon:"✅",word:"approved",    tone:"good"},
+  lost:        {icon:"🚫",word:"not bidding / lost",tone:"bad"},
+  estimating:  {icon:"↩️",word:"sent back for more work",tone:"bad"},
+  negotiating: {icon:"🤝",word:"moved to negotiating",tone:"good"},
+  bid_submitted:{icon:"📤",word:"submitted",  tone:"good"},
+  portfolio:   {icon:"🏆",word:"won — added to portfolio",tone:"good"},
+};
+async function notifyReviewOutcome(bid,newStatus,actor){
+  // Only when it was actually waiting on a reviewer.
+  if(bid?.status!=="ready_review")return;
+  const meta=STAGE_OUTCOME[newStatus];
+  if(!meta)return;
+  const who=bid.requested_review_by||bid.estimator;
+  if(!who||who===actor)return;      // no point telling yourself
+  try{
+    await notify("bid_reviewed",
+      `${meta.icon} Bid ${meta.word} — ${bid.name||"Untitled"}`,
+      `${actor} ${meta.word==="approved"?"approved":"moved"} ${bid.name||"your bid"}`+
+      `${bid.quote_number?` (Quote ${bid.quote_number})`:""}`+
+      `${meta.word==="approved"?".":` to ${stageOf(newStatus).label}.`}`,
+      {to:who,bid_id:bid.id});
+  }catch(e){ console.warn("review notification failed:",e.message); }
+}
+
 function BidBoard({user,onBack}){
   const [bids,setBids]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -8039,7 +8071,11 @@ function BidBoard({user,onBack}){
 
   async function setStatus(bid,status){
     setBids(b=>b.map(x=>x.id===bid.id?{...x,status}:x));   // optimistic
-    try{ await API.estimates.update(bid.id,{status,updated_at:new Date().toISOString()}); }
+    try{
+      await API.estimates.update(bid.id,{status,updated_at:new Date().toISOString()});
+      // Tell whoever asked for the review what the answer was.
+      await notifyReviewOutcome(bid,status,user.name);
+    }
     catch(e){ setErr(e.message); load(); }
   }
 
@@ -8276,6 +8312,7 @@ function ReviewRequestModal({bid,user,onClose,onSent,onErr}){
         status:"ready_review",
         reviewer_name:name||null,reviewer_email:email.trim(),
         review_note:note||null,review_requested_at:new Date().toISOString(),
+        requested_review_by:user.name,
         updated_at:new Date().toISOString(),
       });
       // in-app notification lands immediately, whether or not the email is sent
@@ -8409,10 +8446,15 @@ function BidDetail({bidId,user,onBack,onChanged}){
           <div style={{fontSize:22,fontWeight:900,color:T.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
             {bid.name||"Untitled bid"}
           </div>
-          <select value={bid.status||"estimating"} onChange={e=>{
+          <select value={bid.status||"estimating"} onChange={async e=>{
               // moving to Ready For Review asks who should be told
               if(e.target.value==="ready_review"){setAskReview(true);return;}
-              patch({status:e.target.value});
+              const next=e.target.value;
+              // Capture the current status before patch overwrites it — the
+              // notification only fires when it was waiting on a reviewer.
+              const was=bid;
+              patch({status:next});
+              await notifyReviewOutcome(was,next,user.name);
             }}
             style={{background:`${st.color}18`,border:`1px solid ${st.color}55`,color:st.color,borderRadius:8,
               padding:"8px 10px",fontSize:11.5,fontWeight:800,fontFamily:"inherit",cursor:"pointer",
