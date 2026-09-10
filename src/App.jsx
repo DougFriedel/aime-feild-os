@@ -2567,7 +2567,46 @@ function printReport(report, project){
   setTimeout(()=>{win.focus();win.print();},1200);
 }
 
-function printReportWithOptions(report, project, sections, photos, photoLayout){
+// Rasterize / prepare selected project documents for the PDF appendix.
+// Images embed directly; PDFs are rendered page-by-page via PDF.js (CDN, already
+// used by the drawings viewer); anything else (xlsx, docx…) is listed on the
+// attachment index page only, since the browser can't print it.
+async function prepareDocsForPrint(docs,onProgress){
+  const out=[];
+  for(const d of docs||[]){
+    const fname=(d.file_name||d.name||"").toLowerCase();
+    const data=d.file||"";
+    const isImage=(d.file_type||"").startsWith("image/")||data.startsWith("data:image")||/\.(jpe?g|png|gif|webp|bmp)$/.test(fname);
+    const isPdf=d.file_type==="application/pdf"||data.startsWith("data:application/pdf")||fname.endsWith(".pdf");
+    const item={doc:d,kind:isImage?"image":isPdf?"pdf":"other",pages:[],error:"",note:""};
+    if(isImage&&data){item.pages=[data];}
+    else if(isPdf&&data){
+      try{
+        onProgress&&onProgress(`Opening ${d.name||d.file_name}…`);
+        const pdfjsLib=await loadPdfJs();
+        const b64=data.split(",")[1]||"";
+        const bin=atob(b64);const bytes=new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+        const pdf=await pdfjsLib.getDocument({data:bytes}).promise;
+        const MAX_PAGES=30;
+        const max=Math.min(pdf.numPages,MAX_PAGES);
+        for(let p=1;p<=max;p++){
+          onProgress&&onProgress(`${d.name||d.file_name} · page ${p} of ${max}`);
+          const page=await pdf.getPage(p);
+          const vp=page.getViewport({scale:1.5});
+          const c=document.createElement("canvas");c.width=vp.width;c.height=vp.height;
+          await page.render({canvasContext:c.getContext("2d"),viewport:vp}).promise;
+          item.pages.push(c.toDataURL("image/jpeg",0.85));
+        }
+        if(pdf.numPages>max)item.note=`showing first ${max} of ${pdf.numPages} pages`;
+      }catch(e){item.error=e.message||"Could not render PDF";}
+    }else if(!data){item.error="No file data stored";}
+    out.push(item);
+  }
+  return out;
+}
+
+function printReportWithOptions(report, project, sections, photos, photoLayout, docItems, preWin){
   const division = project.division;
   const positions = getPositions(division);
   const tot = reportTotals(report, division);
@@ -2602,6 +2641,31 @@ function printReportWithOptions(report, project, sections, photos, photoLayout){
           </div>
         </div>`).join('');
     }
+  }
+
+  let docHTML = '';
+  if(docItems&&docItems.length>0){
+    const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const fmtSize = b => { b=parseFloat(b)||0; return b>=1048576?(b/1048576).toFixed(1)+' MB':b>=1024?Math.round(b/1024)+' KB':b?b+' B':'—'; };
+    const fmtWhen = s => { if(!s) return '—'; const d=new Date(s); return isNaN(d)?'—':d.toLocaleDateString(); };
+    docHTML = `
+      <div style="page-break-before:always;padding:20px;">
+        <div style="font-size:10pt;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#1f3864;border-bottom:1.5px solid #1f3864;padding-bottom:5px;margin-bottom:10px;">📎 Attached Documents — ${docItems.length}</div>
+        <table><thead><tr><th style="width:24px">#</th><th>Document</th><th>Type</th><th style="text-align:right">Size</th><th>Uploaded</th><th>In this PDF</th></tr></thead>
+        <tbody>${docItems.map((it,i)=>`<tr>
+          <td>${i+1}</td>
+          <td><strong>${esc(it.doc.name||it.doc.file_name||'—')}</strong>${it.doc.file_name&&it.doc.file_name!==it.doc.name?`<div style="font-size:7.5pt;color:#6b7280">${esc(it.doc.file_name)}</div>`:''}</td>
+          <td>${esc(it.doc.doc_type||'')}${it.doc.file_type?`<div style="font-size:7.5pt;color:#6b7280">${esc(it.doc.file_type)}</div>`:''}</td>
+          <td style="text-align:right">${fmtSize(it.doc.file_size)}</td>
+          <td>${esc(it.doc.uploaded_by||'—')}<div style="font-size:7.5pt;color:#6b7280">${fmtWhen(it.doc.created_at)}</div></td>
+          <td>${it.pages.length>0?`✓ ${it.pages.length} page${it.pages.length!==1?'s':''}${it.note?' ('+esc(it.note)+')':''}`:it.error?`⚠ ${esc(it.error)}`:'Listed only — file type can\'t be printed'}</td>
+        </tr>`).join('')}</tbody></table>
+      </div>` +
+      docItems.filter(it=>it.pages.length>0).map(it=>it.pages.map((src,pi)=>`
+        <div style="page-break-before:always;padding:20px;">
+          <div style="font-size:9pt;color:#555;margin-bottom:8px;font-weight:700">📎 ${esc(it.doc.name||it.doc.file_name||'Document')} · Page ${pi+1} of ${it.pages.length}</div>
+          <img src="${src}" style="width:100%;max-height:900px;object-fit:contain;display:block;border:1px solid #e5e7eb"/>
+        </div>`).join('')).join('');
   }
 
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -2727,10 +2791,15 @@ ${subsTotal>0?`<tr><td>Subcontractors</td><td style="text-align:right">${fmt2(su
 
 ${photoHTML}
 
+${docHTML}
+
 </body></html>`;
 
-  const win = window.open('','_blank','width=950,height=800');
+  // preWin = a window the caller already opened synchronously inside the tap
+  // (so mobile popup blockers allow it) while attachments were being prepared.
+  const win = preWin || window.open('','_blank','width=950,height=800');
   if(!win){alert('Popup blocked — please allow popups and try again.');return;}
+  win.document.open();
   win.document.write(html);
   win.document.close();
   win.focus();
@@ -2868,6 +2937,10 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   const [reportPhotos,setReportPhotos]=useState([]);
   const [selectedPhotos,setSelectedPhotos]=useState([]);
   const [photosLoading,setPhotosLoading]=useState(false);
+  const [reportDocs,setReportDocs]=useState([]);
+  const [selectedDocs,setSelectedDocs]=useState([]);
+  const [docsLoading,setDocsLoading]=useState(false);
+  const [printBusy,setPrintBusy]=useState("");
   const [printSections,setPrintSections]=useState({
     weather:true,description:true,labor:true,equipment:true,
     rental:true,materials:true,visitors:true,delays:true,signature:true
@@ -2890,6 +2963,22 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       setSelectedPhotos(onDate.map(ph=>ph.id));
     }catch(e){}
     setPhotosLoading(false);
+  }
+
+  // Project documents (Documents tab uploads) — same pattern as photos:
+  // files uploaded on the report date float to the top and start selected.
+  async function loadDocsForPrint(){
+    setDocsLoading(true);
+    try{
+      const d=await API.docs.forProject(project.id);
+      const list=(Array.isArray(d)?d:[]).filter(x=>!x.visible_to||x.visible_to.includes(user?.role||"crew"));
+      const dayOf=(s)=>{if(!s)return"";const dt=new Date(s);if(isNaN(dt))return"";const p=n=>String(n).padStart(2,"0");return `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}`;};
+      const onDate=list.filter(x=>dayOf(x.created_at)===report.date);
+      const others=list.filter(x=>dayOf(x.created_at)!==report.date);
+      setReportDocs([...onDate,...others].map(x=>({...x,_onDate:dayOf(x.created_at)===report.date})));
+      setSelectedDocs(onDate.map(x=>x.id));
+    }catch(e){}
+    setDocsLoading(false);
   }
 
   async function sendEsig(){
@@ -3140,12 +3229,48 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     const selAll=()=>setSelectedPhotos(reportPhotos.map(p=>p.id));
     const selNone=()=>setSelectedPhotos([]);
     const selDateOnly=()=>setSelectedPhotos(reportPhotos.filter(p=>p.date===report.date).map(p=>p.id));
+    const toggleDoc=(id)=>setSelectedDocs(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
+    const docsAll=()=>setSelectedDocs(reportDocs.map(d=>d.id));
+    const docsNone=()=>setSelectedDocs([]);
+    const docsDateOnly=()=>setSelectedDocs(reportDocs.filter(d=>d._onDate).map(d=>d.id));
+    const everythingOn=()=>{selAll();docsAll();};
+    const everythingOff=()=>{selNone();docsNone();};
+    const docMeta=(d)=>{
+      const fname=(d.file_name||d.name||"").toLowerCase();
+      const data=d.file||"";
+      const isImage=(d.file_type||"").startsWith("image/")||data.startsWith("data:image")||/\.(jpe?g|png|gif|webp|bmp)$/.test(fname);
+      const isPdf=d.file_type==="application/pdf"||data.startsWith("data:application/pdf")||fname.endsWith(".pdf");
+      const b=parseFloat(d.file_size)||0;
+      const size=b>=1048576?(b/1048576).toFixed(1)+" MB":b>=1024?Math.round(b/1024)+" KB":"";
+      return {icon:isImage?"🖼️":isPdf?"📄":fname.match(/\.xlsx?$/)?"📊":fname.match(/\.docx?$/)?"📝":"📁",
+        printable:isImage||isPdf,size,
+        label:isImage?"Image · embedded":isPdf?"PDF · pages embedded":"Listed in index only"};
+    };
+    const attachCount=selectedPhotos.length+selectedDocs.length;
 
     const catColor={Progress:T.blue,Safety:T.red,Equipment:T.yellow,"Issue/Deficiency":T.red,Before:T.purple,After:T.green,Inspection:T.orange,Other:T.muted};
 
-    function generate(){
+    async function generate(){
+      if(printBusy)return;
       const photos=reportPhotos.filter(p=>selectedPhotos.includes(p.id));
-      printReportWithOptions(report,project,printSections,photos,photoLayout);
+      const docs=reportDocs.filter(d=>selectedDocs.includes(d.id));
+      // Open the window synchronously (inside the tap) so mobile popup blockers
+      // allow it, then fill it once any PDF attachments have been rasterized.
+      const win=window.open('','_blank','width=950,height=800');
+      if(!win){alert('Popup blocked — please allow popups and try again.');return;}
+      win.document.write('<html><body style="font-family:Arial,sans-serif;padding:40px;color:#1f3864"><h2>Preparing your PDF…</h2><p id="aime-status" style="color:#555">Loading attachments</p></body></html>');
+      let docItems=[];
+      if(docs.length>0){
+        setPrintBusy("Preparing attachments…");
+        try{
+          docItems=await prepareDocsForPrint(docs,(msg)=>{
+            setPrintBusy(msg);
+            try{const el=win.document.getElementById('aime-status');if(el)el.textContent=msg;}catch(e){}
+          });
+        }catch(e){}
+        setPrintBusy("");
+      }
+      printReportWithOptions(report,project,printSections,photos,photoLayout,docItems,win);
       setShowPrintModal(false);
     }
 
@@ -3154,8 +3279,8 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
         <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <button onClick={()=>setShowPrintModal(false)} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
           <div style={{fontSize:15,fontWeight:800,color:T.text}}>🖨️ Print / Export PDF</div>
-          <button onClick={generate} style={{background:T.blue,color:"#fff",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-            Generate PDF
+          <button onClick={generate} disabled={!!printBusy} style={{background:T.blue,color:"#fff",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:printBusy?"wait":"pointer",fontFamily:"inherit",opacity:printBusy?0.6:1}}>
+            {printBusy?"Working…":"Generate PDF"}
           </button>
         </div>
 
@@ -3164,6 +3289,17 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
           <div style={{...cardS,marginBottom:14,background:T.blueLow,border:`1px solid ${T.blue}30`}}>
             <div style={{fontSize:13,fontWeight:800,color:T.text}}>{project.name}</div>
             <div style={{fontSize:11,color:T.muted}}>{report.date} · Report #{report.report_no} · {report.submitted_by}</div>
+          </div>
+          {/* Attachments master switch — photos + documents together */}
+          <div style={{...cardS,marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:800,color:T.text,textTransform:"uppercase",letterSpacing:"1px"}}>📎 Attachments</div>
+              <div style={{fontSize:11,color:T.muted}}>{selectedPhotos.length} photo{selectedPhotos.length!==1?"s":""} · {selectedDocs.length} document{selectedDocs.length!==1?"s":""} selected</div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={everythingOn} style={{...ghostBtn,fontSize:11,padding:"4px 10px",color:T.green,border:`1px solid ${T.green}40`}}>✓ Everything</button>
+              <button onClick={everythingOff} style={{...ghostBtn,fontSize:11,padding:"4px 10px",color:T.red,border:`1px solid ${T.red}40`}}>✕ None</button>
+            </div>
           </div>
           <div style={{...cardS,marginBottom:14}}>
             <div style={{fontSize:12,fontWeight:800,color:T.text,textTransform:"uppercase",letterSpacing:"1px",marginBottom:12}}>Report Sections</div>
@@ -3231,9 +3367,53 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
               </div>}
             </>}
           </div>
-          <button onClick={generate}
-            style={{...primBtn,borderRadius:14,background:T.blue,color:"#fff"}}>
-            🖨️ Generate PDF ({Object.values(printSections).filter(Boolean).length} sections{selectedPhotos.length>0?`, ${selectedPhotos.length} photos`:""})
+
+          {/* Documents */}
+          <div style={{...cardS,marginBottom:14}}>
+            <div style={{fontSize:12,fontWeight:800,color:T.text,textTransform:"uppercase",letterSpacing:"1px",marginBottom:4}}>
+              📁 Documents ({selectedDocs.length}/{reportDocs.length} selected)
+            </div>
+            <div style={{fontSize:11,color:T.muted,marginBottom:12}}>Tap documents to include/exclude. Images and PDFs are added as pages; other file types are listed on an index page.</div>
+
+            {docsLoading&&<div style={{textAlign:"center",padding:"20px 0",color:T.muted}}>Loading documents...</div>}
+
+            {!docsLoading&&reportDocs.length===0&&(
+              <div style={{textAlign:"center",padding:"20px 0",color:T.muted,fontSize:12}}>No documents on this job yet</div>
+            )}
+
+            {!docsLoading&&reportDocs.length>0&&<>
+              <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+                <button onClick={docsAll} style={{...ghostBtn,fontSize:11,padding:"4px 10px",color:T.green,border:`1px solid ${T.green}40`}}>✓ Select All ({reportDocs.length})</button>
+                <button onClick={docsDateOnly} style={{...ghostBtn,fontSize:11,padding:"4px 10px",color:T.blue,border:`1px solid ${T.blue}40`}}>📅 This Date ({reportDocs.filter(d=>d._onDate).length})</button>
+                <button onClick={docsNone} style={{...ghostBtn,fontSize:11,padding:"4px 10px",color:T.red,border:`1px solid ${T.red}40`}}>✕ None</button>
+              </div>
+              {reportDocs.map(d=>{
+                const sel=selectedDocs.includes(d.id);
+                const m=docMeta(d);
+                return(
+                  <div key={d.id} onClick={()=>toggleDoc(d.id)}
+                    style={{display:"flex",alignItems:"center",gap:10,padding:"9px 10px",marginBottom:6,borderRadius:10,cursor:"pointer",
+                      background:sel?T.greenLow:T.surface,border:`1px solid ${sel?T.green:T.border}`,transition:"all 0.15s",opacity:sel?1:0.7}}>
+                    <div style={{width:22,height:22,borderRadius:6,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",
+                      background:sel?T.green:"transparent",border:`2px solid ${sel?T.green:T.border}`,color:"#000",fontSize:12,fontWeight:800}}>{sel?"✓":""}</div>
+                    <div style={{fontSize:20,flexShrink:0}}>{m.icon}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:700,color:sel?T.text:T.sub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name||d.file_name}</div>
+                      <div style={{fontSize:10.5,color:m.printable?T.muted:T.yellow}}>
+                        {m.label}{m.size?` · ${m.size}`:""}{d.uploaded_by?` · ${d.uploaded_by}`:""}{d._onDate?" · Today":""}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>}
+          </div>
+
+          <button onClick={generate} disabled={!!printBusy}
+            style={{...primBtn,borderRadius:14,background:T.blue,color:"#fff",opacity:printBusy?0.6:1}}>
+            {printBusy
+              ?`⏳ ${printBusy}`
+              :`🖨️ Generate PDF (${Object.values(printSections).filter(Boolean).length} sections${selectedPhotos.length>0?`, ${selectedPhotos.length} photos`:""}${selectedDocs.length>0?`, ${selectedDocs.length} docs`:""})`}
           </button>
         </div>
       </div>
@@ -3391,7 +3571,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       <AuditTrail table="daily_reports" recordId={report.id} label="this report"/>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-        <button onClick={async()=>{setShowPrintModal(true);await loadPhotosForPrint();}} style={{...primBtn,background:"#1f3864",color:"#fff",borderRadius:14}}>🖨️ Print / Save PDF</button>
+        <button onClick={async()=>{setShowPrintModal(true);await Promise.all([loadPhotosForPrint(),loadDocsForPrint()]);}} style={{...primBtn,background:"#1f3864",color:"#fff",borderRadius:14}}>🖨️ Print / Save PDF</button>
         <button onClick={exportXLSX} style={{...primBtn,background:divColor+"15",color:divColor,border:`1px solid ${divColor}40`,borderRadius:14}}>📥 Excel (.xlsx)</button>
       </div>
       {/* Anyone who can approve, plus whoever submitted it — crew need to be
