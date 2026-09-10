@@ -538,7 +538,10 @@ function equipAmt(r,division){
     const eq=getEquipList(division).find(e=>!e.section&&e.name===r.description);
     if(eq)rate=eq.rate;
   }
-  const qty=parseFloat(r.qty)||0;
+  // Owned equipment has no quantity box — one machine, billed by hours or
+  // days. A row with no qty is one unit; an older row that explicitly says 0
+  // still totals nothing.
+  const qty=(r.qty===""||r.qty==null)?1:(parseFloat(r.qty)||0);
   const usage=parseFloat(r.usage)||0;
   return qty*rate*(usage||1);
 }
@@ -607,7 +610,7 @@ if(typeof document!=="undefined"){
 function TopBar({title,sub,onBack,right}){return(<div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50}}>{onBack&&<button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>}<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{title}</div>{sub&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{sub}</div>}</div>{right&&<div style={{flexShrink:0,marginLeft:12}}>{right}</div>}</div></div>);}
 
 function LaborCard({row,onChange,onRemove,division}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{ROSTER().map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
-function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>set("qty",e.target.value)} style={inp}/></div><div>
+function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr",gap:8,marginBottom:8}}><div>
               <label style={lbl}>
                 {eq
                   ?<span>{eq.unit==="Hours"?"⏱️ Hours":eq.unit==="Days"?"📅 Days":eq.unit==="Ft"?"📏 Feet":eq.unit==="Week"?"📅 Weeks":eq.unit==="Month"?"📅 Months":"📊 "+eq.unit}</span>
@@ -2661,7 +2664,7 @@ ${sections.labor&&(report.labor||[]).length>0?`<div class="section"><h2>Labor �
 
 ${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>Equipment — ${(report.equipment||[]).length} Items${tot.equip>0?' · '+fmt2(tot.equip):''}</h2>
 <table><thead><tr><th>Equipment</th><th>Unit</th><th style="text-align:center">Qty</th><th style="text-align:center">Hrs / Days</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.equipment||[]).filter(e=>e.description||parseFloat(e.qty)).map(e=>{const rate=parseFloat(e.rate)||(getEquipList(division).find(x=>!x.section&&x.name===e.description)||{}).rate||0;return `<tr><td>${e.description||'—'}</td><td>${e.unit||'—'}</td><td style="text-align:center">${e.qty||0}</td><td style="text-align:center">${e.usage||'—'}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${fmt2(equipAmt(e,division))}</td></tr>`;}).join('')}
+<tbody>${(report.equipment||[]).filter(e=>e.description||parseFloat(e.usage)).map(e=>{const rate=parseFloat(e.rate)||(getEquipList(division).find(x=>!x.section&&x.name===e.description)||{}).rate||0;return `<tr><td>${e.description||'—'}</td><td>${e.unit||'—'}</td><td style="text-align:center">${e.qty||0}</td><td style="text-align:center">${e.usage||'—'}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${fmt2(equipAmt(e,division))}</td></tr>`;}).join('')}
 </tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.equip||0)}</strong></td></tr></tfoot></table></div>`:''}
 
 ${sections.rental&&(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).length>0?`<div class="section"><h2>Rental Equipment${tot.rental>0?' · '+fmt2(tot.rental):''}</h2>
@@ -2922,7 +2925,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
             equipment:(report.equipment||[]).map(e=>({
               description:e.description||"",
               unit:e.unit||"",
-              qty:e.qty||0,
+              qty:(e.qty===""||e.qty==null)?1:e.qty,
               rate:e.rate?m(e.rate):"",
               amount:m(equipAmt(e,div)),
             })),
@@ -3046,11 +3049,11 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       put('J25', num(tot.labor), $);
 
       /* equipment — 15 rows */
-      const equip=(report.equipment||[]).filter(e=>e.description||num(e.qty));
+      const equip=(report.equipment||[]).filter(e=>e.description||num(e.usage));
       equip.slice(0,15).forEach((e,i)=>{
         const r=29+i;
         put('B'+r, e.description||'');
-        put('G'+r, num(e.qty));
+        put('G'+r, (e.qty===''||e.qty==null)?1:num(e.qty));
         put('H'+r, e.usage||e.unit||'');
         let rate=num(e.rate);
         if(!rate&&e.description){
