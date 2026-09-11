@@ -15385,12 +15385,32 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
   const [bolTracking,setBolTracking]=useState(existingSlip?.data?.bolTracking||"");
   const [skidCount,setSkidCount]=useState(existingSlip?.data?.skidCount||"");
   const [totalWeight,setTotalWeight]=useState(existingSlip?.data?.totalWeight||"");
-  const [sealNo,setSealNo]=useState("");
-  const [sqrs,setSqrs]=useState("SQR03, SQR04, SQR06, SQR33, SQR35");
-  const [drawingRev,setDrawingRev]=useState("");
-  const [deliveryAppt,setDeliveryAppt]=useState("Call 24 hrs. in advance: (814) 539-6922 x299");
-  const [recvHours,setRecvHours]=useState("7:00 AM thru 3:00 PM ONLY");
-  const [notes,setNotes]=useState(existingSlip?.data?.notes||"");
+  const d0=existingSlip?.data||{};
+  const dv=(k,fallback)=>(d0[k]!==undefined&&d0[k]!==null)?d0[k]:fallback;
+  const [sealNo,setSealNo]=useState(dv("sealNo",""));
+  const [sqrs,setSqrs]=useState(dv("sqrs","SQR03, SQR04, SQR06, SQR33, SQR35"));
+  const [drawingRev,setDrawingRev]=useState(dv("drawingRev",""));
+  const [deliveryAppt,setDeliveryAppt]=useState(dv("deliveryAppt","Call 24 hrs. in advance: (814) 539-6922 x299"));
+  const [recvHours,setRecvHours]=useState(dv("recvHours","7:00 AM thru 3:00 PM ONLY"));
+  const [notes,setNotes]=useState(dv("notes",""));
+
+  // Section 1 — Ship To / Order Information. Every box is editable so the
+  // slip can go to a different customer / site; defaults come from the job.
+  const [fromAddr,setFromAddr]=useState(dv("fromAddr","AIME / Atlantic Welders Inc.\n5730 Pennington Ave, Baltimore, MD 21226"));
+  const [customerName,setCustomerName]=useState(dv("customerName",job.customer||""));
+  // JWFI is the usual customer, so keep its buyer / dock as the default when
+  // the job is theirs; any other customer starts blank.
+  const isJWF=/jwf/i.test(job.customer||"");
+  const [buyerContact,setBuyerContact]=useState(dv("buyerContact",isJWF?"JWFI Purchasing":""));
+  const [shipVia,setShipVia]=useState(dv("shipVia",""));
+  const [shipTo,setShipTo]=useState(dv("shipTo",isJWF?"JWFI\n84 Iron Street - Dock 2 Johnstown, PA 15906":""));
+  const [customerPo,setCustomerPo]=useState(dv("customerPo",job.po_number||""));
+
+  // Section 2 — Shipment Details extras (the rest already have state above).
+  const [partNumber,setPartNumber]=useState(dv("partNumber",parts.map(p=>p.part_number).filter(Boolean).join(", ")));
+  const [partDesc,setPartDesc]=useState(dv("partDesc",parts.map(p=>p.description).filter(Boolean).join(", ")));
+  const [operation,setOperation]=useState(dv("operation",""));
+  const [uom,setUom]=useState(dv("uom","EA"));
 
   const blankLine={poLine:"",partNo:"",description:"",qtyOrdered:"",qtyShipped:"",qtyBackordered:"",pkgSkid:"",notes:""};
   const [lines,setLines]=useState(()=>existingSlip?.data?.lines||parts.map(p=>({...blankLine,partNo:p.part_number,description:p.description||"",qtyOrdered:String(p.qty_ordered||"")})).concat(Array(Math.max(0,6-parts.length)).fill(blankLine)));
@@ -15408,7 +15428,8 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
 
   async function saveSlip(){
     setSaving(true);setSaveMsg("");
-    const data={slipNo,shipDate,carrier,truckTrailer,bolTracking,skidCount,totalWeight,sealNo,sqrs,drawingRev,deliveryAppt,recvHours,notes,checks,lines};
+    const data={slipNo,shipDate,carrier,truckTrailer,bolTracking,skidCount,totalWeight,sealNo,sqrs,drawingRev,deliveryAppt,recvHours,notes,checks,lines,
+      fromAddr,customerName,buyerContact,shipVia,shipTo,customerPo,partNumber,partDesc,operation,uom};
     try{
       if(slipId){
         await API.mfg.packingSlips.update(slipId,{slip_number:slipNo,ship_date:shipDate||null,data,updated_at:new Date().toISOString()});
@@ -15438,6 +15459,8 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
 
   function printSlip(){
     const CHECKMARK="✓";
+    const escP=(v)=>String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const ml=(v)=>escP(v).replace(/\n/g,"<br/>");   // multi-line box
     const CB=(checked)=>checked?`<span style="font-size:14px">☑</span>`:`<span style="font-size:14px">☐</span>`;
 
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -15497,29 +15520,29 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
 <div class="section-header">1. Ship To / Order Information</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #ccc;margin-bottom:4px;">
   <div style="border-right:1px solid #ccc;">
-    ${[["From","AIME / Atlantic Welders Inc.<br/>5730 Pennington Ave, Baltimore, MD 21226"],
-       ["Customer / Project",job.customer||"JWF Industries"],
-       ["Buyer / Contact","JWFI Purchasing"],
-       ["Ship Via",carrier||"Vendor Truck"]].map(([l,v])=>`
-    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v}</div></div>`).join("")}
+    ${[["From",ml(fromAddr)],
+       ["Customer / Project",escP(customerName)],
+       ["Buyer / Contact",escP(buyerContact)],
+       ["Ship Via",escP(shipVia||carrier)]].map(([l,v])=>`
+    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v||"&nbsp;"}</div></div>`).join("")}
   </div>
   <div>
-    ${[["Ship To","JWFI<br/>84 Iron Street - Dock 2 Johnstown, PA 15906"],
-       ["Customer PO #",job.po_number||"222577-00"],
-       ["Delivery Appointment",deliveryAppt],
-       ["Receiving Hours",recvHours]].map(([l,v])=>`
-    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v}</div></div>`).join("")}
+    ${[["Ship To",ml(shipTo)],
+       ["Customer PO #",escP(customerPo)],
+       ["Delivery Appointment",escP(deliveryAppt)],
+       ["Receiving Hours",escP(recvHours)]].map(([l,v])=>`
+    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v||"&nbsp;"}</div></div>`).join("")}
   </div>
 </div>
 
 <!-- SECTION 2: SHIPMENT DETAILS -->
 <div class="section-header">2. Shipment Details</div>
 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;border:1px solid #ccc;margin-bottom:4px;">
-  ${[["Part Number",parts.map(p=>p.part_number).join(", ")||"1651"],
-     ["Description",parts.map(p=>p.description).filter(Boolean).join(", ")||""],
+  ${[["Part Number",partNumber],
+     ["Description",partDesc],
      ["Drawing Rev.",drawingRev],
-     ["Operation","OSP Fit / Weld"],
-     ["UOM","EA"],
+     ["Operation",operation],
+     ["UOM",uom],
      ["SQRs",sqrs],
      ["Carrier / Driver",carrier],
      ["Truck / Trailer #",truckTrailer],
@@ -15527,7 +15550,7 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
      ["Skid / Package Count",skidCount],
      ["Total Weight",totalWeight?(totalWeight+" lbs"):""],
      ["Seal #",sealNo]].map(([l,v])=>`
-  <div class="ship-row"><div class="ship-label">${l}</div><div class="ship-value">${v||"&nbsp;"}</div></div>`).join("")}
+  <div class="ship-row"><div class="ship-label">${l}</div><div class="ship-value">${escP(v)||"&nbsp;"}</div></div>`).join("")}
 </div>
 
 <!-- SECTION 3: PARTS PACKED/SHIPPED -->
@@ -15641,20 +15664,45 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
           </div>
         </div>
 
-        {/* Auto-filled from job */}
-        <div style={{...cardS,marginBottom:12,background:T.blueLow,border:`1px solid ${T.blue}30`}}>
-          <div style={{fontSize:12,fontWeight:800,color:T.blue,marginBottom:8}}>📦 Auto-filled from Job</div>
-          {[["Customer / Project",job.customer||"JWF Industries"],["Customer PO #",job.po_number||""],["Part Number",parts.map(p=>p.part_number).join(", ")],["Description",parts.map(p=>p.description).filter(Boolean).join(", ")]].map(([l,v])=>(
-            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
-              <span style={{color:T.muted,fontWeight:700}}>{l}</span>
-              <span style={{color:T.text}}>{v||"—"}</span>
-            </div>
-          ))}
+        {/* Section 1: Ship To / Order Information — all editable */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.blue,marginBottom:4}}>📦 1. Ship To / Order Information</div>
+          <div style={{fontSize:10.5,color:T.muted,marginBottom:12}}>Pre-filled from the job. Change anything here for a different customer, buyer, or ship-to site — it's saved with this slip only.</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>From</label>
+              <textarea value={fromAddr} onChange={e=>setFromAddr(e.target.value)} rows={2} style={{...inp,resize:"vertical",minHeight:52}}/></div>
+            <div><label style={lbl}>Ship To</label>
+              <textarea value={shipTo} onChange={e=>setShipTo(e.target.value)} rows={2} placeholder={"Company\nStreet, City, ST ZIP"} style={{...inp,resize:"vertical",minHeight:52}}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Customer / Project</label><input value={customerName} onChange={e=>setCustomerName(e.target.value)} placeholder="Customer" style={inp}/></div>
+            <div><label style={lbl}>Customer PO #</label><input value={customerPo} onChange={e=>setCustomerPo(e.target.value)} placeholder="PO #" style={inp}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Buyer / Contact</label><input value={buyerContact} onChange={e=>setBuyerContact(e.target.value)} placeholder="Name / dept / phone" style={inp}/></div>
+            <div><label style={lbl}>Ship Via</label><input value={shipVia} onChange={e=>setShipVia(e.target.value)} placeholder={carrier||"e.g. AIME Delivery"} style={inp}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><label style={lbl}>Delivery Appointment</label><input value={deliveryAppt} onChange={e=>setDeliveryAppt(e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>Receiving Hours</label><input value={recvHours} onChange={e=>setRecvHours(e.target.value)} style={inp}/></div>
+          </div>
         </div>
 
-        {/* Shipment details */}
+        {/* Section 2: Shipment details — all editable */}
         <div style={{...cardS,marginBottom:12}}>
-          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:12}}>🚛 Shipment Details</div>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:12}}>🚛 2. Shipment Details</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Part Number</label><input value={partNumber} onChange={e=>setPartNumber(e.target.value)} placeholder="Part #" style={inp}/></div>
+            <div><label style={lbl}>Description</label><input value={partDesc} onChange={e=>setPartDesc(e.target.value)} placeholder="Description" style={inp}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Drawing Rev.</label><input value={drawingRev} onChange={e=>setDrawingRev(e.target.value)} placeholder="Rev" style={inp}/></div>
+            <div><label style={lbl}>Operation</label><input value={operation} onChange={e=>setOperation(e.target.value)} placeholder="e.g. OSP Fit / Weld" style={inp}/></div>
+            <div><label style={lbl}>UOM</label><input value={uom} onChange={e=>setUom(e.target.value)} placeholder="EA" style={inp}/></div>
+          </div>
+          <div style={{marginBottom:10}}>
+            <label style={lbl}>SQRs</label><input value={sqrs} onChange={e=>setSqrs(e.target.value)} placeholder="SQR numbers, comma separated" style={inp}/>
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
             <div><label style={lbl}>Carrier / Driver</label><input value={carrier} onChange={e=>setCarrier(e.target.value)} style={inp}/></div>
             <div><label style={lbl}>Truck / Trailer #</label><input value={truckTrailer} onChange={e=>setTruckTrailer(e.target.value)} placeholder="Truck/Trailer #" style={inp}/></div>
