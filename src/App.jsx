@@ -12485,7 +12485,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [af,setAf]=useState({part_id:"",qty:"",date:today(),by:user.name});
 
   const [showShipForm,setShowShipForm]=useState(false);
-  const [sf,setSf]=useState({part_id:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
+  const [sf,setSf]=useState({part_id:"",item:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
 
   useEffect(()=>{load();},[job.id]);
 
@@ -12637,19 +12637,26 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
     setSaving(false);
   }
 
+  // A shipment can be tied to a finished part (normal) or stand alone with a
+  // free-text item, for jobs where the customer supplies the material and
+  // nothing is tracked as an assembly.
+  const shipFormOk=!!sf.qty&&(!!sf.part_id||!!(sf.item||"").trim());
   async function logShipment(){
-    if(!sf.qty||!sf.part_id)return;
+    if(!shipFormOk)return;
     setSaving(true);
     try{
       const qty=parseInt(sf.qty)||0;
-      await API.mfg.shippingLog.create({part_id:sf.part_id,job_id:job.id,qty_shipped:qty,ship_date:sf.date,customer:sf.customer||null,bol_number:sf.bol||null,entered_by:sf.by});
+      await API.mfg.shippingLog.create({part_id:sf.part_id||null,item_description:sf.part_id?null:(sf.item.trim()||null),
+        job_id:job.id,qty_shipped:qty,ship_date:sf.date,customer:sf.customer||null,bol_number:sf.bol||null,entered_by:sf.by});
       // mfg_parts.qty_shipped is a cached total the manufacturing dashboard
       // reads. The packing slip flow updates it; this one did not, so the
       // dashboard showed 0 shipped while the job showed 40.
-      const part=parts.find(x=>x.id===sf.part_id);
-      await API.mfg.parts.update(sf.part_id,
-        {qty_shipped:(parseInt(part?.qty_shipped)||0)+qty}).catch(()=>{});
-      setShowShipForm(false);setSf({part_id:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
+      if(sf.part_id){
+        const part=parts.find(x=>x.id===sf.part_id);
+        await API.mfg.parts.update(sf.part_id,
+          {qty_shipped:(parseInt(part?.qty_shipped)||0)+qty}).catch(()=>{});
+      }
+      setShowShipForm(false);setSf({part_id:"",item:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
       await load();
     }catch(e){alert(e.message);}
     setSaving(false);
@@ -12658,7 +12665,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const allBomItems=parts.flatMap(p=>(boms[p.id]||[]).map(item=>({...item,part_id:p.id,_partNum:p.part_number})));
   const totalCanBuild=parts.length>0?parts.reduce((mn,p)=>Math.min(mn,canBuildPart(p.id)),9999):0;
   const totalReadyToShip=parts.reduce((s,p)=>s+asmTotals(p.id).readyToShip,0);
-  const totalShipped=parts.reduce((s,p)=>s+asmTotals(p.id).shipped,0);
+  const totalShipped=shippingLogs.reduce((s,a)=>s+(parseInt(a.qty_shipped)||0),0);
   const reorderNeeded=allBomItems.filter(item=>inv(item).needsReorder);
 
   if(showPackingSlip) return(
@@ -12998,12 +13005,16 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           </div>
           {showShipForm&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.blue}40`}}>
             <div style={{fontSize:13,fontWeight:800,color:T.blue,marginBottom:12}}>Log Shipment</div>
-            <div style={{marginBottom:10}}><label style={lbl}>Assembly *</label>
-              <select value={sf.part_id} onChange={e=>setSf(x=>({...x,part_id:e.target.value}))} style={inpSel}>
-                <option value="">— Select —</option>
+            <div style={{marginBottom:10}}><label style={lbl}>Assembly {parts.length?"":"(none on this job)"}</label>
+              <select value={sf.part_id} onChange={e=>setSf(x=>({...x,part_id:e.target.value}))} style={inpSel} disabled={!parts.length}>
+                <option value="">{parts.length?"— None / customer-supplied —":"— No finished parts set up —"}</option>
                 {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}{p.description?" — "+p.description:""}</option>)}
               </select>
             </div>
+            {!sf.part_id&&<div style={{marginBottom:10}}><label style={lbl}>What shipped *</label>
+              <input value={sf.item} onChange={e=>setSf(x=>({...x,item:e.target.value}))} placeholder="e.g. Security Door Frames (customer-supplied material)" style={inp}/>
+              <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>No assembly needed — just describe the item and enter the quantity.</div>
+            </div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
               <div><label style={lbl}>Qty Shipped *</label><input type="number" value={sf.qty} onChange={e=>setSf(x=>({...x,qty:e.target.value}))} placeholder="0" style={inp}/></div>
               <div><label style={lbl}>Ship Date</label><input type="date" value={sf.date} onChange={e=>setSf(x=>({...x,date:e.target.value}))} style={inp}/></div>
@@ -13013,7 +13024,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
               <div><label style={lbl}>BOL #</label><input value={sf.bol} onChange={e=>setSf(x=>({...x,bol:e.target.value}))} placeholder="BOL #" style={inp}/></div>
             </div>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={logShipment} disabled={!sf.qty||!sf.part_id||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.blue,opacity:sf.qty&&sf.part_id&&!saving?1:0.5}}>{saving?"Saving…":"Log Shipment"}</button>
+              <button onClick={logShipment} disabled={!shipFormOk||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.blue,opacity:shipFormOk&&!saving?1:0.5}}>{saving?"Saving…":"Log Shipment"}</button>
               <button onClick={()=>setShowShipForm(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
             </div>
           </div>}
@@ -13021,7 +13032,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
             const part=parts.find(p=>p.id===s.part_id);
             return(<div key={s.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.blue}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <div style={{fontSize:14,fontWeight:800,color:T.blue}}>{s.qty_shipped} shipped — {part?.part_number||"—"}</div>
+                <div style={{fontSize:14,fontWeight:800,color:T.blue}}>{s.qty_shipped} shipped — {part?.part_number||s.item_description||"—"}</div>
                 <div style={{fontSize:11,color:T.muted}}>{s.ship_date}{s.customer?" · "+s.customer:""}{s.bol_number?" · BOL: "+s.bol_number:""}</div>
               </div>
               {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete?"))try{
