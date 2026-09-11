@@ -17688,21 +17688,32 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
   const [showPull,setShowPull]=useState(false);
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
 
-  const addLine=()=>setLines(ls=>[...ls,{id:uid(),period_start:"",period_end:"",
+  // Each line has a unit: "hour" (employees × hours × rate, the original
+  // weekly-labor row) or "each" (qty × rate, for piece-priced items).
+  const addLine=()=>setLines(ls=>[...ls,{id:uid(),unit:"hour",period_start:"",period_end:"",
     description:`${job.description||job.job_number} - Weekly Labor`,
     employees:"",hours:"",rate:rate,source:null}]);
+  const addItemLine=()=>setLines(ls=>[...ls,{id:uid(),unit:"each",period_start:"",period_end:"",
+    description:"",qty:"",rate:"",source:null}]);
   const setLine=(id,k,v)=>setLines(ls=>ls.map(l=>l.id===id?{...l,[k]:v}:l));
   const delLine=(id)=>setLines(ls=>ls.filter(l=>l.id!==id));
 
+  const isEach=(l)=>l.unit==="each";
   // Man-hours = employees × hours each. Amount = man-hours × rate.
-  const manHours=(l)=>(parseFloat(l.employees)||0)*(parseFloat(l.hours)||0);
-  const lineAmt=(l)=>manHours(l)*(parseFloat(l.rate)||0);
+  // Item lines: amount = qty × rate, no man-hours.
+  const manHours=(l)=>isEach(l)?0:(parseFloat(l.employees)||0)*(parseFloat(l.hours)||0);
+  const lineQty=(l)=>isEach(l)?(parseFloat(l.qty)||0):manHours(l);
+  const lineAmt=(l)=>lineQty(l)*(parseFloat(l.rate)||0);
 
-  const totalManHours=lines.reduce((s,l)=>s+manHours(l),0);
-  const laborSubtotal=lines.reduce((s,l)=>s+lineAmt(l),0);
+  const laborLines=lines.filter(l=>!isEach(l));
+  const itemLines=lines.filter(isEach);
+  const totalManHours=laborLines.reduce((s,l)=>s+manHours(l),0);
+  const laborSubtotal=laborLines.reduce((s,l)=>s+lineAmt(l),0);
+  const itemsSubtotal=itemLines.reduce((s,l)=>s+lineAmt(l),0);
+  const linesSubtotal=laborSubtotal+itemsSubtotal;
   const materials=parseFloat(f.materials)||0;
   const freight=parseFloat(f.freight)||0;
-  const taxable=laborSubtotal+materials+freight;
+  const taxable=linesSubtotal+materials+freight;
   const taxAmount=taxable*((parseFloat(f.tax_pct)||0)/100);
   const total=taxable+taxAmount;
   const paid=parseFloat(f.amount_paid)||0;
@@ -17727,7 +17738,7 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
       tax_pct:parseFloat(f.tax_pct)||0,tax_amount:taxAmount,
       retainage_pct:0,retainage_amount:0,
       amount_paid:paid,
-      subtotal:laborSubtotal,total,
+      subtotal:linesSubtotal,total,
       lines,
       created_by:invoice?.created_by||user.name,
       updated_at:new Date().toISOString(),
@@ -17838,12 +17849,20 @@ table.tot .v{text-align:right;min-width:90px}
     <th style="width:30%">Description</th>
     <th class="c" style="width:10%">Employees</th>
     <th class="c" style="width:8%">Hours</th>
-    <th class="c" style="width:11%">Man-Hours</th>
+    <th class="c" style="width:11%">${itemLines.length?"Qty / Man-Hrs":"Man-Hours"}</th>
     <th class="c" style="width:8%">Rate</th>
     <th class="r" style="width:13%">Amount</th>
   </tr></thead>
   <tbody>
-    ${rows.map(l=>l?`<tr>
+    ${rows.map(l=>l?(isEach(l)?`<tr>
+      <td>${period(l)}</td>
+      <td>${esc(l.description)}</td>
+      <td class="c">&mdash;</td>
+      <td class="c">&mdash;</td>
+      <td class="c">${n0(l.qty)} ea</td>
+      <td class="c">${m2(l.rate)}</td>
+      <td class="r">${m2(lineAmt(l))}</td>
+    </tr>`:`<tr>
       <td>${period(l)}</td>
       <td>${esc(l.description)}</td>
       <td class="c">${n0(l.employees)}</td>
@@ -17851,14 +17870,14 @@ table.tot .v{text-align:right;min-width:90px}
       <td class="c">${n0(manHours(l))}</td>
       <td class="c">${n0(l.rate)}</td>
       <td class="r">${n0(lineAmt(l))}</td>
-    </tr>`:`<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join("")}
+    </tr>`):`<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join("")}
   </tbody>
 </table>
 
 <div class="foot">
   <div>
     <h2>NOTES / PAYMENT TERMS</h2>
-    <div class="hl">Labor billed at $${m2(rate)} per man-hour. Weekly billing period.</div>
+    ${laborLines.length?`<div class="hl">Labor billed at $${m2(rate)} per man-hour. Weekly billing period.</div>`:""}
     <div class="note">${esc(f.notes).replace(/\n/g,"<br/>")}</div>
     <div class="sig">
       <div><div class="sigline"></div><div class="siglbl">Authorized By</div></div>
@@ -17867,8 +17886,9 @@ table.tot .v{text-align:right;min-width:90px}
   </div>
   <div>
     <table class="tot">
-      <tr><td class="k">Total Man-Hours</td><td class="v">${n0(totalManHours)}</td></tr>
-      <tr><td class="k">Labor Subtotal</td><td class="v">${n0(laborSubtotal)}</td></tr>
+      ${laborLines.length||!itemLines.length?`<tr><td class="k">Total Man-Hours</td><td class="v">${n0(totalManHours)}</td></tr>
+      <tr><td class="k">Labor Subtotal</td><td class="v">${n0(laborSubtotal)}</td></tr>`:""}
+      ${itemLines.length?`<tr><td class="k">Items Subtotal</td><td class="v">${m2(itemsSubtotal)}</td></tr>`:""}
       <tr><td class="k">Materials / Consumables</td><td class="v">${n0(materials)}</td></tr>
       <tr><td class="k">Freight / Other</td><td class="v">${n0(freight)}</td></tr>
       <tr><td class="k">Sales Tax</td><td class="v">${n0(taxAmount)}</td></tr>
@@ -17941,26 +17961,34 @@ table.tot .v{text-align:right;min-width:90px}
 
       {/* Lines */}
       <div style={{display:"flex",gap:8,marginBottom:10}}>
-        <button onClick={addLine} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ Add Week</button>
+        <button onClick={addLine} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ Add Week (hourly)</button>
+        <button onClick={addItemLine} style={{...primBtn,flex:1,borderRadius:12,background:T.purple,fontSize:13}}>+ Add Items (each)</button>
         <button onClick={()=>setShowPull(true)} style={{...primBtn,flex:1,borderRadius:12,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,fontSize:13}}>
           ↓ Pull Logged Hours
         </button>
       </div>
 
       {lines.length===0&&<div style={{...cardS,textAlign:"center",padding:"24px",color:T.muted,fontSize:12,marginBottom:10}}>
-        No billing weeks yet. Pull logged hours to build them automatically, or add a week by hand.
+        No lines yet. Pull logged hours, add a week by hand, or add a per-item line (qty × price each).
       </div>}
 
       {lines.map(l=>(
-        <div key={l.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${l.source?T.green:T.blue}`}}>
+        <div key={l.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${l.source?T.green:isEach(l)?T.purple:T.blue}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
-            <div style={{fontSize:11,color:l.source?T.green:T.muted,fontWeight:l.source?700:400}}>
-              {l.source?`🏭 ${l.source.ids.length} labor entries`:"Manual week"}
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <div style={{fontSize:11,color:l.source?T.green:T.muted,fontWeight:l.source?700:400}}>
+                {l.source?`🏭 ${l.source.ids.length} labor entries`:isEach(l)?"Items":"Manual week"}
+              </div>
+              {!l.source&&<select value={l.unit||"hour"} onChange={e=>setLine(l.id,"unit",e.target.value)}
+                style={{...inp,width:"auto",padding:"3px 6px",fontSize:11,fontWeight:700,color:isEach(l)?T.purple:T.blue}}>
+                <option value="hour">Per man-hour</option>
+                <option value="each">Per each</option>
+              </select>}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:9}}>
               <div style={{textAlign:"right"}}>
                 <div style={{fontSize:14,fontWeight:900,color:T.green}}>{money2(lineAmt(l))}</div>
-                <div style={{fontSize:10,color:T.muted}}>{manHours(l)} man-hrs</div>
+                <div style={{fontSize:10,color:T.muted}}>{isEach(l)?`${lineQty(l)} × ${money2(l.rate)}`:`${manHours(l)} man-hrs`}</div>
               </div>
               <button onClick={()=>delLine(l.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
             </div>
@@ -17970,21 +17998,29 @@ table.tot .v{text-align:right;min-width:90px}
             <div><label style={lbl}>Week To</label><input type="date" value={l.period_end||""} onChange={e=>setLine(l.id,"period_end",e.target.value)} style={ri}/></div>
           </div>
           <div style={{marginBottom:8}}><label style={lbl}>Description</label>
-            <input value={l.description||""} onChange={e=>setLine(l.id,"description",e.target.value)} style={ri}/></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            <input value={l.description||""} onChange={e=>setLine(l.id,"description",e.target.value)}
+              placeholder={isEach(l)?"e.g. Bracket assembly, P/N 0801651":""} style={ri}/></div>
+          {isEach(l)?<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div><label style={lbl}>Quantity</label>
+              <input type="number" step="1" value={l.qty||""} onChange={e=>setLine(l.id,"qty",e.target.value)} placeholder="60" style={{...ri,textAlign:"center"}}/></div>
+            <div><label style={lbl}>Price Each</label>
+              <input type="number" step="0.01" value={l.rate||""} onChange={e=>setLine(l.id,"rate",e.target.value)} placeholder="120.00" style={{...ri,textAlign:"right"}}/></div>
+          </div>
+          :<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
             <div><label style={lbl}>Employees</label>
               <input type="number" value={l.employees||""} onChange={e=>setLine(l.id,"employees",e.target.value)} style={{...ri,textAlign:"center"}}/></div>
             <div><label style={lbl}>Hours Each</label>
               <input type="number" step="0.5" value={l.hours||""} onChange={e=>setLine(l.id,"hours",e.target.value)} style={{...ri,textAlign:"center"}}/></div>
             <div><label style={lbl}>Rate</label>
               <input type="number" step="0.01" value={l.rate||""} onChange={e=>setLine(l.id,"rate",e.target.value)} style={{...ri,textAlign:"right"}}/></div>
-          </div>
+          </div>}
         </div>
       ))}
 
       {/* Totals */}
       <div style={{...cardS,marginTop:12,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
-        {[["Total Man-Hours",totalManHours,false],["Labor Subtotal",laborSubtotal,true]].map(([l,v,isMoney])=>(
+        {[["Total Man-Hours",totalManHours,false],["Labor Subtotal",laborSubtotal,true],
+          ...(itemLines.length?[["Items Subtotal",itemsSubtotal,true]]:[])].map(([l,v,isMoney])=>(
           <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${T.border}`,fontSize:13}}>
             <span style={{color:T.sub}}>{l}</span>
             <span style={{fontWeight:700}}>{isMoney?money2(v):Number(v).toLocaleString("en-US")}</span>
