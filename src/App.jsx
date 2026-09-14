@@ -265,8 +265,9 @@ const API={
     open:(name)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&status=eq.open&limit=1`),
     openForProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&status=eq.open&order=clock_in_at.asc`),
     openAll:()=>sb("/time_cards?status=eq.open&select=*,projects(id,name,division)&order=clock_in_at.asc"),
-    pending:()=>sb("/time_cards?status=eq.pending&select=*,projects(id,name,division)&order=date.desc,worker_name.asc"),
-    pendingForProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&status=eq.pending&order=date.desc,worker_name.asc`),
+    pending:()=>sb("/time_cards?status=in.(pending,worker_approved,disputed)&select=*,projects(id,name,division)&order=date.desc,worker_name.asc"),
+    pendingForProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&status=in.(pending,worker_approved,disputed)&order=date.desc,worker_name.asc`),
+    unconfirmedFor:(name,from,to)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=gte.${from}&date=lte.${to}&status=in.(pending,disputed)&select=id,date,total_hours,status`),
   },
   myTime:{
     cards:(name,from,to)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=gte.${from}&date=lte.${to}&select=*,projects(id,name,division)&order=date.asc`),
@@ -1051,6 +1052,7 @@ function MyHoursScreen({user,onBack}){
       total:c.total_hours!=null&&c.total_hours!==""?parseFloat(c.total_hours)
             :(parseFloat(c.reg_hours)||0)+(parseFloat(c.ot_hours)||0)+(parseFloat(c.travel_hours)||0),
       status:c.status||"approved",
+      disputeNote:c.dispute_note||"",
       inAt:c.clock_in_at,outAt:c.clock_out_at,
       note:c.classification||"",
       edited:c.edited_by&&c.original_hours!=null&&Number(c.original_hours)!==Number(c.total_hours)
@@ -1072,7 +1074,36 @@ function MyHoursScreen({user,onBack}){
   const tot=entries.reduce((s,e)=>({
     reg:s.reg+e.reg,ot:s.ot+e.ot,travel:s.travel+e.travel,total:s.total+e.total,
   }),{reg:0,ot:0,travel:0,total:0});
-  const pendingHrs=entries.filter(e=>e.status==="pending").reduce((s,e)=>s+e.total,0);
+  const pendingHrs=entries.filter(e=>e.status==="pending"||e.status==="worker_approved").reduce((s,e)=>s+e.total,0);
+  // Field cards the employee still needs to sign off on this week
+  const toConfirm=cards.filter(c=>c.status==="pending"||c.status==="disputed");
+  const confirmedHrs=entries.filter(e=>e.status==="worker_approved").reduce((s,e)=>s+e.total,0);
+  const weekOver=isoOf(addDays(weekStart,6))<isoOf(new Date());
+  async function confirmWeek(){
+    if(!toConfirm.length)return;
+    const hrs=toConfirm.reduce((s,c)=>s+(parseFloat(c.total_hours)||0),0);
+    if(!window.confirm(`Confirm ${hrs.toFixed(2)} hours for the week of ${weekStart.toLocaleDateString()}?\n\nThis tells your PM the hours are correct. If something is wrong, use ⚑ Flag on that day instead.`))return;
+    setBusy(true);
+    try{
+      const at=new Date().toISOString();
+      await Promise.all(toConfirm.map(c=>API.timeCards.update(c.id,{status:"worker_approved",worker_approved_at:at,worker_approved_by:user.name,dispute_note:null})));
+      await notify("time_confirmed","Time confirmed",`${user.name} confirmed ${hrs.toFixed(1)} hours for week of ${isoOf(weekStart)} — ready for PM approval`);
+      await load();
+    }catch(e){setErr(e.message);}
+    setBusy(false);
+  }
+  async function flagEntry(e){
+    const id=String(e.id).slice(1);
+    const why=window.prompt(`What's wrong with ${e.job} on ${e.date}? (hours, job, missing day…)`,"");
+    if(why==null)return;
+    setBusy(true);
+    try{
+      await API.timeCards.update(id,{status:"disputed",dispute_note:why.trim()||"Flagged by employee",disputed_at:new Date().toISOString()});
+      await notify("time_disputed","Time flagged",`${user.name} flagged ${e.date} · ${e.job}: ${why.trim()||"no note"}`);
+      await load();
+    }catch(err2){setErr(err2.message);}
+    setBusy(false);
+  }
 
   // One row per day, Monday to Sunday
   const dayRows=[...Array(7)].map((_,i)=>{
@@ -1108,7 +1139,7 @@ function MyHoursScreen({user,onBack}){
   const hhmm=(iso)=>iso?new Date(iso).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):null;
   const h1=(n)=>Number(n||0).toFixed(2);
 
-  const statusMeta={pending:{c:T.yellow,l:"pending"},approved:{c:T.green,l:"approved"}};
+  const statusMeta=Object.fromEntries(Object.entries(TC_STATUS).map(([k,v])=>[k,{c:v.c,l:v.mine}]));
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
@@ -1203,10 +1234,25 @@ function MyHoursScreen({user,onBack}){
                   </div>
                 ))}
               </div>
-              {pendingHrs>0&&<div style={{fontSize:11.5,color:T.yellow,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-                ⏳ {h1(pendingHrs)} hours still waiting on a PM to approve
+              {confirmedHrs>0&&toConfirm.length===0&&<div style={{fontSize:11.5,color:T.blue,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                ✓ You confirmed this week — {h1(confirmedHrs)} hours waiting on PM approval
               </div>}
             </div>
+
+            {/* Weekly sign-off */}
+            {toConfirm.length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.yellow}`,background:`${T.yellow}10`}}>
+              <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:4}}>
+                {weekOver?"⏰ Confirm last week's hours":"✍️ Confirm your hours"}
+              </div>
+              <div style={{fontSize:11.5,color:T.muted,lineHeight:1.6,marginBottom:10}}>
+                {toConfirm.length} day{toConfirm.length!==1?"s":""} · {h1(toConfirm.reduce((s,c)=>s+(parseFloat(c.total_hours)||0),0))} hours entered by your foreman need your OK before the PM can approve them.
+                Check each day below — tap <b>⚑ Flag</b> on anything that's wrong.
+              </div>
+              <button onClick={confirmWeek} disabled={busy||!!punch}
+                style={{...primBtn,borderRadius:12,background:T.green,color:"#000",opacity:busy||punch?0.6:1}}>
+                {punch?"Clock out first":"✓ My hours are correct"}
+              </button>
+            </div>}
 
             {/* Day by day */}
             <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Day by Day</div>
@@ -1240,6 +1286,13 @@ function MyHoursScreen({user,onBack}){
                         </span>
                       </div>
                     </div>
+                    {e.kind==="field"&&(e.status==="pending"||e.status==="worker_approved")&&<div style={{marginTop:6,textAlign:"right"}}>
+                      <button onClick={()=>flagEntry(e)} disabled={busy}
+                        style={{background:"none",border:`1px solid ${T.red}40`,borderRadius:7,padding:"3px 9px",color:T.red,fontSize:10.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⚑ Flag</button>
+                    </div>}
+                    {e.kind==="field"&&e.status==="disputed"&&<div style={{fontSize:10.5,color:T.red,marginTop:4,lineHeight:1.5}}>
+                      ⚑ You flagged this{e.disputeNote?`: ${e.disputeNote}`:""} — your PM will fix it.
+                    </div>}
                     {e.edited&&<div style={{fontSize:10.5,color:T.blue,marginTop:4,lineHeight:1.5}}>
                       ✏️ adjusted by {e.edited.by} — was {h1(e.edited.was)}
                       {e.edited.why?` · ${e.edited.why}`:""}
@@ -1561,6 +1614,20 @@ function ActivityScreen({user,onBack}){
 }
 
 function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onMyHours,onActivity,onNotifications,notifCount,isOnline,pendingCount,onSync}){
+  // Hours the foreman entered for this user (this week + last) still waiting on their OK.
+  const [toConfirm,setToConfirm]=useState(null);
+  useEffect(()=>{
+    let dead=false;
+    (async()=>{
+      try{
+        const mon=mondayOf(new Date());
+        const rows=await API.punches.unconfirmedFor(user.name,isoOf(addDays(mon,-7)),isoOf(addDays(mon,6)));
+        if(!dead)setToConfirm(Array.isArray(rows)?rows:[]);
+      }catch{ if(!dead)setToConfirm([]); }
+    })();
+    return()=>{dead=true;};
+  },[user.name]);
+  const confirmHrs=(toConfirm||[]).reduce((s,c)=>s+(parseFloat(c.total_hours)||0),0);
   // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
   // by division always returned zero for that card.
   const [mfgStats,setMfgStats]=useState(null);
@@ -1651,8 +1718,10 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           display:"flex",justifyContent:"space-between",alignItems:"center",
           cursor:"pointer",fontFamily:"inherit"}}>
           <div style={{textAlign:"left"}}>
-            <div style={{fontSize:15,fontWeight:800,color:T.blue}}>⏱️ My Hours</div>
-            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>This week's time, past weeks, and your certifications</div>
+            <div style={{fontSize:15,fontWeight:800,color:T.blue}}>⏱️ My Hours{toConfirm&&toConfirm.length>0&&<span style={{marginLeft:8,background:T.yellow,color:"#000",borderRadius:9,padding:"1px 8px",fontSize:11,fontWeight:800}}>{toConfirm.length}</span>}</div>
+            <div style={{fontSize:11.5,color:toConfirm&&toConfirm.length>0?T.yellow:T.muted,marginTop:2}}>
+              {toConfirm&&toConfirm.length>0?`⚠ ${confirmHrs.toFixed(1)} hours need your confirmation`:"This week's time, past weeks, and your certifications"}
+            </div>
           </div>
           <span style={{color:T.blue,fontSize:18,flexShrink:0}}>→</span>
         </button>
@@ -1981,6 +2050,57 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
 }
 
 const RSTEPS=["Job Info","Labor","Equipment","Materials","Site Notes","Review"];
+
+/* ── Weekly time approval ──────────────────────────────────────────────
+   pending          foreman entered it (daily report / T&M / manual) — waiting on the employee
+   worker_approved  employee confirmed their week — waiting on the PM
+   disputed         employee flagged it with a note — PM must fix, then approve
+   approved         PM final approval (payroll)                                    */
+const TC_STATUS={
+  pending:        {c:"#F59E0B",short:"Waiting on employee",mine:"Needs your OK"},
+  worker_approved:{c:"#60A5FA",short:"Employee confirmed",  mine:"Confirmed · waiting on PM"},
+  disputed:       {c:"#EF4444",short:"Flagged by employee", mine:"Flagged"},
+  approved:       {c:"#22C55E",short:"PM approved",         mine:"Approved"},
+  open:           {c:"#22C55E",short:"On the clock",        mine:"On the clock"},
+};
+
+/* T&M ticket labor → time cards. A ticket is re-saved often, so this is
+   idempotent: a card this ticket created gets its hours replaced, not added.
+   If a daily report already made a card for the same worker/job/day, the
+   daily report wins and the ticket is skipped. PM-approved cards are never touched. */
+async function autoPopulateTimeCardsFromTicket(ticket, project){
+  const marker=`[tm:${ticket.id}]`;
+  const labor=(ticket.labor||[]).filter(l=>!isPerDiemRow(l)&&(l.name||l.customName));
+  let created=0,updated=0;
+  for(const entry of labor){
+    const name=entry.name==="__other"?(entry.customName||"").trim():(entry.name||"").trim();
+    if(!name)continue;
+    const reg=parseFloat(entry.hours)||0, ot=parseFloat(entry.ot_hours)||0;
+    if(reg+ot===0)continue;
+    try{
+      const existing=await API.timeCards.find(name,ticket.ticket_date,project.id);
+      const all=Array.isArray(existing)?existing:[];
+      const mine=all.find(c=>String(c.notes||"").includes(marker));
+      const other=all.find(c=>(c.source||"manual")!=="punch");
+      if(mine){
+        if(mine.status==="approved")continue;
+        await API.timeCards.update(mine.id,{reg_hours:reg,ot_hours:ot,total_hours:reg+ot+(parseFloat(mine.travel_hours)||0),classification:entry.classification||mine.classification||""});
+        updated++;
+      }else if(other){
+        continue; // daily report / manual card already covers this day on this job
+      }else{
+        await API.timeCards.create({
+          worker_name:name,date:ticket.ticket_date,project_id:project.id,division:project.division,
+          classification:entry.classification||"",reg_hours:reg,ot_hours:ot,travel_hours:0,total_hours:reg+ot,
+          notes:`Auto-filled from T&M ticket${ticket.ticket_no?" #"+ticket.ticket_no:""} · ${project.name} ${marker}`,
+          source:"tm",status:"pending",
+        });
+        created++;
+      }
+    }catch(e){}
+  }
+  return {created,updated};
+}
 
 async function autoPopulateTimeCards(report, project){
   const labor=(report.labor||[]).filter(l=>l.name&&l.name.trim());
@@ -7418,7 +7538,7 @@ function NotificationsPanel({onCountChange,user}){
     }
     useEffect(()=>{loadN();},[]);
     const unread=notifs.filter(n=>!n.read).length;
-    const typeIcon={report_submitted:"📋",report_flagged:"🚩",report_approved:"✅",bid_review:"📊"};
+    const typeIcon={report_submitted:"📋",report_flagged:"🚩",report_approved:"✅",bid_review:"📊",time_confirmed:"⏱️",time_disputed:"⚑"};
     const toggleSel=(id)=>setSelected(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
     const exitSelect=()=>{setSelectMode(false);setSelected([]);};
     async function deleteSelected(){
@@ -7615,12 +7735,15 @@ function ClockRoster({pmDiv,divIds,user,onErr}){
   }
   useEffect(()=>{load();},[pmDiv]);
 
+  const confirmedRows=pendRows.filter(c=>c.status==="worker_approved");
+  const waitingRows=pendRows.filter(c=>c.status==="pending");
+  const disputedRows=pendRows.filter(c=>c.status==="disputed");
   async function approveAll(){
-    if(!pendRows.length)return;
-    if(!window.confirm(`Approve ${pendRows.length} time card${pendRows.length!==1?"s":""}?`))return;
+    if(!confirmedRows.length)return;
+    if(!window.confirm(`Approve ${confirmedRows.length} employee-confirmed time card${confirmedRows.length!==1?"s":""}?`))return;
     setSaving(true);
     try{
-      await Promise.all(pendRows.map(c=>API.timeCards.update(c.id,{
+      await Promise.all(confirmedRows.map(c=>API.timeCards.update(c.id,{
         status:"approved",approved_by:user.name,approved_at:new Date().toISOString(),
       })));
       await load();
@@ -7671,18 +7794,181 @@ function ClockRoster({pmDiv,divIds,user,onErr}){
       {pendRows.length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.yellow}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
           <div style={{fontSize:11,fontWeight:700,color:T.yellow,textTransform:"uppercase",letterSpacing:"1px"}}>
-            ⏳ Hours to approve ({pendRows.length}) · {pendHrs.toFixed(1)}h
+            ⏳ Time cards ({pendRows.length}) · {pendHrs.toFixed(1)}h
           </div>
-          <button onClick={approveAll} disabled={saving}
-            style={{background:T.green,color:"#000",border:"none",borderRadius:9,padding:"6px 13px",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
-            ✓ Approve all
+          <button onClick={approveAll} disabled={saving||!confirmedRows.length}
+            style={{background:confirmedRows.length?T.green:T.border,color:"#000",border:"none",borderRadius:9,padding:"6px 13px",fontSize:12,fontWeight:800,cursor:confirmedRows.length?"pointer":"not-allowed",fontFamily:"inherit",opacity:saving?0.6:1}}>
+            ✓ Approve {confirmedRows.length} confirmed
           </button>
         </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+          {[["Waiting on employee",waitingRows.length,TC_STATUS.pending.c],["Employee confirmed",confirmedRows.length,TC_STATUS.worker_approved.c],["Flagged",disputedRows.length,TC_STATUS.disputed.c]].map(([l,n,c])=>(
+            <div key={l} style={{textAlign:"center",background:T.surface,borderRadius:8,padding:"6px 4px"}}>
+              <div style={{fontSize:16,fontWeight:900,color:n?c:T.muted}}>{n}</div>
+              <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.4px"}}>{l}</div>
+            </div>
+          ))}
+        </div>
+        {disputedRows.length>0&&<div style={{fontSize:11.5,color:T.red,lineHeight:1.6,marginBottom:6}}>
+          {disputedRows.slice(0,4).map(c=><div key={c.id}>⚑ <b>{c.worker_name}</b> {c.date}{c.projects?.name?` · ${c.projects.name}`:""}: {c.dispute_note||"flagged"}</div>)}
+          {disputedRows.length>4&&<div>…and {disputedRows.length-4} more — see Time Cards.</div>}
+        </div>}
         <div style={{fontSize:11.5,color:T.muted,lineHeight:1.6}}>
-          Edit individual hours on the job's Time tab before approving — this button takes them as they stand.
+          Employees confirm their week from My Hours. Open <b>Time Cards → Weekly Approval</b> to fix flagged days, approve by worker, or approve unconfirmed hours.
         </div>
       </div>}
     </>
+  );
+}
+
+/* PM weekly approval: one week, grouped by worker. Employees confirm from
+   My Hours; here the PM fixes flagged days, then approves per worker (or
+   everything the crew has already confirmed in one tap). */
+function WeeklyApprovalPanel({user,projects,onErr}){
+  const [weekStart,setWeekStart]=useState(()=>{const m=mondayOf(new Date());return new Date().getDay()<=1?addDays(m,-7):m;});
+  const [rows,setRows]=useState([]);const [loading,setLoading]=useState(true);
+  const [busy,setBusy]=useState(false);
+  const [openWorker,setOpenWorker]=useState(null);
+  const [edit,setEdit]=useState(null); // {id,reg,ot,travel,reason}
+  const from=isoOf(weekStart),to=isoOf(addDays(weekStart,6));
+  async function load(){
+    setLoading(true);
+    try{const r=await API.timeCards.byRange(from,to);setRows((Array.isArray(r)?r:[]).filter(c=>c.status!=="open"));}
+    catch(e){onErr&&onErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[from]);
+  const jobOf=(c)=>(projects.find(p=>p.id===c.project_id)||{}).name||(c.source==="shop"?"Shop":"—");
+  const hrs=(c)=>parseFloat(c.total_hours)||((parseFloat(c.reg_hours)||0)+(parseFloat(c.ot_hours)||0)+(parseFloat(c.travel_hours)||0));
+  const byWorker={};
+  rows.forEach(c=>{const n=c.worker_name||"?";(byWorker[n]=byWorker[n]||[]).push(c);});
+  const workers=Object.keys(byWorker).sort().map(name=>{
+    const list=byWorker[name].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    const st={pending:0,worker_approved:0,disputed:0,approved:0};
+    list.forEach(c=>{st[c.status]=(st[c.status]||0)+1;});
+    const open=list.filter(c=>c.status!=="approved");
+    return {name,list,st,total:list.reduce((s,c)=>s+hrs(c),0),open,
+      state:open.length===0?"approved":st.disputed>0?"disputed":st.pending>0?"pending":"worker_approved"};
+  });
+  const allConfirmed=rows.filter(c=>c.status==="worker_approved");
+  async function approveCards(cards,label){
+    if(!cards.length)return;
+    if(!window.confirm(`Approve ${cards.length} time card${cards.length!==1?"s":""} — ${label}?`))return;
+    setBusy(true);
+    try{
+      const at=new Date().toISOString();
+      await Promise.all(cards.map(c=>API.timeCards.update(c.id,{status:"approved",approved_by:user.name,approved_at:at,dispute_note:null})));
+      await load();
+    }catch(e){onErr&&onErr(e.message);}
+    setBusy(false);
+  }
+  async function sendBack(c){
+    // Re-open a card for the employee after fixing it (or un-approve by mistake).
+    setBusy(true);
+    try{await API.timeCards.update(c.id,{status:"pending",dispute_note:null,worker_approved_at:null});await load();}
+    catch(e){onErr&&onErr(e.message);}
+    setBusy(false);
+  }
+  async function saveEdit(){
+    const c=rows.find(x=>x.id===edit.id);if(!c)return;
+    const reg=parseFloat(edit.reg)||0,ot=parseFloat(edit.ot)||0,tr=parseFloat(edit.travel)||0;
+    setBusy(true);
+    try{
+      await API.timeCards.update(c.id,{
+        reg_hours:reg,ot_hours:ot,travel_hours:tr,total_hours:reg+ot+tr,
+        original_hours:c.original_hours??c.total_hours,
+        edited_by:user.name,edited_at:new Date().toISOString(),edit_reason:edit.reason||null,
+        // A fixed card goes back to the employee to re-confirm.
+        status:"pending",dispute_note:null,worker_approved_at:null,
+      });
+      setEdit(null);await load();
+    }catch(e){onErr&&onErr(e.message);}
+    setBusy(false);
+  }
+  const pill=(s)=><span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.4px",color:TC_STATUS[s]?.c||T.muted,border:`1px solid ${TC_STATUS[s]?.c||T.muted}40`,borderRadius:6,padding:"1px 6px",whiteSpace:"nowrap"}}>{TC_STATUS[s]?.short||s}</span>;
+  const dayName=(iso)=>["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(iso+"T12:00:00").getDay()];
+  return(
+    <div style={{...cardS,marginBottom:16,borderLeft:`3px solid ${T.blue}`}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>✅ Weekly Approval</div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:12}}>
+        <button onClick={()=>setWeekStart(addDays(weekStart,-7))} style={{...ghostBtn,padding:"6px 12px"}}>‹</button>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:13,fontWeight:800,color:T.text}}>Week of {weekStart.toLocaleDateString(undefined,{month:"short",day:"numeric"})} – {addDays(weekStart,6).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</div>
+          <div style={{fontSize:10.5,color:T.muted}}>{rows.length} cards · {rows.reduce((s,c)=>s+hrs(c),0).toFixed(1)} h</div>
+        </div>
+        <button onClick={()=>setWeekStart(addDays(weekStart,7))} style={{...ghostBtn,padding:"6px 12px"}}>›</button>
+      </div>
+      <button onClick={()=>approveCards(allConfirmed,"everything employees have confirmed")} disabled={busy||!allConfirmed.length}
+        style={{...primBtn,borderRadius:12,marginBottom:12,background:allConfirmed.length?T.green:T.border,color:"#000",opacity:busy?0.6:1,cursor:allConfirmed.length?"pointer":"not-allowed"}}>
+        ✓ Approve all employee-confirmed ({allConfirmed.length})
+      </button>
+      {loading&&<Spinner/>}
+      {!loading&&workers.length===0&&<div style={{textAlign:"center",padding:"18px 0",color:T.muted,fontSize:12}}>No time cards this week.</div>}
+      {!loading&&workers.map(w=>{
+        const isOpen=openWorker===w.name;
+        return(
+          <div key={w.name} style={{border:`1px solid ${T.border}`,borderRadius:10,marginBottom:8,overflow:"hidden",borderLeft:`3px solid ${TC_STATUS[w.state]?.c||T.border}`}}>
+            <div onClick={()=>setOpenWorker(isOpen?null:w.name)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",cursor:"pointer",background:T.surface}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:800,color:T.text}}>{w.name}</div>
+                <div style={{fontSize:10.5,color:T.muted,marginTop:2,display:"flex",gap:6,flexWrap:"wrap"}}>
+                  {w.st.pending>0&&<span style={{color:TC_STATUS.pending.c}}>{w.st.pending} waiting on employee</span>}
+                  {w.st.worker_approved>0&&<span style={{color:TC_STATUS.worker_approved.c}}>{w.st.worker_approved} confirmed</span>}
+                  {w.st.disputed>0&&<span style={{color:TC_STATUS.disputed.c}}>{w.st.disputed} flagged</span>}
+                  {w.st.approved>0&&<span style={{color:TC_STATUS.approved.c}}>{w.st.approved} approved</span>}
+                </div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontSize:16,fontWeight:900,color:T.text}}>{w.total.toFixed(1)}h</div>
+                <div style={{fontSize:10,color:T.muted}}>{isOpen?"▲":"▼"}</div>
+              </div>
+            </div>
+            {isOpen&&<div style={{padding:"6px 12px 12px"}}>
+              {w.list.map(c=>(
+                <div key={c.id} style={{padding:"8px 0",borderTop:`1px solid ${T.border}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:700,color:T.text}}>{dayName(c.date)} {String(c.date).slice(5)} · {jobOf(c)}</div>
+                      <div style={{fontSize:10.5,color:T.muted}}>{parseFloat(c.reg_hours)||0} reg · {parseFloat(c.ot_hours)||0} OT · {parseFloat(c.travel_hours)||0} trv{c.classification?` · ${c.classification}`:""}{c.source?` · from ${c.source==="tm"?"T&M":c.source}`:""}</div>
+                      {c.status==="disputed"&&<div style={{fontSize:11,color:TC_STATUS.disputed.c,marginTop:3}}>⚑ {c.dispute_note||"Flagged by employee"}</div>}
+                      {c.edited_by&&<div style={{fontSize:10.5,color:T.blue,marginTop:2}}>✏️ {c.edited_by}{c.edit_reason?` — ${c.edit_reason}`:""}</div>}
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontSize:13,fontWeight:800,color:T.text}}>{hrs(c).toFixed(2)}</div>
+                      {pill(c.status)}
+                    </div>
+                  </div>
+                  {edit?.id===c.id
+                    ?<div style={{marginTop:8,background:T.surface,borderRadius:8,padding:10}}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:6}}>
+                        {[["reg","Reg"],["ot","OT"],["travel","Travel"]].map(([k,l])=>(
+                          <div key={k}><label style={lbl}>{l}</label><input type="number" step="0.25" value={edit[k]} onChange={e=>setEdit({...edit,[k]:e.target.value})} style={inp}/></div>
+                        ))}
+                      </div>
+                      <input placeholder="Reason for change (shown to employee)" value={edit.reason} onChange={e=>setEdit({...edit,reason:e.target.value})} style={{...inp,marginBottom:6}}/>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={saveEdit} disabled={busy} style={{...ghostBtn,flex:1,textAlign:"center",color:T.green,border:`1px solid ${T.green}40`}}>Save & send back to employee</button>
+                        <button onClick={()=>setEdit(null)} style={{...ghostBtn,padding:"6px 10px"}}>Cancel</button>
+                      </div>
+                    </div>
+                    :c.status!=="approved"&&<div style={{display:"flex",gap:6,marginTop:6,justifyContent:"flex-end"}}>
+                      <button onClick={()=>setEdit({id:c.id,reg:c.reg_hours||0,ot:c.ot_hours||0,travel:c.travel_hours||0,reason:""})} style={{...ghostBtn,fontSize:10.5,padding:"4px 9px"}}>✏️ Fix</button>
+                      <button onClick={()=>approveCards([c],`${c.worker_name} ${c.date}`)} disabled={busy} style={{...ghostBtn,fontSize:10.5,padding:"4px 9px",color:T.green,border:`1px solid ${T.green}40`}}>✓ Approve</button>
+                    </div>}
+                  {c.status==="approved"&&<div style={{textAlign:"right",marginTop:4}}>
+                    <button onClick={()=>sendBack(c)} disabled={busy} style={{...ghostBtn,fontSize:10,padding:"3px 8px",color:T.muted}}>↩ Un-approve</button>
+                  </div>}
+                </div>
+              ))}
+              {w.open.length>0&&<button onClick={()=>approveCards(w.open,`${w.name}'s week${w.st.pending||w.st.disputed?" (includes hours the employee hasn't confirmed)":""}`)} disabled={busy}
+                style={{...primBtn,borderRadius:10,marginTop:8,fontSize:12,background:w.state==="worker_approved"?T.green:T.yellow,color:"#000",opacity:busy?0.6:1}}>
+                ✓ Approve {w.name}'s week ({w.open.length} card{w.open.length!==1?"s":""}){w.state!=="worker_approved"?" — not all confirmed":""}
+              </button>}
+            </div>}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -7761,6 +8047,7 @@ function TimeCardsScreen({user,projects,onBack}){
     <div style={{background:T.bg,minHeight:'100vh',fontFamily:'inherit'}}>
       <TopBar title="⏱️ Time Cards" onBack={onBack}/>
       <div style={{padding:'12px 16px 100px'}}>
+        <WeeklyApprovalPanel user={user} projects={projects} onErr={setErr}/>
         <ErrBanner msg={err} onDismiss={()=>setErr('')}/>
 
         {/* Date Range Selector */}
@@ -18596,8 +18883,11 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       return;
     }
     try{
-      if(isNew)await API.tmTickets.create(data);
+      let savedId=ticket?.id;
+      if(isNew){const res=await API.tmTickets.create(data);savedId=Array.isArray(res)?res[0]?.id:res?.id;}
       else await API.tmTickets.update(ticket.id,data);
+      // Same as the Daily Report: labor on the ticket becomes the crew's time cards.
+      if(savedId){try{await autoPopulateTimeCardsFromTicket({...data,id:savedId},project);}catch(e){}}
       onSaved&&onSaved();
     }catch(e){
       try{
