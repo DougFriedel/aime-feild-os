@@ -276,7 +276,7 @@ const API={
     tickets:(name,limit=15)=>sb(`/tm_tickets?submitted_by=eq.${encodeURIComponent(name)}&select=id,ticket_date,ticket_no,status,grand_total,client_signature,projects(name)&order=ticket_date.desc&limit=${limit}`),
     crew:(name)=>sb(`/crew_members?name=eq.${encodeURIComponent(name)}&limit=1`),
   },
-  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc&limit=5000`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
+  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc&limit=5000`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),forWorkerDay:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&order=created_at.asc`),forProjectDay:(pid,date)=>sb(`/time_cards?project_id=eq.${pid}&date=eq.${date}&order=created_at.asc`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
@@ -2065,34 +2065,46 @@ const TC_STATUS={
   open:           {c:"#22C55E",short:"On the clock",        mine:"On the clock"},
 };
 
-/* T&M ticket labor → time cards. A ticket is re-saved often, so this is
-   idempotent: a card this ticket created gets its hours replaced, not added.
-   If a daily report already made a card for the same worker/job/day, the
-   daily report wins and the ticket is skipped. PM-approved cards are never touched. */
+/* T&M ticket labor → time cards. Runs on every save, so it MIRRORS the
+   ticket: a card this ticket created is updated to the ticket's hours, and
+   a worker taken off the ticket has their card removed. A card from a daily
+   report or a clock punch on the same worker/job/day is left alone (the
+   daily report wins). PM-approved cards are never touched. */
 async function autoPopulateTimeCardsFromTicket(ticket, project){
   const marker=`[tm:${ticket.id}]`;
-  const labor=(ticket.labor||[]).filter(l=>!isPerDiemRow(l)&&(l.name||l.customName));
-  let created=0,updated=0;
+  const labor=(ticket.labor||[]).filter(l=>!isPerDiemRow(l));
+  // Sum by worker in case someone appears on two rows
+  const byWorker={};
   for(const entry of labor){
     const name=entry.name==="__other"?(entry.customName||"").trim():(entry.name||"").trim();
     if(!name)continue;
-    const reg=parseFloat(entry.hours)||0, ot=parseFloat(entry.ot_hours)||0;
-    if(reg+ot===0)continue;
+    const w=byWorker[name]=byWorker[name]||{reg:0,ot:0,cls:entry.classification||""};
+    w.reg+=parseFloat(entry.hours)||0; w.ot+=parseFloat(entry.ot_hours)||0;
+  }
+  let created=0,updated=0,removed=0;
+  let dayCards=[];
+  try{const r=await API.timeCards.forProjectDay(project.id,ticket.ticket_date);dayCards=Array.isArray(r)?r:[];}catch(e){}
+  const mineCards=dayCards.filter(c=>String(c.notes||"").includes(marker));
+  for(const [name,w] of Object.entries(byWorker)){
     try{
-      const existing=await API.timeCards.find(name,ticket.ticket_date,project.id);
-      const all=Array.isArray(existing)?existing:[];
-      const mine=all.find(c=>String(c.notes||"").includes(marker));
-      const other=all.find(c=>(c.source||"manual")!=="punch");
+      const mine=mineCards.find(c=>c.worker_name===name);
+      const other=dayCards.find(c=>c.worker_name===name&&!String(c.notes||"").includes(marker)&&(c.source||"manual")!=="punch");
+      if(w.reg+w.ot===0){
+        if(mine&&mine.status!=="approved"){await API.timeCards.remove(mine.id);removed++;}
+        continue;
+      }
       if(mine){
         if(mine.status==="approved")continue;
-        await API.timeCards.update(mine.id,{reg_hours:reg,ot_hours:ot,total_hours:reg+ot+(parseFloat(mine.travel_hours)||0),classification:entry.classification||mine.classification||""});
+        await API.timeCards.update(mine.id,{reg_hours:w.reg,ot_hours:w.ot,total_hours:w.reg+w.ot+(parseFloat(mine.travel_hours)||0),classification:w.cls||mine.classification||"",
+          // hours changed → employee has to re-confirm
+          ...(mine.status==="worker_approved"&&(Number(mine.reg_hours)!==w.reg||Number(mine.ot_hours)!==w.ot)?{status:"pending",worker_approved_at:null}:{})});
         updated++;
       }else if(other){
-        continue; // daily report / manual card already covers this day on this job
+        continue;
       }else{
         await API.timeCards.create({
           worker_name:name,date:ticket.ticket_date,project_id:project.id,division:project.division,
-          classification:entry.classification||"",reg_hours:reg,ot_hours:ot,travel_hours:0,total_hours:reg+ot,
+          classification:w.cls,reg_hours:w.reg,ot_hours:w.ot,travel_hours:0,total_hours:w.reg+w.ot,
           notes:`Auto-filled from T&M ticket${ticket.ticket_no?" #"+ticket.ticket_no:""} · ${project.name} ${marker}`,
           source:"tm",status:"pending",
         });
@@ -2100,56 +2112,65 @@ async function autoPopulateTimeCardsFromTicket(ticket, project){
       }
     }catch(e){}
   }
-  return {created,updated};
+  // Workers removed from the ticket
+  for(const c of mineCards){
+    if(!byWorker[c.worker_name]&&c.status!=="approved"){try{await API.timeCards.remove(c.id);removed++;}catch(e){}}
+  }
+  return {created,updated,removed};
 }
 
+/* Daily report labor → time cards. Idempotent MIRROR of the report:
+   - a worker's hours REPLACE the daily-report card for that worker/job/day
+     (so editing a report updates the card instead of doubling it)
+   - a worker removed from the report has their daily-report card removed
+   - clock-punch cards, T&M-ticket cards and manual cards are left alone
+   - PM-approved cards are never touched (un-approve first)
+   - if the hours changed after the employee confirmed, it goes back to pending */
 async function autoPopulateTimeCards(report, project){
-  const labor=(report.labor||[]).filter(l=>l.name&&l.name.trim());
-  if(!labor.length) return {created:0,updated:0};
-  let created=0,updated=0;
-  for(const entry of labor){
-    const reg=parseFloat(entry.regHrs)||0;
-    const ot=parseFloat(entry.otHrs)||0;
-    const travel=parseFloat(entry.travelHrs)||0;
-    if(reg+ot+travel===0) continue;
+  const byWorker={};
+  for(const entry of (report.labor||[])){
+    if(isPerDiemRow(entry))continue;
+    const name=(entry.name||"").trim(); if(!name)continue;
+    const w=byWorker[name]=byWorker[name]||{reg:0,ot:0,travel:0,cls:entry.classification||""};
+    w.reg+=parseFloat(entry.regHrs)||0; w.ot+=parseFloat(entry.otHrs)||0; w.travel+=parseFloat(entry.travelHrs)||0;
+  }
+  let created=0,updated=0,removed=0;
+  let dayCards=[];
+  try{const r=await API.timeCards.forProjectDay(project.id,report.date);dayCards=Array.isArray(r)?r:[];}catch(e){}
+  const isDailyCard=(c)=>c.source==="daily"||String(c.notes||"").startsWith("Auto-filled from daily report");
+  const dailyCards=dayCards.filter(isDailyCard);
+  const noteFor=()=>`Auto-filled from daily report${report.report_no?" #"+report.report_no:""} · ${project.name}`;
+  for(const [name,w] of Object.entries(byWorker)){
+    const total=w.reg+w.ot+w.travel;
     try{
-      const existing=await API.timeCards.find(entry.name,report.date,project.id);
-      const all=Array.isArray(existing)?existing:[];
-      // Only merge into another daily-report card. Merging into a clock punch
-      // would double the worker's day.
-      const card=all.find(c=>(c.source||"manual")!=="punch")||null;
-      if(card){
-        const newReg=(parseFloat(card.reg_hours)||0)+reg;
-        const newOT=(parseFloat(card.ot_hours)||0)+ot;
-        const newTravel=(parseFloat(card.travel_hours)||0)+travel;
-        await API.timeCards.update(card.id,{
-          reg_hours:newReg,
-          ot_hours:newOT,
-          travel_hours:newTravel,
-          total_hours:newReg+newOT+newTravel,
+      const mine=dailyCards.find(c=>c.worker_name===name);
+      if(total===0){
+        if(mine&&mine.status!=="approved"){await API.timeCards.remove(mine.id);removed++;}
+        continue;
+      }
+      if(mine){
+        if(mine.status==="approved")continue;
+        const changed=Number(mine.reg_hours)!==w.reg||Number(mine.ot_hours)!==w.ot||Number(mine.travel_hours)!==w.travel;
+        if(!changed&&(mine.classification||"")===(w.cls||""))continue;
+        await API.timeCards.update(mine.id,{
+          reg_hours:w.reg,ot_hours:w.ot,travel_hours:w.travel,total_hours:total,classification:w.cls||mine.classification||"",notes:noteFor(),
+          ...(mine.status==="worker_approved"&&changed?{status:"pending",worker_approved_at:null}:{}),
         });
         updated++;
       }else{
         await API.timeCards.create({
-          worker_name:entry.name,
-          date:report.date,
-          project_id:project.id,
-          division:project.division,
-          classification:entry.classification||"",
-          reg_hours:reg,
-          ot_hours:ot,
-          travel_hours:travel,
-          total_hours:reg+ot+travel,
-          notes:`Auto-filled from daily report${report.report_no?" #"+report.report_no:""} · ${project.name}`,
-          source:"daily",status:"pending",
+          worker_name:name,date:report.date,project_id:project.id,division:project.division,
+          classification:w.cls,reg_hours:w.reg,ot_hours:w.ot,travel_hours:w.travel,total_hours:total,
+          notes:noteFor(),source:"daily",status:"pending",
         });
         created++;
       }
-    }catch(e){
-
-    }
+    }catch(e){}
   }
-  return{created,updated};
+  for(const c of dailyCards){
+    if(!byWorker[c.worker_name]&&c.status!=="approved"){try{await API.timeCards.remove(c.id);removed++;}catch(e){}}
+  }
+  return {created,updated,removed};
 }
 
 function VisitorAddRow({onAdd}){
@@ -2312,9 +2333,8 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
       try{
         await API.reports.update(existing.id,{...reportData,updated_at:new Date().toISOString()});
         clearDraft(draftKey);
-        // Deliberately NOT re-running autoPopulateTimeCards: it adds hours to
-        // existing cards rather than replacing them, so editing would double
-        // the worker's day. Time cards from the original submission stand.
+        // Mirror the edited hours onto the crew's time cards (replace, not add).
+        try{await autoPopulateTimeCards({...reportData,report_no:reportData.report_no||existing.report_no},project);}catch(e){}
         onSave&&onSave(reportData,existing.id);
       }catch(e){
         alert("Couldn't save changes: "+e.message);
