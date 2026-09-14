@@ -299,8 +299,8 @@ const API={
     labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),openFor:(name)=>sb(`/mfg_labor?worker_name=eq.${encodeURIComponent(name)}&status=eq.open&limit=1`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_labor?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
     ncr:{forJob:(jid)=>sb(`/mfg_ncr?job_id=eq.${jid}&order=created_at.desc`),forPart:(pid)=>sb(`/mfg_ncr?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_ncr',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_ncr?id=eq.${id}`,{method:'PATCH',body:d})},
   },
-  docFolders:{forProject:(pid)=>sb(`/document_folders?project_id=eq.${pid}&order=name.asc`),create:(d)=>sb("/document_folders",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/document_folders?id=eq.${id}`,{method:"PATCH",body:d}),remove:(id)=>sb(`/document_folders?id=eq.${id}`,{method:"DELETE"})},
-  docs:     {forProject:(pid)=>sb(`/documents?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/documents?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
+  docFolders:{forProject:(pid)=>sb(`/document_folders?project_id=eq.${pid}&order=name.asc`),forMfgJob:(jid)=>sb(`/document_folders?mfg_job_id=eq.${jid}&order=name.asc`),create:(d)=>sb("/document_folders",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/document_folders?id=eq.${id}`,{method:"PATCH",body:d}),remove:(id)=>sb(`/document_folders?id=eq.${id}`,{method:"DELETE"})},
+  docs:     {forProject:(pid)=>sb(`/documents?project_id=eq.${pid}&order=created_at.desc`),forMfgJob:(jid)=>sb(`/documents?mfg_job_id=eq.${jid}&order=created_at.desc`),create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/documents?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
   milestones:{forProject:(pid)=>sb(`/milestones?project_id=eq.${pid}&order=sort_order.asc,target_date.asc`),create:(d)=>sb("/milestones",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/milestones?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/milestones?id=eq.${id}`,{method:"DELETE"})},
   crew:     {list:()=>sb("/crew_members?order=name.asc"),create:(d)=>sb("/crew_members",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/crew_members?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/crew_members?id=eq.${id}`,{method:"DELETE"})},
   audit:{
@@ -4266,8 +4266,13 @@ function SafetyTab({projectId,safety,user,onRefresh,onErr}){
   </div>);
 }
 
-function DocsTab({projectId,user,onErr}){
+function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
   const canAdmin=user.role==="admin"||user.role==="pm";
+  // Same tab serves field projects and manufacturing jobs; only the owner column differs.
+  const ownerKey=mfgJobId?"mfg_job_id":"project_id";
+  const ownerId=mfgJobId||projectId;
+  const loadFolders=()=>mfgJobId?API.docFolders.forMfgJob(mfgJobId):API.docFolders.forProject(projectId);
+  const loadDocs=()=>mfgJobId?API.docs.forMfgJob(mfgJobId):API.docs.forProject(projectId);
 
   const [folders,setFolders]=useState([]);
   const [currentFolder,setCurrentFolder]=useState(null); // null = root view
@@ -4287,7 +4292,7 @@ function DocsTab({projectId,user,onErr}){
   const fileRef=useRef(null);
 
   const FOLDER_COLORS=["#60A5FA","#34D399","#F97316","#FC8181","#FBBF24","#A78BFA","#2DD4BF","#F472B6"];
-  const docIcons={Drawing:"📐",Specification:"📄",Manual:"📗",Permit:"🗂️",Contract:"📝","As-Built":"🗺️",ITP:"✅",Procedure:"📋","Safety Plan":"⛑️",Other:"📁","Fillable Form":"📝"};
+  const docIcons={Drawing:"📐",Specification:"📄",Manual:"📗",Permit:"🗂️",Contract:"📝","As-Built":"🗺️",ITP:"✅",Procedure:"📋","Safety Plan":"⛑️",Other:"📁","Fillable Form":"📝","Shipping Ticket":"🚚","Packing Slip":"📦","Receipt":"🧾","Mill Cert":"🏷️"};
   const mimeIcons={"application/pdf":"📄","image/":"🖼️","application/vnd.openxmlformats-officedocument.spreadsheetml":"📊","application/vnd.openxmlformats-officedocument.wordprocessingml":"📝","application/vnd.openxmlformats-officedocument.presentationml":"📊","video/":"🎬","text/":"📝"};
   function getMimeIcon(mime=""){for(const[k,v] of Object.entries(mimeIcons)){if(mime.startsWith(k))return v;}return"📁";}
   function fmtSize(bytes){if(!bytes)return"";if(bytes<1024)return bytes+"B";if(bytes<1048576)return(bytes/1024).toFixed(1)+"KB";return(bytes/1048576).toFixed(1)+"MB";}
@@ -4295,7 +4300,7 @@ function DocsTab({projectId,user,onErr}){
   async function load(){
     setLoading(true);
     try{
-      const [f,d]=await Promise.all([API.docFolders.forProject(projectId),API.docs.forProject(projectId)]);
+      const [f,d]=await Promise.all([loadFolders(),loadDocs()]);
       setFolders(Array.isArray(f)?f:[]);
       setDocs(Array.isArray(d)?d:[]);
     }catch(e){onErr(e.message);}
@@ -4306,7 +4311,7 @@ function DocsTab({projectId,user,onErr}){
   async function createFolder(){
     if(!folderName.trim())return;
     try{
-      await API.docFolders.create({project_id:projectId,name:folderName.trim(),description:folderDesc.trim(),color:folderColor,created_by:user.name});
+      await API.docFolders.create({[ownerKey]:ownerId,name:folderName.trim(),description:folderDesc.trim(),color:folderColor,created_by:user.name});
       setFolderName("");setFolderDesc("");setFolderColor("#60A5FA");
       setShowNewFolder(false);await load();
     }catch(e){onErr(e.message);}
@@ -4350,9 +4355,9 @@ function DocsTab({projectId,user,onErr}){
         const data=await toB64(file);
         const isFillable=file.name.toLowerCase().endsWith('.pdf');
         const payload={
-          project_id:projectId,
+          [ownerKey]:ownerId,
           name:file.name.replace(/\.[^.]+$/,""),
-          doc_type:isFillable?"Fillable Form":"Other",
+          doc_type:defaultType||(isFillable?"Fillable Form":"Other"),
           file:data,
           file_name:file.name,
           file_size:file.size,
@@ -13046,7 +13051,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
-        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📎 Docs"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"12px 4px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -13064,6 +13069,12 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           onBack={()=>setTab("overview")} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="billing"&&canAdmin&&<MfgBillingTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
+
+        {/* Shipping tickets, packing slips, mill certs, receipts — anything paper that came with the parts. */}
+        {!loading&&tab==="docs"&&<>
+          <div style={{fontSize:11.5,color:T.muted,marginBottom:10,lineHeight:1.5}}>Upload received shipping tickets, packing slips, mill certs and receipts for this job. Make folders per supplier or per PO if it helps.</div>
+          <DocsTab mfgJobId={job.id} user={user} onErr={m=>setFormErr(m)} defaultType="Shipping Ticket"/>
+        </>}
 
         {}
         {!loading&&tab==="overview"&&<>
