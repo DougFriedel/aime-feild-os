@@ -8124,13 +8124,19 @@ function TimeCardsScreen({user,projects,onBack}){
             <div><label style={lbl}>To</label><input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} style={inp}/></div>
           </div>
           <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-            {[['This Week',0,6],['Last 2 Weeks',0,13],['This Month',0,29],['Last Month',30,59]].map(([label,from,to])=>(
+            {/* Real calendar periods (Mon–Sun weeks, full months), not "last N days" —
+                otherwise a Monday holiday drops off the week's timecard on Monday night. */}
+            {[
+              ['This Week',()=>{const m=mondayOf(new Date());return [m,addDays(m,6)];}],
+              ['Last Week',()=>{const m=addDays(mondayOf(new Date()),-7);return [m,addDays(m,6)];}],
+              ['Last 2 Weeks',()=>{const m=mondayOf(new Date());return [addDays(m,-7),addDays(m,6)];}],
+              ['This Month',()=>{const n=new Date();return [new Date(n.getFullYear(),n.getMonth(),1,12),new Date(n.getFullYear(),n.getMonth()+1,0,12)];}],
+              ['Last Month',()=>{const n=new Date();return [new Date(n.getFullYear(),n.getMonth()-1,1,12),new Date(n.getFullYear(),n.getMonth(),0,12)];}],
+            ].map(([label,range])=>(
               <button key={label} onClick={()=>{
-                const d=new Date();
-                const t=new Date();t.setDate(t.getDate()-from);
-                const f=new Date();f.setDate(f.getDate()-to);
-                setToDate(t.toISOString().slice(0,10));
-                setFromDate(f.toISOString().slice(0,10));
+                const [f,t]=range();
+                setFromDate(isoOf(f));
+                setToDate(isoOf(t));
               }} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:'4px 10px',color:T.muted,fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
                 {label}
               </button>
