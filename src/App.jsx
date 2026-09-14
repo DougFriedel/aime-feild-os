@@ -282,6 +282,15 @@ const API={
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
+  schedule:{
+    byRange:(from,to)=>sb(`/schedule?date=gte.${from}&date=lte.${to}&order=date.asc,worker_name.asc`),
+    forWorker:(name,from,to)=>sb(`/schedule?worker_name=eq.${encodeURIComponent(name)}&date=gte.${from}&date=lte.${to}&order=date.asc`),
+    create:(d)=>sb("/schedule",{method:"POST",body:d,prefer:"return=representation"}),
+    createMany:(rows)=>sb("/schedule",{method:"POST",body:rows,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/schedule?id=eq.${id}`,{method:"PATCH",body:d}),
+    remove:(id)=>sb(`/schedule?id=eq.${id}`,{method:"DELETE"}),
+    removeMany:(ids)=>sb(`/schedule?id=in.(${ids.map(encodeURIComponent).join(",")})`,{method:"DELETE"}),
+  },
   mfg:{
     jobs:{list:()=>sb('/mfg_jobs?order=created_at.desc'),create:(d)=>sb('/mfg_jobs',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_jobs?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_jobs?id=eq.${id}`,{method:'DELETE'})},
     parts:{forJob:(jid)=>sb(`/mfg_parts?job_id=eq.${jid}&order=part_number.asc`),create:(d)=>sb('/mfg_parts',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_parts?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_parts?id=eq.${id}`,{method:'DELETE'})},
@@ -5708,6 +5717,264 @@ const PTABS=[
   {id:"info",icon:"ℹ️",label:"Info",perm:null},
 ];
 
+/* ── Crew Schedule ──────────────────────────────────────────────────────
+   Week grid: rows = employees, columns = Mon–Sun. A cell holds one or more
+   assignments (field job, shop job, PTO, training, off). Copy last week,
+   filter by division, job view, and an "unassigned" summary. Stored in the
+   `schedule` table; nothing else in the app reads it yet.                 */
+const SCHED_TYPES={
+  job:     {l:"Job",       c:"#60A5FA"},
+  shop:    {l:"Shop",      c:"#A78BFA"},
+  pto:     {l:"PTO",       c:"#F59E0B"},
+  training:{l:"Training",  c:"#22C55E"},
+  off:     {l:"Off",       c:"#6B7280"},
+};
+function CrewScheduleTab({user,projects,onErr}){
+  const [weekStart,setWeekStart]=useState(()=>mondayOf(new Date()));
+  const from=isoOf(weekStart),to=isoOf(addDays(weekStart,6));
+  const days=[0,1,2,3,4,5,6].map(i=>addDays(weekStart,i));
+  const [rows,setRows]=useState([]);
+  const [mfgJobs,setMfgJobs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [busy,setBusy]=useState(false);
+  const [view,setView]=useState("crew"); // crew | job
+  const [divFilter,setDivFilter]=useState("All");
+  const [search,setSearch]=useState("");
+  const [cell,setCell]=useState(null); // {worker,date}
+  const [draft,setDraft]=useState(null); // {type,project_id,mfg_job_id,start_time,note}
+  const roster=ROSTER();
+  const activeProjects=projects.filter(p=>!p.archived&&p.status!=="archived"&&p.status!=="closed");
+  const divisions=["All",...new Set(activeProjects.map(p=>p.division).filter(Boolean))];
+  const todayIso=isoOf(new Date());
+
+  async function load(){
+    setLoading(true);
+    try{
+      const [s,m]=await Promise.all([API.schedule.byRange(from,to),API.mfg.jobs.list().catch(()=>[])]);
+      setRows(Array.isArray(s)?s:[]);setMfgJobs(Array.isArray(m)?m:[]);
+    }catch(e){
+      if(String(e.message||"").includes("schedule")||String(e.message||"").includes("42P01"))onErr&&onErr("Run AIME_v3.1_crew_schedule.sql in Supabase to create the schedule table.");
+      else onErr&&onErr(e.message);
+    }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[from]);
+
+  const projName=(id)=>(projects.find(p=>p.id===id)||{}).name||"Job";
+  const mfgName=(id)=>(mfgJobs.find(j=>j.id===id)||{}).job_number||"Shop";
+  const label=(a)=>a.type==="job"?projName(a.project_id):a.type==="shop"?mfgName(a.mfg_job_id):SCHED_TYPES[a.type]?.l||a.type;
+  const color=(a)=>SCHED_TYPES[a.type]?.c||T.muted;
+  const at=(worker,date)=>rows.filter(r=>r.worker_name===worker&&r.date===date);
+
+  // Crew view rows: roster filtered by search; division filter applies to jobs offered + who shows (anyone scheduled in that division, or unassigned)
+  const visibleWorkers=roster.filter(w=>!search||w.toLowerCase().includes(search.toLowerCase()));
+  const weekAssign=(w)=>rows.filter(r=>r.worker_name===w);
+  const unassigned=visibleWorkers.filter(w=>days.slice(0,5).some(d=>at(w,isoOf(d)).length===0));
+
+  function openCell(worker,date,existing){
+    setCell({worker,date,id:existing?.id||null});
+    setDraft(existing?{type:existing.type,project_id:existing.project_id||"",mfg_job_id:existing.mfg_job_id||"",start_time:existing.start_time||"",note:existing.note||""}
+                     :{type:"job",project_id:"",mfg_job_id:"",start_time:"",note:""});
+  }
+  async function saveCell(){
+    if(!cell||!draft)return;
+    if(draft.type==="job"&&!draft.project_id){alert("Pick a job.");return;}
+    if(draft.type==="shop"&&!draft.mfg_job_id){alert("Pick a shop job.");return;}
+    const proj=activeProjects.find(p=>p.id===draft.project_id);
+    const body={worker_name:cell.worker,date:cell.date,type:draft.type,
+      project_id:draft.type==="job"?draft.project_id:null,
+      mfg_job_id:draft.type==="shop"?draft.mfg_job_id:null,
+      division:draft.type==="job"?(proj?.division||null):draft.type==="shop"?"Manufacturing":null,
+      start_time:draft.start_time||null,note:draft.note||null,created_by:user.name};
+    setBusy(true);
+    try{
+      if(cell.id)await API.schedule.update(cell.id,body);else await API.schedule.create(body);
+      setCell(null);setDraft(null);await load();
+    }catch(e){onErr&&onErr(e.message);}
+    setBusy(false);
+  }
+  async function removeCell(){
+    if(!cell?.id)return;
+    setBusy(true);
+    try{await API.schedule.remove(cell.id);setCell(null);setDraft(null);await load();}catch(e){onErr&&onErr(e.message);}
+    setBusy(false);
+  }
+  async function copyLastWeek(){
+    setBusy(true);
+    try{
+      const prev=await API.schedule.byRange(isoOf(addDays(weekStart,-7)),isoOf(addDays(weekStart,-1)));
+      const src=(Array.isArray(prev)?prev:[]).filter(r=>r.type==="job"||r.type==="shop");
+      if(!src.length){alert("Nothing scheduled last week to copy.");setBusy(false);return;}
+      const have=new Set(rows.map(r=>`${r.worker_name}|${r.date}|${r.project_id||r.mfg_job_id||r.type}`));
+      const add=src.map(r=>({worker_name:r.worker_name,date:isoOf(addDays(r.date,7)),type:r.type,project_id:r.project_id,mfg_job_id:r.mfg_job_id,division:r.division,start_time:r.start_time,note:r.note,created_by:user.name}))
+        .filter(r=>!have.has(`${r.worker_name}|${r.date}|${r.project_id||r.mfg_job_id||r.type}`));
+      if(!add.length){alert("Last week's assignments are already on this week.");setBusy(false);return;}
+      if(!window.confirm(`Copy ${add.length} assignment${add.length!==1?"s":""} from last week onto this week?`)){setBusy(false);return;}
+      await API.schedule.createMany(add);await load();
+    }catch(e){onErr&&onErr(e.message);}
+    setBusy(false);
+  }
+  async function fillWeek(worker,template){
+    // Apply one assignment Mon–Fri for a worker (skips days that already have it)
+    const add=days.slice(0,5).map(d=>isoOf(d)).filter(date=>!at(worker,date).some(a=>(a.project_id||a.mfg_job_id||a.type)===(template.project_id||template.mfg_job_id||template.type)))
+      .map(date=>({worker_name:worker,date,type:template.type,project_id:template.project_id||null,mfg_job_id:template.mfg_job_id||null,division:template.division||null,start_time:template.start_time||null,note:template.note||null,created_by:user.name}));
+    if(!add.length)return;
+    setBusy(true);
+    try{await API.schedule.createMany(add);setCell(null);setDraft(null);await load();}catch(e){onErr&&onErr(e.message);}
+    setBusy(false);
+  }
+  async function clearWeek(){
+    if(!rows.length)return;
+    if(!window.confirm(`Clear all ${rows.length} assignments for this week?`))return;
+    setBusy(true);
+    try{await API.schedule.removeMany(rows.map(r=>r.id));await load();}catch(e){onErr&&onErr(e.message);}
+    setBusy(false);
+  }
+
+  const chip=(a,onClick)=>(
+    <div key={a.id} onClick={onClick} title={[label(a),a.start_time,a.note].filter(Boolean).join(" · ")}
+      style={{fontSize:10,fontWeight:700,color:"#fff",background:color(a),borderRadius:5,padding:"2px 5px",marginBottom:2,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",opacity:a.type==="off"?0.6:1}}>
+      {label(a)}{a.start_time?` ${a.start_time}`:""}
+    </div>
+  );
+
+  const jobsInView=activeProjects.filter(p=>divFilter==="All"||p.division===divFilter);
+  const shopInView=mfgJobs.filter(j=>!j.archived&&j.status!=="shipped"&&j.status!=="closed");
+
+  return(
+    <div>
+      <div style={{fontSize:10,color:T.purple,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>🔒 Preview — visible only to you while we build it</div>
+
+      {/* Week nav + actions */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:10}}>
+        <button onClick={()=>setWeekStart(addDays(weekStart,-7))} style={{...ghostBtn,padding:"6px 12px"}}>‹</button>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:14,fontWeight:800,color:T.text}}>Week of {weekStart.toLocaleDateString(undefined,{month:"short",day:"numeric"})} – {addDays(weekStart,6).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</div>
+          <div style={{fontSize:10.5,color:T.muted}}>{rows.length} assignment{rows.length!==1?"s":""} · {unassigned.length} with open weekdays</div>
+        </div>
+        <button onClick={()=>setWeekStart(addDays(weekStart,7))} style={{...ghostBtn,padding:"6px 12px"}}>›</button>
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        <button onClick={()=>setWeekStart(mondayOf(new Date()))} style={{...ghostBtn,fontSize:11,padding:"5px 10px"}}>Today</button>
+        <button onClick={copyLastWeek} disabled={busy} style={{...ghostBtn,fontSize:11,padding:"5px 10px",color:T.blue,border:`1px solid ${T.blue}40`}}>⎘ Copy last week</button>
+        <button onClick={clearWeek} disabled={busy||!rows.length} style={{...ghostBtn,fontSize:11,padding:"5px 10px",color:T.red,border:`1px solid ${T.red}40`}}>Clear week</button>
+        <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+          {[["crew","👷 Crew"],["job","🏗️ Jobs"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setView(v)} style={{...ghostBtn,fontSize:11,padding:"5px 10px",background:view===v?T.blueLow:T.surface,color:view===v?T.blue:T.muted,border:`1px solid ${view===v?T.blue:T.border}`}}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        <select value={divFilter} onChange={e=>setDivFilter(e.target.value)} style={{...inp,width:"auto",fontSize:12,padding:"6px 8px"}}>{divisions.map(d=><option key={d}>{d}</option>)}</select>
+        {view==="crew"&&<input placeholder="Find employee…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,flex:1,fontSize:12,padding:"6px 8px"}}/>}
+      </div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+        {Object.entries(SCHED_TYPES).map(([k,v])=><span key={k} style={{fontSize:10,color:T.muted}}><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:v.c,marginRight:4,verticalAlign:"middle"}}/>{v.l}</span>)}
+      </div>
+
+      {loading&&<Spinner/>}
+
+      {/* CREW GRID */}
+      {!loading&&view==="crew"&&<div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:12}}>
+        <table style={{borderCollapse:"collapse",minWidth:820,width:"100%",fontSize:11}}>
+          <thead><tr>
+            <th style={{position:"sticky",left:0,background:T.surface,textAlign:"left",padding:"8px 10px",borderBottom:`1px solid ${T.border}`,color:T.muted,fontSize:10,textTransform:"uppercase",letterSpacing:"0.5px",minWidth:150,zIndex:1}}>Employee</th>
+            {days.map(d=>{const iso=isoOf(d);const isToday=iso===todayIso;const wk=d.getDay()===0||d.getDay()===6;return(
+              <th key={iso} style={{padding:"8px 6px",borderBottom:`1px solid ${T.border}`,borderLeft:`1px solid ${T.border}`,color:isToday?T.orange:wk?T.muted:T.text,fontSize:10,textTransform:"uppercase",letterSpacing:"0.5px",minWidth:92,background:isToday?`${T.orange}12`:T.surface}}>
+                {d.toLocaleDateString(undefined,{weekday:"short"})}<div style={{fontSize:11,fontWeight:800}}>{d.getDate()}</div>
+              </th>);})}
+          </tr></thead>
+          <tbody>
+            {visibleWorkers.map(w=>{
+              const wa=weekAssign(w);
+              const jobsDays=wa.filter(a=>a.type==="job"||a.type==="shop").length;
+              return(
+                <tr key={w}>
+                  <td style={{position:"sticky",left:0,background:T.bg,padding:"6px 10px",borderBottom:`1px solid ${T.border}`,zIndex:1}}>
+                    <div style={{fontWeight:700,color:T.text,whiteSpace:"nowrap"}}>{w}</div>
+                    <div style={{fontSize:9.5,color:jobsDays===0?T.yellow:T.muted}}>{jobsDays===0?"unassigned":`${jobsDays} day${jobsDays!==1?"s":""}`}</div>
+                  </td>
+                  {days.map(d=>{const iso=isoOf(d);const list=at(w,iso);const wk=d.getDay()===0||d.getDay()===6;return(
+                    <td key={iso} onClick={()=>openCell(w,iso,null)}
+                      style={{verticalAlign:"top",padding:4,borderBottom:`1px solid ${T.border}`,borderLeft:`1px solid ${T.border}`,cursor:"pointer",background:iso===todayIso?`${T.orange}08`:wk?`${T.border}30`:"transparent",minHeight:36}}>
+                      {list.map(a=>chip(a,(e)=>{e.stopPropagation();openCell(w,iso,a);}))}
+                      {list.length===0&&<div style={{height:22,borderRadius:5,border:`1px dashed ${T.border}`,opacity:0.5}}/>}
+                    </td>);})}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>}
+
+      {/* JOB VIEW */}
+      {!loading&&view==="job"&&<div>
+        {[...jobsInView.map(p=>({id:p.id,name:p.name,sub:`${p.division||""}${p.client?" · "+p.client:""}`,key:"project_id",c:SCHED_TYPES.job.c})),
+          ...((divFilter==="All"||divFilter==="Manufacturing")?shopInView.map(j=>({id:j.id,name:j.job_number||"Shop job",sub:`${j.customer||""}${j.due_date?" · due "+fmtDate(j.due_date):""}${j.ship_date?" · ship "+fmtDate(j.ship_date):""}`,key:"mfg_job_id",c:SCHED_TYPES.shop.c})):[])]
+          .map(j=>{
+            const jr=rows.filter(r=>r[j.key]===j.id);
+            if(!jr.length&&search)return null;
+            return(
+              <div key={j.key+j.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${j.c}`,opacity:jr.length?1:0.55}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:jr.length?6:0}}>
+                  <div><div style={{fontSize:13,fontWeight:800,color:T.text}}>{j.name}</div><div style={{fontSize:10.5,color:T.muted}}>{j.sub}</div></div>
+                  <div style={{fontSize:11,color:T.muted}}>{new Set(jr.map(r=>r.worker_name)).size} people · {jr.length} man-days</div>
+                </div>
+                {jr.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
+                  {days.map(d=>{const iso=isoOf(d);const who=jr.filter(r=>r.date===iso);return(
+                    <div key={iso} style={{background:T.surface,borderRadius:6,padding:"4px 5px",minHeight:34}}>
+                      <div style={{fontSize:9,color:iso===todayIso?T.orange:T.muted,textTransform:"uppercase"}}>{d.toLocaleDateString(undefined,{weekday:"short"})} {d.getDate()}</div>
+                      {who.map(r=><div key={r.id} onClick={()=>{setView("crew");openCell(r.worker_name,iso,r);}} style={{fontSize:10,color:T.text,cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.worker_name.split(" ")[0]} {r.worker_name.split(" ").slice(1).map(s=>s[0]).join("")}</div>)}
+                    </div>);})}
+                </div>}
+              </div>
+            );
+          })}
+      </div>}
+
+      {/* CELL EDITOR */}
+      {cell&&draft&&<div onClick={()=>{setCell(null);setDraft(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:"16px 16px 0 0",padding:16,width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",border:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div><div style={{fontSize:14,fontWeight:800,color:T.text}}>{cell.worker}</div><div style={{fontSize:11,color:T.muted}}>{new Date(cell.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"})}</div></div>
+            <button onClick={()=>{setCell(null);setDraft(null);}} style={{...ghostBtn,padding:"4px 10px"}}>✕</button>
+          </div>
+          {at(cell.worker,cell.date).filter(a=>a.id!==cell.id).length>0&&<div style={{fontSize:10.5,color:T.muted,marginBottom:8}}>Also that day: {at(cell.worker,cell.date).filter(a=>a.id!==cell.id).map(a=>label(a)).join(", ")}</div>}
+          <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
+            {Object.entries(SCHED_TYPES).map(([k,v])=>(
+              <button key={k} onClick={()=>setDraft({...draft,type:k})} style={{...ghostBtn,fontSize:11,padding:"6px 10px",background:draft.type===k?v.c:T.surface,color:draft.type===k?"#fff":T.muted,border:`1px solid ${draft.type===k?v.c:T.border}`}}>{v.l}</button>
+            ))}
+          </div>
+          {draft.type==="job"&&<div style={{marginBottom:8}}><label style={lbl}>Job</label>
+            <select value={draft.project_id} onChange={e=>setDraft({...draft,project_id:e.target.value})} style={inp}>
+              <option value="">— Select job —</option>
+              {jobsInView.map(p=><option key={p.id} value={p.id}>{p.name}{p.division?` (${p.division})`:""}</option>)}
+            </select></div>}
+          {draft.type==="shop"&&<div style={{marginBottom:8}}><label style={lbl}>Shop job</label>
+            <select value={draft.mfg_job_id} onChange={e=>setDraft({...draft,mfg_job_id:e.target.value})} style={inp}>
+              <option value="">— Select shop job —</option>
+              {shopInView.map(j=><option key={j.id} value={j.id}>{j.job_number}{j.customer?` · ${j.customer}`:""}{j.due_date?` · due ${fmtDate(j.due_date)}`:""}</option>)}
+            </select></div>}
+          <div style={{display:"grid",gridTemplateColumns:"110px 1fr",gap:8,marginBottom:10}}>
+            <div><label style={lbl}>Start</label><input type="time" value={draft.start_time} onChange={e=>setDraft({...draft,start_time:e.target.value})} style={inp}/></div>
+            <div><label style={lbl}>Note</label><input value={draft.note} onChange={e=>setDraft({...draft,note:e.target.value})} placeholder="Bring welding rig, meet at shop…" style={inp}/></div>
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <button onClick={saveCell} disabled={busy} style={{...primBtn,flex:1,borderRadius:10,background:T.green,color:"#000",opacity:busy?0.6:1}}>{cell.id?"Save":"Add"}</button>
+            {!cell.id&&(draft.type==="job"||draft.type==="shop")&&<button onClick={()=>{
+                if(draft.type==="job"&&!draft.project_id){alert("Pick a job.");return;}
+                if(draft.type==="shop"&&!draft.mfg_job_id){alert("Pick a shop job.");return;}
+                const proj=activeProjects.find(p=>p.id===draft.project_id);
+                fillWeek(cell.worker,{type:draft.type,project_id:draft.type==="job"?draft.project_id:null,mfg_job_id:draft.type==="shop"?draft.mfg_job_id:null,division:draft.type==="job"?proj?.division:"Manufacturing",start_time:draft.start_time,note:draft.note});
+              }} disabled={busy} style={{...ghostBtn,flex:1,textAlign:"center",color:T.blue,border:`1px solid ${T.blue}40`,fontWeight:700}}>Mon–Fri</button>}
+            {cell.id&&<button onClick={removeCell} disabled={busy} style={{...ghostBtn,color:T.red,border:`1px solid ${T.red}40`,padding:"8px 12px"}}>🗑</button>}
+          </div>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
 function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const [projects,setProjects]=useState(initProjects||[]);
   const [reports,setReports]=useState([]);
@@ -5963,7 +6230,10 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const scopedTmPending=tmPending.filter(t=>divIds.has(t.project_id));
   const tmPendingValue=scopedTmPending.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
 
-  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"contracts",l:`📐 Contracts${overBudgetCount>0?" ("+overBudgetCount+")":""}`},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
+  // Crew schedule is in preview — only visible to the people listed here while it's being built.
+  const SCHEDULE_PREVIEW_USERS=["Doug Friedel"];
+  const canSeeSchedule=SCHEDULE_PREVIEW_USERS.includes(user?.name);
+  const DMTABS=[{id:"overview",l:"📊 Overview"},...(canSeeSchedule?[{id:"schedule",l:"📅 Schedule"}]:[]),{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"contracts",l:`📐 Contracts${overBudgetCount>0?" ("+overBudgetCount+")":""}`},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
   const divOf=(r)=>(projects.find(p=>p.id===r.project_id)||r.projects||{}).division;
   const allTot=scopedReports.reduce((s,r)=>{const t=reportTotals(r,divOf(r));return{l:s.l+t.labor,e:s.e+t.equip,g:s.g+t.grand};},{l:0,e:0,g:0});
@@ -6772,6 +7042,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
         {/* USERS */}
         {pmTab==="users"&&<UserManagementScreen user={user} onBack={()=>setPmTab("overview")}/>}
+        {pmTab==="schedule"&&canSeeSchedule&&<CrewScheduleTab user={user} projects={projects} onErr={onErr}/>}
       </div>
     </div>
   );
