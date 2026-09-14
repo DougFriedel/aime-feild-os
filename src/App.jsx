@@ -968,6 +968,44 @@ function mondayOf(d){
 function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
 const isoOf=(d)=>d.toISOString().slice(0,10);
 
+/* ── Payroll overtime rule ────────────────────────────────────────────
+   OT is paid only after 40 hours PHYSICALLY WORKED in a Mon–Sun week.
+   Holiday hours do not count toward the 40. Travel is paid separately
+   and does not count either. Foremen may mark "OT" on a daily report
+   (that's what the client is billed) but the employee's time card is
+   re-cut here: worked hours fill regular up to 40, the rest is OT.
+   Cards are not rewritten in the DB — this is applied wherever cards
+   are shown or printed, so it always reflects the whole week. */
+const WEEKLY_OT_THRESHOLD=40;
+function applyWeeklyOT(cards){
+  const out=[];
+  const byWorkerWeek={};
+  for(const c of cards){
+    if(!c||!c.date)continue;
+    const key=(c.worker_name||"?")+"|"+isoOf(mondayOf(String(c.date)));
+    (byWorkerWeek[key]=byWorkerWeek[key]||[]).push(c);
+  }
+  for(const list of Object.values(byWorkerWeek)){
+    list.sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.created_at||"").localeCompare(String(b.created_at||"")));
+    let run=0;
+    for(const c of list){
+      const holiday=parseFloat(c.holiday_hours)||0;
+      const travel=parseFloat(c.travel_hours)||0;
+      const worked=c.source==="holiday"?0:(parseFloat(c.reg_hours)||0)+(parseFloat(c.ot_hours)||0);
+      const regRoom=Math.max(0,WEEKLY_OT_THRESHOLD-run);
+      const reg=Math.min(worked,regRoom);
+      const ot=worked-reg;
+      run+=worked;
+      out.push({...c,
+        raw_reg_hours:c.reg_hours,raw_ot_hours:c.ot_hours,
+        reg_hours:reg,ot_hours:ot,travel_hours:travel,holiday_hours:holiday,
+        total_hours:reg+ot+travel+holiday,
+        ot_recut:(parseFloat(c.ot_hours)||0)!==ot});
+    }
+  }
+  return out;
+}
+
 function MyHoursScreen({user,onBack}){
   const [weekStart,setWeekStart]=useState(()=>mondayOf(new Date()));
   const [cards,setCards]=useState([]);
@@ -1047,7 +1085,7 @@ function MyHoursScreen({user,onBack}){
 
   /* ── Combine field and shop into one weekly picture ── */
   const entries=[
-    ...cards.map(c=>({
+    ...applyWeeklyOT(cards).map(c=>({
       id:"f"+c.id,kind:c.source==="holiday"?"holiday":"field",date:c.date,
       job:c.source==="holiday"?String(c.notes||"Holiday").replace("Holiday — ",""):(c.projects?.name||"—"),
       holiday:parseFloat(c.holiday_hours)||0,
@@ -7649,6 +7687,7 @@ function NotificationsPanel({onCountChange,user}){
   }
 
 function printEmployeeTimecards(cards,from,to,selectedJobs,projects,preOpenedWin=null,mfgJobs=[]){
+  cards=applyWeeklyOT(cards); // payroll OT = over 40 worked in the week
   const filtered=cards.filter(c=>{
     if(!c.date||c.date<from||c.date>to)return false;
     // Shop cards carry mfg_job_id, so filtering on project_id alone dropped
@@ -7885,6 +7924,12 @@ function WeeklyApprovalPanel({user,projects,onErr}){
   const [openWorker,setOpenWorker]=useState(null);
   const [edit,setEdit]=useState(null); // {id,reg,ot,travel,reason}
   const from=isoOf(weekStart),to=isoOf(addDays(weekStart,6));
+  function printWorker(name){
+    const win=window.open("","_blank","width=900,height=750");
+    if(!win){alert("Popup blocked — please allow popups and try again.");return;}
+    try{printEmployeeTimecards(rows.filter(c=>c.worker_name===name),from,to,null,projects,win,[]);}
+    catch(e){win.close();onErr&&onErr(e.message);}
+  }
   // Holiday pay: one card per worker, no project, already approved.
   const HOLIDAYS=["New Year's Day","Memorial Day","Juneteenth","Independence Day","Labor Day","Thanksgiving","Day After Thanksgiving","Christmas Eve","Christmas Day","Other"];
   const [hol,setHol]=useState(null); // {date,name,other,hours,workers:[]}
@@ -7911,7 +7956,7 @@ function WeeklyApprovalPanel({user,projects,onErr}){
   }
   async function load(){
     setLoading(true);
-    try{const r=await API.timeCards.byRange(from,to);setRows((Array.isArray(r)?r:[]).filter(c=>c.status!=="open"));}
+    try{const r=await API.timeCards.byRange(from,to);setRows(applyWeeklyOT((Array.isArray(r)?r:[]).filter(c=>c.status!=="open")));}
     catch(e){onErr&&onErr(e.message);}
     setLoading(false);
   }
@@ -8055,6 +8100,7 @@ function WeeklyApprovalPanel({user,projects,onErr}){
                     <div style={{minWidth:0}}>
                       <div style={{fontSize:12,fontWeight:700,color:T.text}}>{dayName(c.date)} {String(c.date).slice(5)} · {c.source==="holiday"?"🎉 "+String(c.notes||"Holiday").replace("Holiday — ",""):jobOf(c)}</div>
                       <div style={{fontSize:10.5,color:T.muted}}>{c.source==="holiday"?`${parseFloat(c.holiday_hours)||hrs(c)} holiday hrs`:`${parseFloat(c.reg_hours)||0} reg · ${parseFloat(c.ot_hours)||0} OT · ${parseFloat(c.travel_hours)||0} trv${c.classification?` · ${c.classification}`:""}${c.source?` · from ${c.source==="tm"?"T&M":c.source}`:""}`}</div>
+                      {c.ot_recut&&<div style={{fontSize:10,color:T.yellow,marginTop:2}}>payroll: OT only after 40 worked this week (report had {parseFloat(c.raw_reg_hours)||0} reg / {parseFloat(c.raw_ot_hours)||0} OT)</div>}
                       {c.status==="disputed"&&<div style={{fontSize:11,color:TC_STATUS.disputed.c,marginTop:3}}>⚑ {c.dispute_note||"Flagged by employee"}</div>}
                       {c.edited_by&&<div style={{fontSize:10.5,color:T.blue,marginTop:2}}>✏️ {c.edited_by}{c.edit_reason?` — ${c.edit_reason}`:""}</div>}
                     </div>
@@ -8077,7 +8123,7 @@ function WeeklyApprovalPanel({user,projects,onErr}){
                       </div>
                     </div>
                     :c.status!=="approved"&&<div style={{display:"flex",gap:6,marginTop:6,justifyContent:"flex-end"}}>
-                      <button onClick={()=>setEdit({id:c.id,reg:c.reg_hours||0,ot:c.ot_hours||0,travel:c.travel_hours||0,reason:""})} style={{...ghostBtn,fontSize:10.5,padding:"4px 9px"}}>✏️ Fix</button>
+                      <button onClick={()=>setEdit({id:c.id,reg:c.raw_reg_hours??c.reg_hours??0,ot:c.raw_ot_hours??c.ot_hours??0,travel:c.travel_hours||0,reason:""})} style={{...ghostBtn,fontSize:10.5,padding:"4px 9px"}}>✏️ Fix</button>
                       <button onClick={()=>approveCards([c],`${c.worker_name} ${c.date}`)} disabled={busy} style={{...ghostBtn,fontSize:10.5,padding:"4px 9px",color:T.green,border:`1px solid ${T.green}40`}}>✓ Approve</button>
                     </div>}
                   {c.status==="approved"&&<div style={{textAlign:"right",marginTop:4}}>
@@ -8091,6 +8137,10 @@ function WeeklyApprovalPanel({user,projects,onErr}){
                 style={{...primBtn,borderRadius:10,marginTop:8,fontSize:12,background:w.state==="worker_approved"?T.green:T.yellow,color:"#000",opacity:busy?0.6:1}}>
                 ✓ Approve {w.name}'s week ({w.open.length} card{w.open.length!==1?"s":""}){w.state!=="worker_approved"?" — not all confirmed":""}
               </button>}
+              <button onClick={()=>printWorker(w.name)} disabled={busy}
+                style={{...ghostBtn,width:"100%",textAlign:"center",borderRadius:10,marginTop:8,fontSize:12,fontWeight:700,color:T.blue,border:`1px solid ${T.blue}40`}}>
+                🖨️ Print {w.name}'s timecard
+              </button>
             </div>}
           </div>
         );
@@ -8118,11 +8168,14 @@ function TimeCardsScreen({user,projects,onBack}){
     try{
       // byRange, not all() — all() caps at 500 rows ordered by date, so on a
       // busy month the oldest cards silently vanished from the report.
+      // Load the whole Mon–Sun weeks around the range so weekly OT is
+      // computed from every day of the week, not just the days shown.
+      const wFrom=isoOf(mondayOf(fromDate)), wTo=isoOf(addDays(mondayOf(toDate),6));
       const [r,m]=await Promise.all([
-        API.timeCards.byRange(fromDate,toDate),
+        API.timeCards.byRange(wFrom,wTo),
         API.mfg.jobs.list().catch(()=>[]),
       ]);
-      setCards(Array.isArray(r)?r:[]);
+      setCards(applyWeeklyOT(Array.isArray(r)?r:[]));
       setMfgJobs(Array.isArray(m)?m:[]);
     }catch(e){setErr(e.message);}
     setLoading(false);
@@ -8148,7 +8201,7 @@ function TimeCardsScreen({user,projects,onBack}){
     }
     setPrinting(true);
     try{
-      printEmployeeTimecards(cards,fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects,win,mfgJobs);
+      printEmployeeTimecards(cards.filter(c=>c.date>=fromDate&&c.date<=toDate),fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects,win,mfgJobs);
     }catch(e){
       win.close();
       alert("Error generating report: "+e.message);
