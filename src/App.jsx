@@ -2776,10 +2776,10 @@ ${sections.weather&&report.site_conditions?`<div class="section"><h2>Site Condit
 ${sections.description&&report.description?`<div class="section"><h2>Description of Work</h2><div class="desc-box">${report.description.replace(/\n/g,'<br/>')}</div></div>`:''}
 
 ${sections.labor&&(report.labor||[]).length>0?`<div class="section"><h2>Labor — ${(report.labor||[]).filter(l=>!isPerDiemRow(l)).length} Workers · ${fmtH(tot.labor_hrs||0)} Total Hrs${tot.labor>0?' · '+fmt2(tot.labor):''}</h2>
-<table><thead><tr><th>Name</th><th>Classification</th><th style="text-align:center">Reg Hrs</th><th style="text-align:center">OT Hrs</th><th style="text-align:center">Travel</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.labor||[]).filter(l=>!isPerDiemRow(l)).filter(l=>l.name||l.classification||parseFloat(l.regHrs)||parseFloat(l.otHrs)||parseFloat(l.travelHrs)).map(l=>`<tr><td>${l.name||'—'}</td><td>${l.classification||'—'}</td><td style="text-align:center">${l.regHrs||0}</td><td style="text-align:center">${l.otHrs||0}</td><td style="text-align:center">${l.travelHrs||0}</td><td style="text-align:right">${fmt2(laborAmt(l,division))}</td></tr>`).join('')}
-${tot.perdiem>0?`<tr><td colspan="2"><em>Per Diem</em></td><td colspan="3" style="text-align:center">${tot.perdiem_count} employee${tot.perdiem_count!==1?'s':''} × ${fmt2(tot.perdiem/tot.perdiem_count)}</td><td style="text-align:right">${fmt2(tot.perdiem)}</td></tr>`:''}
-</tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL LABOR</strong></td><td style="text-align:right"><strong>${fmt2(tot.labor||0)}</strong></td></tr></tfoot></table></div>`:''}
+<table><thead><tr><th>Name</th><th>Classification</th><th style="text-align:center">Reg Hrs</th><th style="text-align:center">OT Hrs</th><th style="text-align:center">Travel</th><th style="text-align:right">Reg Rate</th><th style="text-align:right">OT Rate</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${(report.labor||[]).filter(l=>!isPerDiemRow(l)).filter(l=>l.name||l.classification||parseFloat(l.regHrs)||parseFloat(l.otHrs)||parseFloat(l.travelHrs)).map(l=>{const pos=getPositions(division).find(p=>p.name===l.classification);const rate=pos?pos.rate:0;return `<tr><td>${l.name||'—'}</td><td>${l.classification||'—'}</td><td style="text-align:center">${l.regHrs||0}</td><td style="text-align:center">${l.otHrs||0}</td><td style="text-align:center">${l.travelHrs||0}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${rate&&(parseFloat(l.otHrs)||0)>0?fmt2(rate*1.5):''}</td><td style="text-align:right">${fmt2(laborAmt(l,division))}</td></tr>`;}).join('')}
+${tot.perdiem>0?`<tr><td colspan="2"><em>Per Diem</em></td><td colspan="3" style="text-align:center">${tot.perdiem_count} employee${tot.perdiem_count!==1?'s':''}</td><td style="text-align:right">${fmt2(tot.perdiem/tot.perdiem_count)}</td><td></td><td style="text-align:right">${fmt2(tot.perdiem)}</td></tr>`:''}
+</tbody><tfoot><tr class="total-row"><td colspan="7"><strong>TOTAL LABOR</strong></td><td style="text-align:right"><strong>${fmt2(tot.labor||0)}</strong></td></tr></tfoot></table></div>`:''}
 
 ${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>Equipment — ${(report.equipment||[]).length} Items${tot.equip>0?' · '+fmt2(tot.equip):''}</h2>
 <table><thead><tr><th>Equipment</th><th>Unit</th><th style="text-align:center">Qty</th><th style="text-align:center">Hrs / Days</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
@@ -12485,7 +12485,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [af,setAf]=useState({part_id:"",qty:"",date:today(),by:user.name});
 
   const [showShipForm,setShowShipForm]=useState(false);
-  const [sf,setSf]=useState({part_id:"",item:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
+  const [sf,setSf]=useState({part_id:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
 
   useEffect(()=>{load();},[job.id]);
 
@@ -12637,26 +12637,19 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
     setSaving(false);
   }
 
-  // A shipment can be tied to a finished part (normal) or stand alone with a
-  // free-text item, for jobs where the customer supplies the material and
-  // nothing is tracked as an assembly.
-  const shipFormOk=!!sf.qty&&(!!sf.part_id||!!(sf.item||"").trim());
   async function logShipment(){
-    if(!shipFormOk)return;
+    if(!sf.qty||!sf.part_id)return;
     setSaving(true);
     try{
       const qty=parseInt(sf.qty)||0;
-      await API.mfg.shippingLog.create({part_id:sf.part_id||null,item_description:sf.part_id?null:(sf.item.trim()||null),
-        job_id:job.id,qty_shipped:qty,ship_date:sf.date,customer:sf.customer||null,bol_number:sf.bol||null,entered_by:sf.by});
+      await API.mfg.shippingLog.create({part_id:sf.part_id,job_id:job.id,qty_shipped:qty,ship_date:sf.date,customer:sf.customer||null,bol_number:sf.bol||null,entered_by:sf.by});
       // mfg_parts.qty_shipped is a cached total the manufacturing dashboard
       // reads. The packing slip flow updates it; this one did not, so the
       // dashboard showed 0 shipped while the job showed 40.
-      if(sf.part_id){
-        const part=parts.find(x=>x.id===sf.part_id);
-        await API.mfg.parts.update(sf.part_id,
-          {qty_shipped:(parseInt(part?.qty_shipped)||0)+qty}).catch(()=>{});
-      }
-      setShowShipForm(false);setSf({part_id:"",item:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
+      const part=parts.find(x=>x.id===sf.part_id);
+      await API.mfg.parts.update(sf.part_id,
+        {qty_shipped:(parseInt(part?.qty_shipped)||0)+qty}).catch(()=>{});
+      setShowShipForm(false);setSf({part_id:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
       await load();
     }catch(e){alert(e.message);}
     setSaving(false);
@@ -12665,7 +12658,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const allBomItems=parts.flatMap(p=>(boms[p.id]||[]).map(item=>({...item,part_id:p.id,_partNum:p.part_number})));
   const totalCanBuild=parts.length>0?parts.reduce((mn,p)=>Math.min(mn,canBuildPart(p.id)),9999):0;
   const totalReadyToShip=parts.reduce((s,p)=>s+asmTotals(p.id).readyToShip,0);
-  const totalShipped=shippingLogs.reduce((s,a)=>s+(parseInt(a.qty_shipped)||0),0);
+  const totalShipped=parts.reduce((s,p)=>s+asmTotals(p.id).shipped,0);
   const reorderNeeded=allBomItems.filter(item=>inv(item).needsReorder);
 
   if(showPackingSlip) return(
@@ -13005,16 +12998,12 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           </div>
           {showShipForm&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.blue}40`}}>
             <div style={{fontSize:13,fontWeight:800,color:T.blue,marginBottom:12}}>Log Shipment</div>
-            <div style={{marginBottom:10}}><label style={lbl}>Assembly {parts.length?"":"(none on this job)"}</label>
-              <select value={sf.part_id} onChange={e=>setSf(x=>({...x,part_id:e.target.value}))} style={inpSel} disabled={!parts.length}>
-                <option value="">{parts.length?"— None / customer-supplied —":"— No finished parts set up —"}</option>
+            <div style={{marginBottom:10}}><label style={lbl}>Assembly *</label>
+              <select value={sf.part_id} onChange={e=>setSf(x=>({...x,part_id:e.target.value}))} style={inpSel}>
+                <option value="">— Select —</option>
                 {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}{p.description?" — "+p.description:""}</option>)}
               </select>
             </div>
-            {!sf.part_id&&<div style={{marginBottom:10}}><label style={lbl}>What shipped *</label>
-              <input value={sf.item} onChange={e=>setSf(x=>({...x,item:e.target.value}))} placeholder="e.g. Security Door Frames (customer-supplied material)" style={inp}/>
-              <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>No assembly needed — just describe the item and enter the quantity.</div>
-            </div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
               <div><label style={lbl}>Qty Shipped *</label><input type="number" value={sf.qty} onChange={e=>setSf(x=>({...x,qty:e.target.value}))} placeholder="0" style={inp}/></div>
               <div><label style={lbl}>Ship Date</label><input type="date" value={sf.date} onChange={e=>setSf(x=>({...x,date:e.target.value}))} style={inp}/></div>
@@ -13024,7 +13013,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
               <div><label style={lbl}>BOL #</label><input value={sf.bol} onChange={e=>setSf(x=>({...x,bol:e.target.value}))} placeholder="BOL #" style={inp}/></div>
             </div>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={logShipment} disabled={!shipFormOk||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.blue,opacity:shipFormOk&&!saving?1:0.5}}>{saving?"Saving…":"Log Shipment"}</button>
+              <button onClick={logShipment} disabled={!sf.qty||!sf.part_id||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.blue,opacity:sf.qty&&sf.part_id&&!saving?1:0.5}}>{saving?"Saving…":"Log Shipment"}</button>
               <button onClick={()=>setShowShipForm(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
             </div>
           </div>}
@@ -13032,7 +13021,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
             const part=parts.find(p=>p.id===s.part_id);
             return(<div key={s.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.blue}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <div style={{fontSize:14,fontWeight:800,color:T.blue}}>{s.qty_shipped} shipped — {part?.part_number||s.item_description||"—"}</div>
+                <div style={{fontSize:14,fontWeight:800,color:T.blue}}>{s.qty_shipped} shipped — {part?.part_number||"—"}</div>
                 <div style={{fontSize:11,color:T.muted}}>{s.ship_date}{s.customer?" · "+s.customer:""}{s.bol_number?" · BOL: "+s.bol_number:""}</div>
               </div>
               {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete?"))try{
@@ -15396,32 +15385,12 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
   const [bolTracking,setBolTracking]=useState(existingSlip?.data?.bolTracking||"");
   const [skidCount,setSkidCount]=useState(existingSlip?.data?.skidCount||"");
   const [totalWeight,setTotalWeight]=useState(existingSlip?.data?.totalWeight||"");
-  const d0=existingSlip?.data||{};
-  const dv=(k,fallback)=>(d0[k]!==undefined&&d0[k]!==null)?d0[k]:fallback;
-  const [sealNo,setSealNo]=useState(dv("sealNo",""));
-  const [sqrs,setSqrs]=useState(dv("sqrs","SQR03, SQR04, SQR06, SQR33, SQR35"));
-  const [drawingRev,setDrawingRev]=useState(dv("drawingRev",""));
-  const [deliveryAppt,setDeliveryAppt]=useState(dv("deliveryAppt","Call 24 hrs. in advance: (814) 539-6922 x299"));
-  const [recvHours,setRecvHours]=useState(dv("recvHours","7:00 AM thru 3:00 PM ONLY"));
-  const [notes,setNotes]=useState(dv("notes",""));
-
-  // Section 1 — Ship To / Order Information. Every box is editable so the
-  // slip can go to a different customer / site; defaults come from the job.
-  const [fromAddr,setFromAddr]=useState(dv("fromAddr","AIME / Atlantic Welders Inc.\n5730 Pennington Ave, Baltimore, MD 21226"));
-  const [customerName,setCustomerName]=useState(dv("customerName",job.customer||""));
-  // JWFI is the usual customer, so keep its buyer / dock as the default when
-  // the job is theirs; any other customer starts blank.
-  const isJWF=/jwf/i.test(job.customer||"");
-  const [buyerContact,setBuyerContact]=useState(dv("buyerContact",isJWF?"JWFI Purchasing":""));
-  const [shipVia,setShipVia]=useState(dv("shipVia",""));
-  const [shipTo,setShipTo]=useState(dv("shipTo",isJWF?"JWFI\n84 Iron Street - Dock 2 Johnstown, PA 15906":""));
-  const [customerPo,setCustomerPo]=useState(dv("customerPo",job.po_number||""));
-
-  // Section 2 — Shipment Details extras (the rest already have state above).
-  const [partNumber,setPartNumber]=useState(dv("partNumber",parts.map(p=>p.part_number).filter(Boolean).join(", ")));
-  const [partDesc,setPartDesc]=useState(dv("partDesc",parts.map(p=>p.description).filter(Boolean).join(", ")));
-  const [operation,setOperation]=useState(dv("operation",""));
-  const [uom,setUom]=useState(dv("uom","EA"));
+  const [sealNo,setSealNo]=useState("");
+  const [sqrs,setSqrs]=useState("SQR03, SQR04, SQR06, SQR33, SQR35");
+  const [drawingRev,setDrawingRev]=useState("");
+  const [deliveryAppt,setDeliveryAppt]=useState("Call 24 hrs. in advance: (814) 539-6922 x299");
+  const [recvHours,setRecvHours]=useState("7:00 AM thru 3:00 PM ONLY");
+  const [notes,setNotes]=useState(existingSlip?.data?.notes||"");
 
   const blankLine={poLine:"",partNo:"",description:"",qtyOrdered:"",qtyShipped:"",qtyBackordered:"",pkgSkid:"",notes:""};
   const [lines,setLines]=useState(()=>existingSlip?.data?.lines||parts.map(p=>({...blankLine,partNo:p.part_number,description:p.description||"",qtyOrdered:String(p.qty_ordered||"")})).concat(Array(Math.max(0,6-parts.length)).fill(blankLine)));
@@ -15439,8 +15408,7 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
 
   async function saveSlip(){
     setSaving(true);setSaveMsg("");
-    const data={slipNo,shipDate,carrier,truckTrailer,bolTracking,skidCount,totalWeight,sealNo,sqrs,drawingRev,deliveryAppt,recvHours,notes,checks,lines,
-      fromAddr,customerName,buyerContact,shipVia,shipTo,customerPo,partNumber,partDesc,operation,uom};
+    const data={slipNo,shipDate,carrier,truckTrailer,bolTracking,skidCount,totalWeight,sealNo,sqrs,drawingRev,deliveryAppt,recvHours,notes,checks,lines};
     try{
       if(slipId){
         await API.mfg.packingSlips.update(slipId,{slip_number:slipNo,ship_date:shipDate||null,data,updated_at:new Date().toISOString()});
@@ -15470,8 +15438,6 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
 
   function printSlip(){
     const CHECKMARK="✓";
-    const escP=(v)=>String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const ml=(v)=>escP(v).replace(/\n/g,"<br/>");   // multi-line box
     const CB=(checked)=>checked?`<span style="font-size:14px">☑</span>`:`<span style="font-size:14px">☐</span>`;
 
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -15531,29 +15497,29 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
 <div class="section-header">1. Ship To / Order Information</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #ccc;margin-bottom:4px;">
   <div style="border-right:1px solid #ccc;">
-    ${[["From",ml(fromAddr)],
-       ["Customer / Project",escP(customerName)],
-       ["Buyer / Contact",escP(buyerContact)],
-       ["Ship Via",escP(shipVia||carrier)]].map(([l,v])=>`
-    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v||"&nbsp;"}</div></div>`).join("")}
+    ${[["From","AIME / Atlantic Welders Inc.<br/>5730 Pennington Ave, Baltimore, MD 21226"],
+       ["Customer / Project",job.customer||"JWF Industries"],
+       ["Buyer / Contact","JWFI Purchasing"],
+       ["Ship Via",carrier||"Vendor Truck"]].map(([l,v])=>`
+    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v}</div></div>`).join("")}
   </div>
   <div>
-    ${[["Ship To",ml(shipTo)],
-       ["Customer PO #",escP(customerPo)],
-       ["Delivery Appointment",escP(deliveryAppt)],
-       ["Receiving Hours",escP(recvHours)]].map(([l,v])=>`
-    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v||"&nbsp;"}</div></div>`).join("")}
+    ${[["Ship To","JWFI<br/>84 Iron Street - Dock 2 Johnstown, PA 15906"],
+       ["Customer PO #",job.po_number||"222577-00"],
+       ["Delivery Appointment",deliveryAppt],
+       ["Receiving Hours",recvHours]].map(([l,v])=>`
+    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v}</div></div>`).join("")}
   </div>
 </div>
 
 <!-- SECTION 2: SHIPMENT DETAILS -->
 <div class="section-header">2. Shipment Details</div>
 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;border:1px solid #ccc;margin-bottom:4px;">
-  ${[["Part Number",partNumber],
-     ["Description",partDesc],
+  ${[["Part Number",parts.map(p=>p.part_number).join(", ")||"1651"],
+     ["Description",parts.map(p=>p.description).filter(Boolean).join(", ")||""],
      ["Drawing Rev.",drawingRev],
-     ["Operation",operation],
-     ["UOM",uom],
+     ["Operation","OSP Fit / Weld"],
+     ["UOM","EA"],
      ["SQRs",sqrs],
      ["Carrier / Driver",carrier],
      ["Truck / Trailer #",truckTrailer],
@@ -15561,7 +15527,7 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
      ["Skid / Package Count",skidCount],
      ["Total Weight",totalWeight?(totalWeight+" lbs"):""],
      ["Seal #",sealNo]].map(([l,v])=>`
-  <div class="ship-row"><div class="ship-label">${l}</div><div class="ship-value">${escP(v)||"&nbsp;"}</div></div>`).join("")}
+  <div class="ship-row"><div class="ship-label">${l}</div><div class="ship-value">${v||"&nbsp;"}</div></div>`).join("")}
 </div>
 
 <!-- SECTION 3: PARTS PACKED/SHIPPED -->
@@ -15675,45 +15641,20 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
           </div>
         </div>
 
-        {/* Section 1: Ship To / Order Information — all editable */}
-        <div style={{...cardS,marginBottom:12}}>
-          <div style={{fontSize:12,fontWeight:800,color:T.blue,marginBottom:4}}>📦 1. Ship To / Order Information</div>
-          <div style={{fontSize:10.5,color:T.muted,marginBottom:12}}>Pre-filled from the job. Change anything here for a different customer, buyer, or ship-to site — it's saved with this slip only.</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-            <div><label style={lbl}>From</label>
-              <textarea value={fromAddr} onChange={e=>setFromAddr(e.target.value)} rows={2} style={{...inp,resize:"vertical",minHeight:52}}/></div>
-            <div><label style={lbl}>Ship To</label>
-              <textarea value={shipTo} onChange={e=>setShipTo(e.target.value)} rows={2} placeholder={"Company\nStreet, City, ST ZIP"} style={{...inp,resize:"vertical",minHeight:52}}/></div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-            <div><label style={lbl}>Customer / Project</label><input value={customerName} onChange={e=>setCustomerName(e.target.value)} placeholder="Customer" style={inp}/></div>
-            <div><label style={lbl}>Customer PO #</label><input value={customerPo} onChange={e=>setCustomerPo(e.target.value)} placeholder="PO #" style={inp}/></div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-            <div><label style={lbl}>Buyer / Contact</label><input value={buyerContact} onChange={e=>setBuyerContact(e.target.value)} placeholder="Name / dept / phone" style={inp}/></div>
-            <div><label style={lbl}>Ship Via</label><input value={shipVia} onChange={e=>setShipVia(e.target.value)} placeholder={carrier||"e.g. AIME Delivery"} style={inp}/></div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div><label style={lbl}>Delivery Appointment</label><input value={deliveryAppt} onChange={e=>setDeliveryAppt(e.target.value)} style={inp}/></div>
-            <div><label style={lbl}>Receiving Hours</label><input value={recvHours} onChange={e=>setRecvHours(e.target.value)} style={inp}/></div>
-          </div>
+        {/* Auto-filled from job */}
+        <div style={{...cardS,marginBottom:12,background:T.blueLow,border:`1px solid ${T.blue}30`}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.blue,marginBottom:8}}>📦 Auto-filled from Job</div>
+          {[["Customer / Project",job.customer||"JWF Industries"],["Customer PO #",job.po_number||""],["Part Number",parts.map(p=>p.part_number).join(", ")],["Description",parts.map(p=>p.description).filter(Boolean).join(", ")]].map(([l,v])=>(
+            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
+              <span style={{color:T.muted,fontWeight:700}}>{l}</span>
+              <span style={{color:T.text}}>{v||"—"}</span>
+            </div>
+          ))}
         </div>
 
-        {/* Section 2: Shipment details — all editable */}
+        {/* Shipment details */}
         <div style={{...cardS,marginBottom:12}}>
-          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:12}}>🚛 2. Shipment Details</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-            <div><label style={lbl}>Part Number</label><input value={partNumber} onChange={e=>setPartNumber(e.target.value)} placeholder="Part #" style={inp}/></div>
-            <div><label style={lbl}>Description</label><input value={partDesc} onChange={e=>setPartDesc(e.target.value)} placeholder="Description" style={inp}/></div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
-            <div><label style={lbl}>Drawing Rev.</label><input value={drawingRev} onChange={e=>setDrawingRev(e.target.value)} placeholder="Rev" style={inp}/></div>
-            <div><label style={lbl}>Operation</label><input value={operation} onChange={e=>setOperation(e.target.value)} placeholder="e.g. OSP Fit / Weld" style={inp}/></div>
-            <div><label style={lbl}>UOM</label><input value={uom} onChange={e=>setUom(e.target.value)} placeholder="EA" style={inp}/></div>
-          </div>
-          <div style={{marginBottom:10}}>
-            <label style={lbl}>SQRs</label><input value={sqrs} onChange={e=>setSqrs(e.target.value)} placeholder="SQR numbers, comma separated" style={inp}/>
-          </div>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:12}}>🚛 Shipment Details</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
             <div><label style={lbl}>Carrier / Driver</label><input value={carrier} onChange={e=>setCarrier(e.target.value)} style={inp}/></div>
             <div><label style={lbl}>Truck / Trailer #</label><input value={truckTrailer} onChange={e=>setTruckTrailer(e.target.value)} placeholder="Truck/Trailer #" style={inp}/></div>
@@ -17747,32 +17688,21 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
   const [showPull,setShowPull]=useState(false);
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
 
-  // Each line has a unit: "hour" (employees × hours × rate, the original
-  // weekly-labor row) or "each" (qty × rate, for piece-priced items).
-  const addLine=()=>setLines(ls=>[...ls,{id:uid(),unit:"hour",period_start:"",period_end:"",
+  const addLine=()=>setLines(ls=>[...ls,{id:uid(),period_start:"",period_end:"",
     description:`${job.description||job.job_number} - Weekly Labor`,
     employees:"",hours:"",rate:rate,source:null}]);
-  const addItemLine=()=>setLines(ls=>[...ls,{id:uid(),unit:"each",period_start:"",period_end:"",
-    description:"",qty:"",rate:"",source:null}]);
   const setLine=(id,k,v)=>setLines(ls=>ls.map(l=>l.id===id?{...l,[k]:v}:l));
   const delLine=(id)=>setLines(ls=>ls.filter(l=>l.id!==id));
 
-  const isEach=(l)=>l.unit==="each";
   // Man-hours = employees × hours each. Amount = man-hours × rate.
-  // Item lines: amount = qty × rate, no man-hours.
-  const manHours=(l)=>isEach(l)?0:(parseFloat(l.employees)||0)*(parseFloat(l.hours)||0);
-  const lineQty=(l)=>isEach(l)?(parseFloat(l.qty)||0):manHours(l);
-  const lineAmt=(l)=>lineQty(l)*(parseFloat(l.rate)||0);
+  const manHours=(l)=>(parseFloat(l.employees)||0)*(parseFloat(l.hours)||0);
+  const lineAmt=(l)=>manHours(l)*(parseFloat(l.rate)||0);
 
-  const laborLines=lines.filter(l=>!isEach(l));
-  const itemLines=lines.filter(isEach);
-  const totalManHours=laborLines.reduce((s,l)=>s+manHours(l),0);
-  const laborSubtotal=laborLines.reduce((s,l)=>s+lineAmt(l),0);
-  const itemsSubtotal=itemLines.reduce((s,l)=>s+lineAmt(l),0);
-  const linesSubtotal=laborSubtotal+itemsSubtotal;
+  const totalManHours=lines.reduce((s,l)=>s+manHours(l),0);
+  const laborSubtotal=lines.reduce((s,l)=>s+lineAmt(l),0);
   const materials=parseFloat(f.materials)||0;
   const freight=parseFloat(f.freight)||0;
-  const taxable=linesSubtotal+materials+freight;
+  const taxable=laborSubtotal+materials+freight;
   const taxAmount=taxable*((parseFloat(f.tax_pct)||0)/100);
   const total=taxable+taxAmount;
   const paid=parseFloat(f.amount_paid)||0;
@@ -17797,7 +17727,7 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
       tax_pct:parseFloat(f.tax_pct)||0,tax_amount:taxAmount,
       retainage_pct:0,retainage_amount:0,
       amount_paid:paid,
-      subtotal:linesSubtotal,total,
+      subtotal:laborSubtotal,total,
       lines,
       created_by:invoice?.created_by||user.name,
       updated_at:new Date().toISOString(),
@@ -17908,20 +17838,12 @@ table.tot .v{text-align:right;min-width:90px}
     <th style="width:30%">Description</th>
     <th class="c" style="width:10%">Employees</th>
     <th class="c" style="width:8%">Hours</th>
-    <th class="c" style="width:11%">${itemLines.length?"Qty / Man-Hrs":"Man-Hours"}</th>
+    <th class="c" style="width:11%">Man-Hours</th>
     <th class="c" style="width:8%">Rate</th>
     <th class="r" style="width:13%">Amount</th>
   </tr></thead>
   <tbody>
-    ${rows.map(l=>l?(isEach(l)?`<tr>
-      <td>${period(l)}</td>
-      <td>${esc(l.description)}</td>
-      <td class="c">&mdash;</td>
-      <td class="c">&mdash;</td>
-      <td class="c">${n0(l.qty)} ea</td>
-      <td class="c">${m2(l.rate)}</td>
-      <td class="r">${m2(lineAmt(l))}</td>
-    </tr>`:`<tr>
+    ${rows.map(l=>l?`<tr>
       <td>${period(l)}</td>
       <td>${esc(l.description)}</td>
       <td class="c">${n0(l.employees)}</td>
@@ -17929,14 +17851,14 @@ table.tot .v{text-align:right;min-width:90px}
       <td class="c">${n0(manHours(l))}</td>
       <td class="c">${n0(l.rate)}</td>
       <td class="r">${n0(lineAmt(l))}</td>
-    </tr>`):`<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join("")}
+    </tr>`:`<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join("")}
   </tbody>
 </table>
 
 <div class="foot">
   <div>
     <h2>NOTES / PAYMENT TERMS</h2>
-    ${laborLines.length?`<div class="hl">Labor billed at $${m2(rate)} per man-hour. Weekly billing period.</div>`:""}
+    <div class="hl">Labor billed at $${m2(rate)} per man-hour. Weekly billing period.</div>
     <div class="note">${esc(f.notes).replace(/\n/g,"<br/>")}</div>
     <div class="sig">
       <div><div class="sigline"></div><div class="siglbl">Authorized By</div></div>
@@ -17945,9 +17867,8 @@ table.tot .v{text-align:right;min-width:90px}
   </div>
   <div>
     <table class="tot">
-      ${laborLines.length||!itemLines.length?`<tr><td class="k">Total Man-Hours</td><td class="v">${n0(totalManHours)}</td></tr>
-      <tr><td class="k">Labor Subtotal</td><td class="v">${n0(laborSubtotal)}</td></tr>`:""}
-      ${itemLines.length?`<tr><td class="k">Items Subtotal</td><td class="v">${m2(itemsSubtotal)}</td></tr>`:""}
+      <tr><td class="k">Total Man-Hours</td><td class="v">${n0(totalManHours)}</td></tr>
+      <tr><td class="k">Labor Subtotal</td><td class="v">${n0(laborSubtotal)}</td></tr>
       <tr><td class="k">Materials / Consumables</td><td class="v">${n0(materials)}</td></tr>
       <tr><td class="k">Freight / Other</td><td class="v">${n0(freight)}</td></tr>
       <tr><td class="k">Sales Tax</td><td class="v">${n0(taxAmount)}</td></tr>
@@ -18020,34 +17941,26 @@ table.tot .v{text-align:right;min-width:90px}
 
       {/* Lines */}
       <div style={{display:"flex",gap:8,marginBottom:10}}>
-        <button onClick={addLine} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ Add Week (hourly)</button>
-        <button onClick={addItemLine} style={{...primBtn,flex:1,borderRadius:12,background:T.purple,fontSize:13}}>+ Add Items (each)</button>
+        <button onClick={addLine} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ Add Week</button>
         <button onClick={()=>setShowPull(true)} style={{...primBtn,flex:1,borderRadius:12,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,fontSize:13}}>
           ↓ Pull Logged Hours
         </button>
       </div>
 
       {lines.length===0&&<div style={{...cardS,textAlign:"center",padding:"24px",color:T.muted,fontSize:12,marginBottom:10}}>
-        No lines yet. Pull logged hours, add a week by hand, or add a per-item line (qty × price each).
+        No billing weeks yet. Pull logged hours to build them automatically, or add a week by hand.
       </div>}
 
       {lines.map(l=>(
-        <div key={l.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${l.source?T.green:isEach(l)?T.purple:T.blue}`}}>
+        <div key={l.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${l.source?T.green:T.blue}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <div style={{fontSize:11,color:l.source?T.green:T.muted,fontWeight:l.source?700:400}}>
-                {l.source?`🏭 ${l.source.ids.length} labor entries`:isEach(l)?"Items":"Manual week"}
-              </div>
-              {!l.source&&<select value={l.unit||"hour"} onChange={e=>setLine(l.id,"unit",e.target.value)}
-                style={{...inp,width:"auto",padding:"3px 6px",fontSize:11,fontWeight:700,color:isEach(l)?T.purple:T.blue}}>
-                <option value="hour">Per man-hour</option>
-                <option value="each">Per each</option>
-              </select>}
+            <div style={{fontSize:11,color:l.source?T.green:T.muted,fontWeight:l.source?700:400}}>
+              {l.source?`🏭 ${l.source.ids.length} labor entries`:"Manual week"}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:9}}>
               <div style={{textAlign:"right"}}>
                 <div style={{fontSize:14,fontWeight:900,color:T.green}}>{money2(lineAmt(l))}</div>
-                <div style={{fontSize:10,color:T.muted}}>{isEach(l)?`${lineQty(l)} × ${money2(l.rate)}`:`${manHours(l)} man-hrs`}</div>
+                <div style={{fontSize:10,color:T.muted}}>{manHours(l)} man-hrs</div>
               </div>
               <button onClick={()=>delLine(l.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
             </div>
@@ -18057,29 +17970,21 @@ table.tot .v{text-align:right;min-width:90px}
             <div><label style={lbl}>Week To</label><input type="date" value={l.period_end||""} onChange={e=>setLine(l.id,"period_end",e.target.value)} style={ri}/></div>
           </div>
           <div style={{marginBottom:8}}><label style={lbl}>Description</label>
-            <input value={l.description||""} onChange={e=>setLine(l.id,"description",e.target.value)}
-              placeholder={isEach(l)?"e.g. Bracket assembly, P/N 0801651":""} style={ri}/></div>
-          {isEach(l)?<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <div><label style={lbl}>Quantity</label>
-              <input type="number" step="1" value={l.qty||""} onChange={e=>setLine(l.id,"qty",e.target.value)} placeholder="60" style={{...ri,textAlign:"center"}}/></div>
-            <div><label style={lbl}>Price Each</label>
-              <input type="number" step="0.01" value={l.rate||""} onChange={e=>setLine(l.id,"rate",e.target.value)} placeholder="120.00" style={{...ri,textAlign:"right"}}/></div>
-          </div>
-          :<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            <input value={l.description||""} onChange={e=>setLine(l.id,"description",e.target.value)} style={ri}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
             <div><label style={lbl}>Employees</label>
               <input type="number" value={l.employees||""} onChange={e=>setLine(l.id,"employees",e.target.value)} style={{...ri,textAlign:"center"}}/></div>
             <div><label style={lbl}>Hours Each</label>
               <input type="number" step="0.5" value={l.hours||""} onChange={e=>setLine(l.id,"hours",e.target.value)} style={{...ri,textAlign:"center"}}/></div>
             <div><label style={lbl}>Rate</label>
               <input type="number" step="0.01" value={l.rate||""} onChange={e=>setLine(l.id,"rate",e.target.value)} style={{...ri,textAlign:"right"}}/></div>
-          </div>}
+          </div>
         </div>
       ))}
 
       {/* Totals */}
       <div style={{...cardS,marginTop:12,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
-        {[["Total Man-Hours",totalManHours,false],["Labor Subtotal",laborSubtotal,true],
-          ...(itemLines.length?[["Items Subtotal",itemsSubtotal,true]]:[])].map(([l,v,isMoney])=>(
+        {[["Total Man-Hours",totalManHours,false],["Labor Subtotal",laborSubtotal,true]].map(([l,v,isMoney])=>(
           <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${T.border}`,fontSize:13}}>
             <span style={{color:T.sub}}>{l}</span>
             <span style={{fontWeight:700}}>{isMoney?money2(v):Number(v).toLocaleString("en-US")}</span>
