@@ -2139,8 +2139,8 @@ async function autoPopulateTimeCardsFromTicket(ticket, project){
   for(const entry of labor){
     const name=entry.name==="__other"?(entry.customName||"").trim():(entry.name||"").trim();
     if(!name)continue;
-    const w=byWorker[name]=byWorker[name]||{reg:0,ot:0,cls:entry.classification||""};
-    w.reg+=parseFloat(entry.hours)||0; w.ot+=parseFloat(entry.ot_hours)||0;
+    const w=byWorker[name]=byWorker[name]||{reg:0,ot:0,travel:0,cls:entry.classification||""};
+    w.reg+=parseFloat(entry.hours)||0; w.ot+=parseFloat(entry.ot_hours)||0; w.travel+=parseFloat(entry.travel_hours)||0;
   }
   let created=0,updated=0,removed=0;
   let dayCards=[];
@@ -2150,22 +2150,22 @@ async function autoPopulateTimeCardsFromTicket(ticket, project){
     try{
       const mine=mineCards.find(c=>c.worker_name===name);
       const other=dayCards.find(c=>c.worker_name===name&&!String(c.notes||"").includes(marker)&&(c.source||"manual")!=="punch");
-      if(w.reg+w.ot===0){
+      if(w.reg+w.ot+w.travel===0){
         if(mine&&mine.status!=="approved"){await API.timeCards.remove(mine.id);removed++;}
         continue;
       }
       if(mine){
         if(mine.status==="approved")continue;
-        await API.timeCards.update(mine.id,{reg_hours:w.reg,ot_hours:w.ot,total_hours:w.reg+w.ot+(parseFloat(mine.travel_hours)||0),classification:w.cls||mine.classification||"",
+        await API.timeCards.update(mine.id,{reg_hours:w.reg,ot_hours:w.ot,travel_hours:w.travel,total_hours:w.reg+w.ot+w.travel,classification:w.cls||mine.classification||"",
           // hours changed → employee has to re-confirm
-          ...(mine.status==="worker_approved"&&(Number(mine.reg_hours)!==w.reg||Number(mine.ot_hours)!==w.ot)?{status:"pending",worker_approved_at:null}:{})});
+          ...(mine.status==="worker_approved"&&(Number(mine.reg_hours)!==w.reg||Number(mine.ot_hours)!==w.ot||Number(mine.travel_hours)!==w.travel)?{status:"pending",worker_approved_at:null}:{})});
         updated++;
       }else if(other){
         continue;
       }else{
         await API.timeCards.create({
           worker_name:name,date:ticket.ticket_date,project_id:project.id,division:project.division,
-          classification:w.cls,reg_hours:w.reg,ot_hours:w.ot,travel_hours:0,total_hours:w.reg+w.ot,
+          classification:w.cls,reg_hours:w.reg,ot_hours:w.ot,travel_hours:w.travel,total_hours:w.reg+w.ot+w.travel,
           notes:`Auto-filled from T&M ticket${ticket.ticket_no?" #"+ticket.ticket_no:""} · ${project.name} ${marker}`,
           source:"tm",status:"pending",
         });
@@ -5056,7 +5056,8 @@ function SignaturePackageScreen({project,user,onBack,onErr}){
             ?{name:`Per Diem (${perDiemCount(r)} employee${perDiemCount(r)!==1?"s":""})`,classification:r.classification,
               hours:perDiemCount(r),rate:m(r.rate),amount:m(perDiemCount(r)*(parseFloat(r.rate)||0))}
             :{name:r.name||"",classification:r.classification||"",
-            hours:r.hours||0,rate:m(r.rate),amount:m((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))}),
+            hours:r.hours||0,rate:m(r.rate),ot_hours:r.ot_hours||0,travel_hours:r.travel_hours||0,
+            amount:m((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)+(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0)+(parseFloat(r.travel_hours)||0)*(parseFloat(r.rate)||0))}),
           equipment:(row.equipment||[]).map(r=>({description:r.description||"",unit:r.unit||"",
             qty:r.qty||0,rate:m(r.rate),amount:m((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0))})),
           rental:[],
@@ -19173,6 +19174,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
               rate:m(r.rate),
               otHours:r.ot_hours||0,
               otRate:m(r.ot_rate),
+              travelHours:r.travel_hours||0,
               amount:m(laborRowAmt(r)),
             })),
             equipment:equipment.map(r=>({
@@ -19244,10 +19246,12 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const equipName=(r)=>labelOf(r,"description","customDesc");
 
   // Per diem is one flat row per ticket (headcount × rate), same as the Daily Report.
+  // Travel is billed at the regular rate, same as the Daily Report.
   const laborRowAmt=(r)=>isPerDiemRow(r)
     ?perDiemCount(r)*(parseFloat(r.rate)||0)
     :(parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)
-     +(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0);
+     +(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0)
+     +(parseFloat(r.travel_hours)||0)*(parseFloat(r.rate)||0);
   const workers=labor.filter(r=>!isPerDiemRow(r));
   const perDiemRow=labor.find(isPerDiemRow);
   const perDiemAmt=perDiemRow?laborRowAmt(perDiemRow):0;
@@ -19255,6 +19259,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const laborTotal=labor.reduce((s,r)=>s+laborRowAmt(r),0);
   const totalRegHrs=workers.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
   const totalOtHrs =workers.reduce((s,r)=>s+(parseFloat(r.ot_hours)||0),0);
+  const totalTravelHrs=workers.reduce((s,r)=>s+(parseFloat(r.travel_hours)||0),0);
   function setPerDiem(count,rate){
     const others=labor.filter(r=>!isPerDiemRow(r));
     const n=parseFloat(count);
@@ -19340,7 +19345,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       client_email:bsEmail||null,client_contact:(clientName||bsName)||null,
       show_markup:showMarkup,
       photos,
-      reg_hours:totalRegHrs,ot_hours:totalOtHrs,
+      reg_hours:totalRegHrs,ot_hours:totalOtHrs,travel_hours:totalTravelHrs,
       labor_total:laborTotal,equipment_total:equipTotal,
       materials_total:matsTotal,other_total:otherTotal,
       subtotal,markup_amount:markupAmt,grand_total:grandTotal,
@@ -19414,14 +19419,15 @@ ${labor.length?`<div style="margin-bottom:8px"><div style="background:#1f3864;co
 <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
   <th style="${thStyle}left">Name</th><th style="${thStyle}left">Classification</th>
   <th style="${thStyle}center">Reg Hrs</th><th style="${thStyle}right">Reg Rate</th>
-  <th style="${thStyle}center">OT Hrs</th><th style="${thStyle}right">OT Rate</th><th style="${thStyle}right">Amount</th>
+  <th style="${thStyle}center">OT Hrs</th><th style="${thStyle}right">OT Rate</th><th style="${thStyle}center">Travel</th><th style="${thStyle}right">Amount</th>
 </tr></thead><tbody>
 ${workers.map(r=>`<tr><td style="${tdStyle}left">${laborName(r)}</td><td style="${tdStyle}left">${r.classification||""}</td>
   <td style="${tdStyle}center">${r.hours||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td>
   <td style="${tdStyle}center">${r.ot_hours||""}</td><td style="${tdStyle}right">${(parseFloat(r.ot_hours)||0)>0?fmt(r.ot_rate):""}</td>
+  <td style="${tdStyle}center">${r.travel_hours||""}</td>
   <td style="${tdStyle}right">${fmt(laborRowAmt(r))}</td></tr>`).join("")}
 ${perDiemRow?`<tr><td style="${tdStyle}left"><em>Per Diem</em></td><td style="${tdStyle}left">${perDiemHeads} employee${perDiemHeads!==1?"s":""}</td>
-  <td style="${tdStyle}center">${perDiemHeads}</td><td style="${tdStyle}right">${fmt(perDiemRow.rate)}</td><td></td><td></td>
+  <td style="${tdStyle}center">${perDiemHeads}</td><td style="${tdStyle}right">${fmt(perDiemRow.rate)}</td><td></td><td></td><td></td>
   <td style="${tdStyle}right">${fmt(perDiemAmt)}</td></tr>`:""}
 <tr style="font-weight:700;background:#f9fafb">
   <td colspan="2" style="${tdStyle}right">Labor Total</td>
@@ -19614,7 +19620,7 @@ ${(()=>{
 
         {/* ── LABOR TAB ── */}
         {tab==="labor"&&<div>
-          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:"",ot_hours:"",ot_rate:""})}
+          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:"",ot_hours:"",ot_rate:"",travel_hours:""})}
             style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Worker</button>
           {workers.map(r=>(
             <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}>
@@ -19668,7 +19674,7 @@ ${(()=>{
               </div>
               {/* OT is billed at its own rate, so it is entered separately
                   rather than assumed to be 1.5x. Leave blank if there is none. */}
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                 <div><label style={{...lbl,color:T.yellow}}>OT Hours</label>
                   <input type="number" step="0.5" value={r.ot_hours||""}
                     onChange={e=>{
@@ -19686,10 +19692,15 @@ ${(()=>{
                     onChange={e=>updateRow(setLabor,r.id,"ot_rate",e.target.value)}
                     placeholder="0.00" style={ri}/>
                 </div>
+                <div><label style={{...lbl,color:T.blue}}>Travel</label>
+                  <input type="number" step="0.5" value={r.travel_hours||""}
+                    onChange={e=>updateRow(setLabor,r.id,"travel_hours",e.target.value)}
+                    placeholder="0" style={ri}/>
+                </div>
               </div>
-              {(parseFloat(r.ot_hours)||0)>0&&<div style={{fontSize:11,color:T.muted,marginTop:6,display:"flex",justifyContent:"space-between"}}>
-                <span>{r.hours||0}h reg + <span style={{color:T.yellow}}>{r.ot_hours}h OT</span></span>
-                <span>{fmt((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))} + <span style={{color:T.yellow}}>{fmt((parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0))}</span></span>
+              {((parseFloat(r.ot_hours)||0)>0||(parseFloat(r.travel_hours)||0)>0)&&<div style={{fontSize:11,color:T.muted,marginTop:6,display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:4}}>
+                <span>{r.hours||0}h reg{(parseFloat(r.ot_hours)||0)>0&&<> + <span style={{color:T.yellow}}>{r.ot_hours}h OT</span></>}{(parseFloat(r.travel_hours)||0)>0&&<> + <span style={{color:T.blue}}>{r.travel_hours}h travel</span></>}</span>
+                <span>{fmt((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))}{(parseFloat(r.ot_hours)||0)>0&&<> + <span style={{color:T.yellow}}>{fmt((parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0))}</span></>}{(parseFloat(r.travel_hours)||0)>0&&<> + <span style={{color:T.blue}}>{fmt((parseFloat(r.travel_hours)||0)*(parseFloat(r.rate)||0))}</span></>}</span>
               </div>}
             </div>
           ))}
