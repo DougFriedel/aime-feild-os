@@ -240,10 +240,22 @@ const API={
   reports:{
     forProject:(pid)=>sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`),
     byRange:(from,to)=>sb(`/daily_reports?date=gte.${from}&date=lte.${to}&status=neq.draft&order=date.asc`),
-    all:()=>sb("/daily_reports?select=*,projects(id,name,division)&order=date.desc&limit=3000"),
+    // Dashboard feed. Uses the `daily_reports_lite` view (receipt images and
+    // signatures stripped) and only the last 120 days — pulling `*` for every
+    // report was megabytes of base64 and hit Supabase's statement timeout.
+    // Falls back to the base table (same window) if the view isn't there yet.
+    all:async()=>{
+      const since=(()=>{const d=new Date();d.setDate(d.getDate()-120);return d.toISOString().slice(0,10);})();
+      try{return await sb(`/daily_reports_lite?select=*,projects(id,name,division)&date=gte.${since}&order=date.desc&limit=3000`);}
+      catch(e){return sb(`/daily_reports?select=*,projects(id,name,division)&date=gte.${since}&order=date.desc&limit=1500`);}
+    },
+    byId:(id)=>sb(`/daily_reports?id=eq.${id}&select=*,projects(id,name,division)&limit=1`),
     // Ranged pull for the report builder. all() caps at 300 rows, which would
     // silently drop older reports from a wide date range.
-    inRange:(from,to)=>sb(`/daily_reports?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`),
+    inRange:async(from,to)=>{
+      try{return await sb(`/daily_reports_lite?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`);}
+      catch(e){return sb(`/daily_reports?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`);}
+    },
     pending:()=>sb("/daily_reports?status=eq.submitted&select=*,projects(id,name,division)&order=created_at.desc"),
     create:(d)=>sb("/daily_reports",{method:"POST",body:d,prefer:"return=representation"}),
     update:(id,d)=>sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
@@ -6118,6 +6130,11 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   }
   useEffect(()=>{load();},[]);
 
+  // Rows in the dashboard come from the lite view; fetch the full record before showing it.
+  async function openReport(r,p){
+    setActiveProject(p);setActiveReport(r);
+    try{const full=await API.reports.byId(r.id);if(Array.isArray(full)&&full[0])setActiveReport(full[0]);}catch(e){}
+  }
   async function approve(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});await load();}catch(e){setErr(e.message);}}
   async function flag(id,notes){try{await API.reports.update(id,{status:"flagged",pm_notes:notes});await load();}catch(e){setErr(e.message);}}
 
@@ -6137,7 +6154,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   if(building)return(
     <ReportBuilder projects={pmDiv?projects.filter(p=>p.division===pmDiv):projects} user={user}
       onBack={()=>setBuilding(false)}
-      onOpenReport={(r,p)=>{setActiveReport(r);setActiveProject(p);}}/>
+      onOpenReport={(r,p)=>openReport(r,p)}/>
   );
 
   if(showNotifs)return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}><TopBar title="🔔 Notifications" onBack={()=>{setShowNotifs(false);load();}}/><NotificationsPanel user={user} onCountChange={setUnread} onClose={()=>{setShowNotifs(false);load();}}/></div>);
@@ -6547,7 +6564,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
             {flagged.slice(0,6).map(r=>{
               const proj=projects.find(p=>p.id===r.project_id)||r.projects||{name:"Unknown"};
               return(
-                <div key={r.id} onClick={()=>{setActiveReport(r);setActiveProject(proj);}}
+                <div key={r.id} onClick={()=>openReport(r,proj)}
                   style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.red}`,cursor:"pointer"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                     <div style={{minWidth:0,paddingRight:10}}>
@@ -6583,7 +6600,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
               <div style={{fontSize:14,fontWeight:700,color:T.orange}}>{proj.name}</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:8}}>{r.date} · {r.submitted_by} · {fmt(tot.grand)}</div>
               <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>{setActiveReport(r);setActiveProject(proj);}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>👁 View</button>
+                <button onClick={()=>openReport(r,proj)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>👁 View</button>
                 <button onClick={()=>approve(r.id)} style={{...primBtn,flex:1,fontSize:13,borderRadius:10,background:T.green}}>✓ Approve</button>
               </div>
             </div>);
@@ -7031,7 +7048,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
             const proj=projects.find(p=>p.id===r.project_id)||r.projects||{name:"Unknown"};
             const tot=reportTotals(r,proj.division);
             const statusColor={approved:T.green,flagged:T.red,submitted:T.yellow}[r.status]||T.muted;
-            return(<div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${statusColor}`,cursor:"pointer"}} onClick={()=>{setActiveReport(r);setActiveProject(proj);}}>
+            return(<div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${statusColor}`,cursor:"pointer"}} onClick={()=>openReport(r,proj)}>
               <div style={{display:"flex",justifyContent:"space-between"}}>
                 <div><div style={{fontSize:13,fontWeight:700,color:T.orange}}>{proj.name}</div><div style={{fontSize:11,color:T.muted}}>{r.date} · {r.submitted_by}</div></div>
                 <div style={{textAlign:"right"}}><div style={{fontSize:13,fontWeight:800,color:T.green}}>{fmt(tot.grand)}</div><span style={pill(statusColor)}>{r.status}</span></div>
