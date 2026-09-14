@@ -239,6 +239,7 @@ const API={
   },
   reports:{
     forProject:(pid)=>sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`),
+    byRange:(from,to)=>sb(`/daily_reports?date=gte.${from}&date=lte.${to}&status=neq.draft&order=date.asc`),
     all:()=>sb("/daily_reports?select=*,projects(id,name,division)&order=date.desc&limit=3000"),
     // Ranged pull for the report builder. all() caps at 300 rows, which would
     // silently drop older reports from a wide date range.
@@ -250,6 +251,7 @@ const API={
   },
   tmTickets:{
     forProject:(pid)=>sb(`/tm_tickets?project_id=eq.${pid}&order=created_at.desc`),
+    byRange:(from,to)=>sb(`/tm_tickets?ticket_date=gte.${from}&ticket_date=lte.${to}&order=ticket_date.asc`),
     byId:(id)=>sb(`/tm_tickets?id=eq.${id}&limit=1`),
     // Awaiting PM approval across every job — used by the dashboard snapshot.
     pending:()=>sb("/tm_tickets?status=eq.submitted&select=*,projects(id,name,division)&order=ticket_date.desc&limit=2000"),
@@ -2117,6 +2119,29 @@ async function autoPopulateTimeCardsFromTicket(ticket, project){
     if(!byWorker[c.worker_name]&&c.status!=="approved"){try{await API.timeCards.remove(c.id);removed++;}catch(e){}}
   }
   return {created,updated,removed};
+}
+
+/* Rebuild every daily-report and T&M card in a date range from the source
+   documents. Fixes cards that were doubled by the old additive sync, or
+   that drifted after a report was edited before edits synced. Approved cards
+   are skipped; punches, manual and holiday cards are untouched. */
+async function resyncTimeCardsFromDocs(from,to,projects){
+  const out={reports:0,tickets:0,created:0,updated:0,removed:0};
+  const byId=Object.fromEntries((projects||[]).map(p=>[p.id,p]));
+  let reports=[],tickets=[];
+  try{const r=await API.reports.byRange(from,to);reports=Array.isArray(r)?r:[];}catch(e){}
+  try{const t=await API.tmTickets.byRange(from,to);tickets=Array.isArray(t)?t:[];}catch(e){}
+  for(const r of reports){
+    const p=byId[r.project_id]; if(!p)continue;
+    const res=await autoPopulateTimeCards(r,p); out.reports++;
+    out.created+=res.created;out.updated+=res.updated;out.removed+=res.removed;
+  }
+  for(const t of tickets){
+    const p=byId[t.project_id]; if(!p||!t.id)continue;
+    const res=await autoPopulateTimeCardsFromTicket(t,p); out.tickets++;
+    out.created+=res.created;out.updated+=res.updated;out.removed+=res.removed;
+  }
+  return out;
 }
 
 /* Daily report labor → time cards. Idempotent MIRROR of the report:
@@ -7959,6 +7984,18 @@ function WeeklyApprovalPanel({user,projects,onErr}){
         <button onClick={openHoliday} disabled={busy}
           style={{...ghostBtn,borderRadius:12,padding:"10px 14px",color:T.purple,border:`1px solid ${T.purple}50`,fontWeight:800,whiteSpace:"nowrap"}}>
           🎉 Holiday
+        </button>
+        <button title="Rebuild this week's cards from the daily reports and T&M tickets" disabled={busy}
+          onClick={async()=>{
+            if(!window.confirm("Rebuild this week's time cards from the daily reports and T&M tickets?\n\nUnapproved daily/T&M cards are set to exactly what the reports say (fixes doubled hours). Approved, punch, manual and holiday cards are not touched."))return;
+            setBusy(true);
+            try{const r=await resyncTimeCardsFromDocs(from,to,projects);await load();
+              alert(`Re-synced ${r.reports} report${r.reports!==1?"s":""} and ${r.tickets} T&M ticket${r.tickets!==1?"s":""}: ${r.updated} card${r.updated!==1?"s":""} corrected, ${r.created} added, ${r.removed} removed.`);}
+            catch(e){onErr&&onErr(e.message);}
+            setBusy(false);
+          }}
+          style={{...ghostBtn,borderRadius:12,padding:"10px 12px",color:T.blue,border:`1px solid ${T.blue}50`,fontWeight:800,whiteSpace:"nowrap"}}>
+          🔄
         </button>
       </div>
       {hol&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`,background:`${T.purple}10`}}>
