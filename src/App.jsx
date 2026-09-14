@@ -426,21 +426,26 @@ const API={
 };
 
 /* ── Roster ──
-   NAMES is the list baked into the bundle. Anyone added through the crew
+   SEED_NAMES is the list baked into the bundle. Anyone added through the crew
    directory only exists in the database, so a typed name never reached the
    worker dropdowns until the app was rebuilt. ROSTER merges the two and is
    refreshed at login, so a new hire is usable straight away. */
-let EXTRA_NAMES=[];
+let DB_NAMES=null;   // null = roster not loaded yet (offline / first launch)
+const ROSTER_CACHE_KEY="aime_roster_v1";
 function ROSTER(){
-  return [...new Set([...NAMES,...EXTRA_NAMES])]
-    .filter(Boolean)
-    .sort((a,b)=>a.localeCompare(b));
+  const base=DB_NAMES!==null?DB_NAMES:(()=>{
+    try{const c=JSON.parse(localStorage.getItem(ROSTER_CACHE_KEY)||"null");if(Array.isArray(c)&&c.length)return c;}catch{}
+    return SEED_NAMES;
+  })();
+  return [...new Set(base)].filter(Boolean).sort((a,b)=>a.localeCompare(b));
 }
 async function refreshRoster(){
   try{
     const rows=await sb("/crew_members?select=name,active&order=name.asc");
-    EXTRA_NAMES=(rows||[]).filter(r=>r.active!==false).map(r=>r.name).filter(Boolean);
-  }catch{ /* offline or not deployed — the built-in list still works */ }
+    const names=(rows||[]).filter(r=>r.active!==false).map(r=>(r.name||"").trim()).filter(Boolean);
+    DB_NAMES=names;
+    try{localStorage.setItem(ROSTER_CACHE_KEY,JSON.stringify(names));}catch{}
+  }catch{ /* offline — last cached roster (or the seed list) still works */ }
 }
 
 const T={bg:"#0D0D0F",surface:"#141418",card:"#1A1A20",border:"#26262E",orange:"#60A5FA",orangeLow:"#60A5FA14",orangeMid:"#60A5FA30",green:"#34D399",greenLow:"#34D39914",red:"#FC8181",redLow:"#FC818114",yellow:"#FBBF24",yellowLow:"#FBBF2414",blue:"#60A5FA",blueLow:"#60A5FA14",purple:"#A78BFA",purpleLow:"#A78BFA14",teal:"#2DD4BF",text:"#F0F4FF",sub:"#C8D4F0",muted:"#7080A0"};
@@ -454,7 +459,11 @@ const ghostBtn={background:"transparent",border:`1px solid ${T.border}`,borderRa
 const dangerBtn={background:T.redLow,border:`1px solid ${T.red}30`,borderRadius:12,padding:"12px 16px",color:T.red,fontSize:14,cursor:"pointer",fontFamily:"inherit",fontWeight:600,width:"100%",textAlign:"center"};
 
 const POSITIONS_PIPELINE=[{name:"Project Manager",rate:64.50},{name:"Foreman",rate:63.25},{name:"Technician",rate:60.75},{name:"Inspector",rate:53.75},{name:"Certified Welder",rate:60.75},{name:"Fitter",rate:58.50},{name:"Mechanic",rate:58.50},{name:"Operator",rate:58.50},{name:"Truck Driver",rate:58.50},{name:"Helper (Welder)",rate:57.25},{name:"Laborer",rate:51.00},{name:"Foreman (Elect)",rate:82.25},{name:"Electrician",rate:82.25},{name:"Helper (Elect)",rate:45.50},{name:"Per Diem",rate:190.00,flat:true}];
-const NAMES=["Amanda Harvey","Alan Fairbrother","Alan Robinson","Doug Friedel","Jaden Pugh","Brandon Milano","Charles Acree","Charles Dovel","Chris Utz","Christopher Dean","Chuck Dean","Clay Lau","Connor Kestner","Morgan Schramek","Eric Bowens","Lukas Van Jones","Eric Shumate","Jackson Fama","Howard Lau","Jeff White","Jessica Vance","John Baier","John P. Cosner Jr.","Jordan Gorwell","Joseph Lau","Josh Gladhill","Kevin Gabrish","Kurt Batterton","Leo Velez","Edgrado Ruiz","Mark Hamilton","Alejandro Figueroa","Matthew Custis","Matthew Linton","Mike Gamble","Mike Gamble III","Mike Seiler","Pat Gorman","Paul Howard","Rich Raborg","Robert Neslein","Roland Long","Shane Hower","Steve Kestner","Tom Hatfield","Troy Strother","Tyrone Davis","Walter Chicas-Luna","Will Wychulis","Wyatt Gill","Peggy Carver","Jacob Geiman"].sort();
+/* Employee roster now lives in the database (crew_members, managed from the
+   Crew screen). SEED_NAMES is only the original built-in list, used as a
+   fallback when the app is offline before the roster has ever loaded.
+   Add/remove/deactivate people in the Crew screen — not here. */
+const SEED_NAMES=["Amanda Harvey","Alan Fairbrother","Alan Robinson","Doug Friedel","Jaden Pugh","Brandon Milano","Charles Acree","Charles Dovel","Chris Utz","Christopher Dean","Chuck Dean","Clay Lau","Connor Kestner","Morgan Schramek","Eric Bowens","Eric Shumate","Jackson Fama","Howard Lau","Jeff White","Jessica Vance","John Baier","John P. Cosner Jr.","Jordan Gorwell","Joseph Lau","Josh Gladhill","Kevin Gabrish","Kurt Batterton","Leo Velez","Edgrado Ruiz","Mark Hamilton","Alejandro Figueroa","Matthew Custis","Matthew Linton","Mike Gamble","Mike Gamble III","Mike Seiler","Pat Gorman","Paul Howard","Rich Raborg","Robert Neslein","Roland Long","Shane Hower","Steve Kestner","Tom Hatfield","Troy Strother","Tyrone Davis","Walter Chicas-Luna","Will Wychulis","Wyatt Gill","Peggy Carver","Jacob Geiman"].sort();
 // Pipeline rate sheet — synced with AIME_CPC_Master_Daily (WORK tab). Names must stay stable: saved reports and T&M tickets look rates up by name.
 const EQUIP_LIST_PIPELINE=[{section:"Trucks & Trailers"},{name:"Truck - 1 Ton",rate:21.5,unit:"Hours"},{name:"Truck - 3/4 Ton w/ Snow Plow",rate:350,unit:"Days"},{name:"Truck - 1/2 Ton",rate:18.5,unit:"Hours"},{name:"Truck - Boom (20-29 Ton)",rate:65,unit:"Hours"},{name:"Truck - Bucket",rate:45,unit:"Hours"},{name:"Truck - Dump Truck (3 Axle)",rate:35,unit:"Hours"},{name:"Truck - Haul Truck - No Trailer",rate:70,unit:"Hours"},{name:"Truck - Tru-Vac",rate:13500,unit:"Month"},{name:"Truck - Welding Rig",rate:35,unit:"Hours"},{name:"Trailer - Electrical - Colonial",rate:147,unit:"Month"},{name:"Trailer - Lowboy - 2 Axle",rate:28,unit:"Hours"},{name:"Trailer - Tag Along",rate:50,unit:"Days"},{name:"Trailer - Tool Trailer - 18-25ft",rate:175,unit:"Days"},{name:"Trailer - Tool Trailer - 26-40ft",rate:200,unit:"Days"},{section:"Earthmoving & ROW"},{name:"ATV - 4 Wheel",rate:125,unit:"Days"},{name:"Backhoe Loader - 80-105 HP",rate:62.45,unit:"Hours"},{name:"Excavator - Mini - 2-8K LB",rate:299,unit:"Days"},{name:"Excavator - Mini - 9K LB",rate:335,unit:"Days"},{name:"Excavator - Mini - 10-11K LB",rate:335,unit:"Days"},{name:"Excavator - Mini - 12-16K LB",rate:475,unit:"Days"},{name:"Excavator - Mini - 17-20K LB",rate:540,unit:"Days"},{name:"Excavator - Small - 21-29K LB",rate:565,unit:"Days"},{name:"Excavator - Small - 30-33K LB",rate:632,unit:"Days"},{name:"Excavator - Small - 34-37K LB",rate:687,unit:"Days"},{name:"Excavator - Small - 38-42K LB",rate:742,unit:"Days"},{name:"Excavator - Small - 43-47K LB",rate:797,unit:"Days"},{name:"Excavator - Medium - 48-55K LB",rate:852,unit:"Days"},{name:"Excavator - Medium - 56-64K LB",rate:935,unit:"Days"},{name:"Excavator - Medium - 65-79K LB",rate:975,unit:"Days"},{name:"Excavator - Large - 80-89K LB",rate:1050,unit:"Days"},{name:"Excavator - Large - 90-119K LB",rate:1350,unit:"Days"},{name:"Excavator - Large - 120-175K LB",rate:1750,unit:"Days"},{name:"Excavator - Large - 176-225K LB",rate:1925,unit:"Days"},{name:"Mower - Riding/Zero Turn",rate:175,unit:"Days"},{name:"Skidsteer Loader - 70-80 HP",rate:440,unit:"Days"},{name:"Skidsteer Loader - 81-100 HP",rate:475,unit:"Days"},{name:"Tractor - 50 HP 4x4 w/ Bush Hog",rate:36.5,unit:"Hours"},{name:"Tractor - Farm w/ Bush Hog 26-40 HP",rate:27.5,unit:"Hours"},{section:"Air, Compressors & Blast"},{name:"Air Compressor - 185 CFM",rate:195,unit:"Days"},{name:"Air Compressor - 375 CFM",rate:275,unit:"Days"},{name:"Air Impact Wrench - 1in",rate:50,unit:"Days"},{name:"Air Spade / Knife",rate:55,unit:"Days"},{name:"Blast Rig - 4 Bag Pot w/ 185 CFM AC",rate:55.5,unit:"Hours"},{name:"Blast Rig - 1 Pot w/ 375 CFM AC",rate:500,unit:"Days"},{section:"Testing & Misc. Tools"},{name:"Bench & Volt Meter",rate:875.5,unit:"Month"},{name:"Beveling Band - 30in",rate:25,unit:"Days"},{name:"Dearman Pipe Clamps",rate:25,unit:"Days"},{name:"FL-9 Fiat-Allis",rate:41.05,unit:"Hours"},{name:"Gasoline Emergency Response Equipment",rate:5000,unit:"Week"},{name:"Grove Man Lift 40ft",rate:29.95,unit:"Hours"},{name:"HEPA Vacuum",rate:100,unit:"Days"},{name:"Holiday Detector / Pipe Jeep",rate:72,unit:"Days"},{name:"Hydraulic Torque",rate:200,unit:"Days"},{name:"Hydro Test Pump",rate:60,unit:"Days"},{name:"Hydrotest - High Pressure",rate:3800,unit:"Days"},{name:"Jack Hammer",rate:72,unit:"Days"},{name:"Laser Pump Aligner",rate:50,unit:"Hours"},{name:"LEL/Gas Monitor - 4 Gas",rate:50,unit:"Days"},{name:"Line Locator",rate:50,unit:"Days"},{name:"Pipe Band Crawler",rate:25,unit:"Days"},{name:"Pipe Beveling Machine 1-1/2-3in",rate:25,unit:"Days"},{name:"Pipe Beveling Machine 10-14in",rate:40,unit:"Days"},{name:"Pipe Beveling Machine 16-22in",rate:100,unit:"Days"},{name:"Tap Machine - 2in",rate:190,unit:"Days"},{name:"Torque Wrench - Pneumatic J5",rate:175,unit:"Days"},{name:"Torque Wrench w/Multiplier Hand",rate:25,unit:"Days"},{name:"Torque Wrench w/Sockets Hyd/Pneu",rate:195,unit:"Days"},{name:"Wach Pipe Cutting Saw",rate:30,unit:"Hours"}];
 
@@ -7235,7 +7244,7 @@ function UserManagementScreen({onBack,currentUser,user}){
   async function remove(id){if(!window.confirm("Remove this user profile?"))return;try{await API.userProfiles.remove(id);await load();}catch(e){setErr(e.message);}}
 
   const profileMap={};profiles.forEach(p=>profileMap[p.name]=p);
-  const allNames=[...new Set([...NAMES,...profiles.map(p=>p.name)])].sort();
+  const allNames=[...new Set([...ROSTER(),...profiles.map(p=>p.name)])].sort();
 
   if(mode==="edit") return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -7373,13 +7382,13 @@ function UserManagementScreen({onBack,currentUser,user}){
 
           {/* Everyone else defaults to Crew */}
           <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 10px"}}>Unconfigured (Default: Field Crew)</div>
-          {NAMES.filter(n=>!profileMap[n]).slice(0,15).map(n=>(
+          {ROSTER().filter(n=>!profileMap[n]).slice(0,15).map(n=>(
             <div key={n} style={{...cardS,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",opacity:0.5}}>
               <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:10,height:10,borderRadius:"50%",background:T.green}}/><span style={{fontSize:13}}>{n}</span><span style={pill(T.green)}>Field Crew</span></div>
               <button onClick={()=>{setF({...blank,name:n});setMode("edit");}} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",color:T.sub,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Set Role</button>
             </div>
           ))}
-          {NAMES.filter(n=>!profileMap[n]).length>15&&<div style={{fontSize:12,color:T.muted,textAlign:"center",padding:"8px 0"}}>+ {NAMES.filter(n=>!profileMap[n]).length-15} more (tap + Add to configure)</div>}
+          {ROSTER().filter(n=>!profileMap[n]).length>15&&<div style={{fontSize:12,color:T.muted,textAlign:"center",padding:"8px 0"}}>+ {ROSTER().filter(n=>!profileMap[n]).length-15} more (tap + Add to configure)</div>}
         </>}
       </div>
     </div>
