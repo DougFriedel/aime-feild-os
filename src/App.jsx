@@ -1046,8 +1046,9 @@ function MyHoursScreen({user,onBack}){
   /* ── Combine field and shop into one weekly picture ── */
   const entries=[
     ...cards.map(c=>({
-      id:"f"+c.id,kind:"field",date:c.date,
-      job:c.projects?.name||"—",
+      id:"f"+c.id,kind:c.source==="holiday"?"holiday":"field",date:c.date,
+      job:c.source==="holiday"?String(c.notes||"Holiday").replace("Holiday — ",""):(c.projects?.name||"—"),
+      holiday:parseFloat(c.holiday_hours)||0,
       reg:parseFloat(c.reg_hours)||0,ot:parseFloat(c.ot_hours)||0,travel:parseFloat(c.travel_hours)||0,
       total:c.total_hours!=null&&c.total_hours!==""?parseFloat(c.total_hours)
             :(parseFloat(c.reg_hours)||0)+(parseFloat(c.ot_hours)||0)+(parseFloat(c.travel_hours)||0),
@@ -1271,10 +1272,10 @@ function MyHoursScreen({user,onBack}){
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
                       <div style={{minWidth:0}}>
                         <div style={{fontSize:12,fontWeight:600,color:T.sub}}>
-                          {e.kind==="shop"?"🏭 ":"🔧 "}{e.job}
+                          {e.kind==="shop"?"🏭 ":e.kind==="holiday"?"🎉 ":"🔧 "}{e.job}
                         </div>
                         <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>
-                          {e.inAt?`${hhmm(e.inAt)} → ${hhmm(e.outAt)||"—"}`:"entered by hand"}
+                          {e.kind==="holiday"?"paid holiday":e.inAt?`${hhmm(e.inAt)} → ${hhmm(e.outAt)||"—"}`:"entered by hand"}
                           {e.note?` · ${e.note}`:""}
                         </div>
                       </div>
@@ -7610,19 +7611,20 @@ function printEmployeeTimecards(cards,from,to,selectedJobs,projects,preOpenedWin
   const byEmployee={};
   filtered.forEach(c=>{
     const name=c.worker_name||"Unknown";
-    if(!byEmployee[name])byEmployee[name]={name,entries:[],reg:0,ot:0,travel:0,total:0};
+    if(!byEmployee[name])byEmployee[name]={name,entries:[],reg:0,ot:0,travel:0,holiday:0,total:0};
     const reg=parseFloat(c.reg_hours)||0;
     const ot=parseFloat(c.ot_hours)||0;
     const travel=parseFloat(c.travel_hours)||0;
-    const total=c.total_hours?parseFloat(c.total_hours):reg+ot+travel;
+    const holiday=parseFloat(c.holiday_hours)||0;
+    const total=c.total_hours?parseFloat(c.total_hours):reg+ot+travel+holiday;
     const proj=projects.find(p=>p.id===c.project_id);
     const shop=c.mfg_job_id?(mfgJobs||[]).find(j=>j.id===c.mfg_job_id):null;
     const shopName=shop?.job_number
       ||(c.source==="shop"?String(c.notes||"").match(/Shop labor — ([^\s·]+)/)?.[1]:null);
-    byEmployee[name].entries.push({...c,reg,ot,travel,total,
-      projName:proj?.name||shopName||"General",
-      projAfe:proj?.afe||(shopName?"Shop":"")});
-    byEmployee[name].reg+=reg;byEmployee[name].ot+=ot;byEmployee[name].travel+=travel;byEmployee[name].total+=total;
+    byEmployee[name].entries.push({...c,reg,ot,travel,holiday,total,
+      projName:c.source==="holiday"?String(c.notes||"Holiday"):(proj?.name||shopName||"General"),
+      projAfe:proj?.afe||(shopName?"Shop":c.source==="holiday"?"HOL":"")});
+    byEmployee[name].reg+=reg;byEmployee[name].ot+=ot;byEmployee[name].travel+=travel;byEmployee[name].holiday+=holiday;byEmployee[name].total+=total;
   });
   const employees=Object.values(byEmployee).sort((a,b)=>a.name.localeCompare(b.name));
   const fmtD=d=>{if(!d)return"";const[y,m,dy]=d.split("-");return`${m}/${dy}/${y}`;};
@@ -7671,24 +7673,26 @@ ${employees.length===0
     <div class="period">Report Period: ${fmtD(from)} — ${fmtD(to)}</div>
   </div>
   <table>
-    <thead><tr><th>Date</th><th>Project</th><th>AFE/PO</th><th style="text-align:center">REG</th><th style="text-align:center">OT</th><th style="text-align:center">TRAVEL</th><th style="text-align:center">TOTAL</th><th>Notes</th></tr></thead>
+    <thead><tr><th>Date</th><th>Project</th><th>AFE/PO</th><th style="text-align:center">REG</th><th style="text-align:center">OT</th><th style="text-align:center">TRAVEL</th><th style="text-align:center">HOL</th><th style="text-align:center">TOTAL</th><th>Notes</th></tr></thead>
     <tbody>
       ${emp.entries.sort((a,b)=>(a.date||"").localeCompare(b.date||"")).map(e=>`
       <tr><td>${fmtD(e.date)}</td><td>${e.projName}</td><td style="text-align:center">${e.projAfe||"—"}</td>
       <td style="text-align:center;color:#166534;font-weight:600">${fmtN(e.reg)}</td>
       <td style="text-align:center;color:#b45309;font-weight:600">${fmtN(e.ot)}</td>
       <td style="text-align:center;color:#1e40af;font-weight:600">${fmtN(e.travel)}</td>
+      <td style="text-align:center;color:#7c3aed;font-weight:600">${e.holiday?fmtN(e.holiday):""}</td>
       <td style="text-align:center;font-weight:800">${fmtN(e.total)}</td>
       <td style="font-size:8pt;color:#6b7280">${(e.notes||"").replace("Auto-filled from daily report","Auto")}</td></tr>`).join("")}
     </tbody>
     <tfoot><tr class="totals-row"><td colspan="3"><strong>TOTALS — ${emp.name.toUpperCase()}</strong></td>
     <td style="text-align:center">${fmtN(emp.reg)}</td><td style="text-align:center">${fmtN(emp.ot)}</td>
-    <td style="text-align:center">${fmtN(emp.travel)}</td><td style="text-align:center"><strong>${fmtN(emp.total)}</strong></td><td></td></tr></tfoot>
+    <td style="text-align:center">${fmtN(emp.travel)}</td><td style="text-align:center">${fmtN(emp.holiday)}</td><td style="text-align:center"><strong>${fmtN(emp.total)}</strong></td><td></td></tr></tfoot>
   </table>
   <div class="summary">
     <div class="sum-box reg"><div class="sum-label">Regular</div><div class="sum-val">${fmtN(emp.reg)}h</div></div>
     <div class="sum-box ot"><div class="sum-label">Overtime</div><div class="sum-val">${fmtN(emp.ot)}h</div></div>
     <div class="sum-box travel"><div class="sum-label">Travel</div><div class="sum-val">${fmtN(emp.travel)}h</div></div>
+    <div class="sum-box travel" style="background:#ede9fe;border:1px solid #c4b5fd"><div class="sum-label">Holiday</div><div class="sum-val">${fmtN(emp.holiday)}h</div></div>
     <div class="sum-box total"><div class="sum-label">TOTAL HOURS</div><div class="sum-val">${fmtN(emp.total)}</div></div>
   </div>
   <div class="sigs">
@@ -7831,6 +7835,30 @@ function WeeklyApprovalPanel({user,projects,onErr}){
   const [openWorker,setOpenWorker]=useState(null);
   const [edit,setEdit]=useState(null); // {id,reg,ot,travel,reason}
   const from=isoOf(weekStart),to=isoOf(addDays(weekStart,6));
+  // Holiday pay: one card per worker, no project, already approved.
+  const HOLIDAYS=["New Year's Day","Memorial Day","Juneteenth","Independence Day","Labor Day","Thanksgiving","Day After Thanksgiving","Christmas Eve","Christmas Day","Other"];
+  const [hol,setHol]=useState(null); // {date,name,other,hours,workers:[]}
+  const roster=ROSTER();
+  const openHoliday=()=>setHol({date:from,name:"Labor Day",other:"",hours:"8",workers:roster});
+  const holName=()=>hol.name==="Other"?(hol.other||"Holiday").trim():hol.name;
+  async function saveHoliday(){
+    if(!hol.date||!hol.workers.length||!(parseFloat(hol.hours)>0))return;
+    const already=new Set(rows.filter(c=>c.source==="holiday"&&c.date===hol.date).map(c=>c.worker_name));
+    const todo=hol.workers.filter(w=>!already.has(w));
+    if(!todo.length){alert("Everyone selected already has a holiday card for that day.");return;}
+    if(!window.confirm(`Add ${hol.hours} holiday hours (${holName()}, ${hol.date}) for ${todo.length} employee${todo.length!==1?"s":""}?`))return;
+    setBusy(true);
+    try{
+      const h=parseFloat(hol.hours);const at=new Date().toISOString();
+      await Promise.all(todo.map(w=>API.timeCards.create({
+        worker_name:w,date:hol.date,project_id:null,division:null,classification:"Holiday",
+        reg_hours:0,ot_hours:0,travel_hours:0,holiday_hours:h,total_hours:h,
+        notes:`Holiday — ${holName()}`,source:"holiday",status:"approved",approved_by:user.name,approved_at:at,
+      })));
+      setHol(null);await load();
+    }catch(e){onErr&&onErr(e.message);}
+    setBusy(false);
+  }
   async function load(){
     setLoading(true);
     try{const r=await API.timeCards.byRange(from,to);setRows((Array.isArray(r)?r:[]).filter(c=>c.status!=="open"));}
@@ -7838,8 +7866,8 @@ function WeeklyApprovalPanel({user,projects,onErr}){
     setLoading(false);
   }
   useEffect(()=>{load();},[from]);
-  const jobOf=(c)=>(projects.find(p=>p.id===c.project_id)||{}).name||(c.source==="shop"?"Shop":"—");
-  const hrs=(c)=>parseFloat(c.total_hours)||((parseFloat(c.reg_hours)||0)+(parseFloat(c.ot_hours)||0)+(parseFloat(c.travel_hours)||0));
+  const jobOf=(c)=>(projects.find(p=>p.id===c.project_id)||{}).name||(c.source==="shop"?"Shop":c.source==="holiday"?"Holiday":"—");
+  const hrs=(c)=>parseFloat(c.total_hours)||((parseFloat(c.reg_hours)||0)+(parseFloat(c.ot_hours)||0)+(parseFloat(c.travel_hours)||0)+(parseFloat(c.holiday_hours)||0));
   const byWorker={};
   rows.forEach(c=>{const n=c.worker_name||"?";(byWorker[n]=byWorker[n]||[]).push(c);});
   const workers=Object.keys(byWorker).sort().map(name=>{
@@ -7898,10 +7926,45 @@ function WeeklyApprovalPanel({user,projects,onErr}){
         </div>
         <button onClick={()=>setWeekStart(addDays(weekStart,7))} style={{...ghostBtn,padding:"6px 12px"}}>›</button>
       </div>
-      <button onClick={()=>approveCards(allConfirmed,"everything employees have confirmed")} disabled={busy||!allConfirmed.length}
-        style={{...primBtn,borderRadius:12,marginBottom:12,background:allConfirmed.length?T.green:T.border,color:"#000",opacity:busy?0.6:1,cursor:allConfirmed.length?"pointer":"not-allowed"}}>
-        ✓ Approve all employee-confirmed ({allConfirmed.length})
-      </button>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <button onClick={()=>approveCards(allConfirmed,"everything employees have confirmed")} disabled={busy||!allConfirmed.length}
+          style={{...primBtn,flex:1,borderRadius:12,background:allConfirmed.length?T.green:T.border,color:"#000",opacity:busy?0.6:1,cursor:allConfirmed.length?"pointer":"not-allowed"}}>
+          ✓ Approve confirmed ({allConfirmed.length})
+        </button>
+        <button onClick={openHoliday} disabled={busy}
+          style={{...ghostBtn,borderRadius:12,padding:"10px 14px",color:T.purple,border:`1px solid ${T.purple}50`,fontWeight:800,whiteSpace:"nowrap"}}>
+          🎉 Holiday
+        </button>
+      </div>
+      {hol&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`,background:`${T.purple}10`}}>
+        <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:8}}>🎉 Add Holiday Pay</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+          <div><label style={lbl}>Date</label><input type="date" value={hol.date} onChange={e=>setHol({...hol,date:e.target.value})} style={inp}/></div>
+          <div><label style={lbl}>Hours</label><input type="number" step="0.5" min="0" value={hol.hours} onChange={e=>setHol({...hol,hours:e.target.value})} style={inp}/></div>
+        </div>
+        <div style={{marginBottom:8}}><label style={lbl}>Holiday</label>
+          <select value={hol.name} onChange={e=>setHol({...hol,name:e.target.value})} style={inp}>{HOLIDAYS.map(h=><option key={h}>{h}</option>)}</select>
+          {hol.name==="Other"&&<input value={hol.other} onChange={e=>setHol({...hol,other:e.target.value})} placeholder="Holiday name" style={{...inp,marginTop:6}}/>}
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <label style={lbl}>Employees ({hol.workers.length}/{roster.length})</label>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setHol({...hol,workers:roster})} style={{...ghostBtn,fontSize:10.5,padding:"3px 8px",color:T.green}}>All</button>
+            <button onClick={()=>setHol({...hol,workers:[]})} style={{...ghostBtn,fontSize:10.5,padding:"3px 8px",color:T.red}}>None</button>
+          </div>
+        </div>
+        <div style={{maxHeight:200,overflowY:"auto",border:`1px solid ${T.border}`,borderRadius:8,padding:6,marginBottom:10,display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+          {roster.map(w=>{const on=hol.workers.includes(w);return(
+            <div key={w} onClick={()=>setHol({...hol,workers:on?hol.workers.filter(x=>x!==w):[...hol.workers,w]})}
+              style={{fontSize:11.5,padding:"5px 7px",borderRadius:6,cursor:"pointer",background:on?T.greenLow:"transparent",color:on?T.text:T.muted,border:`1px solid ${on?T.green:"transparent"}`,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{on?"✓ ":""}{w}</div>);})}
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={saveHoliday} disabled={busy||!hol.workers.length} style={{...primBtn,flex:1,borderRadius:10,background:T.purple,color:"#fff",opacity:busy?0.6:1}}>
+            Add {hol.hours||0}h × {hol.workers.length} employee{hol.workers.length!==1?"s":""}
+          </button>
+          <button onClick={()=>setHol(null)} style={{...ghostBtn,padding:"8px 12px"}}>Cancel</button>
+        </div>
+      </div>}
       {loading&&<Spinner/>}
       {!loading&&workers.length===0&&<div style={{textAlign:"center",padding:"18px 0",color:T.muted,fontSize:12}}>No time cards this week.</div>}
       {!loading&&workers.map(w=>{
@@ -7928,8 +7991,8 @@ function WeeklyApprovalPanel({user,projects,onErr}){
                 <div key={c.id} style={{padding:"8px 0",borderTop:`1px solid ${T.border}`}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                     <div style={{minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:700,color:T.text}}>{dayName(c.date)} {String(c.date).slice(5)} · {jobOf(c)}</div>
-                      <div style={{fontSize:10.5,color:T.muted}}>{parseFloat(c.reg_hours)||0} reg · {parseFloat(c.ot_hours)||0} OT · {parseFloat(c.travel_hours)||0} trv{c.classification?` · ${c.classification}`:""}{c.source?` · from ${c.source==="tm"?"T&M":c.source}`:""}</div>
+                      <div style={{fontSize:12,fontWeight:700,color:T.text}}>{dayName(c.date)} {String(c.date).slice(5)} · {c.source==="holiday"?"🎉 "+String(c.notes||"Holiday").replace("Holiday — ",""):jobOf(c)}</div>
+                      <div style={{fontSize:10.5,color:T.muted}}>{c.source==="holiday"?`${parseFloat(c.holiday_hours)||hrs(c)} holiday hrs`:`${parseFloat(c.reg_hours)||0} reg · ${parseFloat(c.ot_hours)||0} OT · ${parseFloat(c.travel_hours)||0} trv${c.classification?` · ${c.classification}`:""}${c.source?` · from ${c.source==="tm"?"T&M":c.source}`:""}`}</div>
                       {c.status==="disputed"&&<div style={{fontSize:11,color:TC_STATUS.disputed.c,marginTop:3}}>⚑ {c.dispute_note||"Flagged by employee"}</div>}
                       {c.edited_by&&<div style={{fontSize:10.5,color:T.blue,marginTop:2}}>✏️ {c.edited_by}{c.edit_reason?` — ${c.edit_reason}`:""}</div>}
                     </div>
@@ -7956,7 +8019,9 @@ function WeeklyApprovalPanel({user,projects,onErr}){
                       <button onClick={()=>approveCards([c],`${c.worker_name} ${c.date}`)} disabled={busy} style={{...ghostBtn,fontSize:10.5,padding:"4px 9px",color:T.green,border:`1px solid ${T.green}40`}}>✓ Approve</button>
                     </div>}
                   {c.status==="approved"&&<div style={{textAlign:"right",marginTop:4}}>
-                    <button onClick={()=>sendBack(c)} disabled={busy} style={{...ghostBtn,fontSize:10,padding:"3px 8px",color:T.muted}}>↩ Un-approve</button>
+                    {c.source==="holiday"
+                      ?<button onClick={async()=>{if(!window.confirm(`Remove holiday pay for ${c.worker_name} on ${c.date}?`))return;setBusy(true);try{await API.timeCards.remove(c.id);await load();}catch(e){onErr&&onErr(e.message);}setBusy(false);}} disabled={busy} style={{...ghostBtn,fontSize:10,padding:"3px 8px",color:T.red}}>🗑 Remove holiday</button>
+                      :<button onClick={()=>sendBack(c)} disabled={busy} style={{...ghostBtn,fontSize:10,padding:"3px 8px",color:T.muted}}>↩ Un-approve</button>}
                   </div>}
                 </div>
               ))}
@@ -8003,6 +8068,7 @@ function TimeCardsScreen({user,projects,onBack}){
 
   /* One lookup for both kinds of card. */
   const jobOf=(c)=>{
+    if(c.source==="holiday")return "🎉 "+String(c.notes||"Holiday").replace("Holiday — ","");
     if(c.project_id)return (projects.find(p=>p.id===c.project_id)||{}).name||null;
     if(c.mfg_job_id)return (mfgJobs.find(j=>j.id===c.mfg_job_id)||{}).job_number||"Shop";
     // Backfilled cards predate mfg_job_id being set; the note carries the job.
@@ -8033,10 +8099,10 @@ function TimeCardsScreen({user,projects,onBack}){
   const byWorker={};
   filtered.forEach(c=>{
     const n=c.worker_name||'?';
-    if(!byWorker[n])byWorker[n]={name:n,total:0,ot:0,reg:0,travel:0};
-    const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
-    const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
-    byWorker[n].total+=tot;byWorker[n].ot+=ot;byWorker[n].reg+=reg;byWorker[n].travel+=trav;
+    if(!byWorker[n])byWorker[n]={name:n,total:0,ot:0,reg:0,travel:0,holiday:0};
+    const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;const holi=parseFloat(c.holiday_hours)||0;
+    const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav+holi;
+    byWorker[n].total+=tot;byWorker[n].ot+=ot;byWorker[n].reg+=reg;byWorker[n].travel+=trav;byWorker[n].holiday+=holi;
   });
   const workerRows=Object.values(byWorker).sort((a,b)=>b.total-a.total);
   const fmt=n=>Number(n||0).toFixed(1);
@@ -8129,6 +8195,7 @@ function TimeCardsScreen({user,projects,onBack}){
               <span>Reg: <strong style={{color:T.sub}}>{fmt(w.reg)}h</strong></span>
               {w.ot>0&&<span>OT: <strong style={{color:T.yellow}}>{fmt(w.ot)}h</strong></span>}
               {w.travel>0&&<span>Travel: <strong style={{color:T.blue}}>{fmt(w.travel)}h</strong></span>}
+              {w.holiday>0&&<span>Holiday: <strong style={{color:T.purple}}>{fmt(w.holiday)}h</strong></span>}
             </div>
           </div>
         ))}
