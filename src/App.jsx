@@ -13550,6 +13550,14 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
                     <div style={{display:"flex",gap:5}}>
                       {canAdmin&&<button onClick={e=>{e.stopPropagation();setAdjItem(item);setAdjTo(String(i.onHand));setAdjReason("");}}
                         style={{background:"none",border:`1px solid ${T.blue}40`,borderRadius:6,padding:"2px 8px",color:T.blue,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>✏️ Count</button>}
+                      {canAdmin&&i.adjusted!==0&&<button title="Delete every count adjustment on this part so Adjusted goes back to 0" onClick={async e=>{
+                          e.stopPropagation();
+                          const adj=receipts.filter(r=>r.bom_id===item.id&&r.transaction_type==="Adjustment");
+                          if(!adj.length)return;
+                          if(!window.confirm(`Undo ${adj.length} count adjustment${adj.length!==1?"s":""} on ${item.component_part_number}?\n\nAdjusted goes back to 0 and on-hand becomes Received − Used − Damaged. Receipts are not touched.`))return;
+                          try{await sb(`/mfg_receipts?id=in.(${adj.map(r=>r.id).join(",")})`,{method:"DELETE"});await load();}catch(err){setFormErr("Error: "+err.message);}
+                        }}
+                        style={{background:"none",border:`1px solid ${T.yellow}40`,borderRadius:6,padding:"2px 8px",color:T.yellow,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>↺ Reset adj.</button>}
                       {canAdmin&&<button onClick={async e=>{e.stopPropagation();if(window.confirm("Remove "+item.component_part_number+" from BOM?"))try{await API.mfg.bom.remove(item.id);await load();}catch(err){}}} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"2px 8px",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>🗑 Remove</button>}
                     </div>
                     <div style={{fontSize:28,fontWeight:900,color:i.needsReorder?T.red:i.onHand<=0?T.yellow:T.green,lineHeight:1}}>{i.onHand}</div>
