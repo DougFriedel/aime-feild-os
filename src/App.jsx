@@ -3051,12 +3051,19 @@ ${visitors.map(v=>`<div class="visitor-row"><div style="flex:1"><strong>${v.name
 ${sections.delays&&delays.length>0?`<div class="section"><h2>Delays & Issues — ${delays.length} Item${delays.length!==1?'s':''}</h2>
 ${delays.map(d=>`<div class="delay-row"><div style="display:flex;gap:10px;align-items:center;margin-bottom:3px"><strong>${d.cause||'—'}</strong>${d.hours>0?`<span style="font-size:8pt;color:#ef4444">${d.hours}h delay</span>`:''}</div><div>${d.description||''}</div>${d.impact?`<div style="font-size:8pt;color:#555">Impact: ${d.impact}</div>`:''}</div>`).join('')}</div>`:''}
 
-${sections.signature&&report.inspector_signature?`<div class="section"><h2>Inspector Sign-Off</h2>
-<div style="background:#fff;border:1px solid #86efac;border-radius:6px;padding:10px;display:flex;align-items:center;gap:16px">
+${sections.signature&&(report.inspector_signature||report.client_signature)?`<div class="section" style="page-break-inside:avoid"><h2>Sign-Off</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+${[["Inspector",report.inspector_signature,report.inspector_name,report.inspector_signed_at,"#86efac"],["Client",report.client_signature,report.client_name,report.client_signed_at,"#93c5fd"]].map(([who,sig,name,at,border])=>sig?`
+<div style="background:#fff;border:1px solid ${border};border-radius:6px;padding:10px;display:flex;align-items:center;gap:12px">
 <div style="background:#ffffff;border:1px solid #ccc;border-radius:4px;padding:6px;display:inline-block;overflow:hidden;">
-<img src="${report.inspector_signature}" style="max-height:70px;max-width:240px;object-fit:contain;display:block;filter:none;"/>
+<img src="${sig}" style="max-height:60px;max-width:200px;object-fit:contain;display:block;filter:none;"/>
 </div>
-<div><div style="font-weight:700">${report.inspector_name||'Inspector'}</div><div style="font-size:9pt;color:#555">${report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleString():''}</div></div>
+<div><div style="font-size:8pt;color:#777;text-transform:uppercase;letter-spacing:1px">${who}</div><div style="font-weight:700">${name||who}</div><div style="font-size:9pt;color:#555">${at?new Date(at).toLocaleString():''}</div></div>
+</div>`:`
+<div style="border:1px solid #ddd;border-radius:6px;padding:10px;color:#777">
+<div style="font-size:8pt;text-transform:uppercase;letter-spacing:1px;margin-bottom:26px">${who}</div>
+<div style="border-top:1px solid #333;padding-top:4px;font-size:8pt">Signature / Date</div>
+</div>`).join('')}
 </div></div>`:''}
 
 ${(tot.grand>0||subsTotal>0)?`<div class="section" style="page-break-inside:avoid">
@@ -3095,7 +3102,7 @@ ${docHTML}
   setTimeout(()=>{win.focus();win.print();},1200);
 }
 
-function SignaturePad({onSave,onCancel,reportName}){
+function SignaturePad({onSave,onCancel,reportName,title}){
   const [name,setName]=useState("");
   const [company,setCompany]=useState("");
   const [role,setRole]=useState("");
@@ -3146,7 +3153,7 @@ function SignaturePad({onSave,onCancel,reportName}){
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16,fontFamily:"inherit"}}>
       <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:440,color:"#111"}}>
-        <div style={{fontSize:16,fontWeight:900,color:"#1f3864",marginBottom:4}}>✍️ Inspector Sign-Off</div>
+        <div style={{fontSize:16,fontWeight:900,color:"#1f3864",marginBottom:4}}>✍️ {title||"Inspector Sign-Off"}</div>
         <div style={{fontSize:12,color:"#666",marginBottom:20}}>{reportName||"Daily Field Report"}</div>
 
         {err&&<div style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#dc2626"}}>{err}</div>}
@@ -3214,6 +3221,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   const [report,setReport]=useState(initReport);
   const [lb,setLb]=useState(null);const [flagNote,setFlagNote]=useState("");const [flagging,setFlagging]=useState(false);
   const [showSigPad,setShowSigPad]=useState(false);const [sigSaving,setSigSaving]=useState(false);
+  const [showClientSigPad,setShowClientSigPad]=useState(false);
   const [showInspectorShare,setShowInspectorShare]=useState(false);
   const [inspLinkCopied,setInspLinkCopied]=useState(false);
   const [showEsigModal,setShowEsigModal]=useState(false);
@@ -3356,6 +3364,25 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     setEsigSending(false);
   }
 
+  // Client / customer representative sign-off — separate from the inspector.
+  async function saveClientSignature(clientName,sigData){
+    setSigSaving(true);
+    try{
+      const compressed=await new Promise(res=>{
+        const img=new Image();
+        img.onload=()=>{const c=document.createElement("canvas");c.width=Math.min(img.width,800);c.height=Math.round(img.height*(c.width/img.width));c.getContext("2d").drawImage(img,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",0.5));};
+        img.src=sigData;
+      });
+      const at=new Date().toISOString();
+      await API.reports.update(report.id,{client_name:clientName,client_signature:compressed,client_signed_at:at});
+      setReport(r=>({...r,client_name:clientName,client_signature:compressed,client_signed_at:at}));
+      setShowClientSigPad(false);
+    }catch(e){
+      const msg=e.message||"Could not save signature.";
+      alert("Signature save failed: "+msg+(String(msg).includes("client_signature")||String(msg).includes("PGRST204")?"\n\nRun AIME_v3.1_client_signature.sql in Supabase first.":""));
+    }
+    setSigSaving(false);
+  }
   async function saveSignature(inspectorName,sigData){
     setSigSaving(true);
     try{
@@ -3529,7 +3556,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       {key:"materials",label:"📦 Materials"},
       {key:"visitors",label:"🏗️ Visitor Log"},
       {key:"delays",label:"⚠️ Delays & Issues"},
-      {key:"signature",label:"✍️ Inspector Signature"},
+      {key:"signature",label:"✍️ Inspector & Client Signatures"},
     ];
     const toggleSection=(k)=>setPrintSections(s=>({...s,[k]:!s[k]}));
     const togglePhoto=(id)=>setSelectedPhotos(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
@@ -3757,6 +3784,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   return(
     <div style={{background:T.bg,minHeight:"100vh",padding:16,fontFamily:"inherit"}}>
       {showSigPad&&<SignaturePad reportName={`${project.name} · ${fmtDate(report.date)}`} onSave={saveSignature} onCancel={()=>setShowSigPad(false)}/>}
+      {showClientSigPad&&<SignaturePad title="Client Sign-Off" reportName={`${project.name} · ${fmtDate(report.date)}`} onSave={saveClientSignature} onCancel={()=>setShowClientSigPad(false)}/>}
       <Lightbox src={lb} onClose={()=>setLb(null)}/>
       <button onClick={onBack} style={{...ghostBtn,marginBottom:14}}>← Reports</button>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.5px"}}>{fmtDate(report.date)}</div><span style={pill(sc)}>{(report.status||"submitted").toUpperCase()}</span></div>
@@ -3843,6 +3871,33 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
           <div style={{fontSize:10,color:T.muted,textAlign:"center",marginTop:5}}>
             Sign Here = on this device · Send Link = inspector's phone · eSign = Box Sign email
           </div>
+        </div>
+      )}
+
+      {/* Client sign-off */}
+      {report.client_signature?(
+        <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px"}}>✅ Client Sign-Off</div>
+              <div style={{fontSize:14,fontWeight:700,color:T.orange,marginTop:2}}>{report.client_name}</div>
+              {report.client_signed_at&&<div style={{fontSize:11,color:T.muted,marginTop:2}}>{new Date(report.client_signed_at).toLocaleString()}</div>}
+            </div>
+            {can(user,"approve_report")&&<button onClick={async()=>{if(!window.confirm("Clear the client signature?"))return;try{await API.reports.update(report.id,{client_name:null,client_signature:null,client_signed_at:null});setReport(r=>({...r,client_name:null,client_signature:null,client_signed_at:null}));}catch(e){alert(e.message);}}}
+              style={{...ghostBtn,fontSize:10.5,padding:"4px 9px",color:T.muted}}>Clear</button>}
+          </div>
+          <div style={{background:"#fff",borderRadius:10,padding:4,marginTop:4}}>
+            <img src={report.client_signature} alt="Client signature" style={{width:"100%",borderRadius:8,display:"block"}}/>
+          </div>
+        </div>
+      ):(
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>🖊️ Client Sign-Off</div>
+          <button onClick={()=>setShowClientSigPad(true)}
+            style={{...primBtn,background:T.blueLow,color:T.blue,border:`1px solid ${T.blue}40`,borderRadius:12,fontSize:12}}>
+            ✍️ Client Signs Here
+          </button>
+          <div style={{fontSize:10,color:T.muted,textAlign:"center",marginTop:5}}>Customer representative signs on this device</div>
         </div>
       )}
 
