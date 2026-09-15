@@ -3051,7 +3051,7 @@ ${visitors.map(v=>`<div class="visitor-row"><div style="flex:1"><strong>${v.name
 ${sections.delays&&delays.length>0?`<div class="section"><h2>Delays & Issues — ${delays.length} Item${delays.length!==1?'s':''}</h2>
 ${delays.map(d=>`<div class="delay-row"><div style="display:flex;gap:10px;align-items:center;margin-bottom:3px"><strong>${d.cause||'—'}</strong>${d.hours>0?`<span style="font-size:8pt;color:#ef4444">${d.hours}h delay</span>`:''}</div><div>${d.description||''}</div>${d.impact?`<div style="font-size:8pt;color:#555">Impact: ${d.impact}</div>`:''}</div>`).join('')}</div>`:''}
 
-${sections.signature&&(report.inspector_signature||report.client_signature)?`<div class="section" style="page-break-inside:avoid"><h2>Sign-Off</h2>
+${sections.signature?`<div class="section" style="page-break-inside:avoid"><h2>Sign-Off</h2>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
 ${[["Inspector",report.inspector_signature,report.inspector_name,report.inspector_signed_at,"#86efac"],["Client",report.client_signature,report.client_name,report.client_signed_at,"#93c5fd"]].map(([who,sig,name,at,border])=>sig?`
 <div style="background:#fff;border:1px solid ${border};border-radius:6px;padding:10px;display:flex;align-items:center;gap:12px">
@@ -3061,8 +3061,8 @@ ${[["Inspector",report.inspector_signature,report.inspector_name,report.inspecto
 <div><div style="font-size:8pt;color:#777;text-transform:uppercase;letter-spacing:1px">${who}</div><div style="font-weight:700">${name||who}</div><div style="font-size:9pt;color:#555">${at?new Date(at).toLocaleString():''}</div></div>
 </div>`:`
 <div style="border:1px solid #ddd;border-radius:6px;padding:10px;color:#777">
-<div style="font-size:8pt;text-transform:uppercase;letter-spacing:1px;margin-bottom:26px">${who}</div>
-<div style="border-top:1px solid #333;padding-top:4px;font-size:8pt">Signature / Date</div>
+<div style="font-size:8pt;text-transform:uppercase;letter-spacing:1px;margin-bottom:40px">${who}</div>
+<div style="border-top:1px solid #333;padding-top:4px;font-size:8pt;display:flex;justify-content:space-between"><span>${who} Signature</span><span>Date</span></div>
 </div>`).join('')}
 </div></div>`:''}
 
