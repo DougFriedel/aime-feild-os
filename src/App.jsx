@@ -13522,6 +13522,16 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           {/* Assembly parts with delete */}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
             <div style={{fontSize:12,fontWeight:800,color:T.text}}>Parts in Stock</div>
+            {canAdmin&&receipts.length>0&&<button title="Delete every inventory transaction on this job — received, used, damaged, counts — so all parts start from zero" onClick={async()=>{
+                const n=receipts.length;
+                if(!window.confirm(`Zero out inventory for ${job.job_number}?\n\nThis deletes all ${n} inventory transaction${n!==1?"s":""} (received, used, damaged, count adjustments) on every part in this job. Received / Used / Damaged / On hand / Can build all go to 0.\n\nAssemblies, shipments and the BOM itself are NOT touched. This can't be undone.`))return;
+                if(window.prompt(`Type ZERO to confirm`)!=="ZERO")return;
+                try{
+                  const ids=receipts.map(r=>r.id).filter(Boolean);
+                  for(let i=0;i<ids.length;i+=200){await sb(`/mfg_receipts?id=in.(${ids.slice(i,i+200).join(",")})`,{method:"DELETE"});}
+                  await load();
+                }catch(err){setFormErr("Error: "+err.message);}
+              }} style={{background:"none",border:`1px solid ${T.yellow}40`,borderRadius:6,padding:"2px 8px",color:T.yellow,fontSize:10,cursor:"pointer",fontFamily:"inherit",marginRight:"auto",marginLeft:10}}>↺ Zero all inventory</button>}
             {canAdmin&&parts.map(p=>(
               <div key={p.id} style={{display:"flex",alignItems:"center",gap:6}}>
                 <span style={{fontSize:11,color:T.purple,fontWeight:700}}>{p.part_number}</span>
