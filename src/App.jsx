@@ -9573,7 +9573,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
         {tab==="documents" &&<BidDocumentsTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="takeoff"   &&<TakeoffTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="estimating"&&<EstimatingTab bid={bid} user={user} onErr={setErr} onTotal={(t)=>{setBid(b=>({...b,total_sales:t}));onChanged&&onChanged();}}/>}
-        {tab==="scope"     &&<ScopeTab bid={bid} user={user} onErr={setErr}/>}
+        {tab==="scope"     &&<ScopeTab bid={bid} user={user} onErr={setErr} onSaved={(body)=>{setBid(b=>({...b,...body}));onChanged&&onChanged();}}/>}
         {tab==="proposal"  &&<ProposalTab bid={bid} user={user} onErr={setErr} onSaved={load}/>}
       </div>
     </div>
@@ -10375,7 +10375,7 @@ const COMMON_EXCLUSIONS=[
 const exclLabel=(x)=>typeof x==="string"?x:x.label;
 const exclText =(x)=>typeof x==="string"?x:x.text;
 
-function ScopeTab({bid,user,onErr}){
+function ScopeTab({bid,user,onErr,onSaved}){
   const asList=(v)=>{
     if(Array.isArray(v))return v;
     if(typeof v==="string"){ try{const p=JSON.parse(v);return Array.isArray(p)?p:[];}catch{return [];} }
@@ -10407,11 +10407,24 @@ function ScopeTab({bid,user,onErr}){
   async function save(){
     setSaving(true);
     try{
-      await API.estimates.update(bid.id,{...f,updated_at:new Date().toISOString()});
+      const body={...f,updated_at:new Date().toISOString()};
+      await API.estimates.update(bid.id,body);
       setDirty(false);
+      // Push the saved values up to the parent. Without this the tab re-read
+      // the stale `bid` prop when you came back from Proposal and looked blank.
+      onSaved&&onSaved(body);
     }catch(e){onErr&&onErr(e.message);}
     setSaving(false);
   }
+  // Unsaved edits survive a tab switch: keep them in a ref keyed by bid so
+  // leaving Scope for Proposal and coming back doesn't lose the paragraph.
+  const scratchKey=`bid_scope_scratch_${bid.id}`;
+  useEffect(()=>{
+    try{const s=JSON.parse(sessionStorage.getItem(scratchKey)||"null");if(s&&s.dirty){setF(s.f);setDirty(true);}}catch{}
+  },[bid.id]);
+  useEffect(()=>{
+    try{dirty?sessionStorage.setItem(scratchKey,JSON.stringify({f,dirty})):sessionStorage.removeItem(scratchKey);}catch{}
+  },[f,dirty]);
 
   const card={...cardS,padding:20,marginBottom:16};
 
