@@ -10466,6 +10466,18 @@ function ProposalTab({bid,user,onErr,onSaved}){
 const COMMON_INCLUSIONS=[
   "Materials","Labor","Equipment","Per Diem","Travel",
   "Detailing","Engineering","PE Stamp","Paint","Galvanizing",
+  {
+    label:"Delays billed as extra",
+    text:"Delays and/or loss of time not the fault of AIME will be billed as an extra.",
+  },
+  {
+    label:"Out-of-sequence demob",
+    text:"Demobilization time caused by working out of sequence at the request of others will be billed as an extra.",
+  },
+  {
+    label:"Drawing / scope changes",
+    text:"Any changes to the Drawings or Scope of Work will be treated as an extra.",
+  },
 ];
 /* Short entries are their own chip label. The two subsurface clauses run to a
    paragraph, so they carry a short label and add the full wording to the list. */
@@ -10617,12 +10629,16 @@ function ScopeTab({bid,user,onErr,onSaved}){
           Common inclusions — click to add
         </div>
         <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
-          {COMMON_INCLUSIONS.filter(x=>!f.inclusions.includes(x)).map(x=>(
-            <button key={x} onClick={()=>set("inclusions",[...f.inclusions,x])}
-              style={{background:T.surface,border:`1px solid ${T.green}30`,borderRadius:14,padding:"5px 11px",
-                color:T.green,fontSize:11.5,cursor:"pointer",fontFamily:"inherit"}}>+ {x}</button>
-          ))}
-          {COMMON_INCLUSIONS.every(x=>f.inclusions.includes(x))&&
+          {COMMON_INCLUSIONS.filter(x=>!f.inclusions.includes(exclText(x))).map(x=>{
+            const long=typeof x!=="string";
+            return(
+              <button key={exclLabel(x)} onClick={()=>set("inclusions",[...f.inclusions,exclText(x)])}
+                title={long?exclText(x):undefined}
+                style={{background:T.surface,border:`1px solid ${T.green}30`,borderRadius:14,padding:"5px 11px",
+                  color:T.green,fontSize:11.5,cursor:"pointer",fontFamily:"inherit"}}>+ {exclLabel(x)}{long?" ¶":""}</button>
+            );
+          })}
+          {COMMON_INCLUSIONS.every(x=>f.inclusions.includes(exclText(x)))&&
             <span style={{fontSize:11.5,color:T.muted}}>All of the common ones are already listed.</span>}
         </div>
       </div>
