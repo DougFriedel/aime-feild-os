@@ -330,7 +330,14 @@ const API={
     ncr:{forJob:(jid)=>sb(`/mfg_ncr?job_id=eq.${jid}&order=created_at.desc`),forPart:(pid)=>sb(`/mfg_ncr?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_ncr',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_ncr?id=eq.${id}`,{method:'PATCH',body:d})},
   },
   docFolders:{forProject:(pid)=>sb(`/document_folders?project_id=eq.${pid}&order=name.asc`),forMfgJob:(jid)=>sb(`/document_folders?mfg_job_id=eq.${jid}&order=name.asc`),create:(d)=>sb("/document_folders",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/document_folders?id=eq.${id}`,{method:"PATCH",body:d}),remove:(id)=>sb(`/document_folders?id=eq.${id}`,{method:"DELETE"})},
-  docs:     {forProject:(pid)=>sb(`/documents?project_id=eq.${pid}&order=created_at.desc`),forMfgJob:(jid)=>sb(`/documents?mfg_job_id=eq.${jid}&order=created_at.desc`),create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/documents?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
+  // Document LISTS never pull the base64 `file` body — with a few PDFs on a job
+  // that's tens of MB and Supabase cancels the query. The body is fetched one
+  // document at a time when someone previews / downloads / prints it.
+  docs:     {
+    _cols:"id,project_id,mfg_job_id,name,doc_type,file_name,file_type,file_size,folder_id,visible_to,can_download,uploaded_by,is_fillable,notes,created_at",
+    forProject:async(pid)=>{try{return await sb(`/documents?project_id=eq.${pid}&select=${API.docs._cols}&order=created_at.desc`);}catch(e){return sb(`/documents?project_id=eq.${pid}&order=created_at.desc`);}},
+    forMfgJob:async(jid)=>{try{return await sb(`/documents?mfg_job_id=eq.${jid}&select=${API.docs._cols}&order=created_at.desc`);}catch(e){return sb(`/documents?mfg_job_id=eq.${jid}&order=created_at.desc`);}},
+    fileOf:async(id)=>{const r=await sb(`/documents?id=eq.${id}&select=file`);return (Array.isArray(r)&&r[0]&&r[0].file)||"";},create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=minimal"}),update:(id,d)=>sb(`/documents?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
   milestones:{forProject:(pid)=>sb(`/milestones?project_id=eq.${pid}&order=sort_order.asc,target_date.asc`),create:(d)=>sb("/milestones",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/milestones?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/milestones?id=eq.${id}`,{method:"DELETE"})},
   crew:     {list:()=>sb("/crew_members?order=name.asc"),create:(d)=>sb("/crew_members",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/crew_members?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/crew_members?id=eq.${id}`,{method:"DELETE"})},
   audit:{
@@ -2871,7 +2878,12 @@ function printReport(report, project){
 // attachment index page only, since the browser can't print it.
 async function prepareDocsForPrint(docs,onProgress){
   const out=[];
-  for(const d of docs||[]){
+  for(const d0 of docs||[]){
+    let d=d0;
+    if(!d.file&&d.id&&!d._fromReport){
+      onProgress&&onProgress(`Loading ${d.name||d.file_name}…`);
+      try{d={...d,file:await API.docs.fileOf(d.id)};}catch(e){d={...d,file:""};}
+    }
     const fname=(d.file_name||d.name||"").toLowerCase();
     const data=d.file||"";
     const isImage=(d.file_type||"").startsWith("image/")||data.startsWith("data:image")||/\.(jpe?g|png|gif|webp|bmp)$/.test(fname);
@@ -4531,7 +4543,7 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
     try{await API.docs.remove(id);await load();}catch(e){onErr(e.message);}
   }
   function downloadDoc(doc){
-    if(!doc.file)return;
+    if(!doc.file)return; // DocRow passes the fetched body in
     const a=document.createElement("a");
     a.href=doc.file;
     a.download=doc.file_name||doc.name||"document";
@@ -4655,7 +4667,7 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
           Root Files ({rootDocCount})
         </div>}
         {currentDocs.map(doc=>(<DocRow key={doc.id} doc={doc} folders={folders} user={user} canAdmin={canAdmin}
-          onDownload={()=>downloadDoc(doc)} canDownload={canDownload(doc)}
+          onDownload={(withFile)=>downloadDoc(withFile||doc)} canDownload={canDownload(doc)}
           onMove={fid=>moveDocToFolder(doc,fid)} onDelete={()=>removeDoc(doc.id)}
           getMimeIcon={getMimeIcon} fmtSize={fmtSize} docIcons={docIcons}
           onDragStart={()=>setDragDoc(doc.id)} onDragEnd={()=>{setDragDoc(null);setDragOverFolder(null);}}
@@ -4679,7 +4691,7 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
           </div>
         </div>
         {currentDocs.map(doc=>(<DocRow key={doc.id} doc={doc} folders={folders} user={user} canAdmin={canAdmin}
-          onDownload={()=>downloadDoc(doc)} canDownload={canDownload(doc)}
+          onDownload={(withFile)=>downloadDoc(withFile||doc)} canDownload={canDownload(doc)}
           onMove={fid=>moveDocToFolder(doc,fid)} onDelete={()=>removeDoc(doc.id)}
           getMimeIcon={getMimeIcon} fmtSize={fmtSize} docIcons={docIcons}
           onDragStart={()=>setDragDoc(doc.id)} onDragEnd={()=>{setDragDoc(null);setDragOverFolder(null);}}
@@ -4694,7 +4706,18 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
   );
 }
 
-function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons,onDragStart,onDragEnd,isDragging}){
+function DocRow({doc:docIn,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons,onDragStart,onDragEnd,isDragging}){
+  // The list row arrives without the file body; pull it the first time it's needed.
+  const [fileData,setFileData]=useState(docIn.file||"");
+  const [fileBusy,setFileBusy]=useState(false);
+  const doc={...docIn,file:fileData};
+  async function ensureFile(){
+    if(fileData)return fileData;
+    setFileBusy(true);
+    try{const f=await API.docs.fileOf(docIn.id);setFileData(f||"");return f||"";}
+    catch(e){alert("Couldn't load the file: "+e.message);return "";}
+    finally{setFileBusy(false);}
+  }
   const [showPreview,setShowPreview]=useState(false);
   const [showMove,setShowMove]=useState(false);   // must be before any conditional return
 
@@ -4702,7 +4725,8 @@ function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelet
   const isImage=doc.file_type?.startsWith("image/")||(doc.file||"").startsWith("data:image")||[".jpg",".jpeg",".png",".gif",".webp",".bmp"].some(e=>fname.endsWith(e));
   const isPdf=doc.file_type==="application/pdf"||(doc.file||"").startsWith("data:application/pdf")||fname.endsWith(".pdf");
   const canPreview=isImage||isPdf;
-  const hasFileData=!!(doc.file&&doc.file.length>100);
+  // Unknown until fetched; a document with a recorded size is assumed to have data.
+  const hasFileData=!!(doc.file&&doc.file.length>100)||(!doc.file&&(parseFloat(doc.file_size)>0||doc.file_size==null));
 
   if(showPreview){
     return(
@@ -4762,14 +4786,15 @@ function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelet
         </div>
       </div>
       <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
-        {canPreview&&<button onClick={()=>{
-            if(!hasFileData){alert("File data not found — please delete and re-upload this document. (It was likely uploaded before the database was updated.)");return;}
+        {canPreview&&<button disabled={fileBusy} onClick={async()=>{
+            const f=await ensureFile();
+            if(!f||f.length<100){alert("File data not found — please delete and re-upload this document. (It was likely uploaded before the database was updated.)");return;}
             setShowPreview(true);
           }}
-          style={{...primBtn,flex:2,borderRadius:10,fontSize:12,background:hasFileData?T.blue:"#26262E",color:hasFileData?"#fff":T.muted,padding:"8px"}}>
-          👁 {hasFileData?"Preview":"Preview (re-upload)"}
+          style={{...primBtn,flex:2,borderRadius:10,fontSize:12,background:hasFileData?T.blue:"#26262E",color:hasFileData?"#fff":T.muted,padding:"8px",opacity:fileBusy?0.6:1}}>
+          {fileBusy?"⏳ Loading…":`👁 ${hasFileData?"Preview":"Preview (re-upload)"}`}
         </button>}
-        {canDownload&&doc.file&&<button onClick={onDownload}
+        {canDownload&&hasFileData&&<button disabled={fileBusy} onClick={async()=>{const f=await ensureFile();if(f)onDownload({...docIn,file:f});}}
           style={{...primBtn,flex:canPreview?1:2,borderRadius:10,fontSize:12,background:T.green,color:"#000",padding:"8px"}}>
           ⬇️
         </button>}
