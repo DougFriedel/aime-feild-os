@@ -238,7 +238,14 @@ const API={
     remove:(id)=>sb(`/projects?id=eq.${id}`,{method:"DELETE"}),
   },
   reports:{
-    forProject:(pid)=>sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`),
+    // Job report list. Lite view (no base64 receipts / signatures) — the full
+    // table timed out on phones once a job had receipts and PDFs attached.
+    // Anything that needs the full record (open / edit / print) calls byId.
+    forProject:async(pid)=>{
+      try{return await sb(`/daily_reports_lite?project_id=eq.${pid}&order=date.desc`);}
+      catch(e){return sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`);}
+    },
+    forProjectFull:(pid)=>sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`),
     byRange:(from,to)=>sb(`/daily_reports?date=gte.${from}&date=lte.${to}&status=neq.draft&order=date.asc`),
     // Dashboard feed. Uses the `daily_reports_lite` view (receipt images and
     // signatures stripped) and only the last 120 days — pulling `*` for every
@@ -12232,7 +12239,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
                 💡 Reports track labor, equipment, materials and site conditions — and automatically generate time cards for payroll.
               </div>
             </div>}
-          {shown.map(r=>{const t=reportTotals(r,project.division);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
+          {shown.map(r=>{const t=reportTotals(r,project.division);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={async()=>{setActiveReport(r);setScreen("reportDetail");try{const full=await API.reports.byId(r.id);if(Array.isArray(full)&&full[0])setActiveReport(full[0]);}catch(e){}}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
          </div>);})()}
         {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
