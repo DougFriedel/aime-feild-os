@@ -119,14 +119,72 @@ async function supa(path,{method="GET",body,prefer}={}){
 let CURRENT_USER=null;
 function setAuditUser(name){CURRENT_USER=name||null;}
 
+/* ── Request guard ────────────────────────────────────────────────────
+   Three things that used to bite in the field:
+   1. A save that hung forever with no feedback, so people tapped Save ten
+      times and got ten copies. Every write now times out (45 s) and
+      IDENTICAL writes (same method + path + body) fired while the first is
+      still in flight — or within 3 s of it finishing — return the first
+      request's result instead of hitting the database again.
+   2. No visible sign that anything was happening. sb() now emits a busy
+      count the app shows as a small "Saving…" pill.
+   3. Timeouts surfaced as raw JSON. They're now a plain sentence.          */
+const SB_TIMEOUT_MS=45000;
+const SB_DEDUPE_MS=3000;
+const _sbInflight=new Map();   // key → {promise, doneAt}
+let _sbBusy=0;
+function _sbSignal(delta){
+  _sbBusy=Math.max(0,_sbBusy+delta);
+  try{window.dispatchEvent(new CustomEvent("aime:busy",{detail:{count:_sbBusy}}));}catch{}
+}
+function _sbFriendly(status,text){
+  if(String(text).includes("57014"))return "The database took too long to answer. Your last action may not have saved — check before trying again.";
+  if(status===0)return "No connection — the request was not sent.";
+  return text||`HTTP ${status}`;
+}
 async function sb(path,opts={}){
   const{method="GET",body,prefer}=opts;
-  const headers={"apikey":SUPA_KEY,"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json"};
-  if(CURRENT_USER)headers["X-AIME-User"]=CURRENT_USER;
-  if(prefer)headers["Prefer"]=prefer;
-  const res=await fetch(`${SUPA_URL}/rest/v1${path}`,{method,headers,...(body!==undefined?{body:JSON.stringify(body)}:{})});
-  if(!res.ok)throw new Error(await res.text()||`HTTP ${res.status}`);
-  const t=await res.text();return t?JSON.parse(t):null;
+  const isWrite=method!=="GET";
+  const key=isWrite?`${method} ${path} ${body!==undefined?JSON.stringify(body):""}`:null;
+  if(key){
+    const hit=_sbInflight.get(key);
+    if(hit&&(!hit.doneAt||Date.now()-hit.doneAt<SB_DEDUPE_MS))return hit.promise;
+  }
+  const run=(async()=>{
+    const headers={"apikey":SUPA_KEY,"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json"};
+    if(CURRENT_USER)headers["X-AIME-User"]=CURRENT_USER;
+    if(prefer)headers["Prefer"]=prefer;
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(),SB_TIMEOUT_MS);
+    if(isWrite)_sbSignal(1);
+    try{
+      let res;
+      try{res=await fetch(`${SUPA_URL}/rest/v1${path}`,{method,headers,signal:ctrl.signal,...(body!==undefined?{body:JSON.stringify(body)}:{})});}
+      catch(e){
+        if(e.name==="AbortError")throw new Error("The request timed out. Your last action may not have saved — check before trying again.");
+        throw new Error(_sbFriendly(0,e.message));
+      }
+      if(!res.ok)throw new Error(_sbFriendly(res.status,await res.text()));
+      const t=await res.text();return t?JSON.parse(t):null;
+    }finally{
+      clearTimeout(timer);
+      if(isWrite)_sbSignal(-1);
+    }
+  })();
+  if(key){
+    const entry={promise:run,doneAt:null};
+    _sbInflight.set(key,entry);
+    run.then(()=>{entry.doneAt=Date.now();},()=>{_sbInflight.delete(key);}); // a failed write may be retried immediately
+    setTimeout(()=>{if(_sbInflight.get(key)===entry)_sbInflight.delete(key);},SB_TIMEOUT_MS+SB_DEDUPE_MS);
+  }
+  return run;
+}
+/* Small pill shown while any write is in flight. */
+function BusyPill(){
+  const [n,setN]=useState(0);
+  useEffect(()=>{const h=e=>setN(e.detail?.count||0);window.addEventListener("aime:busy",h);return()=>window.removeEventListener("aime:busy",h);},[]);
+  if(!n)return null;
+  return <div style={{position:"fixed",top:10,left:"50%",transform:"translateX(-50%)",zIndex:9999,background:"#1f3864",color:"#fff",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,boxShadow:"0 4px 14px rgba(0,0,0,0.4)",pointerEvents:"none"}}>⏳ Saving…</div>;
 }
 
 /* Postgres function call. Used for anything the browser must not see —
@@ -182,12 +240,14 @@ const shellMax=(screen)=>SCREEN_MAX[screen]||(WIDE_SCREENS.has(screen)?1180:480)
    timestamp — never the PIN — and re-reads the profile from the database on
    restore, so a role change or deactivation takes effect immediately. */
 const SESSION_KEY="aime_session";
+const PROFILE_KEY="aime_profile";   // last verified profile (name/role only) — used when the server can't be reached
 
 /* The browser holds a random token issued by the database and nothing else.
    The old version stored { name, at } and trusted it, which meant anyone
    could type a name into localStorage and be signed in as that person. */
-function saveSession(token){
+function saveSession(token,profile){
   try{ if(token) localStorage.setItem(SESSION_KEY,token); }catch{}
+  try{ if(profile) localStorage.setItem(PROFILE_KEY,JSON.stringify({name:profile.name,role:profile.role,at:Date.now()})); }catch{}
 }
 function getSessionToken(){
   try{
@@ -200,7 +260,7 @@ function getSessionToken(){
 }
 async function clearSession(){
   const t=getSessionToken();
-  try{localStorage.removeItem(SESSION_KEY);}catch{}
+  try{localStorage.removeItem(SESSION_KEY);localStorage.removeItem(PROFILE_KEY);}catch{}
   if(t){ try{ await rpc("end_session",{p_token:t}); }catch{} }
 }
 async function restoreSession(){
@@ -209,11 +269,18 @@ async function restoreSession(){
   try{
     const rows=await rpc("verify_session",{p_token:t});
     const p=Array.isArray(rows)?rows[0]:rows;
-    if(!p||!p.name){ try{localStorage.removeItem(SESSION_KEY);}catch{} return null; }
+    if(!p||!p.name){ try{localStorage.removeItem(SESSION_KEY);localStorage.removeItem(PROFILE_KEY);}catch{} return null; }
+    saveSession(t,p);
     return p;
   }catch(e){
-    // Offline, or verify_session not deployed yet — stay signed out for this
-    // load rather than discarding a token that may still be good.
+    // The server answered "no session" → signed out above. Getting HERE means
+    // the server didn't answer at all (offline, timeout, busy database). The
+    // token is still valid, so don't kick the person to the login screen:
+    // sign them in from the last verified profile and re-verify next launch.
+    try{
+      const cached=JSON.parse(localStorage.getItem(PROFILE_KEY)||"null");
+      if(cached&&cached.name&&Date.now()-(cached.at||0)<14*24*3600*1000)return {...cached,_offline:true};
+    }catch{}
     return null;
   }
 }
@@ -16767,7 +16834,7 @@ function AppInner(){
   }
 
   function handleLogin(profile,token){
-    saveSession(token);setAuditUser(profile.name);setUser(profile);
+    saveSession(token,profile);setAuditUser(profile.name);setUser(profile);
     refreshRoster();   // pick up anyone added to the crew directory
   }
   async function handleLogout(){
@@ -16788,6 +16855,7 @@ function AppInner(){
 
   return(
     <div style={{maxWidth:shellMax(screen),margin:"0 auto",transition:"max-width 0.15s ease",fontFamily:"'DM Sans',system-ui,sans-serif",color:T.text,background:T.bg,minHeight:"100vh"}}>
+      <BusyPill/>
       {syncMsg&&<div style={{background:T.green,color:"#000",padding:"10px 16px",fontSize:13,fontWeight:700,textAlign:"center"}}>{syncMsg}</div>}
       {err&&<div style={{background:T.red,color:"#fff",padding:"8px 16px",fontSize:12,cursor:"pointer"}} onClick={()=>setErr("")}>{err} ✕</div>}
       {!user&&restoring&&(
