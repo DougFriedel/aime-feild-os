@@ -4287,13 +4287,20 @@ function DocsTab({projectId,user,onErr}){
       await load();
     }catch(e){onErr(e.message);}
   }
-  function downloadDoc(doc){
+  async function downloadDoc(doc){
     if(!doc.file)return;
-    const a=document.createElement("a");
-    a.href=doc.file;
-    a.download=doc.file_name||doc.name||"document";
-    if(/^https?:/.test(doc.file))a.target="_blank";   // cross-origin: opens in new tab
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    try{
+      const r=await fetch(doc.file);
+      const blob=await r.blob();
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;a.download=doc.file_name||doc.name||"document";
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url),10000);
+    }catch(e){
+      if(/^https?:/.test(doc.file))window.open(doc.file,"_blank");
+      else onErr("Download failed: "+e.message);
+    }
   }
   function canDownload(doc){
     return(doc.can_download||[]).includes(user.role)||user.role==="admin";
@@ -4455,6 +4462,27 @@ function DocsTab({projectId,user,onErr}){
 function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons,onDragStart,onDragEnd,isDragging}){
   const [showPreview,setShowPreview]=useState(false);
   const [showMove,setShowMove]=useState(false);   // must be before any conditional return
+  const [previewUrl,setPreviewUrl]=useState("");
+  const [previewErr,setPreviewErr]=useState("");
+
+  // Browsers refuse to render a multi-MB data: URI in an <iframe> (it just
+  // shows blank), so the preview always goes through a Blob URL — same for
+  // files stored in Supabase Storage. Small and large files then behave alike.
+  useEffect(()=>{
+    if(!showPreview||!doc.file){setPreviewUrl("");return;}
+    let objUrl="",cancelled=false;
+    setPreviewErr("");
+    (async()=>{
+      try{
+        const r=await fetch(doc.file);
+        if(!r.ok)throw new Error(`Could not load file (${r.status})`);
+        const blob=await r.blob();
+        objUrl=URL.createObjectURL(blob);
+        if(!cancelled)setPreviewUrl(objUrl);
+      }catch(e){if(!cancelled)setPreviewErr(e.message||"Could not load file");}
+    })();
+    return()=>{cancelled=true;if(objUrl)URL.revokeObjectURL(objUrl);};
+  },[showPreview,doc.file]);
 
   const fname=(doc.file_name||doc.name||"").toLowerCase();
   const isImage=doc.file_type?.startsWith("image/")||(doc.file||"").startsWith("data:image")||[".jpg",".jpeg",".png",".gif",".webp",".bmp"].some(e=>fname.endsWith(e));
@@ -4483,10 +4511,13 @@ function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelet
           </div>
         </div>
         <div style={{flex:1,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",padding:8}}>
-          {isImage&&<img src={doc.file} alt={doc.name}
+          {previewErr&&<div style={{color:"#FC8181",fontSize:13,textAlign:"center"}}>⚠️ {previewErr}<br/><span style={{color:"#7080A0",fontSize:11}}>Try Download instead.</span></div>}
+          {!previewErr&&!previewUrl&&<div style={{color:"#7080A0",fontSize:13}}>Loading {doc.file_size?fmtSize(doc.file_size):""}…</div>}
+
+          {previewUrl&&isImage&&<img src={previewUrl} alt={doc.name}
             style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:8}}/>}
 
-          {isPdf&&<iframe src={doc.file} title={doc.name}
+          {previewUrl&&isPdf&&<iframe src={previewUrl} title={doc.name}
             style={{width:"100%",height:"100%",border:"none",borderRadius:8,background:"#fff"}}/>}
         </div>
       </div>
