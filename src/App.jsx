@@ -288,6 +288,14 @@ const API={
     stageLog:{forPart:(pid)=>sb(`/mfg_stage_log?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_stage_log',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_stage_log?id=eq.${id}`,{method:'DELETE'})},
     assemblyLog:{forPart:(pid)=>sb(`/mfg_assembly_log?part_id=eq.${pid}&order=completion_date.desc`),forJob:(jid)=>sb(`/mfg_assembly_log?job_id=eq.${jid}&order=completion_date.desc`),create:(d)=>sb('/mfg_assembly_log',{method:'POST',body:d,prefer:'return=representation'})},
     shippingLog:{forPart:(pid)=>sb(`/mfg_shipping_log?part_id=eq.${pid}&order=ship_date.desc`),forJob:(jid)=>sb(`/mfg_shipping_log?job_id=eq.${jid}&order=ship_date.desc`),create:(d)=>sb('/mfg_shipping_log',{method:'POST',body:d,prefer:'return=representation'})},
+    ctq:{forJob:(jid)=>sb(`/mfg_ctq_sheets?job_id=eq.${jid}&order=created_at.desc`),
+      create:(d)=>sb('/mfg_ctq_sheets',{method:'POST',body:d,prefer:'return=representation'}),
+      update:(id,d)=>sb(`/mfg_ctq_sheets?id=eq.${id}`,{method:'PATCH',body:d}),
+      remove:(id)=>sb(`/mfg_ctq_sheets?id=eq.${id}`,{method:'DELETE'})},
+    docs:{forJob:(jid)=>sb(`/mfg_job_documents?job_id=eq.${jid}&order=created_at.desc`),
+      create:(d)=>sb('/mfg_job_documents',{method:'POST',body:d,prefer:'return=representation'}),
+      update:(id,d)=>sb(`/mfg_job_documents?id=eq.${id}`,{method:'PATCH',body:d}),
+      remove:(id)=>sb(`/mfg_job_documents?id=eq.${id}`,{method:'DELETE'})},
     packingSlips:{forJob:(jid)=>sb(`/mfg_packing_slips?job_id=eq.${jid}&order=created_at.desc`),latest:()=>sb('/mfg_packing_slips?select=slip_number&slip_number=not.is.null&order=slip_number.desc&limit=1'),create:(d)=>sb('/mfg_packing_slips',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_packing_slips?id=eq.${id}`,{method:'DELETE'})},
     qc:{
       forJob:(jid)=>sb(`/mfg_qc_checklists?job_id=eq.${jid}&select=*&order=qc_date.desc,created_at.desc`),
@@ -12752,7 +12760,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
-        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"12px 4px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -12770,6 +12778,8 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           onBack={()=>setTab("overview")} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="billing"&&canAdmin&&<MfgBillingTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
+
+        {!loading&&tab==="docs"&&<MfgDocsTab job={job} user={user} canAdmin={canAdmin} onErr={m=>setFormErr(m)}/>}
 
         {}
         {!loading&&tab==="overview"&&<>
@@ -14287,12 +14297,18 @@ const QC_DISPOSITIONS=[
 
 function QCTab({job,parts,user,onErr}){
   const [rows,setRows]=useState([]);
+  const [ctqs,setCtqs]=useState([]);
   const [loading,setLoading]=useState(true);
   const [openForm,setOpenForm]=useState(null);   // {} for new, row for edit
+  const [openCtq,setOpenCtq]=useState(null);     // {} for new, row for edit
+  const canAdmin=canMfg(user,"manage_jobs");
 
   async function load(){
     setLoading(true);
-    try{ setRows(await API.mfg.qc.forJob(job.id)||[]); }
+    try{
+      const [q,c]=await Promise.all([API.mfg.qc.forJob(job.id),API.mfg.ctq.forJob(job.id).catch(()=>[])]);
+      setRows(q||[]);setCtqs(c||[]);
+    }
     catch(e){ onErr&&onErr(e.message); }
     setLoading(false);
   }
@@ -14302,12 +14318,23 @@ function QCTab({job,parts,user,onErr}){
     if(!window.confirm("Delete this QC checklist?"))return;
     try{ await API.mfg.qc.remove(r.id); await load(); }catch(e){ onErr&&onErr(e.message); }
   }
+  async function delCtq(r){
+    if(!window.confirm("Delete this CTQ inspection sheet and all readings on it?"))return;
+    try{ await API.mfg.ctq.remove(r.id); await load(); }catch(e){ onErr&&onErr(e.message); }
+  }
 
   if(openForm!==null)return(
     <QCForm job={job} parts={parts} user={user}
       record={openForm.id?openForm:null}
       onBack={()=>setOpenForm(null)}
       onSaved={()=>{setOpenForm(null);load();}}
+      onErr={onErr}/>
+  );
+  if(openCtq!==null)return(
+    <CTQSheet job={job} parts={parts} user={user} canAdmin={canAdmin}
+      record={openCtq.id?openCtq:null}
+      onBack={()=>setOpenCtq(null)}
+      onSaved={()=>{load();}}
       onErr={onErr}/>
   );
 
@@ -14318,6 +14345,42 @@ function QCTab({job,parts,user,onErr}){
 
   return(
     <div>
+      {/* ── CTQ Inspection sheets ── */}
+      <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:8}}>📐 CTQ Inspection Checklists</div>
+      <button onClick={()=>setOpenCtq({})}
+        style={{...primBtn,borderRadius:14,marginBottom:10,background:T.blue}}>
+        + New CTQ Inspection Sheet
+      </button>
+      {!loading&&ctqs.length===0&&<div style={{...cardS,textAlign:"center",padding:16,color:T.muted,fontSize:12,marginBottom:18}}>
+        No CTQ sheets yet. Set up the characteristics (max / target / min) once, then inspectors record each piece.
+      </div>}
+      {ctqs.map(r=>{
+        const st=ctqProgress(r);
+        return(
+          <div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${st.oot?T.red:st.done>=st.total&&st.total?T.green:T.blue}`}}>
+            <div onClick={()=>setOpenCtq(r)} style={{cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:13.5,fontWeight:800,color:T.blue}}>{r.part_number||"CTQ"}{r.description?` — ${r.description}`:""}</div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>
+                  Order {r.order_no||"—"} · Op {r.operation||"—"} · Rev {r.dwg_rev||"—"} · {(r.characteristics||[]).length} characteristics · {r.order_qty||0} pcs
+                </div>
+                <div style={{fontSize:11,color:T.sub,marginTop:3}}>{st.done} of {st.total} readings entered{st.oot?` · ${st.oot} OUT OF TOLERANCE`:""}</div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                {st.oot>0&&<span style={pill(T.red)}>⚠ {st.oot}</span>}
+                {st.oot===0&&st.total>0&&st.done>=st.total&&<span style={pill(T.green)}>Complete</span>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+              <button onClick={()=>setOpenCtq(r)} style={{...ghostBtn,flex:2,textAlign:"center",fontSize:12}}>Open</button>
+              {canAdmin&&<button onClick={()=>delCtq(r)} style={{...ghostBtn,fontSize:12,color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* ── Final QC checklists ── */}
+      <div style={{fontSize:12,fontWeight:800,color:T.text,margin:"18px 0 8px"}}>✅ QC Checklists</div>
       <button onClick={()=>setOpenForm({})}
         style={{...primBtn,borderRadius:14,marginBottom:14,background:T.purple}}>
         + New QC Checklist
@@ -14365,6 +14428,303 @@ function QCTab({job,parts,user,onErr}){
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ── CTQ Inspection Checklist (F-8.2.4-9 style) ───────────────
+   One sheet per job / operation. Characteristics are set up once
+   (description, max / target / min); inspectors then enter Inspected
+   By / Date / Actual for every piece. Readings are stored as
+   readings[charId][pieceNo] = {by,date,actual}.                       */
+const ctqNum=(v)=>{const n=parseFloat(String(v??"").replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
+function ctqCheck(ch,actual){
+  // returns "ok" | "oot" | null (blank / not a dimension)
+  if(actual==null||String(actual).trim()==="")return null;
+  const mx=ctqNum(ch.max),mn=ctqNum(ch.min);
+  if(mx==null&&mn==null){                    // visual / attribute check
+    const t=String(actual).trim().toLowerCase();
+    if(["ok","pass","good","yes","✓","acc","accept","x"].includes(t))return "ok";
+    if(["fail","bad","no","rej","reject","ng"].includes(t))return "oot";
+    return "ok";
+  }
+  const a=ctqNum(actual);if(a==null)return null;
+  if(mx!=null&&a>mx+1e-9)return "oot";
+  if(mn!=null&&a<mn-1e-9)return "oot";
+  return "ok";
+}
+function ctqProgress(r){
+  const chars=r.characteristics||[],qty=parseInt(r.order_qty)||0,rd=r.readings||{};
+  let done=0,oot=0;
+  chars.forEach(ch=>{for(let i=1;i<=qty;i++){const v=rd[ch.id]?.[i];if(v&&String(v.actual??"").trim()!==""){done++;if(ctqCheck(ch,v.actual)==="oot")oot++;}}});
+  return{done,oot,total:chars.length*qty};
+}
+
+function CTQSheet({job,parts,user,canAdmin,record,onBack,onSaved,onErr}){
+  const isNew=!record;
+  const p0=parts?.[0];
+  const [id,setId]=useState(record?.id||null);
+  const [f,setF]=useState({
+    order_no:record?.order_no||"",
+    part_number:record?.part_number||p0?.part_number||"",
+    description:record?.description||p0?.description||job.description||"",
+    dwg_rev:record?.dwg_rev||"",
+    operation:record?.operation||"",
+    order_qty:String(record?.order_qty||p0?.qty_ordered||""),
+    note:record?.note||"100% Inspection Required",
+  });
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  const [chars,setChars]=useState(record?.characteristics||[]);
+  const [readings,setReadings]=useState(record?.readings||{});
+  const [active,setActive]=useState(0);            // characteristic index
+  const [setup,setSetup]=useState(isNew||!(record?.characteristics||[]).length);
+  const [saving,setSaving]=useState(false);
+  const [dirty,setDirty]=useState(false);
+  const qty=Math.max(0,parseInt(f.order_qty)||0);
+
+  const addChar=()=>setChars(cs=>[...cs,{id:uid(),description:"",max:"",target:"",min:""}]);
+  const setChar=(cid,k,v)=>{setChars(cs=>cs.map(c=>c.id===cid?{...c,[k]:v}:c));setDirty(true);};
+  const delChar=(cid)=>{if(!window.confirm("Remove this characteristic and its readings?"))return;
+    setChars(cs=>cs.filter(c=>c.id!==cid));setReadings(r=>{const n={...r};delete n[cid];return n;});setDirty(true);};
+  const moveChar=(i,dir)=>setChars(cs=>{const n=[...cs];const j=i+dir;if(j<0||j>=n.length)return cs;[n[i],n[j]]=[n[j],n[i]];return n;});
+
+  const getR=(cid,i)=>readings[cid]?.[i]||{};
+  const setR=(cid,i,k,v)=>{
+    setReadings(r=>{
+      const cur={...(r[cid]?.[i]||{})};
+      cur[k]=v;
+      // First time an actual is typed, stamp the inspector and date.
+      if(k==="actual"&&String(v).trim()!==""){if(!cur.by)cur.by=user.name;if(!cur.date)cur.date=today();}
+      return{...r,[cid]:{...(r[cid]||{}),[i]:cur}};
+    });
+    setDirty(true);
+  };
+  const clearR=(cid,i)=>{setReadings(r=>{const c={...(r[cid]||{})};delete c[i];return{...r,[cid]:c};});setDirty(true);};
+
+  async function save(silent){
+    if(!chars.length&&!setup){onErr&&onErr("Add at least one characteristic.");return;}
+    setSaving(true);
+    const body={
+      job_id:job.id,order_no:f.order_no||null,part_number:f.part_number||null,description:f.description||null,
+      dwg_rev:f.dwg_rev||null,operation:f.operation||null,order_qty:qty,note:f.note||null,
+      characteristics:chars.map(c=>({...c,description:(c.description||"").trim()})),
+      readings,updated_by:user.name,updated_at:new Date().toISOString(),
+    };
+    try{
+      if(!id){const res=await API.mfg.ctq.create({...body,created_by:user.name});const row=Array.isArray(res)?res[0]:res;if(row?.id)setId(row.id);}
+      else await API.mfg.ctq.update(id,body);
+      setDirty(false);onSaved&&onSaved();
+      if(!silent)setSetup(false);
+    }catch(e){onErr&&onErr(e.message);}
+    setSaving(false);
+  }
+
+  const ch=chars[active];
+  const stat=ctqProgress({characteristics:chars,order_qty:qty,readings});
+  const fmt3=(v)=>{const n=ctqNum(v);return n==null?(String(v||"").trim()||"n/a"):n.toFixed(3);};
+
+  function printSheet(){
+    const w=window.open("","_blank");
+    if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(v)=>String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const dt=(d)=>{if(!d)return "";const[y,m,dd]=String(d).split("-");return dd?`${m}/${dd}/${y.slice(2)}`:d;};
+    const printDate=new Date().toLocaleDateString();
+    const PER_PAGE=41;
+    const pages=[];
+    chars.forEach(c=>{
+      const n=Math.max(qty,1);
+      for(let start=1;start<=n;start+=PER_PAGE)pages.push({c,start,end:Math.min(n,start+PER_PAGE-1)});
+    });
+    const cell=(c,i)=>{
+      if(i>qty)return{by:"",date:"",act:"",cls:""};
+      const v=getR(c.id,i);const r=ctqCheck(c,v.actual);
+      return{by:esc(v.by),date:dt(v.date),act:esc(v.actual),cls:r==="oot"?"oot":""};
+    };
+    const grid=(c,from,to)=>{
+      // Row layout mirrors the JWF form: 8 across on the first row (next to
+      // the description box), then 11 across.
+      const rows=[];let i=from;
+      const first=[];for(let k=0;k<8&&i<=to;k++,i++)first.push(i);rows.push(first);
+      while(i<=to){const r=[];for(let k=0;k<11&&i<=to;k++,i++)r.push(i);rows.push(r);}
+      const rowHtml=(nums,cols)=>{
+        const pad=Array.from({length:cols-nums.length},()=>null);
+        const all=[...nums,...pad];
+        return `<table class="g"><tr class="n"><td class="lbl"></td>${all.map(n=>`<td>${n??""}</td>`).join("")}</tr>
+          <tr><td class="lbl">Inspected By</td>${all.map(n=>{const x=n?cell(c,n):{};return `<td class="v">${x.by||""}</td>`;}).join("")}</tr>
+          <tr><td class="lbl">Date</td>${all.map(n=>{const x=n?cell(c,n):{};return `<td class="v">${x.date||""}</td>`;}).join("")}</tr>
+          <tr class="act"><td class="lbl">Actual</td>${all.map(n=>{const x=n?cell(c,n):{};return `<td class="v ${x.cls||""}">${x.act||""}</td>`;}).join("")}</tr></table>`;
+      };
+      return `<div class="firstrow"><div class="desc">
+          <div class="dt">Description</div>
+          <div class="dbox">${esc(c.description)}</div>
+          <table class="lim"><tr><td>Max</td><td>${fmt3(c.max)}</td></tr><tr><td>Target</td><td>${fmt3(c.target)}</td></tr><tr><td>Min</td><td>${fmt3(c.min)}</td></tr></table>
+        </div><div class="g8">${rowHtml(rows[0],8)}</div></div>
+        ${rows.slice(1).map(r=>rowHtml(r,11)).join("")}`;
+    };
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>CTQ Inspection — ${esc(f.part_number)}</title>
+<style>
+  @page{size:letter;margin:0.4in}
+  *{box-sizing:border-box}
+  body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0;font-size:10pt}
+  .page{page-break-after:always;position:relative;min-height:9.6in}
+  .page:last-child{page-break-after:auto}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start}
+  .hdr .t{font-size:14pt;font-weight:bold;text-decoration:underline}
+  .hdr .o{font-size:12pt;font-weight:bold}
+  .hdr .pg{font-size:9pt}
+  .band{background:#ddd;text-align:center;font-size:7.5pt;font-weight:bold;margin:4px 0 2px;border-top:2px solid #000}
+  .kv{display:grid;grid-template-columns:1.3in 3.2in 1in 1in 1fr;font-size:10pt}
+  .kv b{font-weight:bold}
+  .center{text-align:center;font-size:12pt;font-weight:bold;margin:4px 0 2px}
+  .red{color:#e02020;text-align:center;font-weight:bold;font-size:12pt;letter-spacing:4px;margin:2px 0 6px}
+  .rule{border-top:2px solid #000;margin:4px 0 8px}
+  .firstrow{display:flex;gap:10px;align-items:flex-start}
+  .desc{width:2.1in;flex-shrink:0}
+  .dt{font-weight:bold;text-align:center;font-size:10pt}
+  .dbox{border:1.5px solid #000;min-height:0.5in;padding:2px 3px;font-size:9.5pt}
+  .lim{border:1.5px solid #000;border-top:none;width:100%;border-collapse:collapse;font-size:9.5pt}
+  .lim td{padding:1px 4px}.lim td:first-child{font-weight:bold;width:45%}
+  .g8{flex:1}
+  table.g{border-collapse:collapse;width:100%;table-layout:fixed;margin-bottom:6px}
+  table.g td{border:1.5px solid #000;height:0.2in;font-size:8.5pt;text-align:center;overflow:hidden;white-space:nowrap;padding:0 2px}
+  table.g tr.n td{border:none;font-weight:bold;height:0.16in}
+  table.g td.lbl{border:none;text-align:right;font-weight:bold;font-size:8.5pt;width:0.85in;padding-right:6px}
+  table.g tr.act td{height:0.5in;font-size:9.5pt}
+  table.g td.oot{background:#fde2e2;font-weight:bold;outline:2px solid #e02020;outline-offset:-2px}
+  .foot{position:absolute;bottom:0;left:0;right:0;font-size:9.5pt}
+  .foot .c{text-align:center;font-size:11pt;margin-bottom:8px}
+  @media print{.page{min-height:auto;height:9.6in}}
+</style></head><body>
+${pages.map((pg,pi)=>`
+<div class="page">
+  <div class="hdr">
+    <div><div class="t">Shop Traveler- Inspect</div><div style="font-size:9pt">Print Date: ${printDate}</div></div>
+    <div class="o">Order No: ${esc(f.order_no)}</div>
+    <div class="pg">Page ${pi+1} of ${pages.length}</div>
+  </div>
+  <div class="band">Shop Traveler Data</div>
+  <div class="kv"><b>Parent Item No.</b><span>${esc(f.part_number)}</span><span>Dwg Rev</span><span>${esc(f.dwg_rev)}</span><b style="text-align:right">Order Qty: ${qty}</b></div>
+  <div class="kv"><b>Description</b><span>${esc(f.description)}</span></div>
+  <div class="center">Inspect all ${qty} Pcs</div>
+  <div class="band">CTQ Data</div>
+  <div class="kv"><b>Operation</b><span>${esc(f.operation)}</span><span>Dwg Rev</span><span>${esc(f.dwg_rev)}</span></div>
+  <div class="red">${esc(f.note||"100% Inspection Required")}</div>
+  <div class="rule"></div>
+  ${grid(pg.c,pg.start,pg.end)}
+  ${pi===pages.length-1?`<div class="foot"><div class="c">Circle any dimension that is out of tolerance, notify your Crew leader.<br/>You must inspect product back to the last acceptable piece.</div>F-8.2.4-9 Rev 3 (2.02.12)&nbsp;&nbsp;CTQ Inspection Checklist &nbsp;·&nbsp; ${esc(job.job_number)} &nbsp;·&nbsp; AIME</div>`:""}
+</div>`).join("")}
+<script>window.onload=function(){window.print();}</script>
+</body></html>`;
+    w.document.write(html);w.document.close();
+  }
+
+  const cellStyle=(r)=>({...inp,padding:"6px 8px",fontSize:13,textAlign:"center",
+    ...(r==="oot"?{borderColor:T.red,background:T.red+"22",color:T.red,fontWeight:800}:r==="ok"?{borderColor:T.green+"80"}:{})});
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <button onClick={()=>{if(dirty&&!window.confirm("Unsaved readings — leave anyway?"))return;onBack();}} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>← QC</button>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={printSheet} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>🖨️ Print</button>
+          <button onClick={()=>save(true)} disabled={saving} style={{...primBtn,padding:"8px 16px",borderRadius:10,fontSize:12,background:dirty?T.green:T.blue,opacity:saving?0.6:1}}>{saving?"Saving…":dirty?"Save readings":"Saved"}</button>
+        </div>
+      </div>
+
+      {/* Header / setup */}
+      <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.blue}}>📐 CTQ Inspection — {job.job_number}</div>
+          {canAdmin&&<button onClick={()=>setSetup(x=>!x)} style={{...ghostBtn,padding:"5px 10px",fontSize:11}}>{setup?"Done with setup":"✏️ Edit setup"}</button>}
+        </div>
+        {!setup&&<div style={{fontSize:12,color:T.sub,lineHeight:1.7}}>
+          <b style={{color:T.text}}>{f.part_number}</b> — {f.description}<br/>
+          Order {f.order_no||"—"} · Op {f.operation||"—"} · Dwg Rev {f.dwg_rev||"—"} · <b style={{color:T.text}}>Inspect all {qty} pcs</b> · <span style={{color:T.red,fontWeight:700}}>{f.note}</span>
+        </div>}
+        {setup&&<>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Order No.</label><input value={f.order_no} onChange={e=>set("order_no",e.target.value)} placeholder="1452508" style={inp}/></div>
+            <div><label style={lbl}>Parent Item No.</label><input value={f.part_number} onChange={e=>set("part_number",e.target.value)} placeholder="0801651" style={inp}/></div>
+            <div><label style={lbl}>Order Qty *</label><input type="number" value={f.order_qty} onChange={e=>set("order_qty",e.target.value)} placeholder="40" style={inp}/></div>
+          </div>
+          <div style={{marginBottom:10}}><label style={lbl}>Description</label><input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="BOOM PIVOT, SUB WELDMENT" style={inp}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:10,marginBottom:14}}>
+            <div><label style={lbl}>Operation</label><input value={f.operation} onChange={e=>set("operation",e.target.value)} placeholder="2018 FIT/WELD" style={inp}/></div>
+            <div><label style={lbl}>Dwg Rev</label><input value={f.dwg_rev} onChange={e=>set("dwg_rev",e.target.value)} placeholder="I" style={inp}/></div>
+            <div><label style={lbl}>Banner</label><input value={f.note} onChange={e=>set("note",e.target.value)} style={inp}/></div>
+          </div>
+
+          <div style={{fontSize:11,fontWeight:800,color:T.muted,letterSpacing:0.5,textTransform:"uppercase",marginBottom:6}}>Characteristics (one page each)</div>
+          {chars.map((c,i)=>(
+            <div key={c.id} style={{...cardS,padding:10,marginBottom:8,background:T.bg}}>
+              <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+                <span style={{fontSize:11,fontWeight:800,color:T.muted,width:18}}>{i+1}</span>
+                <input value={c.description} onChange={e=>setChar(c.id,"description",e.target.value)} placeholder='e.g. Sheet 1 Zone F8 14.063" Dim' style={{...inp,flex:1}}/>
+                <button onClick={()=>moveChar(i,-1)} style={{...ghostBtn,padding:"6px 8px",fontSize:11}}>↑</button>
+                <button onClick={()=>moveChar(i,1)} style={{...ghostBtn,padding:"6px 8px",fontSize:11}}>↓</button>
+                <button onClick={()=>delChar(c.id)} style={{...ghostBtn,padding:"6px 8px",fontSize:11,color:T.red}}>✕</button>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                <div><label style={lbl}>Max</label><input value={c.max} onChange={e=>setChar(c.id,"max",e.target.value)} placeholder="14.125 or n/a" style={inp}/></div>
+                <div><label style={lbl}>Target</label><input value={c.target} onChange={e=>setChar(c.id,"target",e.target.value)} placeholder="14.063" style={inp}/></div>
+                <div><label style={lbl}>Min</label><input value={c.min} onChange={e=>setChar(c.id,"min",e.target.value)} placeholder="14.001" style={inp}/></div>
+              </div>
+              <div style={{fontSize:10.5,color:T.muted,marginTop:4}}>Leave Max / Min blank (or n/a) for a visual check — inspectors then type OK / FAIL.</div>
+            </div>
+          ))}
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={addChar} style={{...ghostBtn,flex:1,fontSize:12,borderColor:T.blue,color:T.blue}}>+ Add Characteristic</button>
+            <button onClick={()=>save(false)} disabled={saving||!qty||!chars.length} style={{...primBtn,flex:1,borderRadius:12,fontSize:12,background:T.blue,opacity:(!qty||!chars.length||saving)?0.5:1}}>{saving?"Saving…":"Save & Start Inspecting"}</button>
+          </div>
+        </>}
+      </div>
+
+      {/* Inspection entry */}
+      {!setup&&chars.length>0&&<>
+        <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:6,marginBottom:10}}>
+          {chars.map((c,i)=>{
+            let done=0,oot=0;for(let k=1;k<=qty;k++){const v=readings[c.id]?.[k];if(v&&String(v.actual??"").trim()!==""){done++;if(ctqCheck(c,v.actual)==="oot")oot++;}}
+            return <button key={c.id} onClick={()=>setActive(i)}
+              style={{...ghostBtn,flexShrink:0,padding:"8px 12px",fontSize:11,borderColor:i===active?T.blue:oot?T.red:T.border,color:i===active?T.blue:oot?T.red:T.sub,background:i===active?T.blue+"15":"transparent"}}>
+              {i+1}. {(c.description||"Characteristic").slice(0,28)} <span style={{opacity:0.7}}>{done}/{qty}</span>{oot?` ⚠${oot}`:""}
+            </button>;
+          })}
+        </div>
+
+        {ch&&<div style={{...cardS,marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8,marginBottom:10}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:800,color:T.text}}>{ch.description||"Characteristic"}</div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Max <b style={{color:T.text}}>{fmt3(ch.max)}</b> · Target <b style={{color:T.text}}>{fmt3(ch.target)}</b> · Min <b style={{color:T.text}}>{fmt3(ch.min)}</b></div>
+            </div>
+            <div style={{fontSize:11,color:T.muted}}>Typing an actual stamps your name and today's date. Out-of-tolerance turns red.</div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"44px 1fr 1.2fr 1fr 28px",gap:6,fontSize:10.5,fontWeight:800,color:T.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>
+            <div>#</div><div>Actual</div><div>Inspected By</div><div>Date</div><div></div>
+          </div>
+          {Array.from({length:qty},(_,k)=>k+1).map(i=>{
+            const v=getR(ch.id,i);const r=ctqCheck(ch,v.actual);
+            return(
+              <div key={i} style={{display:"grid",gridTemplateColumns:"44px 1fr 1.2fr 1fr 28px",gap:6,alignItems:"center",marginBottom:5}}>
+                <div style={{fontSize:12,fontWeight:800,color:r==="oot"?T.red:T.sub,textAlign:"center"}}>{i}</div>
+                <input value={v.actual||""} onChange={e=>setR(ch.id,i,"actual",e.target.value)} inputMode="decimal"
+                  placeholder={ctqNum(ch.max)==null&&ctqNum(ch.min)==null?"OK / FAIL":fmt3(ch.target)} style={cellStyle(r)}/>
+                <input value={v.by||""} onChange={e=>setR(ch.id,i,"by",e.target.value)} placeholder="Inspector" style={{...inp,padding:"6px 8px",fontSize:12}}/>
+                <input type="date" value={v.date||""} onChange={e=>setR(ch.id,i,"date",e.target.value)} style={{...inp,padding:"6px 6px",fontSize:12}}/>
+                <button onClick={()=>clearR(ch.id,i)} title="Clear" style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:14}}>×</button>
+              </div>
+            );
+          })}
+          {stat.oot>0&&<div style={{marginTop:10,padding:"8px 12px",borderRadius:10,background:T.red+"18",color:T.red,fontSize:12,fontWeight:700}}>
+            ⚠ {stat.oot} reading{stat.oot>1?"s":""} out of tolerance on this sheet. Notify your crew leader and inspect back to the last acceptable piece.
+          </div>}
+        </div>}
+
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>save(true)} disabled={saving} style={{...primBtn,flex:2,borderRadius:12,background:dirty?T.green:T.blue,opacity:saving?0.6:1}}>{saving?"Saving…":dirty?"💾 Save Readings":"✓ Saved"}</button>
+          <button onClick={printSheet} style={{...ghostBtn,flex:1,textAlign:"center"}}>🖨️ Print</button>
+        </div>
+      </>}
     </div>
   );
 }
@@ -17631,6 +17991,190 @@ function PullMfgLaborModal({job,onClose,onPull,onErr}){
 }
 
 /* ── Manufacturing billing tab — invoices only, no AIA ── */
+/* ── Manufacturing job documents ─────────────────────────────── */
+function MfgDocsTab({job,user,canAdmin,onErr}){
+  const [docs,setDocs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [uploading,setUploading]=useState(false);
+  const [progress,setProgress]=useState("");
+  const [viewing,setViewing]=useState(null);
+  const [q,setQ]=useState("");
+  const fileRef=useRef(null);
+
+  const CATS=["Drawing","Customer PO","Spec / Procedure","Material Cert","Inspection / QC","Photo","Other"];
+  const fmtSize=(b)=>!b?"":b<1048576?(b/1024).toFixed(0)+" KB":(b/1048576).toFixed(1)+" MB";
+  const iconFor=(d)=>{const t=d.file_type||"",n=(d.file_name||"").toLowerCase();
+    if(t.startsWith("image/"))return "🖼️";if(t==="application/pdf"||n.endsWith(".pdf"))return "📄";
+    if(/sheet|excel|csv/.test(t)||/\.(xlsx?|csv)$/.test(n))return "📊";if(/word|document/.test(t)||/\.docx?$/.test(n))return "📝";return "📎";};
+
+  async function load(){
+    setLoading(true);
+    try{setDocs(await API.mfg.docs.forJob(job.id)||[]);}catch(e){onErr&&onErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[job.id]);
+
+  // Same approach as the Drawings tab: files live in Supabase Storage, the
+  // row keeps the path. No size cap beyond the bucket's.
+  async function handleFiles(files){
+    if(!files||!files.length)return;
+    setUploading(true);
+    for(let i=0;i<files.length;i++){
+      const file=files[i];
+      setProgress(`Uploading ${i+1} of ${files.length}: ${file.name}`);
+      try{
+        const clean=file.name.replace(/[^A-Za-z0-9._-]/g,"_");
+        const path=`mfg-docs/${job.id}/${Date.now()}-${clean}`;
+        await storageUpload("documents",path,file,file.type||undefined);
+        await API.mfg.docs.create({
+          job_id:job.id,
+          title:file.name.replace(/\.[^.]+$/,""),
+          category:"Other",
+          storage_path:path,
+          file_name:file.name,
+          file_type:file.type||null,
+          file_size:file.size,
+          uploaded_by:user.name,
+        });
+      }catch(e){onErr&&onErr(`${file.name}: ${e.message}`);}
+    }
+    setProgress("");setUploading(false);
+    if(fileRef.current)fileRef.current.value="";
+    await load();
+  }
+  async function setCategory(d,category){
+    try{await API.mfg.docs.update(d.id,{category});setDocs(ds=>ds.map(x=>x.id===d.id?{...x,category}:x));}
+    catch(e){onErr&&onErr(e.message);}
+  }
+  async function rename(d){
+    const title=window.prompt("Document title",d.title||"");
+    if(title===null||!title.trim())return;
+    try{await API.mfg.docs.update(d.id,{title:title.trim()});setDocs(ds=>ds.map(x=>x.id===d.id?{...x,title:title.trim()}:x));}
+    catch(e){onErr&&onErr(e.message);}
+  }
+  async function del(d){
+    if(!window.confirm(`Delete "${d.title}"? This cannot be undone.`))return;
+    try{
+      await API.mfg.docs.remove(d.id);
+      await storageRemove("documents",d.storage_path).catch(()=>{});
+      await load();
+    }catch(e){onErr&&onErr(e.message);}
+  }
+  async function download(d){
+    const url=storagePublicUrl("documents",d.storage_path);
+    try{
+      const r=await fetch(url);const blob=await r.blob();
+      const obj=URL.createObjectURL(blob);
+      const a=document.createElement("a");a.href=obj;a.download=d.file_name||d.title||"document";
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(obj),10000);
+    }catch(e){window.open(url,"_blank");}
+  }
+
+  const filtered=docs.filter(d=>{
+    if(!q.trim())return true;const s=q.toLowerCase();
+    return (d.title||"").toLowerCase().includes(s)||(d.file_name||"").toLowerCase().includes(s)||(d.category||"").toLowerCase().includes(s);
+  });
+  const grouped=CATS.map(c=>[c,filtered.filter(d=>(d.category||"Other")===c)]).filter(([,arr])=>arr.length);
+
+  if(viewing)return <MfgDocViewer doc={viewing} onBack={()=>setViewing(null)} onDownload={()=>download(viewing)} fmtSize={fmtSize}/>;
+
+  return(
+    <div>
+      <input ref={fileRef} type="file" multiple style={{display:"none"}}
+        accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt,.dwg,.dxf,.step,.stp"
+        onChange={e=>handleFiles(Array.from(e.target.files||[]))}/>
+      <div style={{display:"flex",gap:10,marginBottom:12}}>
+        <button onClick={()=>fileRef.current?.click()} disabled={uploading}
+          style={{...primBtn,flex:1,borderRadius:12,background:T.blue,opacity:uploading?0.6:1}}>
+          {uploading?"Uploading…":"📎 Upload Job Documents"}
+        </button>
+      </div>
+      {progress&&<div style={{fontSize:12,color:T.sub,marginBottom:10}}>{progress}</div>}
+      <div onDragOver={e=>{e.preventDefault();}} onDrop={e=>{e.preventDefault();handleFiles(Array.from(e.dataTransfer.files||[]));}}
+        style={{...cardS,border:`1px dashed ${T.border}`,textAlign:"center",padding:14,color:T.muted,fontSize:12,marginBottom:12}}>
+        Drop files here — PDFs, photos, Word / Excel, CAD files. Any size.
+      </div>
+      {docs.length>3&&<input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search documents…" style={{...inp,marginBottom:12}}/>}
+
+      {loading&&<Spinner/>}
+      {!loading&&docs.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>📁</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Documents Yet</div>
+        <div style={{fontSize:12}}>Upload the customer PO, drawings, certs, and anything else for {job.job_number}.</div>
+      </div>}
+
+      {grouped.map(([cat,arr])=>(
+        <div key={cat} style={{marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:800,color:T.muted,letterSpacing:0.5,textTransform:"uppercase",marginBottom:6}}>{cat} · {arr.length}</div>
+          {arr.map(d=>{
+            const n=(d.file_name||"").toLowerCase();
+            const previewable=(d.file_type||"").startsWith("image/")||d.file_type==="application/pdf"||/\.(pdf|png|jpe?g|gif|webp)$/.test(n);
+            return(
+              <div key={d.id} style={{...cardS,marginBottom:8,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}>
+                <div style={{fontSize:26,flexShrink:0}}>{iconFor(d)}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:800,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.title}</div>
+                  <div style={{fontSize:11,color:T.muted}}>{d.file_name}{d.file_size?` · ${fmtSize(d.file_size)}`:""}{d.uploaded_by?` · ${d.uploaded_by}`:""}{d.created_at?` · ${new Date(d.created_at).toLocaleDateString()}`:""}</div>
+                  {canAdmin&&<select value={d.category||"Other"} onChange={e=>setCategory(d,e.target.value)}
+                    style={{...inp,width:"auto",padding:"2px 6px",fontSize:11,marginTop:4}}>
+                    {CATS.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>}
+                </div>
+                <div style={{display:"flex",gap:6,flexShrink:0}}>
+                  {previewable&&<button onClick={()=>setViewing(d)} style={{...ghostBtn,padding:"6px 10px",fontSize:11}}>👁️ View</button>}
+                  <button onClick={()=>download(d)} style={{...ghostBtn,padding:"6px 10px",fontSize:11}}>⬇️</button>
+                  {canAdmin&&<button onClick={()=>rename(d)} style={{...ghostBtn,padding:"6px 10px",fontSize:11}}>✏️</button>}
+                  {canAdmin&&<button onClick={()=>del(d)} style={{...ghostBtn,padding:"6px 10px",fontSize:11,color:T.red}}>🗑️</button>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MfgDocViewer({doc,onBack,onDownload,fmtSize}){
+  const [url,setUrl]=useState("");
+  const [err,setErr]=useState("");
+  const n=(doc.file_name||"").toLowerCase();
+  const isImage=(doc.file_type||"").startsWith("image/")||/\.(png|jpe?g|gif|webp)$/.test(n);
+  useEffect(()=>{
+    let obj="",cancelled=false;
+    (async()=>{
+      try{
+        const r=await fetch(storagePublicUrl("documents",doc.storage_path));
+        if(!r.ok)throw new Error(`Could not load file (${r.status})`);
+        obj=URL.createObjectURL(await r.blob());
+        if(!cancelled)setUrl(obj);
+      }catch(e){if(!cancelled)setErr(e.message);}
+    })();
+    return()=>{cancelled=true;if(obj)URL.revokeObjectURL(obj);};
+  },[doc.id]);
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.97)",display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
+      <div style={{background:"#141418",borderBottom:"1px solid #26262E",padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:14,fontWeight:800,color:"#F0F4FF",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{doc.title}</div>
+          <div style={{fontSize:11,color:"#7080A0"}}>{doc.file_name||""}{doc.file_size?` · ${fmtSize(doc.file_size)}`:""}</div>
+        </div>
+        <div style={{display:"flex",gap:8,flexShrink:0,marginLeft:12}}>
+          <button onClick={onDownload} style={{background:"#34D399",color:"#000",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⬇️ Download</button>
+          <button onClick={onBack} style={{background:"#26262E",color:"#F0F4FF",border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✕ Close</button>
+        </div>
+      </div>
+      <div style={{flex:1,overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center",padding:8}}>
+        {err&&<div style={{color:"#FC8181",fontSize:13}}>⚠️ {err}</div>}
+        {!err&&!url&&<div style={{color:"#7080A0",fontSize:13}}>Loading…</div>}
+        {url&&isImage&&<img src={url} alt={doc.title} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:8}}/>}
+        {url&&!isImage&&<iframe src={url} title={doc.title} style={{width:"100%",height:"100%",border:"none",borderRadius:8,background:"#fff"}}/>}
+      </div>
+    </div>
+  );
+}
+
 function MfgBillingTab({job,user,onErr}){
   const [openInvoice,setOpenInvoice]=useState(null);
   const [rate,setRate]=useState(String(job.labor_rate??75));
