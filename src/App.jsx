@@ -8777,6 +8777,104 @@ const BID_TABS=[
   {id:"proposal",   label:"Proposal"},
 ];
 
+/* ── Convert an approved bid into a job ───────────────────────
+   Field divisions (Mechanical / Pipeline / Structural) create a project;
+   Manufacturing creates a shop job. The estimate remembers which job it
+   became so it can't be converted twice.                              */
+function ConvertBidModal({bid,user,onClose,onDone,onErr}){
+  const money=(v)=>{const n=parseFloat(String(v||"").replace(/[^0-9.\-]/g,""));return isNaN(n)?"":String(n);};
+  const [division,setDivision]=useState(bid.division&&DIVISIONS.includes(bid.division)?bid.division:"Mechanical");
+  const [f,setF]=useState({
+    job_number:bid.project_number||bid.quote_number||"",
+    client:bid.requester_company||"",
+    location:bid.project_address||"",
+    po_number:"",
+    start_date:today(),
+    due_date:bid.due_date||"",
+    contract_value:money(bid.total_sales),
+    description:bid.description||bid.name||"",
+    notes:`Created from bid "${bid.name||""}"${bid.quote_number?` (Quote ${bid.quote_number})`:""}${bid.estimator?` · Estimator: ${bid.estimator}`:""}`,
+  });
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  const [saving,setSaving]=useState(false);
+  const isMfg=division==="Manufacturing";
+  const m=DIV_META[division];
+
+  async function create(){
+    if(!f.job_number.trim()){onErr&&onErr("Job number is required.");return;}
+    setSaving(true);
+    try{
+      let link={};
+      if(isMfg){
+        const res=await API.mfg.jobs.create({
+          job_number:f.job_number.trim(),customer:f.client||"",description:f.description||"",
+          po_number:f.po_number||null,due_date:f.due_date||null,notes:f.notes||"",created_by:user.name,
+        });
+        const row=Array.isArray(res)?res[0]:res;
+        link={job_mfg_id:row?.id||null};
+      }else{
+        const res=await API.projects.create({
+          name:f.job_number.trim(),client:f.client||"",location:f.location||"",afe:"",work_order:f.po_number||"",
+          start_date:f.start_date||today(),notes:[f.description,f.notes].filter(Boolean).join("\n\n"),
+          status:"active",division,job_type:"Contract",
+          contract_value:f.contract_value?parseFloat(f.contract_value):null,
+        });
+        const row=Array.isArray(res)?res[0]:res;
+        link={job_project_id:row?.id||null};
+      }
+      await API.estimates.update(bid.id,{
+        ...link,job_number:f.job_number.trim(),job_division:division,
+        status:"portfolio",converted_by:user.name,converted_at:new Date().toISOString(),
+        updated_at:new Date().toISOString(),
+      });
+      onDone&&onDone();
+    }catch(e){onErr&&onErr(e.message);}
+    setSaving(false);
+  }
+
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:400,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{...cardS,width:"100%",maxWidth:560,maxHeight:"92vh",overflowY:"auto",padding:20}}>
+        <div style={{fontSize:16,fontWeight:900,color:T.text,marginBottom:2}}>🚀 Make this bid a job</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:16}}>Pick the division it belongs to. Everything below is pre-filled from the bid and can be changed.</div>
+
+        <label style={lbl}>Division</label>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:14}}>
+          {DIVISIONS.map(d=>{const dm=DIV_META[d];return(
+            <button key={d} onClick={()=>setDivision(d)} style={{padding:"10px 6px",borderRadius:12,border:`2px solid ${division===d?dm.color:T.border}`,background:division===d?dm.color+"20":T.surface,color:division===d?dm.color:T.sub,fontWeight:700,fontSize:11.5,cursor:"pointer",fontFamily:"inherit"}}>
+              <div style={{fontSize:20,marginBottom:2}}>{dm.icon}</div>{d}
+            </button>);})}
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Job Number *</label><input value={f.job_number} onChange={e=>set("job_number",e.target.value)} placeholder={isMfg?"e.g. 2662-M":"e.g. 2630P"} style={inp}/></div>
+          <div><label style={lbl}>{isMfg?"Customer":"Client"}</label><input value={f.client} onChange={e=>set("client",e.target.value)} style={inp}/></div>
+        </div>
+        {!isMfg&&<div style={{marginBottom:10}}><label style={lbl}>Location</label><input value={f.location} onChange={e=>set("location",e.target.value)} placeholder="City, State or Milepost" style={inp}/></div>}
+        <div style={{marginBottom:10}}><label style={lbl}>Description</label><input value={f.description} onChange={e=>set("description",e.target.value)} style={inp}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Customer PO #</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} style={inp}/></div>
+          {!isMfg&&<div><label style={lbl}>Start Date</label><input type="date" value={f.start_date} onChange={e=>set("start_date",e.target.value)} style={inp}/></div>}
+          <div><label style={lbl}>{isMfg?"Due Date":"Bid Due (ref)"}</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
+          {isMfg&&<div/>}
+        </div>
+        {!isMfg&&<div style={{marginBottom:10}}><label style={lbl}>Contract Value ($)</label>
+          <input type="number" step="0.01" value={f.contract_value} onChange={e=>set("contract_value",e.target.value)} style={inp}/>
+          <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>From the estimate's total sales. Job type will be set to Contract.</div></div>}
+        <div style={{marginBottom:16}}><label style={lbl}>Notes</label><textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/></div>
+
+        <div style={{fontSize:11.5,color:T.sub,background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 12px",marginBottom:14}}>
+          This creates {isMfg?"a manufacturing job":"a project"} in <b style={{color:m.color}}>{division}</b> and moves the bid to <b style={{color:T.green}}>Added to Portfolio</b>.
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={create} disabled={saving||!f.job_number.trim()} style={{...primBtn,flex:2,borderRadius:12,background:m.color,color:"#000",opacity:saving||!f.job_number.trim()?0.5:1}}>{saving?"Creating…":`Create ${isMfg?"Job":"Project"}`}</button>
+          <button onClick={onClose} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BidDetail({bidId,user,onBack,onChanged}){
   // Two people in the same bid overwrite each other silently — last save wins.
   // This does not lock anything, it just makes the overlap visible.
@@ -8785,6 +8883,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
   const [tab,setTab]=useState("overview");
   const [loading,setLoading]=useState(true);
   const [askReview,setAskReview]=useState(false);
+  const [convert,setConvert]=useState(false);
   const [err,setErr]=useState("");
 
   async function load(){
@@ -8814,6 +8913,9 @@ function BidDetail({bidId,user,onBack,onChanged}){
   );
 
   const st=stageOf(bid.status);
+  // Once the bid is approved (or further along) it can be turned into a job.
+  const canConvert=["bid_approved","bid_submitted","negotiating","portfolio"].includes(bid.status);
+  const converted=bid.job_project_id||bid.job_mfg_id;
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -8824,6 +8926,13 @@ function BidDetail({bidId,user,onBack,onChanged}){
           <div style={{fontSize:22,fontWeight:900,color:T.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
             {bid.name||"Untitled bid"}
           </div>
+          {converted&&<span style={{...pill(T.green),padding:"7px 12px",fontSize:11.5}}>
+            ✓ Job {bid.job_number||""}{bid.job_division?` · ${bid.job_division}`:""}
+          </span>}
+          {canConvert&&!converted&&<button onClick={()=>setConvert(true)}
+            style={{...primBtn,padding:"8px 14px",borderRadius:8,fontSize:11.5,background:T.green,color:"#000",flexShrink:0}}>
+            🚀 Make it a Job
+          </button>}
           <select value={bid.status||"estimating"} onChange={async e=>{
               // moving to Ready For Review asks who should be told
               if(e.target.value==="ready_review"){setAskReview(true);return;}
@@ -8860,6 +8969,11 @@ function BidDetail({bidId,user,onBack,onChanged}){
       {askReview&&<ReviewRequestModal bid={bid} user={user}
         onClose={()=>setAskReview(false)}
         onSent={()=>{setAskReview(false);load();onChanged&&onChanged();}}
+        onErr={setErr}/>}
+
+      {convert&&<ConvertBidModal bid={bid} user={user}
+        onClose={()=>setConvert(false)}
+        onDone={()=>{setConvert(false);load();onChanged&&onChanged();}}
         onErr={setErr}/>}
 
       <div style={{padding:"20px 24px 60px"}}>
