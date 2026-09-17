@@ -14529,7 +14529,7 @@ function CTQSheet({job,parts,user,canAdmin,record,onBack,onSaved,onErr}){
     const esc=(v)=>String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;");
     const dt=(d)=>{if(!d)return "";const[y,m,dd]=String(d).split("-");return dd?`${m}/${dd}/${y.slice(2)}`:d;};
     const printDate=new Date().toLocaleDateString();
-    const PER_PAGE=41;
+    const PER_PAGE=50;   // JWF form: 8 + 11 + 11 + 11 + 9 cells per page
     const pages=[];
     chars.forEach(c=>{
       const n=Math.max(qty,1);
@@ -14605,12 +14605,13 @@ ${pages.map((pg,pi)=>`
   <div class="band">Shop Traveler Data</div>
   <div class="kv"><b>Parent Item No.</b><span>${esc(f.part_number)}</span><span>Dwg Rev</span><span>${esc(f.dwg_rev)}</span><b style="text-align:right">Order Qty: ${qty}</b></div>
   <div class="kv"><b>Description</b><span>${esc(f.description)}</span></div>
-  <div class="center">Inspect all ${qty} Pcs</div>
+  <div class="center">Inspect all ${qty} Pcs${qty>PER_PAGE?". Use additional sheets":""}</div>
   <div class="band">CTQ Data</div>
   <div class="kv"><b>Operation</b><span>${esc(f.operation)}</span><span>Dwg Rev</span><span>${esc(f.dwg_rev)}</span></div>
   <div class="red">${esc(f.note||"100% Inspection Required")}</div>
   <div class="rule"></div>
   ${grid(pg.c,pg.start,pg.end)}
+  ${pg.end<qty?`<div style="text-align:right;font-size:9pt;margin-top:2px">Pieces ${pg.end+1}–${qty} continue on the next sheet</div>`:""}
   ${pi===pages.length-1?`<div class="foot"><div class="c">Circle any dimension that is out of tolerance, notify your Crew leader.<br/>You must inspect product back to the last acceptable piece.</div>F-8.2.4-9 Rev 3 (2.02.12)&nbsp;&nbsp;CTQ Inspection Checklist &nbsp;·&nbsp; ${esc(job.job_number)} &nbsp;·&nbsp; AIME</div>`:""}
 </div>`).join("")}
 <script>window.onload=function(){window.print();}</script>
