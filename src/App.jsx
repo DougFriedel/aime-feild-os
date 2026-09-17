@@ -119,72 +119,14 @@ async function supa(path,{method="GET",body,prefer}={}){
 let CURRENT_USER=null;
 function setAuditUser(name){CURRENT_USER=name||null;}
 
-/* ── Request guard ────────────────────────────────────────────────────
-   Three things that used to bite in the field:
-   1. A save that hung forever with no feedback, so people tapped Save ten
-      times and got ten copies. Every write now times out (45 s) and
-      IDENTICAL writes (same method + path + body) fired while the first is
-      still in flight — or within 3 s of it finishing — return the first
-      request's result instead of hitting the database again.
-   2. No visible sign that anything was happening. sb() now emits a busy
-      count the app shows as a small "Saving…" pill.
-   3. Timeouts surfaced as raw JSON. They're now a plain sentence.          */
-const SB_TIMEOUT_MS=45000;
-const SB_DEDUPE_MS=3000;
-const _sbInflight=new Map();   // key → {promise, doneAt}
-let _sbBusy=0;
-function _sbSignal(delta){
-  _sbBusy=Math.max(0,_sbBusy+delta);
-  try{window.dispatchEvent(new CustomEvent("aime:busy",{detail:{count:_sbBusy}}));}catch{}
-}
-function _sbFriendly(status,text){
-  if(String(text).includes("57014"))return "The database took too long to answer. Your last action may not have saved — check before trying again.";
-  if(status===0)return "No connection — the request was not sent.";
-  return text||`HTTP ${status}`;
-}
 async function sb(path,opts={}){
   const{method="GET",body,prefer}=opts;
-  const isWrite=method!=="GET";
-  const key=isWrite?`${method} ${path} ${body!==undefined?JSON.stringify(body):""}`:null;
-  if(key){
-    const hit=_sbInflight.get(key);
-    if(hit&&(!hit.doneAt||Date.now()-hit.doneAt<SB_DEDUPE_MS))return hit.promise;
-  }
-  const run=(async()=>{
-    const headers={"apikey":SUPA_KEY,"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json"};
-    if(CURRENT_USER)headers["X-AIME-User"]=CURRENT_USER;
-    if(prefer)headers["Prefer"]=prefer;
-    const ctrl=new AbortController();
-    const timer=setTimeout(()=>ctrl.abort(),SB_TIMEOUT_MS);
-    if(isWrite)_sbSignal(1);
-    try{
-      let res;
-      try{res=await fetch(`${SUPA_URL}/rest/v1${path}`,{method,headers,signal:ctrl.signal,...(body!==undefined?{body:JSON.stringify(body)}:{})});}
-      catch(e){
-        if(e.name==="AbortError")throw new Error("The request timed out. Your last action may not have saved — check before trying again.");
-        throw new Error(_sbFriendly(0,e.message));
-      }
-      if(!res.ok)throw new Error(_sbFriendly(res.status,await res.text()));
-      const t=await res.text();return t?JSON.parse(t):null;
-    }finally{
-      clearTimeout(timer);
-      if(isWrite)_sbSignal(-1);
-    }
-  })();
-  if(key){
-    const entry={promise:run,doneAt:null};
-    _sbInflight.set(key,entry);
-    run.then(()=>{entry.doneAt=Date.now();},()=>{_sbInflight.delete(key);}); // a failed write may be retried immediately
-    setTimeout(()=>{if(_sbInflight.get(key)===entry)_sbInflight.delete(key);},SB_TIMEOUT_MS+SB_DEDUPE_MS);
-  }
-  return run;
-}
-/* Small pill shown while any write is in flight. */
-function BusyPill(){
-  const [n,setN]=useState(0);
-  useEffect(()=>{const h=e=>setN(e.detail?.count||0);window.addEventListener("aime:busy",h);return()=>window.removeEventListener("aime:busy",h);},[]);
-  if(!n)return null;
-  return <div style={{position:"fixed",top:10,left:"50%",transform:"translateX(-50%)",zIndex:9999,background:"#1f3864",color:"#fff",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:700,boxShadow:"0 4px 14px rgba(0,0,0,0.4)",pointerEvents:"none"}}>⏳ Saving…</div>;
+  const headers={"apikey":SUPA_KEY,"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json"};
+  if(CURRENT_USER)headers["X-AIME-User"]=CURRENT_USER;
+  if(prefer)headers["Prefer"]=prefer;
+  const res=await fetch(`${SUPA_URL}/rest/v1${path}`,{method,headers,...(body!==undefined?{body:JSON.stringify(body)}:{})});
+  if(!res.ok)throw new Error(await res.text()||`HTTP ${res.status}`);
+  const t=await res.text();return t?JSON.parse(t):null;
 }
 
 /* Postgres function call. Used for anything the browser must not see —
@@ -240,14 +182,12 @@ const shellMax=(screen)=>SCREEN_MAX[screen]||(WIDE_SCREENS.has(screen)?1180:480)
    timestamp — never the PIN — and re-reads the profile from the database on
    restore, so a role change or deactivation takes effect immediately. */
 const SESSION_KEY="aime_session";
-const PROFILE_KEY="aime_profile";   // last verified profile (name/role only) — used when the server can't be reached
 
 /* The browser holds a random token issued by the database and nothing else.
    The old version stored { name, at } and trusted it, which meant anyone
    could type a name into localStorage and be signed in as that person. */
-function saveSession(token,profile){
+function saveSession(token){
   try{ if(token) localStorage.setItem(SESSION_KEY,token); }catch{}
-  try{ if(profile) localStorage.setItem(PROFILE_KEY,JSON.stringify({name:profile.name,role:profile.role,at:Date.now()})); }catch{}
 }
 function getSessionToken(){
   try{
@@ -260,7 +200,7 @@ function getSessionToken(){
 }
 async function clearSession(){
   const t=getSessionToken();
-  try{localStorage.removeItem(SESSION_KEY);localStorage.removeItem(PROFILE_KEY);}catch{}
+  try{localStorage.removeItem(SESSION_KEY);}catch{}
   if(t){ try{ await rpc("end_session",{p_token:t}); }catch{} }
 }
 async function restoreSession(){
@@ -269,18 +209,11 @@ async function restoreSession(){
   try{
     const rows=await rpc("verify_session",{p_token:t});
     const p=Array.isArray(rows)?rows[0]:rows;
-    if(!p||!p.name){ try{localStorage.removeItem(SESSION_KEY);localStorage.removeItem(PROFILE_KEY);}catch{} return null; }
-    saveSession(t,p);
+    if(!p||!p.name){ try{localStorage.removeItem(SESSION_KEY);}catch{} return null; }
     return p;
   }catch(e){
-    // The server answered "no session" → signed out above. Getting HERE means
-    // the server didn't answer at all (offline, timeout, busy database). The
-    // token is still valid, so don't kick the person to the login screen:
-    // sign them in from the last verified profile and re-verify next launch.
-    try{
-      const cached=JSON.parse(localStorage.getItem(PROFILE_KEY)||"null");
-      if(cached&&cached.name&&Date.now()-(cached.at||0)<14*24*3600*1000)return {...cached,_offline:true};
-    }catch{}
+    // Offline, or verify_session not deployed yet — stay signed out for this
+    // load rather than discarding a token that may still be good.
     return null;
   }
 }
@@ -305,31 +238,11 @@ const API={
     remove:(id)=>sb(`/projects?id=eq.${id}`,{method:"DELETE"}),
   },
   reports:{
-    // Job report list. Lite view (no base64 receipts / signatures) — the full
-    // table timed out on phones once a job had receipts and PDFs attached.
-    // Anything that needs the full record (open / edit / print) calls byId.
-    forProject:async(pid)=>{
-      try{return await sb(`/daily_reports_lite?project_id=eq.${pid}&order=date.desc`);}
-      catch(e){return sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`);}
-    },
-    forProjectFull:(pid)=>sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`),
-    byRange:(from,to)=>sb(`/daily_reports?date=gte.${from}&date=lte.${to}&status=neq.draft&order=date.asc`),
-    // Dashboard feed. Uses the `daily_reports_lite` view (receipt images and
-    // signatures stripped) and only the last 120 days — pulling `*` for every
-    // report was megabytes of base64 and hit Supabase's statement timeout.
-    // Falls back to the base table (same window) if the view isn't there yet.
-    all:async()=>{
-      const since=(()=>{const d=new Date();d.setDate(d.getDate()-120);return d.toISOString().slice(0,10);})();
-      try{return await sb(`/daily_reports_lite?select=*,projects(id,name,division)&date=gte.${since}&order=date.desc&limit=3000`);}
-      catch(e){return sb(`/daily_reports?select=*,projects(id,name,division)&date=gte.${since}&order=date.desc&limit=1500`);}
-    },
-    byId:(id)=>sb(`/daily_reports?id=eq.${id}&select=*,projects(id,name,division)&limit=1`),
+    forProject:(pid)=>sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`),
+    all:()=>sb("/daily_reports?select=*,projects(id,name,division)&order=date.desc&limit=3000"),
     // Ranged pull for the report builder. all() caps at 300 rows, which would
     // silently drop older reports from a wide date range.
-    inRange:async(from,to)=>{
-      try{return await sb(`/daily_reports_lite?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`);}
-      catch(e){return sb(`/daily_reports?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`);}
-    },
+    inRange:(from,to)=>sb(`/daily_reports?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`),
     pending:()=>sb("/daily_reports?status=eq.submitted&select=*,projects(id,name,division)&order=created_at.desc"),
     create:(d)=>sb("/daily_reports",{method:"POST",body:d,prefer:"return=representation"}),
     update:(id,d)=>sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
@@ -337,7 +250,6 @@ const API={
   },
   tmTickets:{
     forProject:(pid)=>sb(`/tm_tickets?project_id=eq.${pid}&order=created_at.desc`),
-    byRange:(from,to)=>sb(`/tm_tickets?ticket_date=gte.${from}&ticket_date=lte.${to}&order=ticket_date.asc`),
     byId:(id)=>sb(`/tm_tickets?id=eq.${id}&limit=1`),
     // Awaiting PM approval across every job — used by the dashboard snapshot.
     pending:()=>sb("/tm_tickets?status=eq.submitted&select=*,projects(id,name,division)&order=ticket_date.desc&limit=2000"),
@@ -353,9 +265,8 @@ const API={
     open:(name)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&status=eq.open&limit=1`),
     openForProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&status=eq.open&order=clock_in_at.asc`),
     openAll:()=>sb("/time_cards?status=eq.open&select=*,projects(id,name,division)&order=clock_in_at.asc"),
-    pending:()=>sb("/time_cards?status=in.(pending,worker_approved,disputed)&select=*,projects(id,name,division)&order=date.desc,worker_name.asc"),
-    pendingForProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&status=in.(pending,worker_approved,disputed)&order=date.desc,worker_name.asc`),
-    unconfirmedFor:(name,from,to)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=gte.${from}&date=lte.${to}&status=in.(pending,disputed)&select=id,date,total_hours,status`),
+    pending:()=>sb("/time_cards?status=eq.pending&select=*,projects(id,name,division)&order=date.desc,worker_name.asc"),
+    pendingForProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&status=eq.pending&order=date.desc,worker_name.asc`),
   },
   myTime:{
     cards:(name,from,to)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=gte.${from}&date=lte.${to}&select=*,projects(id,name,division)&order=date.asc`),
@@ -364,19 +275,10 @@ const API={
     tickets:(name,limit=15)=>sb(`/tm_tickets?submitted_by=eq.${encodeURIComponent(name)}&select=id,ticket_date,ticket_no,status,grand_total,client_signature,projects(name)&order=ticket_date.desc&limit=${limit}`),
     crew:(name)=>sb(`/crew_members?name=eq.${encodeURIComponent(name)}&limit=1`),
   },
-  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc&limit=5000`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),forWorkerDay:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&order=created_at.asc`),forProjectDay:(pid,date)=>sb(`/time_cards?project_id=eq.${pid}&date=eq.${date}&order=created_at.asc`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
+  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc&limit=5000`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
-  schedule:{
-    byRange:(from,to)=>sb(`/schedule?date=gte.${from}&date=lte.${to}&order=date.asc,worker_name.asc`),
-    forWorker:(name,from,to)=>sb(`/schedule?worker_name=eq.${encodeURIComponent(name)}&date=gte.${from}&date=lte.${to}&order=date.asc`),
-    create:(d)=>sb("/schedule",{method:"POST",body:d,prefer:"return=representation"}),
-    createMany:(rows)=>sb("/schedule",{method:"POST",body:rows,prefer:"return=representation"}),
-    update:(id,d)=>sb(`/schedule?id=eq.${id}`,{method:"PATCH",body:d}),
-    remove:(id)=>sb(`/schedule?id=eq.${id}`,{method:"DELETE"}),
-    removeMany:(ids)=>sb(`/schedule?id=in.(${ids.map(encodeURIComponent).join(",")})`,{method:"DELETE"}),
-  },
   mfg:{
     jobs:{list:()=>sb('/mfg_jobs?order=created_at.desc'),create:(d)=>sb('/mfg_jobs',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_jobs?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_jobs?id=eq.${id}`,{method:'DELETE'})},
     parts:{forJob:(jid)=>sb(`/mfg_parts?job_id=eq.${jid}&order=part_number.asc`),create:(d)=>sb('/mfg_parts',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_parts?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_parts?id=eq.${id}`,{method:'DELETE'})},
@@ -396,15 +298,8 @@ const API={
     labor:{forJob:(jid)=>sb(`/mfg_labor?job_id=eq.${jid}&order=work_date.desc`),openFor:(name)=>sb(`/mfg_labor?worker_name=eq.${encodeURIComponent(name)}&status=eq.open&limit=1`),forPart:(pid)=>sb(`/mfg_labor?part_id=eq.${pid}&order=work_date.desc`),create:(d)=>sb('/mfg_labor',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_labor?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_labor?id=eq.${id}`,{method:'DELETE'})},
     ncr:{forJob:(jid)=>sb(`/mfg_ncr?job_id=eq.${jid}&order=created_at.desc`),forPart:(pid)=>sb(`/mfg_ncr?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_ncr',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_ncr?id=eq.${id}`,{method:'PATCH',body:d})},
   },
-  docFolders:{forProject:(pid)=>sb(`/document_folders?project_id=eq.${pid}&order=name.asc`),forMfgJob:(jid)=>sb(`/document_folders?mfg_job_id=eq.${jid}&order=name.asc`),create:(d)=>sb("/document_folders",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/document_folders?id=eq.${id}`,{method:"PATCH",body:d}),remove:(id)=>sb(`/document_folders?id=eq.${id}`,{method:"DELETE"})},
-  // Document LISTS never pull the base64 `file` body — with a few PDFs on a job
-  // that's tens of MB and Supabase cancels the query. The body is fetched one
-  // document at a time when someone previews / downloads / prints it.
-  docs:     {
-    _cols:"id,project_id,mfg_job_id,name,doc_type,file_name,file_type,file_size,folder_id,visible_to,can_download,uploaded_by,is_fillable,notes,created_at",
-    forProject:async(pid)=>{try{return await sb(`/documents?project_id=eq.${pid}&select=${API.docs._cols}&order=created_at.desc`);}catch(e){return sb(`/documents?project_id=eq.${pid}&order=created_at.desc`);}},
-    forMfgJob:async(jid)=>{try{return await sb(`/documents?mfg_job_id=eq.${jid}&select=${API.docs._cols}&order=created_at.desc`);}catch(e){return sb(`/documents?mfg_job_id=eq.${jid}&order=created_at.desc`);}},
-    fileOf:async(id)=>{const r=await sb(`/documents?id=eq.${id}&select=file`);return (Array.isArray(r)&&r[0]&&r[0].file)||"";},create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=minimal"}),update:(id,d)=>sb(`/documents?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
+  docFolders:{forProject:(pid)=>sb(`/document_folders?project_id=eq.${pid}&order=name.asc`),create:(d)=>sb("/document_folders",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/document_folders?id=eq.${id}`,{method:"PATCH",body:d}),remove:(id)=>sb(`/document_folders?id=eq.${id}`,{method:"DELETE"})},
+  docs:     {forProject:(pid)=>sb(`/documents?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/documents",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/documents?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/documents?id=eq.${id}`,{method:"DELETE"})},
   milestones:{forProject:(pid)=>sb(`/milestones?project_id=eq.${pid}&order=sort_order.asc,target_date.asc`),create:(d)=>sb("/milestones",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/milestones?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/milestones?id=eq.${id}`,{method:"DELETE"})},
   crew:     {list:()=>sb("/crew_members?order=name.asc"),create:(d)=>sb("/crew_members",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/crew_members?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/crew_members?id=eq.${id}`,{method:"DELETE"})},
   audit:{
@@ -507,26 +402,21 @@ const API={
 };
 
 /* ── Roster ──
-   SEED_NAMES is the list baked into the bundle. Anyone added through the crew
+   NAMES is the list baked into the bundle. Anyone added through the crew
    directory only exists in the database, so a typed name never reached the
    worker dropdowns until the app was rebuilt. ROSTER merges the two and is
    refreshed at login, so a new hire is usable straight away. */
-let DB_NAMES=null;   // null = roster not loaded yet (offline / first launch)
-const ROSTER_CACHE_KEY="aime_roster_v1";
+let EXTRA_NAMES=[];
 function ROSTER(){
-  const base=DB_NAMES!==null?DB_NAMES:(()=>{
-    try{const c=JSON.parse(localStorage.getItem(ROSTER_CACHE_KEY)||"null");if(Array.isArray(c)&&c.length)return c;}catch{}
-    return SEED_NAMES;
-  })();
-  return [...new Set(base)].filter(Boolean).sort((a,b)=>a.localeCompare(b));
+  return [...new Set([...NAMES,...EXTRA_NAMES])]
+    .filter(Boolean)
+    .sort((a,b)=>a.localeCompare(b));
 }
 async function refreshRoster(){
   try{
     const rows=await sb("/crew_members?select=name,active&order=name.asc");
-    const names=(rows||[]).filter(r=>r.active!==false).map(r=>(r.name||"").trim()).filter(Boolean);
-    DB_NAMES=names;
-    try{localStorage.setItem(ROSTER_CACHE_KEY,JSON.stringify(names));}catch{}
-  }catch{ /* offline — last cached roster (or the seed list) still works */ }
+    EXTRA_NAMES=(rows||[]).filter(r=>r.active!==false).map(r=>r.name).filter(Boolean);
+  }catch{ /* offline or not deployed — the built-in list still works */ }
 }
 
 const T={bg:"#0D0D0F",surface:"#141418",card:"#1A1A20",border:"#26262E",orange:"#60A5FA",orangeLow:"#60A5FA14",orangeMid:"#60A5FA30",green:"#34D399",greenLow:"#34D39914",red:"#FC8181",redLow:"#FC818114",yellow:"#FBBF24",yellowLow:"#FBBF2414",blue:"#60A5FA",blueLow:"#60A5FA14",purple:"#A78BFA",purpleLow:"#A78BFA14",teal:"#2DD4BF",text:"#F0F4FF",sub:"#C8D4F0",muted:"#7080A0"};
@@ -540,11 +430,7 @@ const ghostBtn={background:"transparent",border:`1px solid ${T.border}`,borderRa
 const dangerBtn={background:T.redLow,border:`1px solid ${T.red}30`,borderRadius:12,padding:"12px 16px",color:T.red,fontSize:14,cursor:"pointer",fontFamily:"inherit",fontWeight:600,width:"100%",textAlign:"center"};
 
 const POSITIONS_PIPELINE=[{name:"Project Manager",rate:64.50},{name:"Foreman",rate:63.25},{name:"Technician",rate:60.75},{name:"Inspector",rate:53.75},{name:"Certified Welder",rate:60.75},{name:"Fitter",rate:58.50},{name:"Mechanic",rate:58.50},{name:"Operator",rate:58.50},{name:"Truck Driver",rate:58.50},{name:"Helper (Welder)",rate:57.25},{name:"Laborer",rate:51.00},{name:"Foreman (Elect)",rate:82.25},{name:"Electrician",rate:82.25},{name:"Helper (Elect)",rate:45.50},{name:"Per Diem",rate:190.00,flat:true}];
-/* Employee roster now lives in the database (crew_members, managed from the
-   Crew screen). SEED_NAMES is only the original built-in list, used as a
-   fallback when the app is offline before the roster has ever loaded.
-   Add/remove/deactivate people in the Crew screen — not here. */
-const SEED_NAMES=["Amanda Harvey","Alan Fairbrother","Alan Robinson","Doug Friedel","Jaden Pugh","Brandon Milano","Charles Acree","Charles Dovel","Chris Utz","Christopher Dean","Chuck Dean","Clay Lau","Connor Kestner","Morgan Schramek","Eric Bowens","Eric Shumate","Jackson Fama","Howard Lau","Jeff White","Jessica Vance","John Baier","John P. Cosner Jr.","Jordan Gorwell","Joseph Lau","Josh Gladhill","Kevin Gabrish","Kurt Batterton","Leo Velez","Edgrado Ruiz","Mark Hamilton","Alejandro Figueroa","Matthew Custis","Matthew Linton","Mike Gamble","Mike Gamble III","Mike Seiler","Pat Gorman","Paul Howard","Rich Raborg","Robert Neslein","Roland Long","Shane Hower","Steve Kestner","Tom Hatfield","Troy Strother","Tyrone Davis","Walter Chicas-Luna","Will Wychulis","Wyatt Gill","Peggy Carver","Jacob Geiman"].sort();
+const NAMES=["Amanda Harvey","Alan Fairbrother","Alan Robinson","Doug Friedel","Jaden Pugh","Brandon Milano","Charles Acree","Charles Dovel","Chris Utz","Christopher Dean","Chuck Dean","Clay Lau","Connor Kestner","Morgan Schramek","Eric Bowens","Eric Shumate","Jackson Fama","Howard Lau","Jeff White","Jessica Vance","John Baier","John P. Cosner Jr.","Jordan Gorwell","Joseph Lau","Josh Gladhill","Kevin Gabrish","Kurt Batterton","Leo Velez","Edgrado Ruiz","Mark Hamilton","Alejandro Figueroa","Matthew Custis","Matthew Linton","Mike Gamble","Mike Gamble III","Mike Seiler","Pat Gorman","Paul Howard","Rich Raborg","Robert Neslein","Roland Long","Shane Hower","Steve Kestner","Tom Hatfield","Troy Strother","Tyrone Davis","Walter Chicas-Luna","Will Wychulis","Wyatt Gill","Peggy Carver","Jacob Geiman"].sort();
 // Pipeline rate sheet — synced with AIME_CPC_Master_Daily (WORK tab). Names must stay stable: saved reports and T&M tickets look rates up by name.
 const EQUIP_LIST_PIPELINE=[{section:"Trucks & Trailers"},{name:"Truck - 1 Ton",rate:21.5,unit:"Hours"},{name:"Truck - 3/4 Ton w/ Snow Plow",rate:350,unit:"Days"},{name:"Truck - 1/2 Ton",rate:18.5,unit:"Hours"},{name:"Truck - Boom (20-29 Ton)",rate:65,unit:"Hours"},{name:"Truck - Bucket",rate:45,unit:"Hours"},{name:"Truck - Dump Truck (3 Axle)",rate:35,unit:"Hours"},{name:"Truck - Haul Truck - No Trailer",rate:70,unit:"Hours"},{name:"Truck - Tru-Vac",rate:13500,unit:"Month"},{name:"Truck - Welding Rig",rate:35,unit:"Hours"},{name:"Trailer - Electrical - Colonial",rate:147,unit:"Month"},{name:"Trailer - Lowboy - 2 Axle",rate:28,unit:"Hours"},{name:"Trailer - Tag Along",rate:50,unit:"Days"},{name:"Trailer - Tool Trailer - 18-25ft",rate:175,unit:"Days"},{name:"Trailer - Tool Trailer - 26-40ft",rate:200,unit:"Days"},{section:"Earthmoving & ROW"},{name:"ATV - 4 Wheel",rate:125,unit:"Days"},{name:"Backhoe Loader - 80-105 HP",rate:62.45,unit:"Hours"},{name:"Excavator - Mini - 2-8K LB",rate:299,unit:"Days"},{name:"Excavator - Mini - 9K LB",rate:335,unit:"Days"},{name:"Excavator - Mini - 10-11K LB",rate:335,unit:"Days"},{name:"Excavator - Mini - 12-16K LB",rate:475,unit:"Days"},{name:"Excavator - Mini - 17-20K LB",rate:540,unit:"Days"},{name:"Excavator - Small - 21-29K LB",rate:565,unit:"Days"},{name:"Excavator - Small - 30-33K LB",rate:632,unit:"Days"},{name:"Excavator - Small - 34-37K LB",rate:687,unit:"Days"},{name:"Excavator - Small - 38-42K LB",rate:742,unit:"Days"},{name:"Excavator - Small - 43-47K LB",rate:797,unit:"Days"},{name:"Excavator - Medium - 48-55K LB",rate:852,unit:"Days"},{name:"Excavator - Medium - 56-64K LB",rate:935,unit:"Days"},{name:"Excavator - Medium - 65-79K LB",rate:975,unit:"Days"},{name:"Excavator - Large - 80-89K LB",rate:1050,unit:"Days"},{name:"Excavator - Large - 90-119K LB",rate:1350,unit:"Days"},{name:"Excavator - Large - 120-175K LB",rate:1750,unit:"Days"},{name:"Excavator - Large - 176-225K LB",rate:1925,unit:"Days"},{name:"Mower - Riding/Zero Turn",rate:175,unit:"Days"},{name:"Skidsteer Loader - 70-80 HP",rate:440,unit:"Days"},{name:"Skidsteer Loader - 81-100 HP",rate:475,unit:"Days"},{name:"Tractor - 50 HP 4x4 w/ Bush Hog",rate:36.5,unit:"Hours"},{name:"Tractor - Farm w/ Bush Hog 26-40 HP",rate:27.5,unit:"Hours"},{section:"Air, Compressors & Blast"},{name:"Air Compressor - 185 CFM",rate:195,unit:"Days"},{name:"Air Compressor - 375 CFM",rate:275,unit:"Days"},{name:"Air Impact Wrench - 1in",rate:50,unit:"Days"},{name:"Air Spade / Knife",rate:55,unit:"Days"},{name:"Blast Rig - 4 Bag Pot w/ 185 CFM AC",rate:55.5,unit:"Hours"},{name:"Blast Rig - 1 Pot w/ 375 CFM AC",rate:500,unit:"Days"},{section:"Testing & Misc. Tools"},{name:"Bench & Volt Meter",rate:875.5,unit:"Month"},{name:"Beveling Band - 30in",rate:25,unit:"Days"},{name:"Dearman Pipe Clamps",rate:25,unit:"Days"},{name:"FL-9 Fiat-Allis",rate:41.05,unit:"Hours"},{name:"Gasoline Emergency Response Equipment",rate:5000,unit:"Week"},{name:"Grove Man Lift 40ft",rate:29.95,unit:"Hours"},{name:"HEPA Vacuum",rate:100,unit:"Days"},{name:"Holiday Detector / Pipe Jeep",rate:72,unit:"Days"},{name:"Hydraulic Torque",rate:200,unit:"Days"},{name:"Hydro Test Pump",rate:60,unit:"Days"},{name:"Hydrotest - High Pressure",rate:3800,unit:"Days"},{name:"Jack Hammer",rate:72,unit:"Days"},{name:"Laser Pump Aligner",rate:50,unit:"Hours"},{name:"LEL/Gas Monitor - 4 Gas",rate:50,unit:"Days"},{name:"Line Locator",rate:50,unit:"Days"},{name:"Pipe Band Crawler",rate:25,unit:"Days"},{name:"Pipe Beveling Machine 1-1/2-3in",rate:25,unit:"Days"},{name:"Pipe Beveling Machine 10-14in",rate:40,unit:"Days"},{name:"Pipe Beveling Machine 16-22in",rate:100,unit:"Days"},{name:"Tap Machine - 2in",rate:190,unit:"Days"},{name:"Torque Wrench - Pneumatic J5",rate:175,unit:"Days"},{name:"Torque Wrench w/Multiplier Hand",rate:25,unit:"Days"},{name:"Torque Wrench w/Sockets Hyd/Pneu",rate:195,unit:"Days"},{name:"Wach Pipe Cutting Saw",rate:30,unit:"Hours"}];
 
@@ -853,11 +739,7 @@ function SubCard({row,onChange,onRemove}){
   );
 }
 
-// Receipts on a materials row can be photos (compressed) or PDFs (stored as-is,
-// capped at 6 MB). Both live in the report JSON; PDFs are rasterized at print time.
-const RECEIPT_PDF_MAX=6*1024*1024;
-const isPdfReceipt=(r)=>r&&(r.type==="pdf"||String(r.src||"").startsWith("data:application/pdf"));
-function MatCard({row,onChange,onRemove}){const fileRef=useRef(null);const camRef=useRef(null);const receipts=row.receipts||[];async function handleFiles(files){const n=[];for(const f of files){const isPdf=f.type==="application/pdf"||/\.pdf$/i.test(f.name);if(isPdf){if(f.size>RECEIPT_PDF_MAX){alert(`${f.name} is ${(f.size/1048576).toFixed(1)} MB — PDFs attached to a report must be under 6 MB. Upload it to the job's Documents tab instead.`);continue;}const src=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(new Error("read failed"));r.readAsDataURL(f);});n.push({id:uid(),src,type:"pdf",name:f.name,size:f.size});continue;}if(!f.type.startsWith("image/"))continue;const src=await compressImg(f,800,0.6);n.push({id:uid(),src});}onChange({...row,receipts:[...receipts,...n]});}return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}><div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}><div><label style={lbl}>Markup %</label><input type="number" min="0" step="0.1" placeholder="12" value={row.markup_pct||""} onChange={e=>onChange({...row,markup_pct:e.target.value})} style={inp}/></div><div><label style={lbl}>Tax ($)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>onChange({...row,tax_amount:e.target.value})} style={inp}/></div><div><label style={lbl}>Line Total</label><div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(matLineTotal(row))}</div></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts & Docs</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}>{isPdfReceipt(r)?<div title={r.name||"PDF"} style={{width:60,height:60,borderRadius:10,border:`2px solid ${T.red}40`,background:T.redLow,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,padding:3}}><span style={{fontSize:20}}>📄</span><span style={{fontSize:8,fontWeight:700,color:T.text,maxWidth:52,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name||"PDF"}</span></div>:<img src={r.src} alt="" style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.blue}40`,display:"block"}}/>}<button onClick={()=>onChange({...row,receipts:receipts.filter(x=>x.id!==r.id)})} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>camRef.current?.click()} title="Take a photo" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>CAMERA</span></button><button onClick={()=>fileRef.current?.click()} title="Choose from your photos or files" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.green}40`,background:T.greenLow,color:T.green,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>🖼️</span><span style={{fontSize:9,fontWeight:700}}>UPLOAD</span></button><input ref={camRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /><input ref={fileRef} type="file" accept="image/*,application/pdf,.pdf" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{matLineTotal(row)>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(matLineTotal(row))}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
+function MatCard({row,onChange,onRemove}){const fileRef=useRef(null);const camRef=useRef(null);const receipts=row.receipts||[];async function handleFiles(files){const n=[];for(const f of files){if(!f.type.startsWith("image/"))continue;const src=await compressImg(f,800,0.6);n.push({id:uid(),src});}onChange({...row,receipts:[...receipts,...n]});}return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}><div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}><div><label style={lbl}>Markup %</label><input type="number" min="0" step="0.1" placeholder="12" value={row.markup_pct||""} onChange={e=>onChange({...row,markup_pct:e.target.value})} style={inp}/></div><div><label style={lbl}>Tax ($)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>onChange({...row,tax_amount:e.target.value})} style={inp}/></div><div><label style={lbl}>Line Total</label><div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(matLineTotal(row))}</div></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}><img src={r.src} alt="" style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.blue}40`,display:"block"}}/><button onClick={()=>onChange({...row,receipts:receipts.filter(x=>x.id!==r.id)})} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>camRef.current?.click()} title="Take a photo" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>CAMERA</span></button><button onClick={()=>fileRef.current?.click()} title="Choose from your photos or files" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.green}40`,background:T.greenLow,color:T.green,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>🖼️</span><span style={{fontSize:9,fontWeight:700}}>UPLOAD</span></button><input ref={camRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /><input ref={fileRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{matLineTotal(row)>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(matLineTotal(row))}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
 
 function LoginScreen({onLogin}){
   const [name,setName]=useState("");
@@ -1083,44 +965,6 @@ function mondayOf(d){
 function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
 const isoOf=(d)=>d.toISOString().slice(0,10);
 
-/* ── Payroll overtime rule ────────────────────────────────────────────
-   OT is paid only after 40 hours PHYSICALLY WORKED in a Mon–Sun week.
-   Holiday hours do not count toward the 40. Travel is paid separately
-   and does not count either. Foremen may mark "OT" on a daily report
-   (that's what the client is billed) but the employee's time card is
-   re-cut here: worked hours fill regular up to 40, the rest is OT.
-   Cards are not rewritten in the DB — this is applied wherever cards
-   are shown or printed, so it always reflects the whole week. */
-const WEEKLY_OT_THRESHOLD=40;
-function applyWeeklyOT(cards){
-  const out=[];
-  const byWorkerWeek={};
-  for(const c of cards){
-    if(!c||!c.date)continue;
-    const key=(c.worker_name||"?")+"|"+isoOf(mondayOf(String(c.date)));
-    (byWorkerWeek[key]=byWorkerWeek[key]||[]).push(c);
-  }
-  for(const list of Object.values(byWorkerWeek)){
-    list.sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.created_at||"").localeCompare(String(b.created_at||"")));
-    let run=0;
-    for(const c of list){
-      const holiday=parseFloat(c.holiday_hours)||0;
-      const travel=parseFloat(c.travel_hours)||0;
-      const worked=c.source==="holiday"?0:(parseFloat(c.reg_hours)||0)+(parseFloat(c.ot_hours)||0);
-      const regRoom=Math.max(0,WEEKLY_OT_THRESHOLD-run);
-      const reg=Math.min(worked,regRoom);
-      const ot=worked-reg;
-      run+=worked;
-      out.push({...c,
-        raw_reg_hours:c.reg_hours,raw_ot_hours:c.ot_hours,
-        reg_hours:reg,ot_hours:ot,travel_hours:travel,holiday_hours:holiday,
-        total_hours:reg+ot+travel+holiday,
-        ot_recut:(parseFloat(c.ot_hours)||0)!==ot});
-    }
-  }
-  return out;
-}
-
 function MyHoursScreen({user,onBack}){
   const [weekStart,setWeekStart]=useState(()=>mondayOf(new Date()));
   const [cards,setCards]=useState([]);
@@ -1200,15 +1044,13 @@ function MyHoursScreen({user,onBack}){
 
   /* ── Combine field and shop into one weekly picture ── */
   const entries=[
-    ...applyWeeklyOT(cards).map(c=>({
-      id:"f"+c.id,kind:c.source==="holiday"?"holiday":"field",date:c.date,
-      job:c.source==="holiday"?String(c.notes||"Holiday").replace("Holiday — ",""):(c.projects?.name||"—"),
-      holiday:parseFloat(c.holiday_hours)||0,
+    ...cards.map(c=>({
+      id:"f"+c.id,kind:"field",date:c.date,
+      job:c.projects?.name||"—",
       reg:parseFloat(c.reg_hours)||0,ot:parseFloat(c.ot_hours)||0,travel:parseFloat(c.travel_hours)||0,
       total:c.total_hours!=null&&c.total_hours!==""?parseFloat(c.total_hours)
             :(parseFloat(c.reg_hours)||0)+(parseFloat(c.ot_hours)||0)+(parseFloat(c.travel_hours)||0),
       status:c.status||"approved",
-      disputeNote:c.dispute_note||"",
       inAt:c.clock_in_at,outAt:c.clock_out_at,
       note:c.classification||"",
       edited:c.edited_by&&c.original_hours!=null&&Number(c.original_hours)!==Number(c.total_hours)
@@ -1230,36 +1072,7 @@ function MyHoursScreen({user,onBack}){
   const tot=entries.reduce((s,e)=>({
     reg:s.reg+e.reg,ot:s.ot+e.ot,travel:s.travel+e.travel,total:s.total+e.total,
   }),{reg:0,ot:0,travel:0,total:0});
-  const pendingHrs=entries.filter(e=>e.status==="pending"||e.status==="worker_approved").reduce((s,e)=>s+e.total,0);
-  // Field cards the employee still needs to sign off on this week
-  const toConfirm=cards.filter(c=>c.status==="pending"||c.status==="disputed");
-  const confirmedHrs=entries.filter(e=>e.status==="worker_approved").reduce((s,e)=>s+e.total,0);
-  const weekOver=isoOf(addDays(weekStart,6))<isoOf(new Date());
-  async function confirmWeek(){
-    if(!toConfirm.length)return;
-    const hrs=toConfirm.reduce((s,c)=>s+(parseFloat(c.total_hours)||0),0);
-    if(!window.confirm(`Confirm ${hrs.toFixed(2)} hours for the week of ${weekStart.toLocaleDateString()}?\n\nThis tells your PM the hours are correct. If something is wrong, use ⚑ Flag on that day instead.`))return;
-    setBusy(true);
-    try{
-      const at=new Date().toISOString();
-      await Promise.all(toConfirm.map(c=>API.timeCards.update(c.id,{status:"worker_approved",worker_approved_at:at,worker_approved_by:user.name,dispute_note:null})));
-      await notify("time_confirmed","Time confirmed",`${user.name} confirmed ${hrs.toFixed(1)} hours for week of ${isoOf(weekStart)} — ready for PM approval`);
-      await load();
-    }catch(e){setErr(e.message);}
-    setBusy(false);
-  }
-  async function flagEntry(e){
-    const id=String(e.id).slice(1);
-    const why=window.prompt(`What's wrong with ${e.job} on ${e.date}? (hours, job, missing day…)`,"");
-    if(why==null)return;
-    setBusy(true);
-    try{
-      await API.timeCards.update(id,{status:"disputed",dispute_note:why.trim()||"Flagged by employee",disputed_at:new Date().toISOString()});
-      await notify("time_disputed","Time flagged",`${user.name} flagged ${e.date} · ${e.job}: ${why.trim()||"no note"}`);
-      await load();
-    }catch(err2){setErr(err2.message);}
-    setBusy(false);
-  }
+  const pendingHrs=entries.filter(e=>e.status==="pending").reduce((s,e)=>s+e.total,0);
 
   // One row per day, Monday to Sunday
   const dayRows=[...Array(7)].map((_,i)=>{
@@ -1295,7 +1108,7 @@ function MyHoursScreen({user,onBack}){
   const hhmm=(iso)=>iso?new Date(iso).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):null;
   const h1=(n)=>Number(n||0).toFixed(2);
 
-  const statusMeta=Object.fromEntries(Object.entries(TC_STATUS).map(([k,v])=>[k,{c:v.c,l:v.mine}]));
+  const statusMeta={pending:{c:T.yellow,l:"pending"},approved:{c:T.green,l:"approved"}};
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
@@ -1390,25 +1203,10 @@ function MyHoursScreen({user,onBack}){
                   </div>
                 ))}
               </div>
-              {confirmedHrs>0&&toConfirm.length===0&&<div style={{fontSize:11.5,color:T.blue,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-                ✓ You confirmed this week — {h1(confirmedHrs)} hours waiting on PM approval
+              {pendingHrs>0&&<div style={{fontSize:11.5,color:T.yellow,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                ⏳ {h1(pendingHrs)} hours still waiting on a PM to approve
               </div>}
             </div>
-
-            {/* Weekly sign-off */}
-            {toConfirm.length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.yellow}`,background:`${T.yellow}10`}}>
-              <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:4}}>
-                {weekOver?"⏰ Confirm last week's hours":"✍️ Confirm your hours"}
-              </div>
-              <div style={{fontSize:11.5,color:T.muted,lineHeight:1.6,marginBottom:10}}>
-                {toConfirm.length} day{toConfirm.length!==1?"s":""} · {h1(toConfirm.reduce((s,c)=>s+(parseFloat(c.total_hours)||0),0))} hours entered by your foreman need your OK before the PM can approve them.
-                Check each day below — tap <b>⚑ Flag</b> on anything that's wrong.
-              </div>
-              <button onClick={confirmWeek} disabled={busy||!!punch}
-                style={{...primBtn,borderRadius:12,background:T.green,color:"#000",opacity:busy||punch?0.6:1}}>
-                {punch?"Clock out first":"✓ My hours are correct"}
-              </button>
-            </div>}
 
             {/* Day by day */}
             <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Day by Day</div>
@@ -1427,10 +1225,10 @@ function MyHoursScreen({user,onBack}){
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
                       <div style={{minWidth:0}}>
                         <div style={{fontSize:12,fontWeight:600,color:T.sub}}>
-                          {e.kind==="shop"?"🏭 ":e.kind==="holiday"?"🎉 ":"🔧 "}{e.job}
+                          {e.kind==="shop"?"🏭 ":"🔧 "}{e.job}
                         </div>
                         <div style={{fontSize:10.5,color:T.muted,marginTop:1}}>
-                          {e.kind==="holiday"?"paid holiday":e.inAt?`${hhmm(e.inAt)} → ${hhmm(e.outAt)||"—"}`:"entered by hand"}
+                          {e.inAt?`${hhmm(e.inAt)} → ${hhmm(e.outAt)||"—"}`:"entered by hand"}
                           {e.note?` · ${e.note}`:""}
                         </div>
                       </div>
@@ -1442,13 +1240,6 @@ function MyHoursScreen({user,onBack}){
                         </span>
                       </div>
                     </div>
-                    {e.kind==="field"&&(e.status==="pending"||e.status==="worker_approved")&&<div style={{marginTop:6,textAlign:"right"}}>
-                      <button onClick={()=>flagEntry(e)} disabled={busy}
-                        style={{background:"none",border:`1px solid ${T.red}40`,borderRadius:7,padding:"3px 9px",color:T.red,fontSize:10.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⚑ Flag</button>
-                    </div>}
-                    {e.kind==="field"&&e.status==="disputed"&&<div style={{fontSize:10.5,color:T.red,marginTop:4,lineHeight:1.5}}>
-                      ⚑ You flagged this{e.disputeNote?`: ${e.disputeNote}`:""} — your PM will fix it.
-                    </div>}
                     {e.edited&&<div style={{fontSize:10.5,color:T.blue,marginTop:4,lineHeight:1.5}}>
                       ✏️ adjusted by {e.edited.by} — was {h1(e.edited.was)}
                       {e.edited.why?` · ${e.edited.why}`:""}
@@ -1770,20 +1561,6 @@ function ActivityScreen({user,onBack}){
 }
 
 function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onMyHours,onActivity,onNotifications,notifCount,isOnline,pendingCount,onSync}){
-  // Hours the foreman entered for this user (this week + last) still waiting on their OK.
-  const [toConfirm,setToConfirm]=useState(null);
-  useEffect(()=>{
-    let dead=false;
-    (async()=>{
-      try{
-        const mon=mondayOf(new Date());
-        const rows=await API.punches.unconfirmedFor(user.name,isoOf(addDays(mon,-7)),isoOf(addDays(mon,6)));
-        if(!dead)setToConfirm(Array.isArray(rows)?rows:[]);
-      }catch{ if(!dead)setToConfirm([]); }
-    })();
-    return()=>{dead=true;};
-  },[user.name]);
-  const confirmHrs=(toConfirm||[]).reduce((s,c)=>s+(parseFloat(c.total_hours)||0),0);
   // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
   // by division always returned zero for that card.
   const [mfgStats,setMfgStats]=useState(null);
@@ -1874,10 +1651,8 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           display:"flex",justifyContent:"space-between",alignItems:"center",
           cursor:"pointer",fontFamily:"inherit"}}>
           <div style={{textAlign:"left"}}>
-            <div style={{fontSize:15,fontWeight:800,color:T.blue}}>⏱️ My Hours{toConfirm&&toConfirm.length>0&&<span style={{marginLeft:8,background:T.yellow,color:"#000",borderRadius:9,padding:"1px 8px",fontSize:11,fontWeight:800}}>{toConfirm.length}</span>}</div>
-            <div style={{fontSize:11.5,color:toConfirm&&toConfirm.length>0?T.yellow:T.muted,marginTop:2}}>
-              {toConfirm&&toConfirm.length>0?`⚠ ${confirmHrs.toFixed(1)} hours need your confirmation`:"This week's time, past weeks, and your certifications"}
-            </div>
+            <div style={{fontSize:15,fontWeight:800,color:T.blue}}>⏱️ My Hours</div>
+            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>This week's time, past weeks, and your certifications</div>
           </div>
           <span style={{color:T.blue,fontSize:18,flexShrink:0}}>→</span>
         </button>
@@ -2207,148 +1982,53 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
 
 const RSTEPS=["Job Info","Labor","Equipment","Materials","Site Notes","Review"];
 
-/* ── Weekly time approval ──────────────────────────────────────────────
-   pending          foreman entered it (daily report / T&M / manual) — waiting on the employee
-   worker_approved  employee confirmed their week — waiting on the PM
-   disputed         employee flagged it with a note — PM must fix, then approve
-   approved         PM final approval (payroll)                                    */
-const TC_STATUS={
-  pending:        {c:"#F59E0B",short:"Waiting on employee",mine:"Needs your OK"},
-  worker_approved:{c:"#60A5FA",short:"Employee confirmed",  mine:"Confirmed · waiting on PM"},
-  disputed:       {c:"#EF4444",short:"Flagged by employee", mine:"Flagged"},
-  approved:       {c:"#22C55E",short:"PM approved",         mine:"Approved"},
-  open:           {c:"#22C55E",short:"On the clock",        mine:"On the clock"},
-};
-
-/* T&M ticket labor → time cards. Runs on every save, so it MIRRORS the
-   ticket: a card this ticket created is updated to the ticket's hours, and
-   a worker taken off the ticket has their card removed. A card from a daily
-   report or a clock punch on the same worker/job/day is left alone (the
-   daily report wins). PM-approved cards are never touched. */
-async function autoPopulateTimeCardsFromTicket(ticket, project){
-  const marker=`[tm:${ticket.id}]`;
-  const labor=(ticket.labor||[]).filter(l=>!isPerDiemRow(l));
-  // Sum by worker in case someone appears on two rows
-  const byWorker={};
-  for(const entry of labor){
-    const name=entry.name==="__other"?(entry.customName||"").trim():(entry.name||"").trim();
-    if(!name)continue;
-    const w=byWorker[name]=byWorker[name]||{reg:0,ot:0,travel:0,cls:entry.classification||""};
-    w.reg+=parseFloat(entry.hours)||0; w.ot+=parseFloat(entry.ot_hours)||0; w.travel+=parseFloat(entry.travel_hours)||0;
-  }
-  let created=0,updated=0,removed=0;
-  let dayCards=[];
-  try{const r=await API.timeCards.forProjectDay(project.id,ticket.ticket_date);dayCards=Array.isArray(r)?r:[];}catch(e){}
-  const mineCards=dayCards.filter(c=>String(c.notes||"").includes(marker));
-  for(const [name,w] of Object.entries(byWorker)){
-    try{
-      const mine=mineCards.find(c=>c.worker_name===name);
-      const other=dayCards.find(c=>c.worker_name===name&&!String(c.notes||"").includes(marker)&&(c.source||"manual")!=="punch");
-      if(w.reg+w.ot+w.travel===0){
-        if(mine&&mine.status!=="approved"){await API.timeCards.remove(mine.id);removed++;}
-        continue;
-      }
-      if(mine){
-        if(mine.status==="approved")continue;
-        await API.timeCards.update(mine.id,{reg_hours:w.reg,ot_hours:w.ot,travel_hours:w.travel,total_hours:w.reg+w.ot+w.travel,classification:w.cls||mine.classification||"",
-          // hours changed → employee has to re-confirm
-          ...(mine.status==="worker_approved"&&(Number(mine.reg_hours)!==w.reg||Number(mine.ot_hours)!==w.ot||Number(mine.travel_hours)!==w.travel)?{status:"pending",worker_approved_at:null}:{})});
-        updated++;
-      }else if(other){
-        continue;
-      }else{
-        await API.timeCards.create({
-          worker_name:name,date:ticket.ticket_date,project_id:project.id,division:project.division,
-          classification:w.cls,reg_hours:w.reg,ot_hours:w.ot,travel_hours:w.travel,total_hours:w.reg+w.ot+w.travel,
-          notes:`Auto-filled from T&M ticket${ticket.ticket_no?" #"+ticket.ticket_no:""} · ${project.name} ${marker}`,
-          source:"tm",status:"pending",
-        });
-        created++;
-      }
-    }catch(e){}
-  }
-  // Workers removed from the ticket
-  for(const c of mineCards){
-    if(!byWorker[c.worker_name]&&c.status!=="approved"){try{await API.timeCards.remove(c.id);removed++;}catch(e){}}
-  }
-  return {created,updated,removed};
-}
-
-/* Rebuild every daily-report and T&M card in a date range from the source
-   documents. Fixes cards that were doubled by the old additive sync, or
-   that drifted after a report was edited before edits synced. Approved cards
-   are skipped; punches, manual and holiday cards are untouched. */
-async function resyncTimeCardsFromDocs(from,to,projects){
-  const out={reports:0,tickets:0,created:0,updated:0,removed:0};
-  const byId=Object.fromEntries((projects||[]).map(p=>[p.id,p]));
-  let reports=[],tickets=[];
-  try{const r=await API.reports.byRange(from,to);reports=Array.isArray(r)?r:[];}catch(e){}
-  try{const t=await API.tmTickets.byRange(from,to);tickets=Array.isArray(t)?t:[];}catch(e){}
-  for(const r of reports){
-    const p=byId[r.project_id]; if(!p)continue;
-    const res=await autoPopulateTimeCards(r,p); out.reports++;
-    out.created+=res.created;out.updated+=res.updated;out.removed+=res.removed;
-  }
-  for(const t of tickets){
-    const p=byId[t.project_id]; if(!p||!t.id)continue;
-    const res=await autoPopulateTimeCardsFromTicket(t,p); out.tickets++;
-    out.created+=res.created;out.updated+=res.updated;out.removed+=res.removed;
-  }
-  return out;
-}
-
-/* Daily report labor → time cards. Idempotent MIRROR of the report:
-   - a worker's hours REPLACE the daily-report card for that worker/job/day
-     (so editing a report updates the card instead of doubling it)
-   - a worker removed from the report has their daily-report card removed
-   - clock-punch cards, T&M-ticket cards and manual cards are left alone
-   - PM-approved cards are never touched (un-approve first)
-   - if the hours changed after the employee confirmed, it goes back to pending */
 async function autoPopulateTimeCards(report, project){
-  const byWorker={};
-  for(const entry of (report.labor||[])){
-    if(isPerDiemRow(entry))continue;
-    const name=(entry.name||"").trim(); if(!name)continue;
-    const w=byWorker[name]=byWorker[name]||{reg:0,ot:0,travel:0,cls:entry.classification||""};
-    w.reg+=parseFloat(entry.regHrs)||0; w.ot+=parseFloat(entry.otHrs)||0; w.travel+=parseFloat(entry.travelHrs)||0;
-  }
-  let created=0,updated=0,removed=0;
-  let dayCards=[];
-  try{const r=await API.timeCards.forProjectDay(project.id,report.date);dayCards=Array.isArray(r)?r:[];}catch(e){}
-  const isDailyCard=(c)=>c.source==="daily"||String(c.notes||"").startsWith("Auto-filled from daily report");
-  const dailyCards=dayCards.filter(isDailyCard);
-  const noteFor=()=>`Auto-filled from daily report${report.report_no?" #"+report.report_no:""} · ${project.name}`;
-  for(const [name,w] of Object.entries(byWorker)){
-    const total=w.reg+w.ot+w.travel;
+  const labor=(report.labor||[]).filter(l=>l.name&&l.name.trim());
+  if(!labor.length) return {created:0,updated:0};
+  let created=0,updated=0;
+  for(const entry of labor){
+    const reg=parseFloat(entry.regHrs)||0;
+    const ot=parseFloat(entry.otHrs)||0;
+    const travel=parseFloat(entry.travelHrs)||0;
+    if(reg+ot+travel===0) continue;
     try{
-      const mine=dailyCards.find(c=>c.worker_name===name);
-      if(total===0){
-        if(mine&&mine.status!=="approved"){await API.timeCards.remove(mine.id);removed++;}
-        continue;
-      }
-      if(mine){
-        if(mine.status==="approved")continue;
-        const changed=Number(mine.reg_hours)!==w.reg||Number(mine.ot_hours)!==w.ot||Number(mine.travel_hours)!==w.travel;
-        if(!changed&&(mine.classification||"")===(w.cls||""))continue;
-        await API.timeCards.update(mine.id,{
-          reg_hours:w.reg,ot_hours:w.ot,travel_hours:w.travel,total_hours:total,classification:w.cls||mine.classification||"",notes:noteFor(),
-          ...(mine.status==="worker_approved"&&changed?{status:"pending",worker_approved_at:null}:{}),
+      const existing=await API.timeCards.find(entry.name,report.date,project.id);
+      const all=Array.isArray(existing)?existing:[];
+      // Only merge into another daily-report card. Merging into a clock punch
+      // would double the worker's day.
+      const card=all.find(c=>(c.source||"manual")!=="punch")||null;
+      if(card){
+        const newReg=(parseFloat(card.reg_hours)||0)+reg;
+        const newOT=(parseFloat(card.ot_hours)||0)+ot;
+        const newTravel=(parseFloat(card.travel_hours)||0)+travel;
+        await API.timeCards.update(card.id,{
+          reg_hours:newReg,
+          ot_hours:newOT,
+          travel_hours:newTravel,
+          total_hours:newReg+newOT+newTravel,
         });
         updated++;
       }else{
         await API.timeCards.create({
-          worker_name:name,date:report.date,project_id:project.id,division:project.division,
-          classification:w.cls,reg_hours:w.reg,ot_hours:w.ot,travel_hours:w.travel,total_hours:total,
-          notes:noteFor(),source:"daily",status:"pending",
+          worker_name:entry.name,
+          date:report.date,
+          project_id:project.id,
+          division:project.division,
+          classification:entry.classification||"",
+          reg_hours:reg,
+          ot_hours:ot,
+          travel_hours:travel,
+          total_hours:reg+ot+travel,
+          notes:`Auto-filled from daily report${report.report_no?" #"+report.report_no:""} · ${project.name}`,
+          source:"daily",status:"pending",
         });
         created++;
       }
-    }catch(e){}
+    }catch(e){
+
+    }
   }
-  for(const c of dailyCards){
-    if(!byWorker[c.worker_name]&&c.status!=="approved"){try{await API.timeCards.remove(c.id);removed++;}catch(e){}}
-  }
-  return {created,updated,removed};
+  return{created,updated};
 }
 
 function VisitorAddRow({onAdd}){
@@ -2511,8 +2191,9 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
       try{
         await API.reports.update(existing.id,{...reportData,updated_at:new Date().toISOString()});
         clearDraft(draftKey);
-        // Mirror the edited hours onto the crew's time cards (replace, not add).
-        try{await autoPopulateTimeCards({...reportData,report_no:reportData.report_no||existing.report_no},project);}catch(e){}
+        // Deliberately NOT re-running autoPopulateTimeCards: it adds hours to
+        // existing cards rather than replacing them, so editing would double
+        // the worker's day. Time cards from the original submission stand.
         onSave&&onSave(reportData,existing.id);
       }catch(e){
         alert("Couldn't save changes: "+e.message);
@@ -2945,12 +2626,7 @@ function printReport(report, project){
 // attachment index page only, since the browser can't print it.
 async function prepareDocsForPrint(docs,onProgress){
   const out=[];
-  for(const d0 of docs||[]){
-    let d=d0;
-    if(!d.file&&d.id&&!d._fromReport){
-      onProgress&&onProgress(`Loading ${d.name||d.file_name}…`);
-      try{d={...d,file:await API.docs.fileOf(d.id)};}catch(e){d={...d,file:""};}
-    }
+  for(const d of docs||[]){
     const fname=(d.file_name||d.name||"").toLowerCase();
     const data=d.file||"";
     const isImage=(d.file_type||"").startsWith("image/")||data.startsWith("data:image")||/\.(jpe?g|png|gif|webp|bmp)$/.test(fname);
@@ -2961,9 +2637,16 @@ async function prepareDocsForPrint(docs,onProgress){
       try{
         onProgress&&onProgress(`Opening ${d.name||d.file_name}…`);
         const pdfjsLib=await loadPdfJs();
-        const b64=data.split(",")[1]||"";
-        const bin=atob(b64);const bytes=new Uint8Array(bin.length);
-        for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+        let bytes;
+        if(/^https?:/.test(data)){
+          const r=await fetch(data);
+          if(!r.ok)throw new Error(`Could not fetch file (${r.status})`);
+          bytes=new Uint8Array(await r.arrayBuffer());
+        }else{
+          const b64=data.split(",")[1]||"";
+          const bin=atob(b64);bytes=new Uint8Array(bin.length);
+          for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+        }
         const pdf=await pdfjsLib.getDocument({data:bytes}).promise;
         const MAX_PAGES=30;
         const max=Math.min(pdf.numPages,MAX_PAGES);
@@ -3100,15 +2783,15 @@ ${sections.weather&&report.site_conditions?`<div class="section"><h2>Site Condit
 ${sections.description&&report.description?`<div class="section"><h2>Description of Work</h2><div class="desc-box">${report.description.replace(/\n/g,'<br/>')}</div></div>`:''}
 
 ${sections.labor&&(report.labor||[]).length>0?`<div class="section"><h2>Labor — ${(report.labor||[]).filter(l=>!isPerDiemRow(l)).length} Workers · ${fmtH(tot.labor_hrs||0)} Total Hrs${tot.labor>0?' · '+fmt2(tot.labor):''}</h2>
-<table><thead><tr><th>Name</th><th>Classification</th><th style="text-align:center">Reg Hrs</th><th style="text-align:center">OT Hrs</th><th style="text-align:center">Travel</th><th style="text-align:right">Reg Rate</th><th style="text-align:right">OT Rate</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.labor||[]).filter(l=>!isPerDiemRow(l)).filter(l=>l.name||l.classification||parseFloat(l.regHrs)||parseFloat(l.otHrs)||parseFloat(l.travelHrs)).map(l=>{const pos=getPositions(division).find(p=>p.name===l.classification);const rate=pos?pos.rate:0;return `<tr><td>${l.name||'—'}</td><td>${l.classification||'—'}</td><td style="text-align:center">${l.regHrs||0}</td><td style="text-align:center">${l.otHrs||0}</td><td style="text-align:center">${l.travelHrs||0}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${rate&&(parseFloat(l.otHrs)||0)>0?fmt2(rate*1.5):''}</td><td style="text-align:right">${fmt2(laborAmt(l,division))}</td></tr>`;}).join('')}
-${tot.perdiem>0?`<tr><td colspan="2"><em>Per Diem</em></td><td colspan="3" style="text-align:center">${tot.perdiem_count} employee${tot.perdiem_count!==1?'s':''}</td><td style="text-align:right">${fmt2(tot.perdiem/tot.perdiem_count)}</td><td></td><td style="text-align:right">${fmt2(tot.perdiem)}</td></tr>`:''}
-</tbody><tfoot><tr class="total-row"><td colspan="7"><strong>TOTAL LABOR</strong></td><td style="text-align:right"><strong>${fmt2(tot.labor||0)}</strong></td></tr></tfoot></table></div>`:''}
+<table><thead><tr><th>Name</th><th>Classification</th><th style="text-align:center">Reg Hrs</th><th style="text-align:center">OT Hrs</th><th style="text-align:center">Travel</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${(report.labor||[]).filter(l=>!isPerDiemRow(l)).filter(l=>l.name||l.classification||parseFloat(l.regHrs)||parseFloat(l.otHrs)||parseFloat(l.travelHrs)).map(l=>`<tr><td>${l.name||'—'}</td><td>${l.classification||'—'}</td><td style="text-align:center">${l.regHrs||0}</td><td style="text-align:center">${l.otHrs||0}</td><td style="text-align:center">${l.travelHrs||0}</td><td style="text-align:right">${fmt2(laborAmt(l,division))}</td></tr>`).join('')}
+${tot.perdiem>0?`<tr><td colspan="2"><em>Per Diem</em></td><td colspan="3" style="text-align:center">${tot.perdiem_count} employee${tot.perdiem_count!==1?'s':''} × ${fmt2(tot.perdiem/tot.perdiem_count)}</td><td style="text-align:right">${fmt2(tot.perdiem)}</td></tr>`:''}
+</tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL LABOR</strong></td><td style="text-align:right"><strong>${fmt2(tot.labor||0)}</strong></td></tr></tfoot></table></div>`:''}
 
 ${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>Equipment — ${(report.equipment||[]).length} Items${tot.equip>0?' · '+fmt2(tot.equip):''}</h2>
-<table><thead><tr><th>Equipment</th><th>Unit</th><th style="text-align:center">Hrs / Days</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.equipment||[]).filter(e=>e.description||parseFloat(e.usage)).map(e=>{const rate=parseFloat(e.rate)||(getEquipList(division).find(x=>!x.section&&x.name===e.description)||{}).rate||0;return `<tr><td>${e.description||'—'}</td><td>${e.unit||'—'}</td><td style="text-align:center">${e.usage||'—'}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${fmt2(equipAmt(e,division))}</td></tr>`;}).join('')}
-</tbody><tfoot><tr class="total-row"><td colspan="4"><strong>TOTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.equip||0)}</strong></td></tr></tfoot></table></div>`:''}
+<table><thead><tr><th>Equipment</th><th>Unit</th><th style="text-align:center">Qty</th><th style="text-align:center">Hrs / Days</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${(report.equipment||[]).filter(e=>e.description||parseFloat(e.usage)).map(e=>{const rate=parseFloat(e.rate)||(getEquipList(division).find(x=>!x.section&&x.name===e.description)||{}).rate||0;return `<tr><td>${e.description||'—'}</td><td>${e.unit||'—'}</td><td style="text-align:center">${e.qty||0}</td><td style="text-align:center">${e.usage||'—'}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${fmt2(equipAmt(e,division))}</td></tr>`;}).join('')}
+</tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.equip||0)}</strong></td></tr></tfoot></table></div>`:''}
 
 ${sections.rental&&(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).length>0?`<div class="section"><h2>Rental Equipment${tot.rental>0?' · '+fmt2(tot.rental):''}</h2>
 <table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:center">Days/Hrs</th><th style="text-align:right">Rate</th><th style="text-align:right">Subtotal</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
@@ -3141,17 +2824,13 @@ ${visitors.map(v=>`<div class="visitor-row"><div style="flex:1"><strong>${v.name
 ${sections.delays&&delays.length>0?`<div class="section"><h2>Delays & Issues — ${delays.length} Item${delays.length!==1?'s':''}</h2>
 ${delays.map(d=>`<div class="delay-row"><div style="display:flex;gap:10px;align-items:center;margin-bottom:3px"><strong>${d.cause||'—'}</strong>${d.hours>0?`<span style="font-size:8pt;color:#ef4444">${d.hours}h delay</span>`:''}</div><div>${d.description||''}</div>${d.impact?`<div style="font-size:8pt;color:#555">Impact: ${d.impact}</div>`:''}</div>`).join('')}</div>`:''}
 
-${sections.signature?`<div class="section" style="page-break-inside:avoid"><h2>Inspector Sign-Off</h2>
-${report.inspector_signature?`<div style="background:#fff;border:1px solid #86efac;border-radius:6px;padding:10px;display:flex;align-items:center;gap:16px">
+${sections.signature&&report.inspector_signature?`<div class="section"><h2>Inspector Sign-Off</h2>
+<div style="background:#fff;border:1px solid #86efac;border-radius:6px;padding:10px;display:flex;align-items:center;gap:16px">
 <div style="background:#ffffff;border:1px solid #ccc;border-radius:4px;padding:6px;display:inline-block;overflow:hidden;">
 <img src="${report.inspector_signature}" style="max-height:70px;max-width:240px;object-fit:contain;display:block;filter:none;"/>
 </div>
 <div><div style="font-weight:700">${report.inspector_name||'Inspector'}</div><div style="font-size:9pt;color:#555">${report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleString():''}</div></div>
-</div>`:`<div style="border:1px solid #ddd;border-radius:6px;padding:10px;color:#777;max-width:60%">
-<div style="font-size:8pt;text-transform:uppercase;letter-spacing:1px;margin-bottom:40px">Inspector</div>
-<div style="border-top:1px solid #333;padding-top:4px;font-size:8pt;display:flex;justify-content:space-between"><span>Inspector Signature</span><span>Date</span></div>
-</div>`}
-</div>`:''}
+</div></div>`:''}
 
 ${(tot.grand>0||subsTotal>0)?`<div class="section" style="page-break-inside:avoid">
 <table style="width:60%;margin-left:auto">
@@ -3189,7 +2868,7 @@ ${docHTML}
   setTimeout(()=>{win.focus();win.print();},1200);
 }
 
-function SignaturePad({onSave,onCancel,reportName,title}){
+function SignaturePad({onSave,onCancel,reportName}){
   const [name,setName]=useState("");
   const [company,setCompany]=useState("");
   const [role,setRole]=useState("");
@@ -3240,7 +2919,7 @@ function SignaturePad({onSave,onCancel,reportName,title}){
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16,fontFamily:"inherit"}}>
       <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:440,color:"#111"}}>
-        <div style={{fontSize:16,fontWeight:900,color:"#1f3864",marginBottom:4}}>✍️ {title||"Inspector Sign-Off"}</div>
+        <div style={{fontSize:16,fontWeight:900,color:"#1f3864",marginBottom:4}}>✍️ Inspector Sign-Off</div>
         <div style={{fontSize:12,color:"#666",marginBottom:20}}>{reportName||"Daily Field Report"}</div>
 
         {err&&<div style={{background:"#fee2e2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#dc2626"}}>{err}</div>}
@@ -3338,18 +3017,8 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   // Pictures saved INSIDE this daily report (receipt / item photos on
   // Materials rows). They live in report.materials[].receipts, not in the
   // project_photos table, so they're folded into the photo picker here.
-  function pdfReceiptsFromReport(){
-    return (report.materials||[]).flatMap((row,ri)=>(row.receipts||[]).filter(r=>r&&r.src&&isPdfReceipt(r)).map((r,i)=>({
-      id:`rcptdoc_${row.id||ri}_${r.id||i}`,
-      name:(r.name||"Receipt.pdf").replace(/\.pdf$/i,""),
-      file_name:r.name||"Receipt.pdf",file_type:"application/pdf",file_size:r.size||null,
-      file:r.src,uploaded_by:report.submitted_by||"",created_at:report.date,
-      doc_type:"Receipt",_onDate:true,_fromReport:true,
-      _label:row.description?`Receipt · ${row.description}`:"Receipt",
-    })));
-  }
   function receiptsFromReport(){
-    return (report.materials||[]).flatMap((row,ri)=>(row.receipts||[]).filter(r=>r&&r.src&&!isPdfReceipt(r)).map((r,i)=>({
+    return (report.materials||[]).flatMap((row,ri)=>(row.receipts||[]).filter(r=>r&&r.src).map((r,i)=>({
       id:`rcpt_${row.id||ri}_${r.id||i}`,
       src:r.src,
       category:"Receipt",
@@ -3380,19 +3049,15 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   // files uploaded on the report date float to the top and start selected.
   async function loadDocsForPrint(){
     setDocsLoading(true);
-    const pdfReceipts=pdfReceiptsFromReport();
     try{
       const d=await API.docs.forProject(project.id);
       const list=(Array.isArray(d)?d:[]).filter(x=>!x.visible_to||x.visible_to.includes(user?.role||"crew"));
       const dayOf=(s)=>{if(!s)return"";const dt=new Date(s);if(isNaN(dt))return"";const p=n=>String(n).padStart(2,"0");return `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}`;};
       const onDate=list.filter(x=>dayOf(x.created_at)===report.date);
       const others=list.filter(x=>dayOf(x.created_at)!==report.date);
-      setReportDocs([...pdfReceipts,...[...onDate,...others].map(x=>({...x,_onDate:dayOf(x.created_at)===report.date}))]);
-      setSelectedDocs([...pdfReceipts,...onDate].map(x=>x.id));
-    }catch(e){
-      setReportDocs(pdfReceipts);
-      setSelectedDocs(pdfReceipts.map(x=>x.id));
-    }
+      setReportDocs([...onDate,...others].map(x=>({...x,_onDate:dayOf(x.created_at)===report.date})));
+      setSelectedDocs(onDate.map(x=>x.id));
+    }catch(e){}
     setDocsLoading(false);
   }
 
@@ -3801,7 +3466,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
                       background:sel?T.green:"transparent",border:`2px solid ${sel?T.green:T.border}`,color:"#000",fontSize:12,fontWeight:800}}>{sel?"✓":""}</div>
                     <div style={{fontSize:20,flexShrink:0}}>{m.icon}</div>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:700,color:sel?T.text:T.sub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d._fromReport?"📎 ":""}{d.name||d.file_name}{d._label?<span style={{fontWeight:400,color:T.muted}}> · {d._label}</span>:null}</div>
+                      <div style={{fontSize:13,fontWeight:700,color:sel?T.text:T.sub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.name||d.file_name}</div>
                       <div style={{fontSize:10.5,color:m.printable?T.muted:T.yellow}}>
                         {m.label}{m.size?` · ${m.size}`:""}{d.uploaded_by?` · ${d.uploaded_by}`:""}{d._onDate?" · Today":""}
                       </div>
@@ -3899,9 +3564,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       </div>}
 
       {(report.rental_equipment||[]).length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`}}><div style={{fontSize:12,color:T.purple,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🔑 Rented Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt((report.rental_equipment||[]).reduce((s,r)=>s+(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1),0))}</span>}</div>{(report.rental_equipment||[]).map((r,i)=>{const amt=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);return(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.rental_equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty||0} × {r.usage||0} days/hrs @ ${r.rate||0}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(amt)}</div>}</div>);})}</div>}
-      {(report.materials||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Materials{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.mats)}</span>}</div>{report.materials.map((r,i)=>(<div key={i} style={{padding:"8px 0",borderBottom:i<report.materials.length-1?`1px solid ${T.border}`:"none"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:r.receipts?.length>0?8:0}}><span style={{fontSize:13}}>{r.qty?`${r.qty}x `:""}{r.description}</span>{can(user,"view_dashboard")&&<span style={{fontSize:13,fontWeight:700,color:T.green}}>${fmt(parseFloat(r.amount)||0)}</span>}</div>{r.receipts?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{r.receipts.map(rc=>isPdfReceipt(rc)
-  ?<a key={rc.id} href={rc.src} download={rc.name||"receipt.pdf"} title={rc.name||"PDF"} style={{width:56,height:56,borderRadius:8,background:T.redLow,border:`1px solid ${T.red}40`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textDecoration:"none",gap:1,padding:2}}><span style={{fontSize:18}}>📄</span><span style={{fontSize:7.5,color:T.text,maxWidth:50,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{rc.name||"PDF"}</span></a>
-  :<img key={rc.id} src={rc.src} alt="" onClick={()=>setLb(rc.src)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer"}}/>)}</div>}</div>))}</div>}
+      {(report.materials||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Materials{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.mats)}</span>}</div>{report.materials.map((r,i)=>(<div key={i} style={{padding:"8px 0",borderBottom:i<report.materials.length-1?`1px solid ${T.border}`:"none"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:r.receipts?.length>0?8:0}}><span style={{fontSize:13}}>{r.qty?`${r.qty}x `:""}{r.description}</span>{can(user,"view_dashboard")&&<span style={{fontSize:13,fontWeight:700,color:T.green}}>${fmt(parseFloat(r.amount)||0)}</span>}</div>{r.receipts?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{r.receipts.map(rc=><img key={rc.id} src={rc.src} alt="" onClick={()=>setLb(rc.src)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer"}}/>)}</div>}</div>))}</div>}
       {can(user,"view_dashboard")&&<div style={{...cardS,background:divColor+"12",border:`1px solid ${divColor}40`,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:15,fontWeight:800}}>Grand Total</span><span style={{fontSize:26,fontWeight:900,color:divColor,letterSpacing:"-1px"}}>${fmt(tot.grand)}</span></div>}
       {can(user,"approve_report")&&report.status==="submitted"&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><button onClick={()=>onApprove&&onApprove(report.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>✓ Approve</button><button onClick={()=>setFlagging(!flagging)} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:12}}>🚩 Flag</button></div>)}
 
@@ -4489,13 +4152,8 @@ function SafetyTab({projectId,safety,user,onRefresh,onErr}){
   </div>);
 }
 
-function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
+function DocsTab({projectId,user,onErr}){
   const canAdmin=user.role==="admin"||user.role==="pm";
-  // Same tab serves field projects and manufacturing jobs; only the owner column differs.
-  const ownerKey=mfgJobId?"mfg_job_id":"project_id";
-  const ownerId=mfgJobId||projectId;
-  const loadFolders=()=>mfgJobId?API.docFolders.forMfgJob(mfgJobId):API.docFolders.forProject(projectId);
-  const loadDocs=()=>mfgJobId?API.docs.forMfgJob(mfgJobId):API.docs.forProject(projectId);
 
   const [folders,setFolders]=useState([]);
   const [currentFolder,setCurrentFolder]=useState(null); // null = root view
@@ -4515,7 +4173,7 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
   const fileRef=useRef(null);
 
   const FOLDER_COLORS=["#60A5FA","#34D399","#F97316","#FC8181","#FBBF24","#A78BFA","#2DD4BF","#F472B6"];
-  const docIcons={Drawing:"📐",Specification:"📄",Manual:"📗",Permit:"🗂️",Contract:"📝","As-Built":"🗺️",ITP:"✅",Procedure:"📋","Safety Plan":"⛑️",Other:"📁","Fillable Form":"📝","Shipping Ticket":"🚚","Packing Slip":"📦","Receipt":"🧾","Mill Cert":"🏷️"};
+  const docIcons={Drawing:"📐",Specification:"📄",Manual:"📗",Permit:"🗂️",Contract:"📝","As-Built":"🗺️",ITP:"✅",Procedure:"📋","Safety Plan":"⛑️",Other:"📁","Fillable Form":"📝"};
   const mimeIcons={"application/pdf":"📄","image/":"🖼️","application/vnd.openxmlformats-officedocument.spreadsheetml":"📊","application/vnd.openxmlformats-officedocument.wordprocessingml":"📝","application/vnd.openxmlformats-officedocument.presentationml":"📊","video/":"🎬","text/":"📝"};
   function getMimeIcon(mime=""){for(const[k,v] of Object.entries(mimeIcons)){if(mime.startsWith(k))return v;}return"📁";}
   function fmtSize(bytes){if(!bytes)return"";if(bytes<1024)return bytes+"B";if(bytes<1048576)return(bytes/1024).toFixed(1)+"KB";return(bytes/1048576).toFixed(1)+"MB";}
@@ -4523,7 +4181,7 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
   async function load(){
     setLoading(true);
     try{
-      const [f,d]=await Promise.all([loadFolders(),loadDocs()]);
+      const [f,d]=await Promise.all([API.docFolders.forProject(projectId),API.docs.forProject(projectId)]);
       setFolders(Array.isArray(f)?f:[]);
       setDocs(Array.isArray(d)?d:[]);
     }catch(e){onErr(e.message);}
@@ -4534,7 +4192,7 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
   async function createFolder(){
     if(!folderName.trim())return;
     try{
-      await API.docFolders.create({[ownerKey]:ownerId,name:folderName.trim(),description:folderDesc.trim(),color:folderColor,created_by:user.name});
+      await API.docFolders.create({project_id:projectId,name:folderName.trim(),description:folderDesc.trim(),color:folderColor,created_by:user.name});
       setFolderName("");setFolderDesc("");setFolderColor("#60A5FA");
       setShowNewFolder(false);await load();
     }catch(e){onErr(e.message);}
@@ -4570,18 +4228,33 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
   }
 
   function toB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});}
+  // Files go to Supabase Storage (bucket "documents"); the row only keeps the
+  // public URL. Stuffing base64 into the row made large uploads time out.
+  const INLINE_MAX=1.5*1024*1024;
   async function uploadFiles(files){
     setUploading(true);
     let uploaded=0;
     for(const file of files){
       try{
-        const data=await toB64(file);
         const isFillable=file.name.toLowerCase().endsWith('.pdf');
+        let data,storagePath=null;
+        try{
+          const safeName=file.name.replace(/[^A-Za-z0-9._-]+/g,"_");
+          storagePath=`project-docs/${projectId}/${Date.now()}-${Math.random().toString(36).slice(2,8)}-${safeName}`;
+          await storageUpload("documents",storagePath,file,file.type||undefined);
+          data=storagePublicUrl("documents",storagePath);
+        }catch(stErr){
+          // Storage unavailable — fall back to inline only for small files.
+          storagePath=null;
+          if(file.size>INLINE_MAX)throw new Error(`Storage upload failed (${stErr.message}). File is ${fmtSize(file.size)} — too large to store inline.`);
+          data=await toB64(file);
+        }
         const payload={
-          [ownerKey]:ownerId,
+          project_id:projectId,
           name:file.name.replace(/\.[^.]+$/,""),
-          doc_type:defaultType||(isFillable?"Fillable Form":"Other"),
+          doc_type:isFillable?"Fillable Form":"Other",
           file:data,
+          storage_path:storagePath,
           file_name:file.name,
           file_size:file.size,
           file_type:file.type,
@@ -4595,7 +4268,7 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
           await API.docs.create(payload);
         }catch(colErr){
           if(colErr.message?.includes("PGRST204")||colErr.message?.includes("schema cache")){
-            const{file_type,file_size,is_fillable,uploaded_by,folder_id,...safe}=payload;
+            const{file_type,file_size,is_fillable,uploaded_by,folder_id,storage_path,...safe}=payload;
             await API.docs.create(safe);
           }else{throw colErr;}
         }
@@ -4607,13 +4280,19 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
   }
   async function removeDoc(id){
     if(!window.confirm("Delete this document?"))return;
-    try{await API.docs.remove(id);await load();}catch(e){onErr(e.message);}
+    try{
+      const doc=docs.find(d=>d.id===id);
+      await API.docs.remove(id);
+      if(doc?.storage_path)await storageRemove("documents",doc.storage_path).catch(()=>{});
+      await load();
+    }catch(e){onErr(e.message);}
   }
   function downloadDoc(doc){
-    if(!doc.file)return; // DocRow passes the fetched body in
+    if(!doc.file)return;
     const a=document.createElement("a");
     a.href=doc.file;
     a.download=doc.file_name||doc.name||"document";
+    if(/^https?:/.test(doc.file))a.target="_blank";   // cross-origin: opens in new tab
     document.body.appendChild(a);a.click();document.body.removeChild(a);
   }
   function canDownload(doc){
@@ -4734,7 +4413,7 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
           Root Files ({rootDocCount})
         </div>}
         {currentDocs.map(doc=>(<DocRow key={doc.id} doc={doc} folders={folders} user={user} canAdmin={canAdmin}
-          onDownload={(withFile)=>downloadDoc(withFile||doc)} canDownload={canDownload(doc)}
+          onDownload={()=>downloadDoc(doc)} canDownload={canDownload(doc)}
           onMove={fid=>moveDocToFolder(doc,fid)} onDelete={()=>removeDoc(doc.id)}
           getMimeIcon={getMimeIcon} fmtSize={fmtSize} docIcons={docIcons}
           onDragStart={()=>setDragDoc(doc.id)} onDragEnd={()=>{setDragDoc(null);setDragOverFolder(null);}}
@@ -4758,7 +4437,7 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
           </div>
         </div>
         {currentDocs.map(doc=>(<DocRow key={doc.id} doc={doc} folders={folders} user={user} canAdmin={canAdmin}
-          onDownload={(withFile)=>downloadDoc(withFile||doc)} canDownload={canDownload(doc)}
+          onDownload={()=>downloadDoc(doc)} canDownload={canDownload(doc)}
           onMove={fid=>moveDocToFolder(doc,fid)} onDelete={()=>removeDoc(doc.id)}
           getMimeIcon={getMimeIcon} fmtSize={fmtSize} docIcons={docIcons}
           onDragStart={()=>setDragDoc(doc.id)} onDragEnd={()=>{setDragDoc(null);setDragOverFolder(null);}}
@@ -4773,18 +4452,7 @@ function DocsTab({projectId,mfgJobId,user,onErr,defaultType}){
   );
 }
 
-function DocRow({doc:docIn,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons,onDragStart,onDragEnd,isDragging}){
-  // The list row arrives without the file body; pull it the first time it's needed.
-  const [fileData,setFileData]=useState(docIn.file||"");
-  const [fileBusy,setFileBusy]=useState(false);
-  const doc={...docIn,file:fileData};
-  async function ensureFile(){
-    if(fileData)return fileData;
-    setFileBusy(true);
-    try{const f=await API.docs.fileOf(docIn.id);setFileData(f||"");return f||"";}
-    catch(e){alert("Couldn't load the file: "+e.message);return "";}
-    finally{setFileBusy(false);}
-  }
+function DocRow({doc,folders,user,canAdmin,onDownload,canDownload,onMove,onDelete,getMimeIcon,fmtSize,docIcons,onDragStart,onDragEnd,isDragging}){
   const [showPreview,setShowPreview]=useState(false);
   const [showMove,setShowMove]=useState(false);   // must be before any conditional return
 
@@ -4792,8 +4460,7 @@ function DocRow({doc:docIn,folders,user,canAdmin,onDownload,canDownload,onMove,o
   const isImage=doc.file_type?.startsWith("image/")||(doc.file||"").startsWith("data:image")||[".jpg",".jpeg",".png",".gif",".webp",".bmp"].some(e=>fname.endsWith(e));
   const isPdf=doc.file_type==="application/pdf"||(doc.file||"").startsWith("data:application/pdf")||fname.endsWith(".pdf");
   const canPreview=isImage||isPdf;
-  // Unknown until fetched; a document with a recorded size is assumed to have data.
-  const hasFileData=!!(doc.file&&doc.file.length>100)||(!doc.file&&(parseFloat(doc.file_size)>0||doc.file_size==null));
+  const hasFileData=!!(doc.file&&doc.file.length>100);
 
   if(showPreview){
     return(
@@ -4853,15 +4520,14 @@ function DocRow({doc:docIn,folders,user,canAdmin,onDownload,canDownload,onMove,o
         </div>
       </div>
       <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
-        {canPreview&&<button disabled={fileBusy} onClick={async()=>{
-            const f=await ensureFile();
-            if(!f||f.length<100){alert("File data not found — please delete and re-upload this document. (It was likely uploaded before the database was updated.)");return;}
+        {canPreview&&<button onClick={()=>{
+            if(!hasFileData){alert("File data not found — please delete and re-upload this document. (It was likely uploaded before the database was updated.)");return;}
             setShowPreview(true);
           }}
-          style={{...primBtn,flex:2,borderRadius:10,fontSize:12,background:hasFileData?T.blue:"#26262E",color:hasFileData?"#fff":T.muted,padding:"8px",opacity:fileBusy?0.6:1}}>
-          {fileBusy?"⏳ Loading…":`👁 ${hasFileData?"Preview":"Preview (re-upload)"}`}
+          style={{...primBtn,flex:2,borderRadius:10,fontSize:12,background:hasFileData?T.blue:"#26262E",color:hasFileData?"#fff":T.muted,padding:"8px"}}>
+          👁 {hasFileData?"Preview":"Preview (re-upload)"}
         </button>}
-        {canDownload&&hasFileData&&<button disabled={fileBusy} onClick={async()=>{const f=await ensureFile();if(f)onDownload({...docIn,file:f});}}
+        {canDownload&&doc.file&&<button onClick={onDownload}
           style={{...primBtn,flex:canPreview?1:2,borderRadius:10,fontSize:12,background:T.green,color:"#000",padding:"8px"}}>
           ⬇️
         </button>}
@@ -5188,8 +4854,7 @@ function SignaturePackageScreen({project,user,onBack,onErr}){
             ?{name:`Per Diem (${perDiemCount(r)} employee${perDiemCount(r)!==1?"s":""})`,classification:r.classification,
               hours:perDiemCount(r),rate:m(r.rate),amount:m(perDiemCount(r)*(parseFloat(r.rate)||0))}
             :{name:r.name||"",classification:r.classification||"",
-            hours:r.hours||0,rate:m(r.rate),ot_hours:r.ot_hours||0,travel_hours:r.travel_hours||0,
-            amount:m((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)+(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0)+(parseFloat(r.travel_hours)||0)*(parseFloat(r.rate)||0))}),
+            hours:r.hours||0,rate:m(r.rate),amount:m((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))}),
           equipment:(row.equipment||[]).map(r=>({description:r.description||"",unit:r.unit||"",
             qty:r.qty||0,rate:m(r.rate),amount:m((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0))})),
           rental:[],
@@ -5862,264 +5527,6 @@ const PTABS=[
   {id:"info",icon:"ℹ️",label:"Info",perm:null},
 ];
 
-/* ── Crew Schedule ──────────────────────────────────────────────────────
-   Week grid: rows = employees, columns = Mon–Sun. A cell holds one or more
-   assignments (field job, shop job, PTO, training, off). Copy last week,
-   filter by division, job view, and an "unassigned" summary. Stored in the
-   `schedule` table; nothing else in the app reads it yet.                 */
-const SCHED_TYPES={
-  job:     {l:"Job",       c:"#60A5FA"},
-  shop:    {l:"Shop",      c:"#A78BFA"},
-  pto:     {l:"PTO",       c:"#F59E0B"},
-  training:{l:"Training",  c:"#22C55E"},
-  off:     {l:"Off",       c:"#6B7280"},
-};
-function CrewScheduleTab({user,projects,onErr}){
-  const [weekStart,setWeekStart]=useState(()=>mondayOf(new Date()));
-  const from=isoOf(weekStart),to=isoOf(addDays(weekStart,6));
-  const days=[0,1,2,3,4,5,6].map(i=>addDays(weekStart,i));
-  const [rows,setRows]=useState([]);
-  const [mfgJobs,setMfgJobs]=useState([]);
-  const [loading,setLoading]=useState(true);
-  const [busy,setBusy]=useState(false);
-  const [view,setView]=useState("crew"); // crew | job
-  const [divFilter,setDivFilter]=useState("All");
-  const [search,setSearch]=useState("");
-  const [cell,setCell]=useState(null); // {worker,date}
-  const [draft,setDraft]=useState(null); // {type,project_id,mfg_job_id,start_time,note}
-  const roster=ROSTER();
-  const activeProjects=projects.filter(p=>!p.archived&&p.status!=="archived"&&p.status!=="closed");
-  const divisions=["All",...new Set(activeProjects.map(p=>p.division).filter(Boolean))];
-  const todayIso=isoOf(new Date());
-
-  async function load(){
-    setLoading(true);
-    try{
-      const [s,m]=await Promise.all([API.schedule.byRange(from,to),API.mfg.jobs.list().catch(()=>[])]);
-      setRows(Array.isArray(s)?s:[]);setMfgJobs(Array.isArray(m)?m:[]);
-    }catch(e){
-      if(String(e.message||"").includes("schedule")||String(e.message||"").includes("42P01"))onErr&&onErr("Run AIME_v3.1_crew_schedule.sql in Supabase to create the schedule table.");
-      else onErr&&onErr(e.message);
-    }
-    setLoading(false);
-  }
-  useEffect(()=>{load();},[from]);
-
-  const projName=(id)=>(projects.find(p=>p.id===id)||{}).name||"Job";
-  const mfgName=(id)=>(mfgJobs.find(j=>j.id===id)||{}).job_number||"Shop";
-  const label=(a)=>a.type==="job"?projName(a.project_id):a.type==="shop"?mfgName(a.mfg_job_id):SCHED_TYPES[a.type]?.l||a.type;
-  const color=(a)=>SCHED_TYPES[a.type]?.c||T.muted;
-  const at=(worker,date)=>rows.filter(r=>r.worker_name===worker&&r.date===date);
-
-  // Crew view rows: roster filtered by search; division filter applies to jobs offered + who shows (anyone scheduled in that division, or unassigned)
-  const visibleWorkers=roster.filter(w=>!search||w.toLowerCase().includes(search.toLowerCase()));
-  const weekAssign=(w)=>rows.filter(r=>r.worker_name===w);
-  const unassigned=visibleWorkers.filter(w=>days.slice(0,5).some(d=>at(w,isoOf(d)).length===0));
-
-  function openCell(worker,date,existing){
-    setCell({worker,date,id:existing?.id||null});
-    setDraft(existing?{type:existing.type,project_id:existing.project_id||"",mfg_job_id:existing.mfg_job_id||"",start_time:existing.start_time||"",note:existing.note||""}
-                     :{type:"job",project_id:"",mfg_job_id:"",start_time:"",note:""});
-  }
-  async function saveCell(){
-    if(!cell||!draft)return;
-    if(draft.type==="job"&&!draft.project_id){alert("Pick a job.");return;}
-    if(draft.type==="shop"&&!draft.mfg_job_id){alert("Pick a shop job.");return;}
-    const proj=activeProjects.find(p=>p.id===draft.project_id);
-    const body={worker_name:cell.worker,date:cell.date,type:draft.type,
-      project_id:draft.type==="job"?draft.project_id:null,
-      mfg_job_id:draft.type==="shop"?draft.mfg_job_id:null,
-      division:draft.type==="job"?(proj?.division||null):draft.type==="shop"?"Manufacturing":null,
-      start_time:draft.start_time||null,note:draft.note||null,created_by:user.name};
-    setBusy(true);
-    try{
-      if(cell.id)await API.schedule.update(cell.id,body);else await API.schedule.create(body);
-      setCell(null);setDraft(null);await load();
-    }catch(e){onErr&&onErr(e.message);}
-    setBusy(false);
-  }
-  async function removeCell(){
-    if(!cell?.id)return;
-    setBusy(true);
-    try{await API.schedule.remove(cell.id);setCell(null);setDraft(null);await load();}catch(e){onErr&&onErr(e.message);}
-    setBusy(false);
-  }
-  async function copyLastWeek(){
-    setBusy(true);
-    try{
-      const prev=await API.schedule.byRange(isoOf(addDays(weekStart,-7)),isoOf(addDays(weekStart,-1)));
-      const src=(Array.isArray(prev)?prev:[]).filter(r=>r.type==="job"||r.type==="shop");
-      if(!src.length){alert("Nothing scheduled last week to copy.");setBusy(false);return;}
-      const have=new Set(rows.map(r=>`${r.worker_name}|${r.date}|${r.project_id||r.mfg_job_id||r.type}`));
-      const add=src.map(r=>({worker_name:r.worker_name,date:isoOf(addDays(r.date,7)),type:r.type,project_id:r.project_id,mfg_job_id:r.mfg_job_id,division:r.division,start_time:r.start_time,note:r.note,created_by:user.name}))
-        .filter(r=>!have.has(`${r.worker_name}|${r.date}|${r.project_id||r.mfg_job_id||r.type}`));
-      if(!add.length){alert("Last week's assignments are already on this week.");setBusy(false);return;}
-      if(!window.confirm(`Copy ${add.length} assignment${add.length!==1?"s":""} from last week onto this week?`)){setBusy(false);return;}
-      await API.schedule.createMany(add);await load();
-    }catch(e){onErr&&onErr(e.message);}
-    setBusy(false);
-  }
-  async function fillWeek(worker,template){
-    // Apply one assignment Mon–Fri for a worker (skips days that already have it)
-    const add=days.slice(0,5).map(d=>isoOf(d)).filter(date=>!at(worker,date).some(a=>(a.project_id||a.mfg_job_id||a.type)===(template.project_id||template.mfg_job_id||template.type)))
-      .map(date=>({worker_name:worker,date,type:template.type,project_id:template.project_id||null,mfg_job_id:template.mfg_job_id||null,division:template.division||null,start_time:template.start_time||null,note:template.note||null,created_by:user.name}));
-    if(!add.length)return;
-    setBusy(true);
-    try{await API.schedule.createMany(add);setCell(null);setDraft(null);await load();}catch(e){onErr&&onErr(e.message);}
-    setBusy(false);
-  }
-  async function clearWeek(){
-    if(!rows.length)return;
-    if(!window.confirm(`Clear all ${rows.length} assignments for this week?`))return;
-    setBusy(true);
-    try{await API.schedule.removeMany(rows.map(r=>r.id));await load();}catch(e){onErr&&onErr(e.message);}
-    setBusy(false);
-  }
-
-  const chip=(a,onClick)=>(
-    <div key={a.id} onClick={onClick} title={[label(a),a.start_time,a.note].filter(Boolean).join(" · ")}
-      style={{fontSize:10,fontWeight:700,color:"#fff",background:color(a),borderRadius:5,padding:"2px 5px",marginBottom:2,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",opacity:a.type==="off"?0.6:1}}>
-      {label(a)}{a.start_time?` ${a.start_time}`:""}
-    </div>
-  );
-
-  const jobsInView=activeProjects.filter(p=>divFilter==="All"||p.division===divFilter);
-  const shopInView=mfgJobs.filter(j=>!j.archived&&j.status!=="shipped"&&j.status!=="closed");
-
-  return(
-    <div>
-      <div style={{fontSize:10,color:T.purple,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>🔒 Preview — visible only to you while we build it</div>
-
-      {/* Week nav + actions */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:10}}>
-        <button onClick={()=>setWeekStart(addDays(weekStart,-7))} style={{...ghostBtn,padding:"6px 12px"}}>‹</button>
-        <div style={{textAlign:"center"}}>
-          <div style={{fontSize:14,fontWeight:800,color:T.text}}>Week of {weekStart.toLocaleDateString(undefined,{month:"short",day:"numeric"})} – {addDays(weekStart,6).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</div>
-          <div style={{fontSize:10.5,color:T.muted}}>{rows.length} assignment{rows.length!==1?"s":""} · {unassigned.length} with open weekdays</div>
-        </div>
-        <button onClick={()=>setWeekStart(addDays(weekStart,7))} style={{...ghostBtn,padding:"6px 12px"}}>›</button>
-      </div>
-      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-        <button onClick={()=>setWeekStart(mondayOf(new Date()))} style={{...ghostBtn,fontSize:11,padding:"5px 10px"}}>Today</button>
-        <button onClick={copyLastWeek} disabled={busy} style={{...ghostBtn,fontSize:11,padding:"5px 10px",color:T.blue,border:`1px solid ${T.blue}40`}}>⎘ Copy last week</button>
-        <button onClick={clearWeek} disabled={busy||!rows.length} style={{...ghostBtn,fontSize:11,padding:"5px 10px",color:T.red,border:`1px solid ${T.red}40`}}>Clear week</button>
-        <div style={{marginLeft:"auto",display:"flex",gap:6}}>
-          {[["crew","👷 Crew"],["job","🏗️ Jobs"]].map(([v,l])=>(
-            <button key={v} onClick={()=>setView(v)} style={{...ghostBtn,fontSize:11,padding:"5px 10px",background:view===v?T.blueLow:T.surface,color:view===v?T.blue:T.muted,border:`1px solid ${view===v?T.blue:T.border}`}}>{l}</button>
-          ))}
-        </div>
-      </div>
-      <div style={{display:"flex",gap:6,marginBottom:12}}>
-        <select value={divFilter} onChange={e=>setDivFilter(e.target.value)} style={{...inp,width:"auto",fontSize:12,padding:"6px 8px"}}>{divisions.map(d=><option key={d}>{d}</option>)}</select>
-        {view==="crew"&&<input placeholder="Find employee…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,flex:1,fontSize:12,padding:"6px 8px"}}/>}
-      </div>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
-        {Object.entries(SCHED_TYPES).map(([k,v])=><span key={k} style={{fontSize:10,color:T.muted}}><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:v.c,marginRight:4,verticalAlign:"middle"}}/>{v.l}</span>)}
-      </div>
-
-      {loading&&<Spinner/>}
-
-      {/* CREW GRID */}
-      {!loading&&view==="crew"&&<div style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:12}}>
-        <table style={{borderCollapse:"collapse",minWidth:820,width:"100%",fontSize:11}}>
-          <thead><tr>
-            <th style={{position:"sticky",left:0,background:T.surface,textAlign:"left",padding:"8px 10px",borderBottom:`1px solid ${T.border}`,color:T.muted,fontSize:10,textTransform:"uppercase",letterSpacing:"0.5px",minWidth:150,zIndex:1}}>Employee</th>
-            {days.map(d=>{const iso=isoOf(d);const isToday=iso===todayIso;const wk=d.getDay()===0||d.getDay()===6;return(
-              <th key={iso} style={{padding:"8px 6px",borderBottom:`1px solid ${T.border}`,borderLeft:`1px solid ${T.border}`,color:isToday?T.orange:wk?T.muted:T.text,fontSize:10,textTransform:"uppercase",letterSpacing:"0.5px",minWidth:92,background:isToday?`${T.orange}12`:T.surface}}>
-                {d.toLocaleDateString(undefined,{weekday:"short"})}<div style={{fontSize:11,fontWeight:800}}>{d.getDate()}</div>
-              </th>);})}
-          </tr></thead>
-          <tbody>
-            {visibleWorkers.map(w=>{
-              const wa=weekAssign(w);
-              const jobsDays=wa.filter(a=>a.type==="job"||a.type==="shop").length;
-              return(
-                <tr key={w}>
-                  <td style={{position:"sticky",left:0,background:T.bg,padding:"6px 10px",borderBottom:`1px solid ${T.border}`,zIndex:1}}>
-                    <div style={{fontWeight:700,color:T.text,whiteSpace:"nowrap"}}>{w}</div>
-                    <div style={{fontSize:9.5,color:jobsDays===0?T.yellow:T.muted}}>{jobsDays===0?"unassigned":`${jobsDays} day${jobsDays!==1?"s":""}`}</div>
-                  </td>
-                  {days.map(d=>{const iso=isoOf(d);const list=at(w,iso);const wk=d.getDay()===0||d.getDay()===6;return(
-                    <td key={iso} onClick={()=>openCell(w,iso,null)}
-                      style={{verticalAlign:"top",padding:4,borderBottom:`1px solid ${T.border}`,borderLeft:`1px solid ${T.border}`,cursor:"pointer",background:iso===todayIso?`${T.orange}08`:wk?`${T.border}30`:"transparent",minHeight:36}}>
-                      {list.map(a=>chip(a,(e)=>{e.stopPropagation();openCell(w,iso,a);}))}
-                      {list.length===0&&<div style={{height:22,borderRadius:5,border:`1px dashed ${T.border}`,opacity:0.5}}/>}
-                    </td>);})}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>}
-
-      {/* JOB VIEW */}
-      {!loading&&view==="job"&&<div>
-        {[...jobsInView.map(p=>({id:p.id,name:p.name,sub:`${p.division||""}${p.client?" · "+p.client:""}`,key:"project_id",c:SCHED_TYPES.job.c})),
-          ...((divFilter==="All"||divFilter==="Manufacturing")?shopInView.map(j=>({id:j.id,name:j.job_number||"Shop job",sub:`${j.customer||""}${j.due_date?" · due "+fmtDate(j.due_date):""}${j.ship_date?" · ship "+fmtDate(j.ship_date):""}`,key:"mfg_job_id",c:SCHED_TYPES.shop.c})):[])]
-          .map(j=>{
-            const jr=rows.filter(r=>r[j.key]===j.id);
-            if(!jr.length&&search)return null;
-            return(
-              <div key={j.key+j.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${j.c}`,opacity:jr.length?1:0.55}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:jr.length?6:0}}>
-                  <div><div style={{fontSize:13,fontWeight:800,color:T.text}}>{j.name}</div><div style={{fontSize:10.5,color:T.muted}}>{j.sub}</div></div>
-                  <div style={{fontSize:11,color:T.muted}}>{new Set(jr.map(r=>r.worker_name)).size} people · {jr.length} man-days</div>
-                </div>
-                {jr.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
-                  {days.map(d=>{const iso=isoOf(d);const who=jr.filter(r=>r.date===iso);return(
-                    <div key={iso} style={{background:T.surface,borderRadius:6,padding:"4px 5px",minHeight:34}}>
-                      <div style={{fontSize:9,color:iso===todayIso?T.orange:T.muted,textTransform:"uppercase"}}>{d.toLocaleDateString(undefined,{weekday:"short"})} {d.getDate()}</div>
-                      {who.map(r=><div key={r.id} onClick={()=>{setView("crew");openCell(r.worker_name,iso,r);}} style={{fontSize:10,color:T.text,cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.worker_name.split(" ")[0]} {r.worker_name.split(" ").slice(1).map(s=>s[0]).join("")}</div>)}
-                    </div>);})}
-                </div>}
-              </div>
-            );
-          })}
-      </div>}
-
-      {/* CELL EDITOR */}
-      {cell&&draft&&<div onClick={()=>{setCell(null);setDraft(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:"16px 16px 0 0",padding:16,width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",border:`1px solid ${T.border}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div><div style={{fontSize:14,fontWeight:800,color:T.text}}>{cell.worker}</div><div style={{fontSize:11,color:T.muted}}>{new Date(cell.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"})}</div></div>
-            <button onClick={()=>{setCell(null);setDraft(null);}} style={{...ghostBtn,padding:"4px 10px"}}>✕</button>
-          </div>
-          {at(cell.worker,cell.date).filter(a=>a.id!==cell.id).length>0&&<div style={{fontSize:10.5,color:T.muted,marginBottom:8}}>Also that day: {at(cell.worker,cell.date).filter(a=>a.id!==cell.id).map(a=>label(a)).join(", ")}</div>}
-          <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-            {Object.entries(SCHED_TYPES).map(([k,v])=>(
-              <button key={k} onClick={()=>setDraft({...draft,type:k})} style={{...ghostBtn,fontSize:11,padding:"6px 10px",background:draft.type===k?v.c:T.surface,color:draft.type===k?"#fff":T.muted,border:`1px solid ${draft.type===k?v.c:T.border}`}}>{v.l}</button>
-            ))}
-          </div>
-          {draft.type==="job"&&<div style={{marginBottom:8}}><label style={lbl}>Job</label>
-            <select value={draft.project_id} onChange={e=>setDraft({...draft,project_id:e.target.value})} style={inp}>
-              <option value="">— Select job —</option>
-              {jobsInView.map(p=><option key={p.id} value={p.id}>{p.name}{p.division?` (${p.division})`:""}</option>)}
-            </select></div>}
-          {draft.type==="shop"&&<div style={{marginBottom:8}}><label style={lbl}>Shop job</label>
-            <select value={draft.mfg_job_id} onChange={e=>setDraft({...draft,mfg_job_id:e.target.value})} style={inp}>
-              <option value="">— Select shop job —</option>
-              {shopInView.map(j=><option key={j.id} value={j.id}>{j.job_number}{j.customer?` · ${j.customer}`:""}{j.due_date?` · due ${fmtDate(j.due_date)}`:""}</option>)}
-            </select></div>}
-          <div style={{display:"grid",gridTemplateColumns:"110px 1fr",gap:8,marginBottom:10}}>
-            <div><label style={lbl}>Start</label><input type="time" value={draft.start_time} onChange={e=>setDraft({...draft,start_time:e.target.value})} style={inp}/></div>
-            <div><label style={lbl}>Note</label><input value={draft.note} onChange={e=>setDraft({...draft,note:e.target.value})} placeholder="Bring welding rig, meet at shop…" style={inp}/></div>
-          </div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            <button onClick={saveCell} disabled={busy} style={{...primBtn,flex:1,borderRadius:10,background:T.green,color:"#000",opacity:busy?0.6:1}}>{cell.id?"Save":"Add"}</button>
-            {!cell.id&&(draft.type==="job"||draft.type==="shop")&&<button onClick={()=>{
-                if(draft.type==="job"&&!draft.project_id){alert("Pick a job.");return;}
-                if(draft.type==="shop"&&!draft.mfg_job_id){alert("Pick a shop job.");return;}
-                const proj=activeProjects.find(p=>p.id===draft.project_id);
-                fillWeek(cell.worker,{type:draft.type,project_id:draft.type==="job"?draft.project_id:null,mfg_job_id:draft.type==="shop"?draft.mfg_job_id:null,division:draft.type==="job"?proj?.division:"Manufacturing",start_time:draft.start_time,note:draft.note});
-              }} disabled={busy} style={{...ghostBtn,flex:1,textAlign:"center",color:T.blue,border:`1px solid ${T.blue}40`,fontWeight:700}}>Mon–Fri</button>}
-            {cell.id&&<button onClick={removeCell} disabled={busy} style={{...ghostBtn,color:T.red,border:`1px solid ${T.red}40`,padding:"8px 12px"}}>🗑</button>}
-          </div>
-        </div>
-      </div>}
-    </div>
-  );
-}
-
 function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const [projects,setProjects]=useState(initProjects||[]);
   const [reports,setReports]=useState([]);
@@ -6263,11 +5670,6 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   }
   useEffect(()=>{load();},[]);
 
-  // Rows in the dashboard come from the lite view; fetch the full record before showing it.
-  async function openReport(r,p){
-    setActiveProject(p);setActiveReport(r);
-    try{const full=await API.reports.byId(r.id);if(Array.isArray(full)&&full[0])setActiveReport(full[0]);}catch(e){}
-  }
   async function approve(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});await load();}catch(e){setErr(e.message);}}
   async function flag(id,notes){try{await API.reports.update(id,{status:"flagged",pm_notes:notes});await load();}catch(e){setErr(e.message);}}
 
@@ -6287,7 +5689,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   if(building)return(
     <ReportBuilder projects={pmDiv?projects.filter(p=>p.division===pmDiv):projects} user={user}
       onBack={()=>setBuilding(false)}
-      onOpenReport={(r,p)=>openReport(r,p)}/>
+      onOpenReport={(r,p)=>{setActiveReport(r);setActiveProject(p);}}/>
   );
 
   if(showNotifs)return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}><TopBar title="🔔 Notifications" onBack={()=>{setShowNotifs(false);load();}}/><NotificationsPanel user={user} onCountChange={setUnread} onClose={()=>{setShowNotifs(false);load();}}/></div>);
@@ -6380,10 +5782,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const scopedTmPending=tmPending.filter(t=>divIds.has(t.project_id));
   const tmPendingValue=scopedTmPending.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
 
-  // Crew schedule is in preview — only visible to the people listed here while it's being built.
-  const SCHEDULE_PREVIEW_USERS=["Doug Friedel"];
-  const canSeeSchedule=SCHEDULE_PREVIEW_USERS.includes(user?.name);
-  const DMTABS=[{id:"overview",l:"📊 Overview"},...(canSeeSchedule?[{id:"schedule",l:"📅 Schedule"}]:[]),{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"contracts",l:`📐 Contracts${overBudgetCount>0?" ("+overBudgetCount+")":""}`},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
+  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"contracts",l:`📐 Contracts${overBudgetCount>0?" ("+overBudgetCount+")":""}`},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
   const divOf=(r)=>(projects.find(p=>p.id===r.project_id)||r.projects||{}).division;
   const allTot=scopedReports.reduce((s,r)=>{const t=reportTotals(r,divOf(r));return{l:s.l+t.labor,e:s.e+t.equip,g:s.g+t.grand};},{l:0,e:0,g:0});
@@ -6697,7 +6096,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
             {flagged.slice(0,6).map(r=>{
               const proj=projects.find(p=>p.id===r.project_id)||r.projects||{name:"Unknown"};
               return(
-                <div key={r.id} onClick={()=>openReport(r,proj)}
+                <div key={r.id} onClick={()=>{setActiveReport(r);setActiveProject(proj);}}
                   style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.red}`,cursor:"pointer"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                     <div style={{minWidth:0,paddingRight:10}}>
@@ -6733,7 +6132,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
               <div style={{fontSize:14,fontWeight:700,color:T.orange}}>{proj.name}</div>
               <div style={{fontSize:12,color:T.muted,marginBottom:8}}>{r.date} · {r.submitted_by} · {fmt(tot.grand)}</div>
               <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>openReport(r,proj)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>👁 View</button>
+                <button onClick={()=>{setActiveReport(r);setActiveProject(proj);}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13}}>👁 View</button>
                 <button onClick={()=>approve(r.id)} style={{...primBtn,flex:1,fontSize:13,borderRadius:10,background:T.green}}>✓ Approve</button>
               </div>
             </div>);
@@ -7181,7 +6580,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
             const proj=projects.find(p=>p.id===r.project_id)||r.projects||{name:"Unknown"};
             const tot=reportTotals(r,proj.division);
             const statusColor={approved:T.green,flagged:T.red,submitted:T.yellow}[r.status]||T.muted;
-            return(<div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${statusColor}`,cursor:"pointer"}} onClick={()=>openReport(r,proj)}>
+            return(<div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${statusColor}`,cursor:"pointer"}} onClick={()=>{setActiveReport(r);setActiveProject(proj);}}>
               <div style={{display:"flex",justifyContent:"space-between"}}>
                 <div><div style={{fontSize:13,fontWeight:700,color:T.orange}}>{proj.name}</div><div style={{fontSize:11,color:T.muted}}>{r.date} · {r.submitted_by}</div></div>
                 <div style={{textAlign:"right"}}><div style={{fontSize:13,fontWeight:800,color:T.green}}>{fmt(tot.grand)}</div><span style={pill(statusColor)}>{r.status}</span></div>
@@ -7192,7 +6591,6 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
 
         {/* USERS */}
         {pmTab==="users"&&<UserManagementScreen user={user} onBack={()=>setPmTab("overview")}/>}
-        {pmTab==="schedule"&&canSeeSchedule&&<CrewScheduleTab user={user} projects={projects} onErr={onErr}/>}
       </div>
     </div>
   );
@@ -7367,7 +6765,7 @@ function UserManagementScreen({onBack,currentUser,user}){
   async function remove(id){if(!window.confirm("Remove this user profile?"))return;try{await API.userProfiles.remove(id);await load();}catch(e){setErr(e.message);}}
 
   const profileMap={};profiles.forEach(p=>profileMap[p.name]=p);
-  const allNames=[...new Set([...ROSTER(),...profiles.map(p=>p.name)])].sort();
+  const allNames=[...new Set([...NAMES,...profiles.map(p=>p.name)])].sort();
 
   if(mode==="edit") return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
@@ -7505,13 +6903,13 @@ function UserManagementScreen({onBack,currentUser,user}){
 
           {/* Everyone else defaults to Crew */}
           <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"20px 0 10px"}}>Unconfigured (Default: Field Crew)</div>
-          {ROSTER().filter(n=>!profileMap[n]).slice(0,15).map(n=>(
+          {NAMES.filter(n=>!profileMap[n]).slice(0,15).map(n=>(
             <div key={n} style={{...cardS,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"space-between",opacity:0.5}}>
               <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:10,height:10,borderRadius:"50%",background:T.green}}/><span style={{fontSize:13}}>{n}</span><span style={pill(T.green)}>Field Crew</span></div>
               <button onClick={()=>{setF({...blank,name:n});setMode("edit");}} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",color:T.sub,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Set Role</button>
             </div>
           ))}
-          {ROSTER().filter(n=>!profileMap[n]).length>15&&<div style={{fontSize:12,color:T.muted,textAlign:"center",padding:"8px 0"}}>+ {ROSTER().filter(n=>!profileMap[n]).length-15} more (tap + Add to configure)</div>}
+          {NAMES.filter(n=>!profileMap[n]).length>15&&<div style={{fontSize:12,color:T.muted,textAlign:"center",padding:"8px 0"}}>+ {NAMES.filter(n=>!profileMap[n]).length-15} more (tap + Add to configure)</div>}
         </>}
       </div>
     </div>
@@ -8048,7 +7446,7 @@ function NotificationsPanel({onCountChange,user}){
     }
     useEffect(()=>{loadN();},[]);
     const unread=notifs.filter(n=>!n.read).length;
-    const typeIcon={report_submitted:"📋",report_flagged:"🚩",report_approved:"✅",bid_review:"📊",time_confirmed:"⏱️",time_disputed:"⚑"};
+    const typeIcon={report_submitted:"📋",report_flagged:"🚩",report_approved:"✅",bid_review:"📊"};
     const toggleSel=(id)=>setSelected(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);
     const exitSelect=()=>{setSelectMode(false);setSelected([]);};
     async function deleteSelected(){
@@ -8108,7 +7506,6 @@ function NotificationsPanel({onCountChange,user}){
   }
 
 function printEmployeeTimecards(cards,from,to,selectedJobs,projects,preOpenedWin=null,mfgJobs=[]){
-  cards=applyWeeklyOT(cards); // payroll OT = over 40 worked in the week
   const filtered=cards.filter(c=>{
     if(!c.date||c.date<from||c.date>to)return false;
     // Shop cards carry mfg_job_id, so filtering on project_id alone dropped
@@ -8121,20 +7518,19 @@ function printEmployeeTimecards(cards,from,to,selectedJobs,projects,preOpenedWin
   const byEmployee={};
   filtered.forEach(c=>{
     const name=c.worker_name||"Unknown";
-    if(!byEmployee[name])byEmployee[name]={name,entries:[],reg:0,ot:0,travel:0,holiday:0,total:0};
+    if(!byEmployee[name])byEmployee[name]={name,entries:[],reg:0,ot:0,travel:0,total:0};
     const reg=parseFloat(c.reg_hours)||0;
     const ot=parseFloat(c.ot_hours)||0;
     const travel=parseFloat(c.travel_hours)||0;
-    const holiday=parseFloat(c.holiday_hours)||0;
-    const total=c.total_hours?parseFloat(c.total_hours):reg+ot+travel+holiday;
+    const total=c.total_hours?parseFloat(c.total_hours):reg+ot+travel;
     const proj=projects.find(p=>p.id===c.project_id);
     const shop=c.mfg_job_id?(mfgJobs||[]).find(j=>j.id===c.mfg_job_id):null;
     const shopName=shop?.job_number
       ||(c.source==="shop"?String(c.notes||"").match(/Shop labor — ([^\s·]+)/)?.[1]:null);
-    byEmployee[name].entries.push({...c,reg,ot,travel,holiday,total,
-      projName:c.source==="holiday"?String(c.notes||"Holiday"):(proj?.name||shopName||"General"),
-      projAfe:proj?.afe||(shopName?"Shop":c.source==="holiday"?"HOL":"")});
-    byEmployee[name].reg+=reg;byEmployee[name].ot+=ot;byEmployee[name].travel+=travel;byEmployee[name].holiday+=holiday;byEmployee[name].total+=total;
+    byEmployee[name].entries.push({...c,reg,ot,travel,total,
+      projName:proj?.name||shopName||"General",
+      projAfe:proj?.afe||(shopName?"Shop":"")});
+    byEmployee[name].reg+=reg;byEmployee[name].ot+=ot;byEmployee[name].travel+=travel;byEmployee[name].total+=total;
   });
   const employees=Object.values(byEmployee).sort((a,b)=>a.name.localeCompare(b.name));
   const fmtD=d=>{if(!d)return"";const[y,m,dy]=d.split("-");return`${m}/${dy}/${y}`;};
@@ -8183,26 +7579,24 @@ ${employees.length===0
     <div class="period">Report Period: ${fmtD(from)} — ${fmtD(to)}</div>
   </div>
   <table>
-    <thead><tr><th>Date</th><th>Project</th><th>AFE/PO</th><th style="text-align:center">REG</th><th style="text-align:center">OT</th><th style="text-align:center">TRAVEL</th><th style="text-align:center">HOL</th><th style="text-align:center">TOTAL</th><th>Notes</th></tr></thead>
+    <thead><tr><th>Date</th><th>Project</th><th>AFE/PO</th><th style="text-align:center">REG</th><th style="text-align:center">OT</th><th style="text-align:center">TRAVEL</th><th style="text-align:center">TOTAL</th><th>Notes</th></tr></thead>
     <tbody>
       ${emp.entries.sort((a,b)=>(a.date||"").localeCompare(b.date||"")).map(e=>`
       <tr><td>${fmtD(e.date)}</td><td>${e.projName}</td><td style="text-align:center">${e.projAfe||"—"}</td>
       <td style="text-align:center;color:#166534;font-weight:600">${fmtN(e.reg)}</td>
       <td style="text-align:center;color:#b45309;font-weight:600">${fmtN(e.ot)}</td>
       <td style="text-align:center;color:#1e40af;font-weight:600">${fmtN(e.travel)}</td>
-      <td style="text-align:center;color:#7c3aed;font-weight:600">${e.holiday?fmtN(e.holiday):""}</td>
       <td style="text-align:center;font-weight:800">${fmtN(e.total)}</td>
       <td style="font-size:8pt;color:#6b7280">${(e.notes||"").replace("Auto-filled from daily report","Auto")}</td></tr>`).join("")}
     </tbody>
     <tfoot><tr class="totals-row"><td colspan="3"><strong>TOTALS — ${emp.name.toUpperCase()}</strong></td>
     <td style="text-align:center">${fmtN(emp.reg)}</td><td style="text-align:center">${fmtN(emp.ot)}</td>
-    <td style="text-align:center">${fmtN(emp.travel)}</td><td style="text-align:center">${fmtN(emp.holiday)}</td><td style="text-align:center"><strong>${fmtN(emp.total)}</strong></td><td></td></tr></tfoot>
+    <td style="text-align:center">${fmtN(emp.travel)}</td><td style="text-align:center"><strong>${fmtN(emp.total)}</strong></td><td></td></tr></tfoot>
   </table>
   <div class="summary">
     <div class="sum-box reg"><div class="sum-label">Regular</div><div class="sum-val">${fmtN(emp.reg)}h</div></div>
     <div class="sum-box ot"><div class="sum-label">Overtime</div><div class="sum-val">${fmtN(emp.ot)}h</div></div>
     <div class="sum-box travel"><div class="sum-label">Travel</div><div class="sum-val">${fmtN(emp.travel)}h</div></div>
-    <div class="sum-box travel" style="background:#ede9fe;border:1px solid #c4b5fd"><div class="sum-label">Holiday</div><div class="sum-val">${fmtN(emp.holiday)}h</div></div>
     <div class="sum-box total"><div class="sum-label">TOTAL HOURS</div><div class="sum-val">${fmtN(emp.total)}</div></div>
   </div>
   <div class="sigs">
@@ -8249,15 +7643,12 @@ function ClockRoster({pmDiv,divIds,user,onErr}){
   }
   useEffect(()=>{load();},[pmDiv]);
 
-  const confirmedRows=pendRows.filter(c=>c.status==="worker_approved");
-  const waitingRows=pendRows.filter(c=>c.status==="pending");
-  const disputedRows=pendRows.filter(c=>c.status==="disputed");
   async function approveAll(){
-    if(!confirmedRows.length)return;
-    if(!window.confirm(`Approve ${confirmedRows.length} employee-confirmed time card${confirmedRows.length!==1?"s":""}?`))return;
+    if(!pendRows.length)return;
+    if(!window.confirm(`Approve ${pendRows.length} time card${pendRows.length!==1?"s":""}?`))return;
     setSaving(true);
     try{
-      await Promise.all(confirmedRows.map(c=>API.timeCards.update(c.id,{
+      await Promise.all(pendRows.map(c=>API.timeCards.update(c.id,{
         status:"approved",approved_by:user.name,approved_at:new Date().toISOString(),
       })));
       await load();
@@ -8308,265 +7699,18 @@ function ClockRoster({pmDiv,divIds,user,onErr}){
       {pendRows.length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.yellow}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
           <div style={{fontSize:11,fontWeight:700,color:T.yellow,textTransform:"uppercase",letterSpacing:"1px"}}>
-            ⏳ Time cards ({pendRows.length}) · {pendHrs.toFixed(1)}h
+            ⏳ Hours to approve ({pendRows.length}) · {pendHrs.toFixed(1)}h
           </div>
-          <button onClick={approveAll} disabled={saving||!confirmedRows.length}
-            style={{background:confirmedRows.length?T.green:T.border,color:"#000",border:"none",borderRadius:9,padding:"6px 13px",fontSize:12,fontWeight:800,cursor:confirmedRows.length?"pointer":"not-allowed",fontFamily:"inherit",opacity:saving?0.6:1}}>
-            ✓ Approve {confirmedRows.length} confirmed
+          <button onClick={approveAll} disabled={saving}
+            style={{background:T.green,color:"#000",border:"none",borderRadius:9,padding:"6px 13px",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit",opacity:saving?0.6:1}}>
+            ✓ Approve all
           </button>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
-          {[["Waiting on employee",waitingRows.length,TC_STATUS.pending.c],["Employee confirmed",confirmedRows.length,TC_STATUS.worker_approved.c],["Flagged",disputedRows.length,TC_STATUS.disputed.c]].map(([l,n,c])=>(
-            <div key={l} style={{textAlign:"center",background:T.surface,borderRadius:8,padding:"6px 4px"}}>
-              <div style={{fontSize:16,fontWeight:900,color:n?c:T.muted}}>{n}</div>
-              <div style={{fontSize:9,color:T.muted,textTransform:"uppercase",letterSpacing:"0.4px"}}>{l}</div>
-            </div>
-          ))}
-        </div>
-        {disputedRows.length>0&&<div style={{fontSize:11.5,color:T.red,lineHeight:1.6,marginBottom:6}}>
-          {disputedRows.slice(0,4).map(c=><div key={c.id}>⚑ <b>{c.worker_name}</b> {c.date}{c.projects?.name?` · ${c.projects.name}`:""}: {c.dispute_note||"flagged"}</div>)}
-          {disputedRows.length>4&&<div>…and {disputedRows.length-4} more — see Time Cards.</div>}
-        </div>}
         <div style={{fontSize:11.5,color:T.muted,lineHeight:1.6}}>
-          Employees confirm their week from My Hours. Open <b>Time Cards → Weekly Approval</b> to fix flagged days, approve by worker, or approve unconfirmed hours.
+          Edit individual hours on the job's Time tab before approving — this button takes them as they stand.
         </div>
       </div>}
     </>
-  );
-}
-
-/* PM weekly approval: one week, grouped by worker. Employees confirm from
-   My Hours; here the PM fixes flagged days, then approves per worker (or
-   everything the crew has already confirmed in one tap). */
-function WeeklyApprovalPanel({user,projects,onErr}){
-  const [weekStart,setWeekStart]=useState(()=>{const m=mondayOf(new Date());return new Date().getDay()<=1?addDays(m,-7):m;});
-  const [rows,setRows]=useState([]);const [loading,setLoading]=useState(true);
-  const [busy,setBusy]=useState(false);
-  const [openWorker,setOpenWorker]=useState(null);
-  const [edit,setEdit]=useState(null); // {id,reg,ot,travel,reason}
-  const from=isoOf(weekStart),to=isoOf(addDays(weekStart,6));
-  function printWorker(name){
-    const win=window.open("","_blank","width=900,height=750");
-    if(!win){alert("Popup blocked — please allow popups and try again.");return;}
-    try{printEmployeeTimecards(rows.filter(c=>c.worker_name===name),from,to,null,projects,win,[]);}
-    catch(e){win.close();onErr&&onErr(e.message);}
-  }
-  // Holiday pay: one card per worker, no project, already approved.
-  const HOLIDAYS=["New Year's Day","Memorial Day","Juneteenth","Independence Day","Labor Day","Thanksgiving","Day After Thanksgiving","Christmas Eve","Christmas Day","Other"];
-  const [hol,setHol]=useState(null); // {date,name,other,hours,workers:[]}
-  const roster=ROSTER();
-  const openHoliday=()=>setHol({date:from,name:"Labor Day",other:"",hours:"8",workers:roster});
-  const holName=()=>hol.name==="Other"?(hol.other||"Holiday").trim():hol.name;
-  async function saveHoliday(){
-    if(!hol.date||!hol.workers.length||!(parseFloat(hol.hours)>0))return;
-    const already=new Set(rows.filter(c=>c.source==="holiday"&&c.date===hol.date).map(c=>c.worker_name));
-    const todo=hol.workers.filter(w=>!already.has(w));
-    if(!todo.length){alert("Everyone selected already has a holiday card for that day.");return;}
-    if(!window.confirm(`Add ${hol.hours} holiday hours (${holName()}, ${hol.date}) for ${todo.length} employee${todo.length!==1?"s":""}?`))return;
-    setBusy(true);
-    try{
-      const h=parseFloat(hol.hours);const at=new Date().toISOString();
-      await Promise.all(todo.map(w=>API.timeCards.create({
-        worker_name:w,date:hol.date,project_id:null,division:null,classification:"Holiday",
-        reg_hours:0,ot_hours:0,travel_hours:0,holiday_hours:h,total_hours:h,
-        notes:`Holiday — ${holName()}`,source:"holiday",status:"approved",approved_by:user.name,approved_at:at,
-      })));
-      setHol(null);await load();
-    }catch(e){onErr&&onErr(e.message);}
-    setBusy(false);
-  }
-  async function load(){
-    setLoading(true);
-    try{const r=await API.timeCards.byRange(from,to);setRows(applyWeeklyOT((Array.isArray(r)?r:[]).filter(c=>c.status!=="open")));}
-    catch(e){onErr&&onErr(e.message);}
-    setLoading(false);
-  }
-  useEffect(()=>{load();},[from]);
-  const jobOf=(c)=>(projects.find(p=>p.id===c.project_id)||{}).name||(c.source==="shop"?"Shop":c.source==="holiday"?"Holiday":"—");
-  const hrs=(c)=>parseFloat(c.total_hours)||((parseFloat(c.reg_hours)||0)+(parseFloat(c.ot_hours)||0)+(parseFloat(c.travel_hours)||0)+(parseFloat(c.holiday_hours)||0));
-  const byWorker={};
-  rows.forEach(c=>{const n=c.worker_name||"?";(byWorker[n]=byWorker[n]||[]).push(c);});
-  const workers=Object.keys(byWorker).sort().map(name=>{
-    const list=byWorker[name].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
-    const st={pending:0,worker_approved:0,disputed:0,approved:0};
-    list.forEach(c=>{st[c.status]=(st[c.status]||0)+1;});
-    const open=list.filter(c=>c.status!=="approved");
-    return {name,list,st,total:list.reduce((s,c)=>s+hrs(c),0),open,
-      state:open.length===0?"approved":st.disputed>0?"disputed":st.pending>0?"pending":"worker_approved"};
-  });
-  const allConfirmed=rows.filter(c=>c.status==="worker_approved");
-  async function approveCards(cards,label){
-    if(!cards.length)return;
-    if(!window.confirm(`Approve ${cards.length} time card${cards.length!==1?"s":""} — ${label}?`))return;
-    setBusy(true);
-    try{
-      const at=new Date().toISOString();
-      await Promise.all(cards.map(c=>API.timeCards.update(c.id,{status:"approved",approved_by:user.name,approved_at:at,dispute_note:null})));
-      await load();
-    }catch(e){onErr&&onErr(e.message);}
-    setBusy(false);
-  }
-  async function sendBack(c){
-    // Re-open a card for the employee after fixing it (or un-approve by mistake).
-    setBusy(true);
-    try{await API.timeCards.update(c.id,{status:"pending",dispute_note:null,worker_approved_at:null});await load();}
-    catch(e){onErr&&onErr(e.message);}
-    setBusy(false);
-  }
-  async function saveEdit(){
-    const c=rows.find(x=>x.id===edit.id);if(!c)return;
-    const reg=parseFloat(edit.reg)||0,ot=parseFloat(edit.ot)||0,tr=parseFloat(edit.travel)||0;
-    setBusy(true);
-    try{
-      await API.timeCards.update(c.id,{
-        reg_hours:reg,ot_hours:ot,travel_hours:tr,total_hours:reg+ot+tr,
-        original_hours:c.original_hours??c.total_hours,
-        edited_by:user.name,edited_at:new Date().toISOString(),edit_reason:edit.reason||null,
-        // A fixed card goes back to the employee to re-confirm.
-        status:"pending",dispute_note:null,worker_approved_at:null,
-      });
-      setEdit(null);await load();
-    }catch(e){onErr&&onErr(e.message);}
-    setBusy(false);
-  }
-  const pill=(s)=><span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.4px",color:TC_STATUS[s]?.c||T.muted,border:`1px solid ${TC_STATUS[s]?.c||T.muted}40`,borderRadius:6,padding:"1px 6px",whiteSpace:"nowrap"}}>{TC_STATUS[s]?.short||s}</span>;
-  const dayName=(iso)=>["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(iso+"T12:00:00").getDay()];
-  return(
-    <div style={{...cardS,marginBottom:16,borderLeft:`3px solid ${T.blue}`}}>
-      <div style={{fontSize:11,fontWeight:700,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>✅ Weekly Approval</div>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:12}}>
-        <button onClick={()=>setWeekStart(addDays(weekStart,-7))} style={{...ghostBtn,padding:"6px 12px"}}>‹</button>
-        <div style={{textAlign:"center"}}>
-          <div style={{fontSize:13,fontWeight:800,color:T.text}}>Week of {weekStart.toLocaleDateString(undefined,{month:"short",day:"numeric"})} – {addDays(weekStart,6).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</div>
-          <div style={{fontSize:10.5,color:T.muted}}>{rows.length} cards · {rows.reduce((s,c)=>s+hrs(c),0).toFixed(1)} h</div>
-        </div>
-        <button onClick={()=>setWeekStart(addDays(weekStart,7))} style={{...ghostBtn,padding:"6px 12px"}}>›</button>
-      </div>
-      <div style={{display:"flex",gap:8,marginBottom:12}}>
-        <button onClick={()=>approveCards(allConfirmed,"everything employees have confirmed")} disabled={busy||!allConfirmed.length}
-          style={{...primBtn,flex:1,borderRadius:12,background:allConfirmed.length?T.green:T.border,color:"#000",opacity:busy?0.6:1,cursor:allConfirmed.length?"pointer":"not-allowed"}}>
-          ✓ Approve confirmed ({allConfirmed.length})
-        </button>
-        <button onClick={openHoliday} disabled={busy}
-          style={{...ghostBtn,borderRadius:12,padding:"10px 14px",color:T.purple,border:`1px solid ${T.purple}50`,fontWeight:800,whiteSpace:"nowrap"}}>
-          🎉 Holiday
-        </button>
-        <button title="Rebuild this week's cards from the daily reports and T&M tickets" disabled={busy}
-          onClick={async()=>{
-            if(!window.confirm("Rebuild this week's time cards from the daily reports and T&M tickets?\n\nUnapproved daily/T&M cards are set to exactly what the reports say (fixes doubled hours). Approved, punch, manual and holiday cards are not touched."))return;
-            setBusy(true);
-            try{const r=await resyncTimeCardsFromDocs(from,to,projects);await load();
-              alert(`Re-synced ${r.reports} report${r.reports!==1?"s":""} and ${r.tickets} T&M ticket${r.tickets!==1?"s":""}: ${r.updated} card${r.updated!==1?"s":""} corrected, ${r.created} added, ${r.removed} removed.`);}
-            catch(e){onErr&&onErr(e.message);}
-            setBusy(false);
-          }}
-          style={{...ghostBtn,borderRadius:12,padding:"10px 12px",color:T.blue,border:`1px solid ${T.blue}50`,fontWeight:800,whiteSpace:"nowrap"}}>
-          🔄
-        </button>
-      </div>
-      {hol&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`,background:`${T.purple}10`}}>
-        <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:8}}>🎉 Add Holiday Pay</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-          <div><label style={lbl}>Date</label><input type="date" value={hol.date} onChange={e=>setHol({...hol,date:e.target.value})} style={inp}/></div>
-          <div><label style={lbl}>Hours</label><input type="number" step="0.5" min="0" value={hol.hours} onChange={e=>setHol({...hol,hours:e.target.value})} style={inp}/></div>
-        </div>
-        <div style={{marginBottom:8}}><label style={lbl}>Holiday</label>
-          <select value={hol.name} onChange={e=>setHol({...hol,name:e.target.value})} style={inp}>{HOLIDAYS.map(h=><option key={h}>{h}</option>)}</select>
-          {hol.name==="Other"&&<input value={hol.other} onChange={e=>setHol({...hol,other:e.target.value})} placeholder="Holiday name" style={{...inp,marginTop:6}}/>}
-        </div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <label style={lbl}>Employees ({hol.workers.length}/{roster.length})</label>
-          <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setHol({...hol,workers:roster})} style={{...ghostBtn,fontSize:10.5,padding:"3px 8px",color:T.green}}>All</button>
-            <button onClick={()=>setHol({...hol,workers:[]})} style={{...ghostBtn,fontSize:10.5,padding:"3px 8px",color:T.red}}>None</button>
-          </div>
-        </div>
-        <div style={{maxHeight:200,overflowY:"auto",border:`1px solid ${T.border}`,borderRadius:8,padding:6,marginBottom:10,display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
-          {roster.map(w=>{const on=hol.workers.includes(w);return(
-            <div key={w} onClick={()=>setHol({...hol,workers:on?hol.workers.filter(x=>x!==w):[...hol.workers,w]})}
-              style={{fontSize:11.5,padding:"5px 7px",borderRadius:6,cursor:"pointer",background:on?T.greenLow:"transparent",color:on?T.text:T.muted,border:`1px solid ${on?T.green:"transparent"}`,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{on?"✓ ":""}{w}</div>);})}
-        </div>
-        <div style={{display:"flex",gap:6}}>
-          <button onClick={saveHoliday} disabled={busy||!hol.workers.length} style={{...primBtn,flex:1,borderRadius:10,background:T.purple,color:"#fff",opacity:busy?0.6:1}}>
-            Add {hol.hours||0}h × {hol.workers.length} employee{hol.workers.length!==1?"s":""}
-          </button>
-          <button onClick={()=>setHol(null)} style={{...ghostBtn,padding:"8px 12px"}}>Cancel</button>
-        </div>
-      </div>}
-      {loading&&<Spinner/>}
-      {!loading&&workers.length===0&&<div style={{textAlign:"center",padding:"18px 0",color:T.muted,fontSize:12}}>No time cards this week.</div>}
-      {!loading&&workers.map(w=>{
-        const isOpen=openWorker===w.name;
-        return(
-          <div key={w.name} style={{border:`1px solid ${T.border}`,borderRadius:10,marginBottom:8,overflow:"hidden",borderLeft:`3px solid ${TC_STATUS[w.state]?.c||T.border}`}}>
-            <div onClick={()=>setOpenWorker(isOpen?null:w.name)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",cursor:"pointer",background:T.surface}}>
-              <div style={{minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:800,color:T.text}}>{w.name}</div>
-                <div style={{fontSize:10.5,color:T.muted,marginTop:2,display:"flex",gap:6,flexWrap:"wrap"}}>
-                  {w.st.pending>0&&<span style={{color:TC_STATUS.pending.c}}>{w.st.pending} waiting on employee</span>}
-                  {w.st.worker_approved>0&&<span style={{color:TC_STATUS.worker_approved.c}}>{w.st.worker_approved} confirmed</span>}
-                  {w.st.disputed>0&&<span style={{color:TC_STATUS.disputed.c}}>{w.st.disputed} flagged</span>}
-                  {w.st.approved>0&&<span style={{color:TC_STATUS.approved.c}}>{w.st.approved} approved</span>}
-                </div>
-              </div>
-              <div style={{textAlign:"right",flexShrink:0}}>
-                <div style={{fontSize:16,fontWeight:900,color:T.text}}>{w.total.toFixed(1)}h</div>
-                <div style={{fontSize:10,color:T.muted}}>{isOpen?"▲":"▼"}</div>
-              </div>
-            </div>
-            {isOpen&&<div style={{padding:"6px 12px 12px"}}>
-              {w.list.map(c=>(
-                <div key={c.id} style={{padding:"8px 0",borderTop:`1px solid ${T.border}`}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                    <div style={{minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:700,color:T.text}}>{dayName(c.date)} {String(c.date).slice(5)} · {c.source==="holiday"?"🎉 "+String(c.notes||"Holiday").replace("Holiday — ",""):jobOf(c)}</div>
-                      <div style={{fontSize:10.5,color:T.muted}}>{c.source==="holiday"?`${parseFloat(c.holiday_hours)||hrs(c)} holiday hrs`:`${parseFloat(c.reg_hours)||0} reg · ${parseFloat(c.ot_hours)||0} OT · ${parseFloat(c.travel_hours)||0} trv${c.classification?` · ${c.classification}`:""}${c.source?` · from ${c.source==="tm"?"T&M":c.source}`:""}`}</div>
-                      {c.ot_recut&&<div style={{fontSize:10,color:T.yellow,marginTop:2}}>payroll: OT only after 40 worked this week (report had {parseFloat(c.raw_reg_hours)||0} reg / {parseFloat(c.raw_ot_hours)||0} OT)</div>}
-                      {c.status==="disputed"&&<div style={{fontSize:11,color:TC_STATUS.disputed.c,marginTop:3}}>⚑ {c.dispute_note||"Flagged by employee"}</div>}
-                      {c.edited_by&&<div style={{fontSize:10.5,color:T.blue,marginTop:2}}>✏️ {c.edited_by}{c.edit_reason?` — ${c.edit_reason}`:""}</div>}
-                    </div>
-                    <div style={{textAlign:"right",flexShrink:0}}>
-                      <div style={{fontSize:13,fontWeight:800,color:T.text}}>{hrs(c).toFixed(2)}</div>
-                      {pill(c.status)}
-                    </div>
-                  </div>
-                  {edit?.id===c.id
-                    ?<div style={{marginTop:8,background:T.surface,borderRadius:8,padding:10}}>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:6}}>
-                        {[["reg","Reg"],["ot","OT"],["travel","Travel"]].map(([k,l])=>(
-                          <div key={k}><label style={lbl}>{l}</label><input type="number" step="0.25" value={edit[k]} onChange={e=>setEdit({...edit,[k]:e.target.value})} style={inp}/></div>
-                        ))}
-                      </div>
-                      <input placeholder="Reason for change (shown to employee)" value={edit.reason} onChange={e=>setEdit({...edit,reason:e.target.value})} style={{...inp,marginBottom:6}}/>
-                      <div style={{display:"flex",gap:6}}>
-                        <button onClick={saveEdit} disabled={busy} style={{...ghostBtn,flex:1,textAlign:"center",color:T.green,border:`1px solid ${T.green}40`}}>Save & send back to employee</button>
-                        <button onClick={()=>setEdit(null)} style={{...ghostBtn,padding:"6px 10px"}}>Cancel</button>
-                      </div>
-                    </div>
-                    :c.status!=="approved"&&<div style={{display:"flex",gap:6,marginTop:6,justifyContent:"flex-end"}}>
-                      <button onClick={()=>setEdit({id:c.id,reg:c.raw_reg_hours??c.reg_hours??0,ot:c.raw_ot_hours??c.ot_hours??0,travel:c.travel_hours||0,reason:""})} style={{...ghostBtn,fontSize:10.5,padding:"4px 9px"}}>✏️ Fix</button>
-                      <button onClick={()=>approveCards([c],`${c.worker_name} ${c.date}`)} disabled={busy} style={{...ghostBtn,fontSize:10.5,padding:"4px 9px",color:T.green,border:`1px solid ${T.green}40`}}>✓ Approve</button>
-                    </div>}
-                  {c.status==="approved"&&<div style={{textAlign:"right",marginTop:4}}>
-                    {c.source==="holiday"
-                      ?<button onClick={async()=>{if(!window.confirm(`Remove holiday pay for ${c.worker_name} on ${c.date}?`))return;setBusy(true);try{await API.timeCards.remove(c.id);await load();}catch(e){onErr&&onErr(e.message);}setBusy(false);}} disabled={busy} style={{...ghostBtn,fontSize:10,padding:"3px 8px",color:T.red}}>🗑 Remove holiday</button>
-                      :<button onClick={()=>sendBack(c)} disabled={busy} style={{...ghostBtn,fontSize:10,padding:"3px 8px",color:T.muted}}>↩ Un-approve</button>}
-                  </div>}
-                </div>
-              ))}
-              {w.open.length>0&&<button onClick={()=>approveCards(w.open,`${w.name}'s week${w.st.pending||w.st.disputed?" (includes hours the employee hasn't confirmed)":""}`)} disabled={busy}
-                style={{...primBtn,borderRadius:10,marginTop:8,fontSize:12,background:w.state==="worker_approved"?T.green:T.yellow,color:"#000",opacity:busy?0.6:1}}>
-                ✓ Approve {w.name}'s week ({w.open.length} card{w.open.length!==1?"s":""}){w.state!=="worker_approved"?" — not all confirmed":""}
-              </button>}
-              <button onClick={()=>printWorker(w.name)} disabled={busy}
-                style={{...ghostBtn,width:"100%",textAlign:"center",borderRadius:10,marginTop:8,fontSize:12,fontWeight:700,color:T.blue,border:`1px solid ${T.blue}40`}}>
-                🖨️ Print {w.name}'s timecard
-              </button>
-            </div>}
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -8589,14 +7733,11 @@ function TimeCardsScreen({user,projects,onBack}){
     try{
       // byRange, not all() — all() caps at 500 rows ordered by date, so on a
       // busy month the oldest cards silently vanished from the report.
-      // Load the whole Mon–Sun weeks around the range so weekly OT is
-      // computed from every day of the week, not just the days shown.
-      const wFrom=isoOf(mondayOf(fromDate)), wTo=isoOf(addDays(mondayOf(toDate),6));
       const [r,m]=await Promise.all([
-        API.timeCards.byRange(wFrom,wTo),
+        API.timeCards.byRange(fromDate,toDate),
         API.mfg.jobs.list().catch(()=>[]),
       ]);
-      setCards(applyWeeklyOT(Array.isArray(r)?r:[]));
+      setCards(Array.isArray(r)?r:[]);
       setMfgJobs(Array.isArray(m)?m:[]);
     }catch(e){setErr(e.message);}
     setLoading(false);
@@ -8604,7 +7745,6 @@ function TimeCardsScreen({user,projects,onBack}){
 
   /* One lookup for both kinds of card. */
   const jobOf=(c)=>{
-    if(c.source==="holiday")return "🎉 "+String(c.notes||"Holiday").replace("Holiday — ","");
     if(c.project_id)return (projects.find(p=>p.id===c.project_id)||{}).name||null;
     if(c.mfg_job_id)return (mfgJobs.find(j=>j.id===c.mfg_job_id)||{}).job_number||"Shop";
     // Backfilled cards predate mfg_job_id being set; the note carries the job.
@@ -8622,7 +7762,7 @@ function TimeCardsScreen({user,projects,onBack}){
     }
     setPrinting(true);
     try{
-      printEmployeeTimecards(cards.filter(c=>c.date>=fromDate&&c.date<=toDate),fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects,win,mfgJobs);
+      printEmployeeTimecards(cards,fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects,win,mfgJobs);
     }catch(e){
       win.close();
       alert("Error generating report: "+e.message);
@@ -8635,10 +7775,10 @@ function TimeCardsScreen({user,projects,onBack}){
   const byWorker={};
   filtered.forEach(c=>{
     const n=c.worker_name||'?';
-    if(!byWorker[n])byWorker[n]={name:n,total:0,ot:0,reg:0,travel:0,holiday:0};
-    const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;const holi=parseFloat(c.holiday_hours)||0;
-    const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav+holi;
-    byWorker[n].total+=tot;byWorker[n].ot+=ot;byWorker[n].reg+=reg;byWorker[n].travel+=trav;byWorker[n].holiday+=holi;
+    if(!byWorker[n])byWorker[n]={name:n,total:0,ot:0,reg:0,travel:0};
+    const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
+    const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
+    byWorker[n].total+=tot;byWorker[n].ot+=ot;byWorker[n].reg+=reg;byWorker[n].travel+=trav;
   });
   const workerRows=Object.values(byWorker).sort((a,b)=>b.total-a.total);
   const fmt=n=>Number(n||0).toFixed(1);
@@ -8649,7 +7789,6 @@ function TimeCardsScreen({user,projects,onBack}){
     <div style={{background:T.bg,minHeight:'100vh',fontFamily:'inherit'}}>
       <TopBar title="⏱️ Time Cards" onBack={onBack}/>
       <div style={{padding:'12px 16px 100px'}}>
-        <WeeklyApprovalPanel user={user} projects={projects} onErr={setErr}/>
         <ErrBanner msg={err} onDismiss={()=>setErr('')}/>
 
         {/* Date Range Selector */}
@@ -8660,19 +7799,13 @@ function TimeCardsScreen({user,projects,onBack}){
             <div><label style={lbl}>To</label><input type="date" value={toDate} onChange={e=>setToDate(e.target.value)} style={inp}/></div>
           </div>
           <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-            {/* Real calendar periods (Mon–Sun weeks, full months), not "last N days" —
-                otherwise a Monday holiday drops off the week's timecard on Monday night. */}
-            {[
-              ['This Week',()=>{const m=mondayOf(new Date());return [m,addDays(m,6)];}],
-              ['Last Week',()=>{const m=addDays(mondayOf(new Date()),-7);return [m,addDays(m,6)];}],
-              ['Last 2 Weeks',()=>{const m=mondayOf(new Date());return [addDays(m,-7),addDays(m,6)];}],
-              ['This Month',()=>{const n=new Date();return [new Date(n.getFullYear(),n.getMonth(),1,12),new Date(n.getFullYear(),n.getMonth()+1,0,12)];}],
-              ['Last Month',()=>{const n=new Date();return [new Date(n.getFullYear(),n.getMonth()-1,1,12),new Date(n.getFullYear(),n.getMonth(),0,12)];}],
-            ].map(([label,range])=>(
+            {[['This Week',0,6],['Last 2 Weeks',0,13],['This Month',0,29],['Last Month',30,59]].map(([label,from,to])=>(
               <button key={label} onClick={()=>{
-                const [f,t]=range();
-                setFromDate(isoOf(f));
-                setToDate(isoOf(t));
+                const d=new Date();
+                const t=new Date();t.setDate(t.getDate()-from);
+                const f=new Date();f.setDate(f.getDate()-to);
+                setToDate(t.toISOString().slice(0,10));
+                setFromDate(f.toISOString().slice(0,10));
               }} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:8,padding:'4px 10px',color:T.muted,fontSize:11,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
                 {label}
               </button>
@@ -8737,7 +7870,6 @@ function TimeCardsScreen({user,projects,onBack}){
               <span>Reg: <strong style={{color:T.sub}}>{fmt(w.reg)}h</strong></span>
               {w.ot>0&&<span>OT: <strong style={{color:T.yellow}}>{fmt(w.ot)}h</strong></span>}
               {w.travel>0&&<span>Travel: <strong style={{color:T.blue}}>{fmt(w.travel)}h</strong></span>}
-              {w.holiday>0&&<span>Holiday: <strong style={{color:T.purple}}>{fmt(w.holiday)}h</strong></span>}
             </div>
           </div>
         ))}
@@ -9696,7 +8828,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
         {tab==="documents" &&<BidDocumentsTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="takeoff"   &&<TakeoffTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="estimating"&&<EstimatingTab bid={bid} user={user} onErr={setErr} onTotal={(t)=>{setBid(b=>({...b,total_sales:t}));onChanged&&onChanged();}}/>}
-        {tab==="scope"     &&<ScopeTab bid={bid} user={user} onErr={setErr} onSaved={(body)=>{setBid(b=>({...b,...body}));onChanged&&onChanged();}}/>}
+        {tab==="scope"     &&<ScopeTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="proposal"  &&<ProposalTab bid={bid} user={user} onErr={setErr} onSaved={load}/>}
       </div>
     </div>
@@ -10466,18 +9598,6 @@ function ProposalTab({bid,user,onErr,onSaved}){
 const COMMON_INCLUSIONS=[
   "Materials","Labor","Equipment","Per Diem","Travel",
   "Detailing","Engineering","PE Stamp","Paint","Galvanizing",
-  {
-    label:"Delays billed as extra",
-    text:"Delays and/or loss of time not the fault of AIME will be billed as an extra.",
-  },
-  {
-    label:"Out-of-sequence demob",
-    text:"Demobilization time caused by working out of sequence at the request of others will be billed as an extra.",
-  },
-  {
-    label:"Drawing / scope changes",
-    text:"Any changes to the Drawings or Scope of Work will be treated as an extra.",
-  },
 ];
 /* Short entries are their own chip label. The two subsurface clauses run to a
    paragraph, so they carry a short label and add the full wording to the list. */
@@ -10510,7 +9630,7 @@ const COMMON_EXCLUSIONS=[
 const exclLabel=(x)=>typeof x==="string"?x:x.label;
 const exclText =(x)=>typeof x==="string"?x:x.text;
 
-function ScopeTab({bid,user,onErr,onSaved}){
+function ScopeTab({bid,user,onErr}){
   const asList=(v)=>{
     if(Array.isArray(v))return v;
     if(typeof v==="string"){ try{const p=JSON.parse(v);return Array.isArray(p)?p:[];}catch{return [];} }
@@ -10542,24 +9662,11 @@ function ScopeTab({bid,user,onErr,onSaved}){
   async function save(){
     setSaving(true);
     try{
-      const body={...f,updated_at:new Date().toISOString()};
-      await API.estimates.update(bid.id,body);
+      await API.estimates.update(bid.id,{...f,updated_at:new Date().toISOString()});
       setDirty(false);
-      // Push the saved values up to the parent. Without this the tab re-read
-      // the stale `bid` prop when you came back from Proposal and looked blank.
-      onSaved&&onSaved(body);
     }catch(e){onErr&&onErr(e.message);}
     setSaving(false);
   }
-  // Unsaved edits survive a tab switch: keep them in a ref keyed by bid so
-  // leaving Scope for Proposal and coming back doesn't lose the paragraph.
-  const scratchKey=`bid_scope_scratch_${bid.id}`;
-  useEffect(()=>{
-    try{const s=JSON.parse(sessionStorage.getItem(scratchKey)||"null");if(s&&s.dirty){setF(s.f);setDirty(true);}}catch{}
-  },[bid.id]);
-  useEffect(()=>{
-    try{dirty?sessionStorage.setItem(scratchKey,JSON.stringify({f,dirty})):sessionStorage.removeItem(scratchKey);}catch{}
-  },[f,dirty]);
 
   const card={...cardS,padding:20,marginBottom:16};
 
@@ -10629,16 +9736,12 @@ function ScopeTab({bid,user,onErr,onSaved}){
           Common inclusions — click to add
         </div>
         <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
-          {COMMON_INCLUSIONS.filter(x=>!f.inclusions.includes(exclText(x))).map(x=>{
-            const long=typeof x!=="string";
-            return(
-              <button key={exclLabel(x)} onClick={()=>set("inclusions",[...f.inclusions,exclText(x)])}
-                title={long?exclText(x):undefined}
-                style={{background:T.surface,border:`1px solid ${T.green}30`,borderRadius:14,padding:"5px 11px",
-                  color:T.green,fontSize:11.5,cursor:"pointer",fontFamily:"inherit"}}>+ {exclLabel(x)}{long?" ¶":""}</button>
-            );
-          })}
-          {COMMON_INCLUSIONS.every(x=>f.inclusions.includes(exclText(x)))&&
+          {COMMON_INCLUSIONS.filter(x=>!f.inclusions.includes(x)).map(x=>(
+            <button key={x} onClick={()=>set("inclusions",[...f.inclusions,x])}
+              style={{background:T.surface,border:`1px solid ${T.green}30`,borderRadius:14,padding:"5px 11px",
+                color:T.green,fontSize:11.5,cursor:"pointer",fontFamily:"inherit"}}>+ {x}</button>
+          ))}
+          {COMMON_INCLUSIONS.every(x=>f.inclusions.includes(x))&&
             <span style={{fontSize:11.5,color:T.muted}}>All of the common ones are already listed.</span>}
         </div>
       </div>
@@ -12347,7 +11450,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
                 💡 Reports track labor, equipment, materials and site conditions — and automatically generate time cards for payroll.
               </div>
             </div>}
-          {shown.map(r=>{const t=reportTotals(r,project.division);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={async()=>{setActiveReport(r);setScreen("reportDetail");try{const full=await API.reports.byId(r.id);if(Array.isArray(full)&&full[0])setActiveReport(full[0]);}catch(e){}}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
+          {shown.map(r=>{const t=reportTotals(r,project.division);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
          </div>);})()}
         {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
@@ -13410,7 +12513,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [af,setAf]=useState({part_id:"",qty:"",date:today(),by:user.name});
 
   const [showShipForm,setShowShipForm]=useState(false);
-  const [sf,setSf]=useState({part_id:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
+  const [sf,setSf]=useState({part_id:"",item:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
 
   useEffect(()=>{load();},[job.id]);
 
@@ -13562,19 +12665,26 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
     setSaving(false);
   }
 
+  // A shipment can be tied to a finished part (normal) or stand alone with a
+  // free-text item, for jobs where the customer supplies the material and
+  // nothing is tracked as an assembly.
+  const shipFormOk=!!sf.qty&&(!!sf.part_id||!!(sf.item||"").trim());
   async function logShipment(){
-    if(!sf.qty||!sf.part_id)return;
+    if(!shipFormOk)return;
     setSaving(true);
     try{
       const qty=parseInt(sf.qty)||0;
-      await API.mfg.shippingLog.create({part_id:sf.part_id,job_id:job.id,qty_shipped:qty,ship_date:sf.date,customer:sf.customer||null,bol_number:sf.bol||null,entered_by:sf.by});
+      await API.mfg.shippingLog.create({part_id:sf.part_id||null,item_description:sf.part_id?null:(sf.item.trim()||null),
+        job_id:job.id,qty_shipped:qty,ship_date:sf.date,customer:sf.customer||null,bol_number:sf.bol||null,entered_by:sf.by});
       // mfg_parts.qty_shipped is a cached total the manufacturing dashboard
       // reads. The packing slip flow updates it; this one did not, so the
       // dashboard showed 0 shipped while the job showed 40.
-      const part=parts.find(x=>x.id===sf.part_id);
-      await API.mfg.parts.update(sf.part_id,
-        {qty_shipped:(parseInt(part?.qty_shipped)||0)+qty}).catch(()=>{});
-      setShowShipForm(false);setSf({part_id:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
+      if(sf.part_id){
+        const part=parts.find(x=>x.id===sf.part_id);
+        await API.mfg.parts.update(sf.part_id,
+          {qty_shipped:(parseInt(part?.qty_shipped)||0)+qty}).catch(()=>{});
+      }
+      setShowShipForm(false);setSf({part_id:"",item:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
       await load();
     }catch(e){alert(e.message);}
     setSaving(false);
@@ -13583,7 +12693,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const allBomItems=parts.flatMap(p=>(boms[p.id]||[]).map(item=>({...item,part_id:p.id,_partNum:p.part_number})));
   const totalCanBuild=parts.length>0?parts.reduce((mn,p)=>Math.min(mn,canBuildPart(p.id)),9999):0;
   const totalReadyToShip=parts.reduce((s,p)=>s+asmTotals(p.id).readyToShip,0);
-  const totalShipped=parts.reduce((s,p)=>s+asmTotals(p.id).shipped,0);
+  const totalShipped=shippingLogs.reduce((s,a)=>s+(parseInt(a.qty_shipped)||0),0);
   const reorderNeeded=allBomItems.filter(item=>inv(item).needsReorder);
 
   if(showPackingSlip) return(
@@ -13611,7 +12721,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
-        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📎 Docs"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"12px 4px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -13629,12 +12739,6 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           onBack={()=>setTab("overview")} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="billing"&&canAdmin&&<MfgBillingTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
-
-        {/* Shipping tickets, packing slips, mill certs, receipts — anything paper that came with the parts. */}
-        {!loading&&tab==="docs"&&<>
-          <div style={{fontSize:11.5,color:T.muted,marginBottom:10,lineHeight:1.5}}>Upload received shipping tickets, packing slips, mill certs and receipts for this job. Make folders per supplier or per PO if it helps.</div>
-          <DocsTab mfgJobId={job.id} user={user} onErr={m=>setFormErr(m)} defaultType="Shipping Ticket"/>
-        </>}
 
         {}
         {!loading&&tab==="overview"&&<>
@@ -13661,16 +12765,6 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           {/* Assembly parts with delete */}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
             <div style={{fontSize:12,fontWeight:800,color:T.text}}>Parts in Stock</div>
-            {canAdmin&&receipts.length>0&&<button title="Delete every inventory transaction on this job — received, used, damaged, counts — so all parts start from zero" onClick={async()=>{
-                const n=receipts.length;
-                if(!window.confirm(`Zero out inventory for ${job.job_number}?\n\nThis deletes all ${n} inventory transaction${n!==1?"s":""} (received, used, damaged, count adjustments) on every part in this job. Received / Used / Damaged / On hand / Can build all go to 0.\n\nAssemblies, shipments and the BOM itself are NOT touched. This can't be undone.`))return;
-                if(window.prompt(`Type ZERO to confirm`)!=="ZERO")return;
-                try{
-                  const ids=receipts.map(r=>r.id).filter(Boolean);
-                  for(let i=0;i<ids.length;i+=200){await sb(`/mfg_receipts?id=in.(${ids.slice(i,i+200).join(",")})`,{method:"DELETE"});}
-                  await load();
-                }catch(err){setFormErr("Error: "+err.message);}
-              }} style={{background:"none",border:`1px solid ${T.yellow}40`,borderRadius:6,padding:"2px 8px",color:T.yellow,fontSize:10,cursor:"pointer",fontFamily:"inherit",marginRight:"auto",marginLeft:10}}>↺ Zero all inventory</button>}
             {canAdmin&&parts.map(p=>(
               <div key={p.id} style={{display:"flex",alignItems:"center",gap:6}}>
                 <span style={{fontSize:11,color:T.purple,fontWeight:700}}>{p.part_number}</span>
@@ -13699,14 +12793,6 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
                     <div style={{display:"flex",gap:5}}>
                       {canAdmin&&<button onClick={e=>{e.stopPropagation();setAdjItem(item);setAdjTo(String(i.onHand));setAdjReason("");}}
                         style={{background:"none",border:`1px solid ${T.blue}40`,borderRadius:6,padding:"2px 8px",color:T.blue,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>✏️ Count</button>}
-                      {canAdmin&&i.adjusted!==0&&<button title="Delete every count adjustment on this part so Adjusted goes back to 0" onClick={async e=>{
-                          e.stopPropagation();
-                          const adj=receipts.filter(r=>r.bom_id===item.id&&r.transaction_type==="Adjustment");
-                          if(!adj.length)return;
-                          if(!window.confirm(`Undo ${adj.length} count adjustment${adj.length!==1?"s":""} on ${item.component_part_number}?\n\nAdjusted goes back to 0 and on-hand becomes Received − Used − Damaged. Receipts are not touched.`))return;
-                          try{await sb(`/mfg_receipts?id=in.(${adj.map(r=>r.id).join(",")})`,{method:"DELETE"});await load();}catch(err){setFormErr("Error: "+err.message);}
-                        }}
-                        style={{background:"none",border:`1px solid ${T.yellow}40`,borderRadius:6,padding:"2px 8px",color:T.yellow,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>↺ Reset adj.</button>}
                       {canAdmin&&<button onClick={async e=>{e.stopPropagation();if(window.confirm("Remove "+item.component_part_number+" from BOM?"))try{await API.mfg.bom.remove(item.id);await load();}catch(err){}}} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"2px 8px",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>🗑 Remove</button>}
                     </div>
                     <div style={{fontSize:28,fontWeight:900,color:i.needsReorder?T.red:i.onHand<=0?T.yellow:T.green,lineHeight:1}}>{i.onHand}</div>
@@ -13947,12 +13033,16 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           </div>
           {showShipForm&&<div style={{...cardS,marginBottom:14,border:`1px solid ${T.blue}40`}}>
             <div style={{fontSize:13,fontWeight:800,color:T.blue,marginBottom:12}}>Log Shipment</div>
-            <div style={{marginBottom:10}}><label style={lbl}>Assembly *</label>
-              <select value={sf.part_id} onChange={e=>setSf(x=>({...x,part_id:e.target.value}))} style={inpSel}>
-                <option value="">— Select —</option>
+            <div style={{marginBottom:10}}><label style={lbl}>Assembly {parts.length?"":"(none on this job)"}</label>
+              <select value={sf.part_id} onChange={e=>setSf(x=>({...x,part_id:e.target.value}))} style={inpSel} disabled={!parts.length}>
+                <option value="">{parts.length?"— None / customer-supplied —":"— No finished parts set up —"}</option>
                 {parts.map(p=><option key={p.id} value={p.id}>{p.part_number}{p.description?" — "+p.description:""}</option>)}
               </select>
             </div>
+            {!sf.part_id&&<div style={{marginBottom:10}}><label style={lbl}>What shipped *</label>
+              <input value={sf.item} onChange={e=>setSf(x=>({...x,item:e.target.value}))} placeholder="e.g. Security Door Frames (customer-supplied material)" style={inp}/>
+              <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>No assembly needed — just describe the item and enter the quantity.</div>
+            </div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
               <div><label style={lbl}>Qty Shipped *</label><input type="number" value={sf.qty} onChange={e=>setSf(x=>({...x,qty:e.target.value}))} placeholder="0" style={inp}/></div>
               <div><label style={lbl}>Ship Date</label><input type="date" value={sf.date} onChange={e=>setSf(x=>({...x,date:e.target.value}))} style={inp}/></div>
@@ -13962,7 +13052,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
               <div><label style={lbl}>BOL #</label><input value={sf.bol} onChange={e=>setSf(x=>({...x,bol:e.target.value}))} placeholder="BOL #" style={inp}/></div>
             </div>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={logShipment} disabled={!sf.qty||!sf.part_id||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.blue,opacity:sf.qty&&sf.part_id&&!saving?1:0.5}}>{saving?"Saving…":"Log Shipment"}</button>
+              <button onClick={logShipment} disabled={!shipFormOk||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.blue,opacity:shipFormOk&&!saving?1:0.5}}>{saving?"Saving…":"Log Shipment"}</button>
               <button onClick={()=>setShowShipForm(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
             </div>
           </div>}
@@ -13970,7 +13060,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
             const part=parts.find(p=>p.id===s.part_id);
             return(<div key={s.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.blue}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <div style={{fontSize:14,fontWeight:800,color:T.blue}}>{s.qty_shipped} shipped — {part?.part_number||"—"}</div>
+                <div style={{fontSize:14,fontWeight:800,color:T.blue}}>{s.qty_shipped} shipped — {part?.part_number||s.item_description||"—"}</div>
                 <div style={{fontSize:11,color:T.muted}}>{s.ship_date}{s.customer?" · "+s.customer:""}{s.bol_number?" · BOL: "+s.bol_number:""}</div>
               </div>
               {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete?"))try{
@@ -16334,12 +15424,32 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
   const [bolTracking,setBolTracking]=useState(existingSlip?.data?.bolTracking||"");
   const [skidCount,setSkidCount]=useState(existingSlip?.data?.skidCount||"");
   const [totalWeight,setTotalWeight]=useState(existingSlip?.data?.totalWeight||"");
-  const [sealNo,setSealNo]=useState("");
-  const [sqrs,setSqrs]=useState("SQR03, SQR04, SQR06, SQR33, SQR35");
-  const [drawingRev,setDrawingRev]=useState("");
-  const [deliveryAppt,setDeliveryAppt]=useState("Call 24 hrs. in advance: (814) 539-6922 x299");
-  const [recvHours,setRecvHours]=useState("7:00 AM thru 3:00 PM ONLY");
-  const [notes,setNotes]=useState(existingSlip?.data?.notes||"");
+  const d0=existingSlip?.data||{};
+  const dv=(k,fallback)=>(d0[k]!==undefined&&d0[k]!==null)?d0[k]:fallback;
+  const [sealNo,setSealNo]=useState(dv("sealNo",""));
+  const [sqrs,setSqrs]=useState(dv("sqrs","SQR03, SQR04, SQR06, SQR33, SQR35"));
+  const [drawingRev,setDrawingRev]=useState(dv("drawingRev",""));
+  const [deliveryAppt,setDeliveryAppt]=useState(dv("deliveryAppt","Call 24 hrs. in advance: (814) 539-6922 x299"));
+  const [recvHours,setRecvHours]=useState(dv("recvHours","7:00 AM thru 3:00 PM ONLY"));
+  const [notes,setNotes]=useState(dv("notes",""));
+
+  // Section 1 — Ship To / Order Information. Every box is editable so the
+  // slip can go to a different customer / site; defaults come from the job.
+  const [fromAddr,setFromAddr]=useState(dv("fromAddr","AIME / Atlantic Welders Inc.\n5730 Pennington Ave, Baltimore, MD 21226"));
+  const [customerName,setCustomerName]=useState(dv("customerName",job.customer||""));
+  // JWFI is the usual customer, so keep its buyer / dock as the default when
+  // the job is theirs; any other customer starts blank.
+  const isJWF=/jwf/i.test(job.customer||"");
+  const [buyerContact,setBuyerContact]=useState(dv("buyerContact",isJWF?"JWFI Purchasing":""));
+  const [shipVia,setShipVia]=useState(dv("shipVia",""));
+  const [shipTo,setShipTo]=useState(dv("shipTo",isJWF?"JWFI\n84 Iron Street - Dock 2 Johnstown, PA 15906":""));
+  const [customerPo,setCustomerPo]=useState(dv("customerPo",job.po_number||""));
+
+  // Section 2 — Shipment Details extras (the rest already have state above).
+  const [partNumber,setPartNumber]=useState(dv("partNumber",parts.map(p=>p.part_number).filter(Boolean).join(", ")));
+  const [partDesc,setPartDesc]=useState(dv("partDesc",parts.map(p=>p.description).filter(Boolean).join(", ")));
+  const [operation,setOperation]=useState(dv("operation",""));
+  const [uom,setUom]=useState(dv("uom","EA"));
 
   const blankLine={poLine:"",partNo:"",description:"",qtyOrdered:"",qtyShipped:"",qtyBackordered:"",pkgSkid:"",notes:""};
   const [lines,setLines]=useState(()=>existingSlip?.data?.lines||parts.map(p=>({...blankLine,partNo:p.part_number,description:p.description||"",qtyOrdered:String(p.qty_ordered||"")})).concat(Array(Math.max(0,6-parts.length)).fill(blankLine)));
@@ -16357,7 +15467,8 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
 
   async function saveSlip(){
     setSaving(true);setSaveMsg("");
-    const data={slipNo,shipDate,carrier,truckTrailer,bolTracking,skidCount,totalWeight,sealNo,sqrs,drawingRev,deliveryAppt,recvHours,notes,checks,lines};
+    const data={slipNo,shipDate,carrier,truckTrailer,bolTracking,skidCount,totalWeight,sealNo,sqrs,drawingRev,deliveryAppt,recvHours,notes,checks,lines,
+      fromAddr,customerName,buyerContact,shipVia,shipTo,customerPo,partNumber,partDesc,operation,uom};
     try{
       if(slipId){
         await API.mfg.packingSlips.update(slipId,{slip_number:slipNo,ship_date:shipDate||null,data,updated_at:new Date().toISOString()});
@@ -16387,6 +15498,8 @@ function PackingSlipScreen({job,parts,user,onBack,onSaved,existingSlip}){
 
   function printSlip(){
     const CHECKMARK="✓";
+    const escP=(v)=>String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const ml=(v)=>escP(v).replace(/\n/g,"<br/>");   // multi-line box
     const CB=(checked)=>checked?`<span style="font-size:14px">☑</span>`:`<span style="font-size:14px">☐</span>`;
 
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -16446,29 +15559,29 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
 <div class="section-header">1. Ship To / Order Information</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #ccc;margin-bottom:4px;">
   <div style="border-right:1px solid #ccc;">
-    ${[["From","AIME / Atlantic Welders Inc.<br/>5730 Pennington Ave, Baltimore, MD 21226"],
-       ["Customer / Project",job.customer||"JWF Industries"],
-       ["Buyer / Contact","JWFI Purchasing"],
-       ["Ship Via",carrier||"Vendor Truck"]].map(([l,v])=>`
-    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v}</div></div>`).join("")}
+    ${[["From",ml(fromAddr)],
+       ["Customer / Project",escP(customerName)],
+       ["Buyer / Contact",escP(buyerContact)],
+       ["Ship Via",escP(shipVia||carrier)]].map(([l,v])=>`
+    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v||"&nbsp;"}</div></div>`).join("")}
   </div>
   <div>
-    ${[["Ship To","JWFI<br/>84 Iron Street - Dock 2 Johnstown, PA 15906"],
-       ["Customer PO #",job.po_number||"222577-00"],
-       ["Delivery Appointment",deliveryAppt],
-       ["Receiving Hours",recvHours]].map(([l,v])=>`
-    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v}</div></div>`).join("")}
+    ${[["Ship To",ml(shipTo)],
+       ["Customer PO #",escP(customerPo)],
+       ["Delivery Appointment",escP(deliveryAppt)],
+       ["Receiving Hours",escP(recvHours)]].map(([l,v])=>`
+    <div class="info-row"><div class="info-label">${l}</div><div class="info-value">${v||"&nbsp;"}</div></div>`).join("")}
   </div>
 </div>
 
 <!-- SECTION 2: SHIPMENT DETAILS -->
 <div class="section-header">2. Shipment Details</div>
 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;border:1px solid #ccc;margin-bottom:4px;">
-  ${[["Part Number",parts.map(p=>p.part_number).join(", ")||"1651"],
-     ["Description",parts.map(p=>p.description).filter(Boolean).join(", ")||""],
+  ${[["Part Number",partNumber],
+     ["Description",partDesc],
      ["Drawing Rev.",drawingRev],
-     ["Operation","OSP Fit / Weld"],
-     ["UOM","EA"],
+     ["Operation",operation],
+     ["UOM",uom],
      ["SQRs",sqrs],
      ["Carrier / Driver",carrier],
      ["Truck / Trailer #",truckTrailer],
@@ -16476,7 +15589,7 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
      ["Skid / Package Count",skidCount],
      ["Total Weight",totalWeight?(totalWeight+" lbs"):""],
      ["Seal #",sealNo]].map(([l,v])=>`
-  <div class="ship-row"><div class="ship-label">${l}</div><div class="ship-value">${v||"&nbsp;"}</div></div>`).join("")}
+  <div class="ship-row"><div class="ship-label">${l}</div><div class="ship-value">${escP(v)||"&nbsp;"}</div></div>`).join("")}
 </div>
 
 <!-- SECTION 3: PARTS PACKED/SHIPPED -->
@@ -16590,20 +15703,45 @@ td{padding:3px 4px;border:1px solid #ccc;font-size:7.5pt;min-height:16px;}
           </div>
         </div>
 
-        {/* Auto-filled from job */}
-        <div style={{...cardS,marginBottom:12,background:T.blueLow,border:`1px solid ${T.blue}30`}}>
-          <div style={{fontSize:12,fontWeight:800,color:T.blue,marginBottom:8}}>📦 Auto-filled from Job</div>
-          {[["Customer / Project",job.customer||"JWF Industries"],["Customer PO #",job.po_number||""],["Part Number",parts.map(p=>p.part_number).join(", ")],["Description",parts.map(p=>p.description).filter(Boolean).join(", ")]].map(([l,v])=>(
-            <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
-              <span style={{color:T.muted,fontWeight:700}}>{l}</span>
-              <span style={{color:T.text}}>{v||"—"}</span>
-            </div>
-          ))}
+        {/* Section 1: Ship To / Order Information — all editable */}
+        <div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.blue,marginBottom:4}}>📦 1. Ship To / Order Information</div>
+          <div style={{fontSize:10.5,color:T.muted,marginBottom:12}}>Pre-filled from the job. Change anything here for a different customer, buyer, or ship-to site — it's saved with this slip only.</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>From</label>
+              <textarea value={fromAddr} onChange={e=>setFromAddr(e.target.value)} rows={2} style={{...inp,resize:"vertical",minHeight:52}}/></div>
+            <div><label style={lbl}>Ship To</label>
+              <textarea value={shipTo} onChange={e=>setShipTo(e.target.value)} rows={2} placeholder={"Company\nStreet, City, ST ZIP"} style={{...inp,resize:"vertical",minHeight:52}}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Customer / Project</label><input value={customerName} onChange={e=>setCustomerName(e.target.value)} placeholder="Customer" style={inp}/></div>
+            <div><label style={lbl}>Customer PO #</label><input value={customerPo} onChange={e=>setCustomerPo(e.target.value)} placeholder="PO #" style={inp}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Buyer / Contact</label><input value={buyerContact} onChange={e=>setBuyerContact(e.target.value)} placeholder="Name / dept / phone" style={inp}/></div>
+            <div><label style={lbl}>Ship Via</label><input value={shipVia} onChange={e=>setShipVia(e.target.value)} placeholder={carrier||"e.g. AIME Delivery"} style={inp}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div><label style={lbl}>Delivery Appointment</label><input value={deliveryAppt} onChange={e=>setDeliveryAppt(e.target.value)} style={inp}/></div>
+            <div><label style={lbl}>Receiving Hours</label><input value={recvHours} onChange={e=>setRecvHours(e.target.value)} style={inp}/></div>
+          </div>
         </div>
 
-        {/* Shipment details */}
+        {/* Section 2: Shipment details — all editable */}
         <div style={{...cardS,marginBottom:12}}>
-          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:12}}>🚛 Shipment Details</div>
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:12}}>🚛 2. Shipment Details</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Part Number</label><input value={partNumber} onChange={e=>setPartNumber(e.target.value)} placeholder="Part #" style={inp}/></div>
+            <div><label style={lbl}>Description</label><input value={partDesc} onChange={e=>setPartDesc(e.target.value)} placeholder="Description" style={inp}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Drawing Rev.</label><input value={drawingRev} onChange={e=>setDrawingRev(e.target.value)} placeholder="Rev" style={inp}/></div>
+            <div><label style={lbl}>Operation</label><input value={operation} onChange={e=>setOperation(e.target.value)} placeholder="e.g. OSP Fit / Weld" style={inp}/></div>
+            <div><label style={lbl}>UOM</label><input value={uom} onChange={e=>setUom(e.target.value)} placeholder="EA" style={inp}/></div>
+          </div>
+          <div style={{marginBottom:10}}>
+            <label style={lbl}>SQRs</label><input value={sqrs} onChange={e=>setSqrs(e.target.value)} placeholder="SQR numbers, comma separated" style={inp}/>
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
             <div><label style={lbl}>Carrier / Driver</label><input value={carrier} onChange={e=>setCarrier(e.target.value)} style={inp}/></div>
             <div><label style={lbl}>Truck / Trailer #</label><input value={truckTrailer} onChange={e=>setTruckTrailer(e.target.value)} placeholder="Truck/Trailer #" style={inp}/></div>
@@ -16850,7 +15988,7 @@ function AppInner(){
   }
 
   function handleLogin(profile,token){
-    saveSession(token,profile);setAuditUser(profile.name);setUser(profile);
+    saveSession(token);setAuditUser(profile.name);setUser(profile);
     refreshRoster();   // pick up anyone added to the crew directory
   }
   async function handleLogout(){
@@ -16871,7 +16009,6 @@ function AppInner(){
 
   return(
     <div style={{maxWidth:shellMax(screen),margin:"0 auto",transition:"max-width 0.15s ease",fontFamily:"'DM Sans',system-ui,sans-serif",color:T.text,background:T.bg,minHeight:"100vh"}}>
-      <BusyPill/>
       {syncMsg&&<div style={{background:T.green,color:"#000",padding:"10px 16px",fontSize:13,fontWeight:700,textAlign:"center"}}>{syncMsg}</div>}
       {err&&<div style={{background:T.red,color:"#fff",padding:"8px 16px",fontSize:12,cursor:"pointer"}} onClick={()=>setErr("")}>{err} ✕</div>}
       {!user&&restoring&&(
@@ -18638,21 +17775,32 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
   const [showPull,setShowPull]=useState(false);
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
 
-  const addLine=()=>setLines(ls=>[...ls,{id:uid(),period_start:"",period_end:"",
+  // Each line has a unit: "hour" (employees × hours × rate, the original
+  // weekly-labor row) or "each" (qty × rate, for piece-priced items).
+  const addLine=()=>setLines(ls=>[...ls,{id:uid(),unit:"hour",period_start:"",period_end:"",
     description:`${job.description||job.job_number} - Weekly Labor`,
     employees:"",hours:"",rate:rate,source:null}]);
+  const addItemLine=()=>setLines(ls=>[...ls,{id:uid(),unit:"each",period_start:"",period_end:"",
+    description:"",qty:"",rate:"",source:null}]);
   const setLine=(id,k,v)=>setLines(ls=>ls.map(l=>l.id===id?{...l,[k]:v}:l));
   const delLine=(id)=>setLines(ls=>ls.filter(l=>l.id!==id));
 
+  const isEach=(l)=>l.unit==="each";
   // Man-hours = employees × hours each. Amount = man-hours × rate.
-  const manHours=(l)=>(parseFloat(l.employees)||0)*(parseFloat(l.hours)||0);
-  const lineAmt=(l)=>manHours(l)*(parseFloat(l.rate)||0);
+  // Item lines: amount = qty × rate, no man-hours.
+  const manHours=(l)=>isEach(l)?0:(parseFloat(l.employees)||0)*(parseFloat(l.hours)||0);
+  const lineQty=(l)=>isEach(l)?(parseFloat(l.qty)||0):manHours(l);
+  const lineAmt=(l)=>lineQty(l)*(parseFloat(l.rate)||0);
 
-  const totalManHours=lines.reduce((s,l)=>s+manHours(l),0);
-  const laborSubtotal=lines.reduce((s,l)=>s+lineAmt(l),0);
+  const laborLines=lines.filter(l=>!isEach(l));
+  const itemLines=lines.filter(isEach);
+  const totalManHours=laborLines.reduce((s,l)=>s+manHours(l),0);
+  const laborSubtotal=laborLines.reduce((s,l)=>s+lineAmt(l),0);
+  const itemsSubtotal=itemLines.reduce((s,l)=>s+lineAmt(l),0);
+  const linesSubtotal=laborSubtotal+itemsSubtotal;
   const materials=parseFloat(f.materials)||0;
   const freight=parseFloat(f.freight)||0;
-  const taxable=laborSubtotal+materials+freight;
+  const taxable=linesSubtotal+materials+freight;
   const taxAmount=taxable*((parseFloat(f.tax_pct)||0)/100);
   const total=taxable+taxAmount;
   const paid=parseFloat(f.amount_paid)||0;
@@ -18677,7 +17825,7 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
       tax_pct:parseFloat(f.tax_pct)||0,tax_amount:taxAmount,
       retainage_pct:0,retainage_amount:0,
       amount_paid:paid,
-      subtotal:laborSubtotal,total,
+      subtotal:linesSubtotal,total,
       lines,
       created_by:invoice?.created_by||user.name,
       updated_at:new Date().toISOString(),
@@ -18788,12 +17936,20 @@ table.tot .v{text-align:right;min-width:90px}
     <th style="width:30%">Description</th>
     <th class="c" style="width:10%">Employees</th>
     <th class="c" style="width:8%">Hours</th>
-    <th class="c" style="width:11%">Man-Hours</th>
+    <th class="c" style="width:11%">${itemLines.length?"Qty / Man-Hrs":"Man-Hours"}</th>
     <th class="c" style="width:8%">Rate</th>
     <th class="r" style="width:13%">Amount</th>
   </tr></thead>
   <tbody>
-    ${rows.map(l=>l?`<tr>
+    ${rows.map(l=>l?(isEach(l)?`<tr>
+      <td>${period(l)}</td>
+      <td>${esc(l.description)}</td>
+      <td class="c">&mdash;</td>
+      <td class="c">&mdash;</td>
+      <td class="c">${n0(l.qty)} ea</td>
+      <td class="c">${m2(l.rate)}</td>
+      <td class="r">${m2(lineAmt(l))}</td>
+    </tr>`:`<tr>
       <td>${period(l)}</td>
       <td>${esc(l.description)}</td>
       <td class="c">${n0(l.employees)}</td>
@@ -18801,14 +17957,14 @@ table.tot .v{text-align:right;min-width:90px}
       <td class="c">${n0(manHours(l))}</td>
       <td class="c">${n0(l.rate)}</td>
       <td class="r">${n0(lineAmt(l))}</td>
-    </tr>`:`<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join("")}
+    </tr>`):`<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join("")}
   </tbody>
 </table>
 
 <div class="foot">
   <div>
     <h2>NOTES / PAYMENT TERMS</h2>
-    <div class="hl">Labor billed at $${m2(rate)} per man-hour. Weekly billing period.</div>
+    ${laborLines.length?`<div class="hl">Labor billed at $${m2(rate)} per man-hour. Weekly billing period.</div>`:""}
     <div class="note">${esc(f.notes).replace(/\n/g,"<br/>")}</div>
     <div class="sig">
       <div><div class="sigline"></div><div class="siglbl">Authorized By</div></div>
@@ -18817,8 +17973,9 @@ table.tot .v{text-align:right;min-width:90px}
   </div>
   <div>
     <table class="tot">
-      <tr><td class="k">Total Man-Hours</td><td class="v">${n0(totalManHours)}</td></tr>
-      <tr><td class="k">Labor Subtotal</td><td class="v">${n0(laborSubtotal)}</td></tr>
+      ${laborLines.length||!itemLines.length?`<tr><td class="k">Total Man-Hours</td><td class="v">${n0(totalManHours)}</td></tr>
+      <tr><td class="k">Labor Subtotal</td><td class="v">${n0(laborSubtotal)}</td></tr>`:""}
+      ${itemLines.length?`<tr><td class="k">Items Subtotal</td><td class="v">${m2(itemsSubtotal)}</td></tr>`:""}
       <tr><td class="k">Materials / Consumables</td><td class="v">${n0(materials)}</td></tr>
       <tr><td class="k">Freight / Other</td><td class="v">${n0(freight)}</td></tr>
       <tr><td class="k">Sales Tax</td><td class="v">${n0(taxAmount)}</td></tr>
@@ -18891,26 +18048,34 @@ table.tot .v{text-align:right;min-width:90px}
 
       {/* Lines */}
       <div style={{display:"flex",gap:8,marginBottom:10}}>
-        <button onClick={addLine} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ Add Week</button>
+        <button onClick={addLine} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ Add Week (hourly)</button>
+        <button onClick={addItemLine} style={{...primBtn,flex:1,borderRadius:12,background:T.purple,fontSize:13}}>+ Add Items (each)</button>
         <button onClick={()=>setShowPull(true)} style={{...primBtn,flex:1,borderRadius:12,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,fontSize:13}}>
           ↓ Pull Logged Hours
         </button>
       </div>
 
       {lines.length===0&&<div style={{...cardS,textAlign:"center",padding:"24px",color:T.muted,fontSize:12,marginBottom:10}}>
-        No billing weeks yet. Pull logged hours to build them automatically, or add a week by hand.
+        No lines yet. Pull logged hours, add a week by hand, or add a per-item line (qty × price each).
       </div>}
 
       {lines.map(l=>(
-        <div key={l.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${l.source?T.green:T.blue}`}}>
+        <div key={l.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${l.source?T.green:isEach(l)?T.purple:T.blue}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
-            <div style={{fontSize:11,color:l.source?T.green:T.muted,fontWeight:l.source?700:400}}>
-              {l.source?`🏭 ${l.source.ids.length} labor entries`:"Manual week"}
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <div style={{fontSize:11,color:l.source?T.green:T.muted,fontWeight:l.source?700:400}}>
+                {l.source?`🏭 ${l.source.ids.length} labor entries`:isEach(l)?"Items":"Manual week"}
+              </div>
+              {!l.source&&<select value={l.unit||"hour"} onChange={e=>setLine(l.id,"unit",e.target.value)}
+                style={{...inp,width:"auto",padding:"3px 6px",fontSize:11,fontWeight:700,color:isEach(l)?T.purple:T.blue}}>
+                <option value="hour">Per man-hour</option>
+                <option value="each">Per each</option>
+              </select>}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:9}}>
               <div style={{textAlign:"right"}}>
                 <div style={{fontSize:14,fontWeight:900,color:T.green}}>{money2(lineAmt(l))}</div>
-                <div style={{fontSize:10,color:T.muted}}>{manHours(l)} man-hrs</div>
+                <div style={{fontSize:10,color:T.muted}}>{isEach(l)?`${lineQty(l)} × ${money2(l.rate)}`:`${manHours(l)} man-hrs`}</div>
               </div>
               <button onClick={()=>delLine(l.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
             </div>
@@ -18920,21 +18085,29 @@ table.tot .v{text-align:right;min-width:90px}
             <div><label style={lbl}>Week To</label><input type="date" value={l.period_end||""} onChange={e=>setLine(l.id,"period_end",e.target.value)} style={ri}/></div>
           </div>
           <div style={{marginBottom:8}}><label style={lbl}>Description</label>
-            <input value={l.description||""} onChange={e=>setLine(l.id,"description",e.target.value)} style={ri}/></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            <input value={l.description||""} onChange={e=>setLine(l.id,"description",e.target.value)}
+              placeholder={isEach(l)?"e.g. Bracket assembly, P/N 0801651":""} style={ri}/></div>
+          {isEach(l)?<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div><label style={lbl}>Quantity</label>
+              <input type="number" step="1" value={l.qty||""} onChange={e=>setLine(l.id,"qty",e.target.value)} placeholder="60" style={{...ri,textAlign:"center"}}/></div>
+            <div><label style={lbl}>Price Each</label>
+              <input type="number" step="0.01" value={l.rate||""} onChange={e=>setLine(l.id,"rate",e.target.value)} placeholder="120.00" style={{...ri,textAlign:"right"}}/></div>
+          </div>
+          :<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
             <div><label style={lbl}>Employees</label>
               <input type="number" value={l.employees||""} onChange={e=>setLine(l.id,"employees",e.target.value)} style={{...ri,textAlign:"center"}}/></div>
             <div><label style={lbl}>Hours Each</label>
               <input type="number" step="0.5" value={l.hours||""} onChange={e=>setLine(l.id,"hours",e.target.value)} style={{...ri,textAlign:"center"}}/></div>
             <div><label style={lbl}>Rate</label>
               <input type="number" step="0.01" value={l.rate||""} onChange={e=>setLine(l.id,"rate",e.target.value)} style={{...ri,textAlign:"right"}}/></div>
-          </div>
+          </div>}
         </div>
       ))}
 
       {/* Totals */}
       <div style={{...cardS,marginTop:12,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
-        {[["Total Man-Hours",totalManHours,false],["Labor Subtotal",laborSubtotal,true]].map(([l,v,isMoney])=>(
+        {[["Total Man-Hours",totalManHours,false],["Labor Subtotal",laborSubtotal,true],
+          ...(itemLines.length?[["Items Subtotal",itemsSubtotal,true]]:[])].map(([l,v,isMoney])=>(
           <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${T.border}`,fontSize:13}}>
             <span style={{color:T.sub}}>{l}</span>
             <span style={{fontWeight:700}}>{isMoney?money2(v):Number(v).toLocaleString("en-US")}</span>
@@ -19354,7 +18527,6 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
               rate:m(r.rate),
               otHours:r.ot_hours||0,
               otRate:m(r.ot_rate),
-              travelHours:r.travel_hours||0,
               amount:m(laborRowAmt(r)),
             })),
             equipment:equipment.map(r=>({
@@ -19426,12 +18598,10 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const equipName=(r)=>labelOf(r,"description","customDesc");
 
   // Per diem is one flat row per ticket (headcount × rate), same as the Daily Report.
-  // Travel is billed at the regular rate, same as the Daily Report.
   const laborRowAmt=(r)=>isPerDiemRow(r)
     ?perDiemCount(r)*(parseFloat(r.rate)||0)
     :(parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)
-     +(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0)
-     +(parseFloat(r.travel_hours)||0)*(parseFloat(r.rate)||0);
+     +(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0);
   const workers=labor.filter(r=>!isPerDiemRow(r));
   const perDiemRow=labor.find(isPerDiemRow);
   const perDiemAmt=perDiemRow?laborRowAmt(perDiemRow):0;
@@ -19439,7 +18609,6 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const laborTotal=labor.reduce((s,r)=>s+laborRowAmt(r),0);
   const totalRegHrs=workers.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
   const totalOtHrs =workers.reduce((s,r)=>s+(parseFloat(r.ot_hours)||0),0);
-  const totalTravelHrs=workers.reduce((s,r)=>s+(parseFloat(r.travel_hours)||0),0);
   function setPerDiem(count,rate){
     const others=labor.filter(r=>!isPerDiemRow(r));
     const n=parseFloat(count);
@@ -19525,7 +18694,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       client_email:bsEmail||null,client_contact:(clientName||bsName)||null,
       show_markup:showMarkup,
       photos,
-      reg_hours:totalRegHrs,ot_hours:totalOtHrs,travel_hours:totalTravelHrs,
+      reg_hours:totalRegHrs,ot_hours:totalOtHrs,
       labor_total:laborTotal,equipment_total:equipTotal,
       materials_total:matsTotal,other_total:otherTotal,
       subtotal,markup_amount:markupAmt,grand_total:grandTotal,
@@ -19550,11 +18719,8 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       return;
     }
     try{
-      let savedId=ticket?.id;
-      if(isNew){const res=await API.tmTickets.create(data);savedId=Array.isArray(res)?res[0]?.id:res?.id;}
+      if(isNew)await API.tmTickets.create(data);
       else await API.tmTickets.update(ticket.id,data);
-      // Same as the Daily Report: labor on the ticket becomes the crew's time cards.
-      if(savedId){try{await autoPopulateTimeCardsFromTicket({...data,id:savedId},project);}catch(e){}}
       onSaved&&onSaved();
     }catch(e){
       try{
@@ -19599,15 +18765,14 @@ ${labor.length?`<div style="margin-bottom:8px"><div style="background:#1f3864;co
 <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
   <th style="${thStyle}left">Name</th><th style="${thStyle}left">Classification</th>
   <th style="${thStyle}center">Reg Hrs</th><th style="${thStyle}right">Reg Rate</th>
-  <th style="${thStyle}center">OT Hrs</th><th style="${thStyle}right">OT Rate</th><th style="${thStyle}center">Travel</th><th style="${thStyle}right">Amount</th>
+  <th style="${thStyle}center">OT Hrs</th><th style="${thStyle}right">OT Rate</th><th style="${thStyle}right">Amount</th>
 </tr></thead><tbody>
 ${workers.map(r=>`<tr><td style="${tdStyle}left">${laborName(r)}</td><td style="${tdStyle}left">${r.classification||""}</td>
   <td style="${tdStyle}center">${r.hours||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td>
   <td style="${tdStyle}center">${r.ot_hours||""}</td><td style="${tdStyle}right">${(parseFloat(r.ot_hours)||0)>0?fmt(r.ot_rate):""}</td>
-  <td style="${tdStyle}center">${r.travel_hours||""}</td>
   <td style="${tdStyle}right">${fmt(laborRowAmt(r))}</td></tr>`).join("")}
 ${perDiemRow?`<tr><td style="${tdStyle}left"><em>Per Diem</em></td><td style="${tdStyle}left">${perDiemHeads} employee${perDiemHeads!==1?"s":""}</td>
-  <td style="${tdStyle}center">${perDiemHeads}</td><td style="${tdStyle}right">${fmt(perDiemRow.rate)}</td><td></td><td></td><td></td>
+  <td style="${tdStyle}center">${perDiemHeads}</td><td style="${tdStyle}right">${fmt(perDiemRow.rate)}</td><td></td><td></td>
   <td style="${tdStyle}right">${fmt(perDiemAmt)}</td></tr>`:""}
 <tr style="font-weight:700;background:#f9fafb">
   <td colspan="2" style="${tdStyle}right">Labor Total</td>
@@ -19800,7 +18965,7 @@ ${(()=>{
 
         {/* ── LABOR TAB ── */}
         {tab==="labor"&&<div>
-          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:"",ot_hours:"",ot_rate:"",travel_hours:""})}
+          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:"",ot_hours:"",ot_rate:""})}
             style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Worker</button>
           {workers.map(r=>(
             <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}>
@@ -19854,7 +19019,7 @@ ${(()=>{
               </div>
               {/* OT is billed at its own rate, so it is entered separately
                   rather than assumed to be 1.5x. Leave blank if there is none. */}
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                 <div><label style={{...lbl,color:T.yellow}}>OT Hours</label>
                   <input type="number" step="0.5" value={r.ot_hours||""}
                     onChange={e=>{
@@ -19872,15 +19037,10 @@ ${(()=>{
                     onChange={e=>updateRow(setLabor,r.id,"ot_rate",e.target.value)}
                     placeholder="0.00" style={ri}/>
                 </div>
-                <div><label style={{...lbl,color:T.blue}}>Travel</label>
-                  <input type="number" step="0.5" value={r.travel_hours||""}
-                    onChange={e=>updateRow(setLabor,r.id,"travel_hours",e.target.value)}
-                    placeholder="0" style={ri}/>
-                </div>
               </div>
-              {((parseFloat(r.ot_hours)||0)>0||(parseFloat(r.travel_hours)||0)>0)&&<div style={{fontSize:11,color:T.muted,marginTop:6,display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:4}}>
-                <span>{r.hours||0}h reg{(parseFloat(r.ot_hours)||0)>0&&<> + <span style={{color:T.yellow}}>{r.ot_hours}h OT</span></>}{(parseFloat(r.travel_hours)||0)>0&&<> + <span style={{color:T.blue}}>{r.travel_hours}h travel</span></>}</span>
-                <span>{fmt((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))}{(parseFloat(r.ot_hours)||0)>0&&<> + <span style={{color:T.yellow}}>{fmt((parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0))}</span></>}{(parseFloat(r.travel_hours)||0)>0&&<> + <span style={{color:T.blue}}>{fmt((parseFloat(r.travel_hours)||0)*(parseFloat(r.rate)||0))}</span></>}</span>
+              {(parseFloat(r.ot_hours)||0)>0&&<div style={{fontSize:11,color:T.muted,marginTop:6,display:"flex",justifyContent:"space-between"}}>
+                <span>{r.hours||0}h reg + <span style={{color:T.yellow}}>{r.ot_hours}h OT</span></span>
+                <span>{fmt((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))} + <span style={{color:T.yellow}}>{fmt((parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0))}</span></span>
               </div>}
             </div>
           ))}
