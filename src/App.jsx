@@ -522,6 +522,10 @@ function getAllPositions(){
 
 const WMO={0:["Clear Sky","☀️"],1:["Mainly Clear","🌤️"],2:["Partly Cloudy","⛅"],3:["Overcast","☁️"],45:["Foggy","🌫️"],48:["Icy Fog","🌫️"],51:["Light Drizzle","🌦️"],53:["Drizzle","🌦️"],55:["Heavy Drizzle","🌦️"],61:["Light Rain","🌧️"],63:["Rain","🌧️"],65:["Heavy Rain","🌧️"],71:["Light Snow","🌨️"],73:["Snow","🌨️"],75:["Heavy Snow","❄️"],80:["Light Showers","🌦️"],81:["Showers","🌦️"],82:["Violent Showers","⛈️"],95:["Thunderstorm","⛈️"],96:["Thunderstorm + Hail","⛈️"],99:["Severe Thunderstorm","⛈️"]};
 const DIVISIONS=["Mechanical","Pipeline","Structural","Manufacturing"];
+/* Field time clock. When off, crew cannot clock in/out on field jobs — hours
+   reach a time card only through Daily Reports and T&M tickets. The shop
+   clock on manufacturing jobs is separate and unaffected. */
+const FIELD_CLOCK_ENABLED=false;
 const DIV_META={Mechanical:{icon:"⚙️",color:"#60A5FA",desc:"Mechanical projects and equipment"},Pipeline:{icon:"🔧",color:"#3B82F6",desc:"Pipeline construction and maintenance"},Structural:{icon:"🏗️",color:"#34D399",desc:"Structural steel and civil work"},Manufacturing:{icon:"🏭",color:"#8B5CF6",desc:"Shop fabrication & production"}};
 const ROLES=["crew","foreman","estimator","pm","admin"];
 const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Reports, time cards, photos, safety, schedule, weather"},foreman:{label:"Foreman",color:T.yellow,desc:"Everything crew can do, plus create and manage jobs"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, PM dashboard, custom reports"},estimator:{label:"Estimator",color:T.purple,desc:"Foreman access plus the estimating platform"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
@@ -4051,9 +4055,13 @@ function TimeCardsTab({projectId,user,project,onErr}){
 
   return(<div>
     {/* The clock comes first — it is what most people open this tab to do. */}
-    <ClockCard project={project||{id:projectId}} user={user} onChange={bump}/>
+    {FIELD_CLOCK_ENABLED&&<ClockCard project={project||{id:projectId}} user={user} onChange={bump}/>}
+    {!FIELD_CLOCK_ENABLED&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.blue}`,fontSize:12.5,color:T.sub,lineHeight:1.6}}>
+      <div style={{fontSize:11,fontWeight:800,color:T.blue,textTransform:"uppercase",letterSpacing:"1px",marginBottom:4}}>⏱ How hours get here</div>
+      Time cards are built from <b style={{color:T.text}}>Daily Reports</b> and <b style={{color:T.text}}>T&M tickets</b>. Log your crew's hours on today's report and they'll show up below.
+    </div>}
 
-    {isSupervisor&&<OnTheClockNow projectId={projectId} refreshKey={clockKey}/>}
+    {FIELD_CLOCK_ENABLED&&isSupervisor&&<OnTheClockNow projectId={projectId} refreshKey={clockKey}/>}
 
     {canApprove&&<TimeApproval projectId={projectId} user={user} refreshKey={clockKey}
       onChange={bump} onErr={onErr}/>}
@@ -6213,7 +6221,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
           {wkLoading&&<div style={{textAlign:"center",padding:24,color:T.muted,fontSize:13}}>Loading hours…</div>}
 
           {!wkLoading&&<>
-            <ClockRoster pmDiv={pmDiv} divIds={divIds} user={user} onErr={setErr}/>
+            {FIELD_CLOCK_ENABLED&&<ClockRoster pmDiv={pmDiv} divIds={divIds} user={user} onErr={setErr}/>}
 
             {/* Expiring certs */}
             {certSoon.length>0&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:"10px 14px",marginBottom:12}}>
