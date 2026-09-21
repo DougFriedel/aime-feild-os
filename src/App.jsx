@@ -2801,7 +2801,7 @@ tr:nth-child(even) td{background:#f9fafb;}
 .badge-blue{background:#dbeafe;color:#1e40af;}
 .visitor-row{padding:7px;border-bottom:1px solid #e5e7eb;display:flex;gap:10px;}
 .delay-row{padding:7px;border-bottom:1px solid #e5e7eb;border-left:3px solid #ef4444;padding-left:10px;}
-.sig-section{margin-top:20px;display:grid;grid-template-columns:${isPipeline?'1fr 1fr 1fr':'1fr 1fr'};gap:20px;}
+.sig-section{margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:20px;}
 .sig-box{border-top:1.5px solid #000;padding-top:8px;}
 .sig-label{font-size:8pt;color:#555;text-transform:uppercase;}
 .footer{margin-top:16px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
@@ -2891,7 +2891,7 @@ ${subsTotal>0?`<tr><td>Subcontractors</td><td style="text-align:right">${fmt2(su
 <div class="sig-section">
   <div class="sig-box"><div style="height:50px"></div><div class="sig-label">Foreman / Submitted By</div><div style="font-weight:700;margin-top:4px">${report.submitted_by||''}</div><div style="margin-top:4px">Date: ______________</div></div>
   ${isPipeline?`<div class="sig-box"><div style="height:50px;text-align:center">${report.inspector_signature?`<img src="${report.inspector_signature}" style="max-height:48px;max-width:100%;object-fit:contain">`:''}</div><div class="sig-label">Inspector</div><div style="margin-top:4px">${report.inspector_name?`<strong>${report.inspector_name}</strong>`:'Name: ______________'}</div><div style="margin-top:4px">Date: ${report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleDateString():'______________'}</div></div>`:''}
-  <div class="sig-box"><div style="height:50px"></div><div class="sig-label">PM / Reviewed By</div><div style="margin-top:4px">Name: ______________</div><div style="margin-top:4px">Date: ______________</div></div>
+  ${!isPipeline?`<div class="sig-box"><div style="height:50px"></div><div class="sig-label">PM / Reviewed By</div><div style="margin-top:4px">Name: ______________</div><div style="margin-top:4px">Date: ______________</div></div>`:''}
 </div>
 
 <div class="footer"><span>AIME Field Pro · ${project.name} · Report #${report.report_no||'—'} · ${dateStr}</span><span>Generated: ${new Date().toLocaleString()}</span></div>
