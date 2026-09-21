@@ -7811,7 +7811,73 @@ function TimeCardsScreen({user,projects,onBack}){
     return null;
   };
 
-  async function remove(id){try{await API.timeCards.remove(id);setCards(c=>c.filter(x=>x.id!==id));}catch(e){setErr(e.message);}}
+  async function remove(id){
+    if(!window.confirm("Delete this time card? This can't be undone."))return;
+    try{await API.timeCards.remove(id);setCards(c=>c.filter(x=>x.id!==id));}catch(e){setErr(e.message);}
+  }
+
+  /* ── Edit any card (pending or approved) with an audit trail ── */
+  const canEdit=user.role==='admin'||user.role==='pm';
+  const [edit,setEdit]=useState(null);       // card id
+  const [draft,setDraft]=useState({});
+  const [saving,setSaving]=useState(false);
+  const [showAdd,setShowAdd]=useState(false);
+  const [add,setAdd]=useState({worker_name:"",date:today(),project_id:"",mfg_job_id:"",classification:"",reg_hours:"",ot_hours:"",travel_hours:"",reason:""});
+  const t=(c)=>{const r=parseFloat(c.reg_hours)||0,o=parseFloat(c.ot_hours)||0,v=parseFloat(c.travel_hours)||0;return c.total_hours!=null&&c.total_hours!==""?parseFloat(c.total_hours):r+o+v;};
+
+  function startEdit(c){
+    setEdit(c.id);
+    setDraft({reg_hours:c.reg_hours??"",ot_hours:c.ot_hours??"",travel_hours:c.travel_hours??"",
+      classification:c.classification||"",date:c.date||"",edit_reason:""});
+  }
+  async function saveEdit(c){
+    if(!draft.edit_reason.trim()){setErr("Give a reason for the change — it's kept with the card.");return;}
+    setSaving(true);
+    const reg=parseFloat(draft.reg_hours)||0,ot=parseFloat(draft.ot_hours)||0,tr=parseFloat(draft.travel_hours)||0;
+    const body={
+      reg_hours:reg,ot_hours:ot,travel_hours:tr,total_hours:reg+ot+tr,
+      classification:draft.classification||null,date:draft.date||c.date,
+      original_hours:c.original_hours!=null?c.original_hours:t(c),
+      edited_by:user.name,edited_at:new Date().toISOString(),edit_reason:draft.edit_reason.trim(),
+      notes:`${c.notes||""}${c.notes?" · ":""}edited by ${user.name}: ${draft.edit_reason.trim()}`,
+    };
+    try{
+      await API.timeCards.update(c.id,body);
+      setCards(cs=>cs.map(x=>x.id===c.id?{...x,...body}:x));
+      setEdit(null);
+    }catch(e){setErr(e.message);}
+    setSaving(false);
+  }
+  async function setStatus(c,status){
+    try{
+      const body={status,...(status==="approved"?{approved_by:user.name,approved_at:new Date().toISOString()}:{approved_by:null,approved_at:null})};
+      await API.timeCards.update(c.id,body);
+      setCards(cs=>cs.map(x=>x.id===c.id?{...x,...body}:x));
+    }catch(e){setErr(e.message);}
+  }
+  async function saveAdd(){
+    if(!add.worker_name.trim()||!add.date||(!add.project_id&&!add.mfg_job_id)){setErr("Employee, date and a job are required.");return;}
+    const reg=parseFloat(add.reg_hours)||0,ot=parseFloat(add.ot_hours)||0,tr=parseFloat(add.travel_hours)||0;
+    if(reg+ot+tr<=0){setErr("Enter some hours.");return;}
+    setSaving(true);
+    try{
+      const proj=projects.find(p=>p.id===add.project_id);
+      const body={worker_name:add.worker_name.trim(),date:add.date,
+        project_id:add.project_id||null,mfg_job_id:add.mfg_job_id||null,
+        division:proj?.division||(add.mfg_job_id?"Manufacturing":null),
+        classification:add.classification||null,
+        reg_hours:reg,ot_hours:ot,travel_hours:tr,total_hours:reg+ot+tr,
+        source:"manual",status:"pending",
+        notes:`Added by ${user.name}${add.reason?": "+add.reason:""}`,
+        edited_by:user.name,edited_at:new Date().toISOString(),edit_reason:add.reason||null};
+      const res=await API.timeCards.create(body);
+      const row=Array.isArray(res)?res[0]:res;
+      setCards(cs=>[row||body,...cs]);
+      setShowAdd(false);
+      setAdd({worker_name:"",date:today(),project_id:"",mfg_job_id:"",classification:"",reg_hours:"",ot_hours:"",travel_hours:"",reason:""});
+    }catch(e){setErr(e.message);}
+    setSaving(false);
+  }
 
   function handlePrint(){
     const win=window.open("","_blank","width=900,height=750");
@@ -7933,6 +7999,41 @@ function TimeCardsScreen({user,projects,onBack}){
           </div>
         ))}
 
+        {/* Add a card by hand (missed day, no report filed) */}
+        {canEdit&&<div style={{margin:'14px 0 8px'}}>
+          {!showAdd&&<button onClick={()=>setShowAdd(true)} style={{...ghostBtn,width:'100%',fontSize:12,borderColor:T.green,color:T.green}}>+ Add Time Card Manually</button>}
+          {showAdd&&<div style={{...cardS,borderLeft:`3px solid ${T.green}`}}>
+            <div style={{fontSize:12,fontWeight:800,color:T.green,marginBottom:10}}>Add Time Card</div>
+            <div style={{display:'grid',gridTemplateColumns:'1.4fr 1fr',gap:8,marginBottom:8}}>
+              <div><label style={lbl}>Employee *</label><input value={add.worker_name} onChange={e=>setAdd(a=>({...a,worker_name:e.target.value}))} placeholder="Full name as on reports" style={inp}/></div>
+              <div><label style={lbl}>Date *</label><input type="date" value={add.date} onChange={e=>setAdd(a=>({...a,date:e.target.value}))} style={inp}/></div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+              <div><label style={lbl}>Field Job</label>
+                <select value={add.project_id} onChange={e=>setAdd(a=>({...a,project_id:e.target.value,mfg_job_id:e.target.value?"":a.mfg_job_id}))} style={inp}>
+                  <option value="">— none —</option>
+                  {projects.filter(p=>p.status==='active').map(p=><option key={p.id} value={p.id}>{p.name}{p.client?` · ${p.client}`:''}</option>)}
+                </select></div>
+              <div><label style={lbl}>Shop Job</label>
+                <select value={add.mfg_job_id} onChange={e=>setAdd(a=>({...a,mfg_job_id:e.target.value,project_id:e.target.value?"":a.project_id}))} style={inp}>
+                  <option value="">— none —</option>
+                  {mfgJobs.filter(j=>j.status==='active').map(j=><option key={j.id} value={j.id}>🏭 {j.job_number}</option>)}
+                </select></div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:8,marginBottom:8}}>
+              <div><label style={lbl}>Class</label><input value={add.classification} onChange={e=>setAdd(a=>({...a,classification:e.target.value}))} placeholder="Welder" style={inp}/></div>
+              <div><label style={lbl}>Reg</label><input type="number" step="0.25" value={add.reg_hours} onChange={e=>setAdd(a=>({...a,reg_hours:e.target.value}))} style={{...inp,textAlign:'center'}}/></div>
+              <div><label style={lbl}>OT</label><input type="number" step="0.25" value={add.ot_hours} onChange={e=>setAdd(a=>({...a,ot_hours:e.target.value}))} style={{...inp,textAlign:'center'}}/></div>
+              <div><label style={lbl}>Travel</label><input type="number" step="0.25" value={add.travel_hours} onChange={e=>setAdd(a=>({...a,travel_hours:e.target.value}))} style={{...inp,textAlign:'center'}}/></div>
+            </div>
+            <div style={{marginBottom:10}}><label style={lbl}>Reason</label><input value={add.reason} onChange={e=>setAdd(a=>({...a,reason:e.target.value}))} placeholder="e.g. No daily report filed 9/18" style={inp}/></div>
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={saveAdd} disabled={saving} style={{...primBtn,flex:2,borderRadius:12,background:T.green,color:'#000',opacity:saving?0.6:1}}>{saving?'Saving…':'Save Card'}</button>
+              <button onClick={()=>setShowAdd(false)} style={{...ghostBtn,flex:1,textAlign:'center'}}>Cancel</button>
+            </div>
+          </div>}
+        </div>}
+
         {/* Individual entries */}
         {filtered.length>0&&<>
           <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:'uppercase',letterSpacing:'1px',margin:'14px 0 8px'}}>All Entries</div>
@@ -7940,21 +8041,48 @@ function TimeCardsScreen({user,projects,onBack}){
             const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
             const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
             const jobName=jobOf(c);
-            return(<div key={c.id} style={{...cardS,marginBottom:6,display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-              <div style={{flex:1}}>
-                <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{c.worker_name}</div>
-                <div style={{fontSize:11,color:T.muted}}>
-                  {c.date}{jobName?` · ${c.mfg_job_id||c.source==="shop"?"🏭 ":""}${jobName}`:''}
+            const editing=edit===c.id;
+            const wasEdited=c.edited_by&&c.original_hours!=null&&Number(c.original_hours)!==tot;
+            const stColor=c.status==='approved'?T.green:c.status==='open'?T.blue:T.yellow;
+            return(<div key={c.id} style={{...cardS,marginBottom:6,borderLeft:`3px solid ${stColor}`}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{c.worker_name}
+                    <span style={{fontSize:9.5,fontWeight:800,color:stColor,marginLeft:8,textTransform:'uppercase',letterSpacing:'0.5px'}}>{c.status||'pending'}</span>
+                  </div>
+                  <div style={{fontSize:11,color:T.muted}}>
+                    {c.date}{jobName?` · ${c.mfg_job_id||c.source==="shop"?"🏭 ":""}${jobName}`:''}{c.classification?` · ${c.classification}`:''}
+                  </div>
+                  {c.notes&&<div style={{fontSize:10,color:T.muted,fontStyle:'italic',marginTop:1}}>{c.notes}</div>}
+                  {wasEdited&&<div style={{fontSize:10.5,color:T.blue,marginTop:2}}>edited by {c.edited_by} · was {Number(c.original_hours).toFixed(2)}h{c.edit_reason?` — ${c.edit_reason}`:''}</div>}
                 </div>
-                {c.notes&&<div style={{fontSize:10,color:T.muted,fontStyle:'italic',marginTop:1}}>{c.notes}</div>}
-              </div>
-              <div style={{display:'flex',alignItems:'center',gap:8}}>
-                <div style={{textAlign:'right'}}>
-                  <div style={{fontSize:15,fontWeight:800,color:T.green}}>{fmt(tot)}h</div>
-                  {ot>0&&<div style={{fontSize:9,color:T.yellow}}>{fmt(ot)} OT</div>}
+                <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{fontSize:15,fontWeight:800,color:T.green}}>{fmt(tot)}h</div>
+                    {(reg>0||ot>0||trav>0)&&<div style={{fontSize:9,color:T.muted}}>{fmt(reg)} reg{ot>0?` · ${fmt(ot)} OT`:''}{trav>0?` · ${fmt(trav)} trv`:''}</div>}
+                  </div>
+                  {canEdit&&!editing&&<button onClick={()=>startEdit(c)} title="Edit hours" style={{background:'none',border:'none',color:T.blue,cursor:'pointer',fontSize:14}}>✏️</button>}
+                  {canEdit&&<button onClick={()=>remove(c.id)} title="Delete" style={{background:'none',border:'none',color:T.red,cursor:'pointer',fontSize:14}}>🗑</button>}
                 </div>
-                {(user.role==='admin'||user.role==='pm')&&<button onClick={()=>remove(c.id)} style={{background:'none',border:'none',color:T.red,cursor:'pointer',fontSize:14}}>🗑</button>}
               </div>
+
+              {editing&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                <div style={{display:'grid',gridTemplateColumns:'1.2fr 1fr 1fr 1fr 1fr',gap:8,marginBottom:8}}>
+                  <div><label style={lbl}>Date</label><input type="date" value={draft.date} onChange={e=>setDraft(d=>({...d,date:e.target.value}))} style={{...inp,padding:'7px 8px',fontSize:12}}/></div>
+                  <div><label style={lbl}>Class</label><input value={draft.classification} onChange={e=>setDraft(d=>({...d,classification:e.target.value}))} style={{...inp,padding:'7px 8px',fontSize:12}}/></div>
+                  {[['Reg','reg_hours'],['OT','ot_hours'],['Travel','travel_hours']].map(([l,k])=>(
+                    <div key={k}><label style={lbl}>{l}</label>
+                      <input type="number" step="0.25" value={draft[k]} onChange={e=>setDraft(d=>({...d,[k]:e.target.value}))} style={{...inp,padding:'7px 8px',fontSize:13,textAlign:'center'}}/></div>
+                  ))}
+                </div>
+                <input value={draft.edit_reason} onChange={e=>setDraft(d=>({...d,edit_reason:e.target.value}))} placeholder="Reason for change (required) — e.g. left early, rain-out, wrong report" style={{...inp,fontSize:12,marginBottom:8}}/>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                  <button onClick={()=>saveEdit(c)} disabled={saving||!draft.edit_reason.trim()} style={{...primBtn,flex:2,borderRadius:10,padding:'9px',fontSize:12,background:T.blue,opacity:saving||!draft.edit_reason.trim()?0.5:1}}>{saving?'Saving…':'Save Changes'}</button>
+                  {c.status!=='approved'&&<button onClick={()=>setStatus(c,'approved')} style={{...ghostBtn,flex:1,padding:'9px',fontSize:12,borderColor:T.green,color:T.green}}>✓ Approve</button>}
+                  {c.status==='approved'&&<button onClick={()=>setStatus(c,'pending')} style={{...ghostBtn,flex:1,padding:'9px',fontSize:12,borderColor:T.yellow,color:T.yellow}}>↩ Un-approve</button>}
+                  <button onClick={()=>setEdit(null)} style={{...ghostBtn,flex:1,padding:'9px',fontSize:12}}>Cancel</button>
+                </div>
+              </div>}
             </div>);
           })}
         </>}
