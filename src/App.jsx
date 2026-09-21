@@ -1995,10 +1995,16 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
 
 const RSTEPS=["Job Info","Labor","Equipment","Materials","Site Notes","Review"];
 
-async function autoPopulateTimeCards(report, project){
+/* Feeds time cards from a Daily Report (source "daily") or a T&M ticket
+   (source "tm"). A worker who appears on more than one report or ticket in
+   a day gets the hours from each ADDED to the same time card, whatever the
+   mix — each report lists only the hours worked on that report, so the sum
+   is the worker's day. Clock punches are never merged into.             */
+async function autoPopulateTimeCards(report, project, source="daily"){
   const labor=(report.labor||[]).filter(l=>l.name&&l.name.trim());
   if(!labor.length) return {created:0,updated:0};
   let created=0,updated=0;
+  const label=source==="tm"?`T&M ticket${report.report_no?" "+report.report_no:""}`:`daily report${report.report_no?" #"+report.report_no:""}`;
   for(const entry of labor){
     const reg=parseFloat(entry.regHrs)||0;
     const ot=parseFloat(entry.otHrs)||0;
@@ -2007,7 +2013,7 @@ async function autoPopulateTimeCards(report, project){
     try{
       const existing=await API.timeCards.find(entry.name,report.date,project.id);
       const all=Array.isArray(existing)?existing:[];
-      // Only merge into another daily-report card. Merging into a clock punch
+      // Only merge into another report-fed card. Merging into a clock punch
       // would double the worker's day.
       const card=all.find(c=>(c.source||"manual")!=="punch")||null;
       if(card){
@@ -2019,6 +2025,7 @@ async function autoPopulateTimeCards(report, project){
           ot_hours:newOT,
           travel_hours:newTravel,
           total_hours:newReg+newOT+newTravel,
+          notes:`${card.notes||""}${card.notes?" · ":""}+${reg+ot+travel}h from ${label}`,
         });
         updated++;
       }else{
@@ -2032,8 +2039,8 @@ async function autoPopulateTimeCards(report, project){
           ot_hours:ot,
           travel_hours:travel,
           total_hours:reg+ot+travel,
-          notes:`Auto-filled from daily report${report.report_no?" #"+report.report_no:""} · ${project.name}`,
-          source:"daily",status:"pending",
+          notes:`Auto-filled from ${label} · ${project.name}`,
+          source,status:"pending",
         });
         created++;
       }
@@ -3957,7 +3964,7 @@ function TimeApproval({projectId,user,refreshKey,onChange,onErr}){
                 <div style={{fontSize:11,color:T.muted,marginTop:2}}>
                   {c.date}
                   {c.clock_in_at?` · ${hhmm(c.clock_in_at)} → ${hhmm(c.clock_out_at)}`:""}
-                  {c.source==="daily"?" · from daily report":c.source==="punch"?" · clocked":""}
+                  {c.source==="daily"?" · from daily report":c.source==="tm"?" · from T&M ticket":c.source==="punch"?" · clocked":""}
                 </div>
                 {c.classification&&<div style={{fontSize:10.5,color:T.muted}}>{c.classification}</div>}
                 {wasEdited&&<div style={{fontSize:10.5,color:T.blue,marginTop:3}}>
@@ -16543,6 +16550,8 @@ function AppInner(){
         else if(item.type==="tm"){
           await API.tmTickets.create(item.data);
           removeFromQueue(item.qid); synced++;
+          const proj=projects.find(p=>p.id===item.data.project_id);
+          if(proj) await feedTimeCardsFromTM(item.data,proj);
         }
         else if(item.type==="tm_update"){
           await API.tmTickets.update(item.id,item.data);
@@ -19180,6 +19189,23 @@ function TMTicketList({project,user,onOpen,onNew}){
 }
 
 /* ── T&M TICKET FORM ─────────────────────────────────────────── */
+// Shape a saved T&M ticket like a daily report so it can feed time cards.
+function tmTicketToLabor(data){
+  return{
+    date:data.ticket_date,
+    report_no:data.ticket_no||"",
+    labor:(data.labor||[])
+      .filter(r=>r&&(r.classification||"")!==PER_DIEM_CLASS)
+      .map(r=>({name:(r.name||r.worker_name||"").trim(),classification:r.classification||"",
+        regHrs:r.hours||0,otHrs:r.ot_hours||0,travelHrs:r.travel_hours||0}))
+      .filter(r=>r.name),
+  };
+}
+async function feedTimeCardsFromTM(data,project){
+  try{ return await autoPopulateTimeCards(tmTicketToLabor(data),project,"tm"); }
+  catch(e){ console.warn("T&M time cards:",e.message); return {created:0,updated:0}; }
+}
+
 function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const isNew=!ticket?.id;
   const canEdit=user.role==="admin"||user.role==="pm"||user.role==="foreman";
@@ -19500,7 +19526,11 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       return;
     }
     try{
-      if(isNew)await API.tmTickets.create(data);
+      if(isNew){
+        await API.tmTickets.create(data);
+        const tc=await feedTimeCardsFromTM(data,project);
+        if(tc.created+tc.updated>0)alert(`Ticket saved. ${tc.created+tc.updated} time card${tc.created+tc.updated!==1?"s":""} updated with these hours (pending approval).`);
+      }
       else await API.tmTickets.update(ticket.id,data);
       onSaved&&onSaved();
     }catch(e){
