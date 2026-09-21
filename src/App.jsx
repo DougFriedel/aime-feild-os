@@ -142,6 +142,7 @@ async function rpc(fn,args){
 }
 
 /* Supabase Storage over plain REST — the app has no supabase-js client. */
+const stripPrivate=(d)=>(d&&typeof d==="object"&&!Array.isArray(d))?Object.fromEntries(Object.entries(d).filter(([k])=>!k.startsWith("_"))):d;
 async function storageUpload(bucket,path,file,contentType){
   const res=await fetch(`${SUPA_URL}/storage/v1/object/${bucket}/${path}`,{
     method:"POST",
@@ -249,8 +250,10 @@ const API={
     // silently drop older reports from a wide date range.
     inRange:(from,to)=>sb(`/daily_reports_light?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`),
     pending:()=>sb("/daily_reports?status=eq.submitted&select=*,projects(id,name,division)&order=created_at.desc"),
-    create:(d)=>sb("/daily_reports",{method:"POST",body:d,prefer:"return=representation"}),
-    update:(id,d)=>sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
+    // Keys starting with "_" are app-side helpers (offline queue, mfg job
+    // name) and never columns — drop them before the row goes to Postgres.
+    create:(d)=>sb("/daily_reports",{method:"POST",body:stripPrivate(d),prefer:"return=representation"}),
+    update:(id,d)=>sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:stripPrivate(d),prefer:"return=representation"}),count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
     remove:(id)=>sb(`/daily_reports?id=eq.${id}`,{method:"DELETE"}),
   },
   tmTickets:{
