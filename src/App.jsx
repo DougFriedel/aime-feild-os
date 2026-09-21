@@ -7822,6 +7822,33 @@ function TimeCardsScreen({user,projects,onBack}){
   const [draft,setDraft]=useState({});
   const [saving,setSaving]=useState(false);
   const [showAdd,setShowAdd]=useState(false);
+  const [openWorker,setOpenWorker]=useState(null);   // worker name expanded in the summary list
+  const [grid,setGrid]=useState({});                  // {cardId:{reg_hours,ot_hours,travel_hours}} unsaved edits
+  const [gridNote,setGridNote]=useState("");
+  const gridVal=(c,k)=>grid[c.id]?.[k]!==undefined?grid[c.id][k]:(c[k]??"");
+  const gridDirty=(cards)=>cards.some(c=>grid[c.id]&&["reg_hours","ot_hours","travel_hours"].some(k=>String(grid[c.id][k]??"")!==String(c[k]??"")));
+  function setCell(c,k,v){setGrid(g=>({...g,[c.id]:{...(g[c.id]||{}),[k]:v}}));}
+  async function saveGrid(cardsForWorker){
+    const changed=cardsForWorker.filter(c=>grid[c.id]&&["reg_hours","ot_hours","travel_hours"].some(k=>String(grid[c.id][k]??"")!==String(c[k]??"")));
+    if(!changed.length)return;
+    setSaving(true);
+    try{
+      for(const c of changed){
+        const d=grid[c.id];
+        const reg=parseFloat(d.reg_hours??c.reg_hours)||0,ot=parseFloat(d.ot_hours??c.ot_hours)||0,tr=parseFloat(d.travel_hours??c.travel_hours)||0;
+        const body={reg_hours:reg,ot_hours:ot,travel_hours:tr,total_hours:reg+ot+tr,
+          original_hours:c.original_hours!=null?c.original_hours:t(c),
+          edited_by:user.name,edited_at:new Date().toISOString(),
+          edit_reason:gridNote.trim()||null,
+          notes:`${c.notes||""}${c.notes?" · ":""}edited by ${user.name} (was ${t(c).toFixed(2)}h)${gridNote.trim()?": "+gridNote.trim():""}`};
+        await API.timeCards.update(c.id,body);
+        setCards(cs=>cs.map(x=>x.id===c.id?{...x,...body}:x));
+      }
+      setGrid(g=>{const n={...g};changed.forEach(c=>delete n[c.id]);return n;});
+      setGridNote("");
+    }catch(e){setErr(e.message);}
+    setSaving(false);
+  }
   const [add,setAdd]=useState({worker_name:"",date:today(),project_id:"",mfg_job_id:"",classification:"",reg_hours:"",ot_hours:"",travel_hours:"",reason:""});
   const t=(c)=>{const r=parseFloat(c.reg_hours)||0,o=parseFloat(c.ot_hours)||0,v=parseFloat(c.travel_hours)||0;return c.total_hours!=null&&c.total_hours!==""?parseFloat(c.total_hours):r+o+v;};
 
@@ -7877,6 +7904,55 @@ function TimeCardsScreen({user,projects,onBack}){
       setAdd({worker_name:"",date:today(),project_id:"",mfg_job_id:"",classification:"",reg_hours:"",ot_hours:"",travel_hours:"",reason:""});
     }catch(e){setErr(e.message);}
     setSaving(false);
+  }
+
+  function renderEntry(c){
+    const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
+    const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
+    const jobName=jobOf(c);
+    const editing=edit===c.id;
+            const wasEdited=c.edited_by&&c.original_hours!=null&&Number(c.original_hours)!==tot;
+            const stColor=c.status==='approved'?T.green:c.status==='open'?T.blue:T.yellow;
+            return(<div key={c.id} style={{...cardS,marginBottom:6,borderLeft:`3px solid ${stColor}`}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{c.worker_name}
+                    <span style={{fontSize:9.5,fontWeight:800,color:stColor,marginLeft:8,textTransform:'uppercase',letterSpacing:'0.5px'}}>{c.status||'pending'}</span>
+                  </div>
+                  <div style={{fontSize:11,color:T.muted}}>
+                    {c.date}{jobName?` · ${c.mfg_job_id||c.source==="shop"?"🏭 ":""}${jobName}`:''}{c.classification?` · ${c.classification}`:''}
+                  </div>
+                  {c.notes&&<div style={{fontSize:10,color:T.muted,fontStyle:'italic',marginTop:1}}>{c.notes}</div>}
+                  {wasEdited&&<div style={{fontSize:10.5,color:T.blue,marginTop:2}}>edited by {c.edited_by} · was {Number(c.original_hours).toFixed(2)}h{c.edit_reason?` — ${c.edit_reason}`:''}</div>}
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{fontSize:15,fontWeight:800,color:T.green}}>{fmt(tot)}h</div>
+                    {(reg>0||ot>0||trav>0)&&<div style={{fontSize:9,color:T.muted}}>{fmt(reg)} reg{ot>0?` · ${fmt(ot)} OT`:''}{trav>0?` · ${fmt(trav)} trv`:''}</div>}
+                  </div>
+                  {canEdit&&!editing&&<button onClick={()=>startEdit(c)} title="Edit hours" style={{background:'none',border:'none',color:T.blue,cursor:'pointer',fontSize:14}}>✏️</button>}
+                  {canEdit&&<button onClick={()=>remove(c.id)} title="Delete" style={{background:'none',border:'none',color:T.red,cursor:'pointer',fontSize:14}}>🗑</button>}
+                </div>
+              </div>
+
+              {editing&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+                <div style={{display:'grid',gridTemplateColumns:'1.2fr 1fr 1fr 1fr 1fr',gap:8,marginBottom:8}}>
+                  <div><label style={lbl}>Date</label><input type="date" value={draft.date} onChange={e=>setDraft(d=>({...d,date:e.target.value}))} style={{...inp,padding:'7px 8px',fontSize:12}}/></div>
+                  <div><label style={lbl}>Class</label><input value={draft.classification} onChange={e=>setDraft(d=>({...d,classification:e.target.value}))} style={{...inp,padding:'7px 8px',fontSize:12}}/></div>
+                  {[['Reg','reg_hours'],['OT','ot_hours'],['Travel','travel_hours']].map(([l,k])=>(
+                    <div key={k}><label style={lbl}>{l}</label>
+                      <input type="number" step="0.25" value={draft[k]} onChange={e=>setDraft(d=>({...d,[k]:e.target.value}))} style={{...inp,padding:'7px 8px',fontSize:13,textAlign:'center'}}/></div>
+                  ))}
+                </div>
+                <input value={draft.edit_reason} onChange={e=>setDraft(d=>({...d,edit_reason:e.target.value}))} placeholder="Reason for change (required) — e.g. left early, rain-out, wrong report" style={{...inp,fontSize:12,marginBottom:8}}/>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                  <button onClick={()=>saveEdit(c)} disabled={saving||!draft.edit_reason.trim()} style={{...primBtn,flex:2,borderRadius:10,padding:'9px',fontSize:12,background:T.blue,opacity:saving||!draft.edit_reason.trim()?0.5:1}}>{saving?'Saving…':'Save Changes'}</button>
+                  {c.status!=='approved'&&<button onClick={()=>setStatus(c,'approved')} style={{...ghostBtn,flex:1,padding:'9px',fontSize:12,borderColor:T.green,color:T.green}}>✓ Approve</button>}
+                  {c.status==='approved'&&<button onClick={()=>setStatus(c,'pending')} style={{...ghostBtn,flex:1,padding:'9px',fontSize:12,borderColor:T.yellow,color:T.yellow}}>↩ Un-approve</button>}
+                  <button onClick={()=>setEdit(null)} style={{...ghostBtn,flex:1,padding:'9px',fontSize:12}}>Cancel</button>
+                </div>
+              </div>}
+            </div>);
   }
 
   function handlePrint(){
@@ -7985,19 +8061,70 @@ function TimeCardsScreen({user,projects,onBack}){
         {!loading&&filtered.length===0&&<div style={{textAlign:'center',padding:'40px 0',color:T.muted}}><div style={{fontSize:32}}>⏱️</div><div style={{marginTop:8}}>No time cards in this date range</div></div>}
 
         {/* Worker summary cards */}
-        {workerRows.map(w=>(
-          <div key={w.name} style={{...cardS,marginBottom:8}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-              <div style={{fontSize:14,fontWeight:800,color:T.orange}}>{w.name}</div>
-              <div style={{fontSize:16,fontWeight:900,color:T.green}}>{fmt(w.total)}h</div>
+        {canEdit&&workerRows.length>0&&<div style={{fontSize:11,color:T.muted,marginBottom:8}}>Tap a name to see and edit that person's daily entries.</div>}
+        {workerRows.map(w=>{
+          const open=openWorker===w.name;
+          const mine=filtered.filter(c=>(c.worker_name||'?')===w.name).sort((a,b)=>b.date?.localeCompare(a.date));
+          return(
+          <div key={w.name} style={{...cardS,marginBottom:8,borderLeft:open?`3px solid ${T.orange}`:undefined}}>
+            <div onClick={()=>setOpenWorker(open?null:w.name)} style={{cursor:'pointer'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                <div style={{fontSize:14,fontWeight:800,color:T.orange}}>{open?'▾':'▸'} {w.name}</div>
+                <div style={{fontSize:16,fontWeight:900,color:T.green}}>{fmt(w.total)}h</div>
+              </div>
+              <div style={{display:'flex',gap:12,fontSize:11,color:T.muted}}>
+                <span>Reg: <strong style={{color:T.sub}}>{fmt(w.reg)}h</strong></span>
+                {w.ot>0&&<span>OT: <strong style={{color:T.yellow}}>{fmt(w.ot)}h</strong></span>}
+                {w.travel>0&&<span>Travel: <strong style={{color:T.blue}}>{fmt(w.travel)}h</strong></span>}
+                <span style={{marginLeft:'auto'}}>{mine.length} entr{mine.length===1?'y':'ies'}</span>
+              </div>
             </div>
-            <div style={{display:'flex',gap:12,fontSize:11,color:T.muted}}>
-              <span>Reg: <strong style={{color:T.sub}}>{fmt(w.reg)}h</strong></span>
-              {w.ot>0&&<span>OT: <strong style={{color:T.yellow}}>{fmt(w.ot)}h</strong></span>}
-              {w.travel>0&&<span>Travel: <strong style={{color:T.blue}}>{fmt(w.travel)}h</strong></span>}
-            </div>
-          </div>
-        ))}
+            {open&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+              <div style={{display:'grid',gridTemplateColumns:'86px 1fr 64px 64px 64px 64px 28px',gap:6,fontSize:10,fontWeight:800,color:T.muted,textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:4,alignItems:'end'}}>
+                <div>Date</div><div>Job</div><div style={{textAlign:'center'}}>Reg</div><div style={{textAlign:'center'}}>OT</div><div style={{textAlign:'center'}}>Travel</div><div style={{textAlign:'right'}}>Total</div><div></div>
+              </div>
+              {[...mine].sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(c=>{
+                const reg=parseFloat(gridVal(c,'reg_hours'))||0,ot=parseFloat(gridVal(c,'ot_hours'))||0,tr=parseFloat(gridVal(c,'travel_hours'))||0;
+                const changed=grid[c.id]&&["reg_hours","ot_hours","travel_hours"].some(k=>String(grid[c.id][k]??"")!==String(c[k]??""));
+                const dow=c.date?new Date(c.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'}):'';
+                const cell={...inp,padding:'6px 4px',fontSize:13,textAlign:'center',fontWeight:700,...(changed?{borderColor:T.blue,background:T.blueLow}:{})};
+                return(
+                  <div key={c.id} style={{display:'grid',gridTemplateColumns:'86px 1fr 64px 64px 64px 64px 28px',gap:6,alignItems:'center',marginBottom:5}}>
+                    <div style={{fontSize:12,color:T.text,fontWeight:700}}>{dow} <span style={{color:T.muted,fontWeight:500}}>{(c.date||'').slice(5).replace('-','/')}</span></div>
+                    <div style={{fontSize:11,color:T.muted,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                      {c.mfg_job_id||c.source==="shop"?"🏭 ":""}{jobOf(c)||'—'}
+                      {c.status==='approved'&&<span style={{color:T.green,marginLeft:6}}>✓</span>}
+                      {c.edited_by&&<span title={`edited by ${c.edited_by}${c.edit_reason?': '+c.edit_reason:''}`} style={{color:T.blue,marginLeft:6}}>✎</span>}
+                    </div>
+                    {canEdit?<>
+                      <input type="number" step="0.25" value={gridVal(c,'reg_hours')} onChange={e=>setCell(c,'reg_hours',e.target.value)} style={cell}/>
+                      <input type="number" step="0.25" value={gridVal(c,'ot_hours')} onChange={e=>setCell(c,'ot_hours',e.target.value)} style={cell}/>
+                      <input type="number" step="0.25" value={gridVal(c,'travel_hours')} onChange={e=>setCell(c,'travel_hours',e.target.value)} style={cell}/>
+                    </>:<>
+                      <div style={{textAlign:'center',fontSize:13}}>{fmt(reg)}</div>
+                      <div style={{textAlign:'center',fontSize:13,color:T.yellow}}>{fmt(ot)}</div>
+                      <div style={{textAlign:'center',fontSize:13,color:T.blue}}>{fmt(tr)}</div>
+                    </>}
+                    <div style={{textAlign:'right',fontSize:14,fontWeight:900,color:T.green}}>{fmt(reg+ot+tr)}</div>
+                    {canEdit?<button onClick={()=>remove(c.id)} title="Delete this day" style={{background:'none',border:'none',color:T.red,cursor:'pointer',fontSize:13,padding:0}}>🗑</button>:<div/>}
+                  </div>
+                );
+              })}
+              {canEdit&&<>
+                {gridDirty(mine)&&<input value={gridNote} onChange={e=>setGridNote(e.target.value)} placeholder="Reason (optional) — e.g. left early Tue, rain-out Fri" style={{...inp,fontSize:12,margin:'8px 0'}}/>}
+                <div style={{display:'flex',gap:8,marginTop:gridDirty(mine)?0:8}}>
+                  <button onClick={()=>saveGrid(mine)} disabled={saving||!gridDirty(mine)}
+                    style={{...primBtn,flex:2,borderRadius:10,padding:'10px',fontSize:12.5,background:T.blue,opacity:saving||!gridDirty(mine)?0.45:1}}>
+                    {saving?'Saving…':gridDirty(mine)?'💾 Save Changes':'No changes'}
+                  </button>
+                  {gridDirty(mine)&&<button onClick={()=>setGrid(g=>{const n={...g};mine.forEach(c=>delete n[c.id]);return n;})} style={{...ghostBtn,flex:1,padding:'10px',fontSize:12}}>Undo</button>}
+                  <button onClick={()=>{setAdd(a=>({...a,worker_name:w.name}));setShowAdd(true);window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});}}
+                    style={{...ghostBtn,flex:1,fontSize:12,padding:'10px',borderColor:T.green,color:T.green}}>+ Add Day</button>
+                </div>
+              </>}
+            </div>}
+          </div>);
+        })}
 
         {/* Add a card by hand (missed day, no report filed) */}
         {canEdit&&<div style={{margin:'14px 0 8px'}}>
@@ -8037,54 +8164,7 @@ function TimeCardsScreen({user,projects,onBack}){
         {/* Individual entries */}
         {filtered.length>0&&<>
           <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:'uppercase',letterSpacing:'1px',margin:'14px 0 8px'}}>All Entries</div>
-          {filtered.sort((a,b)=>b.date?.localeCompare(a.date)).map(c=>{
-            const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
-            const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
-            const jobName=jobOf(c);
-            const editing=edit===c.id;
-            const wasEdited=c.edited_by&&c.original_hours!=null&&Number(c.original_hours)!==tot;
-            const stColor=c.status==='approved'?T.green:c.status==='open'?T.blue:T.yellow;
-            return(<div key={c.id} style={{...cardS,marginBottom:6,borderLeft:`3px solid ${stColor}`}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,fontWeight:700,color:T.orange}}>{c.worker_name}
-                    <span style={{fontSize:9.5,fontWeight:800,color:stColor,marginLeft:8,textTransform:'uppercase',letterSpacing:'0.5px'}}>{c.status||'pending'}</span>
-                  </div>
-                  <div style={{fontSize:11,color:T.muted}}>
-                    {c.date}{jobName?` · ${c.mfg_job_id||c.source==="shop"?"🏭 ":""}${jobName}`:''}{c.classification?` · ${c.classification}`:''}
-                  </div>
-                  {c.notes&&<div style={{fontSize:10,color:T.muted,fontStyle:'italic',marginTop:1}}>{c.notes}</div>}
-                  {wasEdited&&<div style={{fontSize:10.5,color:T.blue,marginTop:2}}>edited by {c.edited_by} · was {Number(c.original_hours).toFixed(2)}h{c.edit_reason?` — ${c.edit_reason}`:''}</div>}
-                </div>
-                <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
-                  <div style={{textAlign:'right'}}>
-                    <div style={{fontSize:15,fontWeight:800,color:T.green}}>{fmt(tot)}h</div>
-                    {(reg>0||ot>0||trav>0)&&<div style={{fontSize:9,color:T.muted}}>{fmt(reg)} reg{ot>0?` · ${fmt(ot)} OT`:''}{trav>0?` · ${fmt(trav)} trv`:''}</div>}
-                  </div>
-                  {canEdit&&!editing&&<button onClick={()=>startEdit(c)} title="Edit hours" style={{background:'none',border:'none',color:T.blue,cursor:'pointer',fontSize:14}}>✏️</button>}
-                  {canEdit&&<button onClick={()=>remove(c.id)} title="Delete" style={{background:'none',border:'none',color:T.red,cursor:'pointer',fontSize:14}}>🗑</button>}
-                </div>
-              </div>
-
-              {editing&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-                <div style={{display:'grid',gridTemplateColumns:'1.2fr 1fr 1fr 1fr 1fr',gap:8,marginBottom:8}}>
-                  <div><label style={lbl}>Date</label><input type="date" value={draft.date} onChange={e=>setDraft(d=>({...d,date:e.target.value}))} style={{...inp,padding:'7px 8px',fontSize:12}}/></div>
-                  <div><label style={lbl}>Class</label><input value={draft.classification} onChange={e=>setDraft(d=>({...d,classification:e.target.value}))} style={{...inp,padding:'7px 8px',fontSize:12}}/></div>
-                  {[['Reg','reg_hours'],['OT','ot_hours'],['Travel','travel_hours']].map(([l,k])=>(
-                    <div key={k}><label style={lbl}>{l}</label>
-                      <input type="number" step="0.25" value={draft[k]} onChange={e=>setDraft(d=>({...d,[k]:e.target.value}))} style={{...inp,padding:'7px 8px',fontSize:13,textAlign:'center'}}/></div>
-                  ))}
-                </div>
-                <input value={draft.edit_reason} onChange={e=>setDraft(d=>({...d,edit_reason:e.target.value}))} placeholder="Reason for change (required) — e.g. left early, rain-out, wrong report" style={{...inp,fontSize:12,marginBottom:8}}/>
-                <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-                  <button onClick={()=>saveEdit(c)} disabled={saving||!draft.edit_reason.trim()} style={{...primBtn,flex:2,borderRadius:10,padding:'9px',fontSize:12,background:T.blue,opacity:saving||!draft.edit_reason.trim()?0.5:1}}>{saving?'Saving…':'Save Changes'}</button>
-                  {c.status!=='approved'&&<button onClick={()=>setStatus(c,'approved')} style={{...ghostBtn,flex:1,padding:'9px',fontSize:12,borderColor:T.green,color:T.green}}>✓ Approve</button>}
-                  {c.status==='approved'&&<button onClick={()=>setStatus(c,'pending')} style={{...ghostBtn,flex:1,padding:'9px',fontSize:12,borderColor:T.yellow,color:T.yellow}}>↩ Un-approve</button>}
-                  <button onClick={()=>setEdit(null)} style={{...ghostBtn,flex:1,padding:'9px',fontSize:12}}>Cancel</button>
-                </div>
-              </div>}
-            </div>);
-          })}
+          {filtered.sort((a,b)=>b.date?.localeCompare(a.date)).map(renderEntry)}
         </>}
       </div>
     </div>
