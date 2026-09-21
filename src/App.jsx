@@ -2710,6 +2710,10 @@ function printReportWithOptions(report, project, sections, photos, photoLayout, 
   const division = project.division;
   const positions = getPositions(division);
   const tot = reportTotals(report, division);
+  // Pipeline reports: no Qty column on equipment, and the Inspector signs
+  // alongside the Foreman and PM.
+  const isPipeline = division === "Pipeline";
+  const showQty = !isPipeline;
   const subsTotal = (report.subcontractors||[]).reduce((s,x)=>s+subLineTotal(x),0);
   const [yr,mo,dy] = (report.date||'').split('-');
   const dateStr = `${mo}/${dy}/${yr}`;
@@ -2797,7 +2801,7 @@ tr:nth-child(even) td{background:#f9fafb;}
 .badge-blue{background:#dbeafe;color:#1e40af;}
 .visitor-row{padding:7px;border-bottom:1px solid #e5e7eb;display:flex;gap:10px;}
 .delay-row{padding:7px;border-bottom:1px solid #e5e7eb;border-left:3px solid #ef4444;padding-left:10px;}
-.sig-section{margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+.sig-section{margin-top:20px;display:grid;grid-template-columns:${isPipeline?'1fr 1fr 1fr':'1fr 1fr'};gap:20px;}
 .sig-box{border-top:1.5px solid #000;padding-top:8px;}
 .sig-label{font-size:8pt;color:#555;text-transform:uppercase;}
 .footer{margin-top:16px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between;}
@@ -2829,9 +2833,9 @@ ${tot.perdiem>0?`<tr><td colspan="2"><em>Per Diem</em></td><td colspan="3" style
 </tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL LABOR</strong></td><td style="text-align:right"><strong>${fmt2(tot.labor||0)}</strong></td></tr></tfoot></table></div>`:''}
 
 ${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>Equipment — ${(report.equipment||[]).length} Items${tot.equip>0?' · '+fmt2(tot.equip):''}</h2>
-<table><thead><tr><th>Equipment</th><th>Unit</th><th style="text-align:center">Qty</th><th style="text-align:center">Hrs / Days</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
-<tbody>${(report.equipment||[]).filter(e=>e.description||parseFloat(e.usage)).map(e=>{const rate=parseFloat(e.rate)||(getEquipList(division).find(x=>!x.section&&x.name===e.description)||{}).rate||0;return `<tr><td>${e.description||'—'}</td><td>${e.unit||'—'}</td><td style="text-align:center">${e.qty||0}</td><td style="text-align:center">${e.usage||'—'}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${fmt2(equipAmt(e,division))}</td></tr>`;}).join('')}
-</tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.equip||0)}</strong></td></tr></tfoot></table></div>`:''}
+<table><thead><tr><th>Equipment</th><th>Unit</th>${showQty?`<th style="text-align:center">Qty</th>`:''}<th style="text-align:center">Hrs / Days</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${(report.equipment||[]).filter(e=>e.description||parseFloat(e.usage)).map(e=>{const rate=parseFloat(e.rate)||(getEquipList(division).find(x=>!x.section&&x.name===e.description)||{}).rate||0;return `<tr><td>${e.description||'—'}</td><td>${e.unit||'—'}</td>${showQty?`<td style="text-align:center">${e.qty||0}</td>`:''}<td style="text-align:center">${e.usage||'—'}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${fmt2(equipAmt(e,division))}</td></tr>`;}).join('')}
+</tbody><tfoot><tr class="total-row"><td colspan="${showQty?5:4}"><strong>TOTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.equip||0)}</strong></td></tr></tfoot></table></div>`:''}
 
 ${sections.rental&&(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).length>0?`<div class="section"><h2>Rental Equipment${tot.rental>0?' · '+fmt2(tot.rental):''}</h2>
 <table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:center">Days/Hrs</th><th style="text-align:right">Rate</th><th style="text-align:right">Subtotal</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
@@ -2885,8 +2889,9 @@ ${subsTotal>0?`<tr><td>Subcontractors</td><td style="text-align:right">${fmt2(su
 </table></div>`:''}
 
 <div class="sig-section">
-  <div class="sig-box"><div style="height:50px"></div><div class="sig-label">Foreman / Submitted By</div><div style="font-weight:700;margin-top:4px">${report.submitted_by||''}</div></div>
-  <div class="sig-box"><div style="height:50px"></div><div class="sig-label">PM / Reviewed By</div><div style="margin-top:4px">Date: ______________</div></div>
+  <div class="sig-box"><div style="height:50px"></div><div class="sig-label">Foreman / Submitted By</div><div style="font-weight:700;margin-top:4px">${report.submitted_by||''}</div><div style="margin-top:4px">Date: ______________</div></div>
+  ${isPipeline?`<div class="sig-box"><div style="height:50px;text-align:center">${report.inspector_signature?`<img src="${report.inspector_signature}" style="max-height:48px;max-width:100%;object-fit:contain">`:''}</div><div class="sig-label">Inspector</div><div style="margin-top:4px">${report.inspector_name?`<strong>${report.inspector_name}</strong>`:'Name: ______________'}</div><div style="margin-top:4px">Date: ${report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleDateString():'______________'}</div></div>`:''}
+  <div class="sig-box"><div style="height:50px"></div><div class="sig-label">PM / Reviewed By</div><div style="margin-top:4px">Name: ______________</div><div style="margin-top:4px">Date: ______________</div></div>
 </div>
 
 <div class="footer"><span>AIME Field Pro · ${project.name} · Report #${report.report_no||'—'} · ${dateStr}</span><span>Generated: ${new Date().toLocaleString()}</span></div>
