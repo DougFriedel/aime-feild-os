@@ -239,6 +239,7 @@ const API={
   },
   reports:{
     forProject:(pid)=>sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`),
+    forMfgJob:(jid)=>sb(`/daily_reports?mfg_job_id=eq.${jid}&order=date.desc`),
     // Dashboard / rollups read daily_reports_light: same rows, but receipt
     // images are stripped out of materials. Pulling them for every report in
     // the system blew past the statement timeout. Detail views still use the
@@ -279,7 +280,7 @@ const API={
     tickets:(name,limit=15)=>sb(`/tm_tickets?submitted_by=eq.${encodeURIComponent(name)}&select=id,ticket_date,ticket_no,status,grand_total,client_signature,projects(name)&order=ticket_date.desc&limit=${limit}`),
     crew:(name)=>sb(`/crew_members?name=eq.${encodeURIComponent(name)}&limit=1`),
   },
-  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc&limit=5000`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
+  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc&limit=5000`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),findMfg:(name,date,jid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&mfg_job_id=eq.${jid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
@@ -1999,6 +2000,17 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
 
 const RSTEPS=["Job Info","Labor","Equipment","Materials","Site Notes","Review"];
 
+/* Daily reports can be filed on a manufacturing job as well as a field
+   project. The report form and detail view only need a handful of project
+   fields, so a shop job is handed in wrapped to look like one; _mfg marks
+   it so saves go to mfg_job_id instead of project_id. */
+function mfgJobAsProject(job){
+  return{id:job.id,_mfg:true,name:job.job_number,client:job.customer||"",location:"Shop",
+    division:"Manufacturing",work_order:job.po_number||"",afe:"",status:job.status||"active",_job:job};
+}
+const reportsFor=(project)=>project._mfg?API.reports.forMfgJob(project.id):API.reports.forProject(project.id);
+const reportOwnerFields=(project)=>project._mfg?{project_id:null,mfg_job_id:project.id}:{project_id:project.id,mfg_job_id:null};
+
 /* Feeds time cards from a Daily Report (source "daily") or a T&M ticket
    (source "tm"). A worker who appears on more than one report or ticket in
    a day gets the hours from each ADDED to the same time card, whatever the
@@ -2015,7 +2027,9 @@ async function autoPopulateTimeCards(report, project, source="daily"){
     const travel=parseFloat(entry.travelHrs)||0;
     if(reg+ot+travel===0) continue;
     try{
-      const existing=await API.timeCards.find(entry.name,report.date,project.id);
+      const existing=project._mfg
+        ?await API.timeCards.findMfg(entry.name,report.date,project.id)
+        :await API.timeCards.find(entry.name,report.date,project.id);
       const all=Array.isArray(existing)?existing:[];
       // Only merge into another report-fed card. Merging into a clock punch
       // would double the worker's day.
@@ -2036,7 +2050,8 @@ async function autoPopulateTimeCards(report, project, source="daily"){
         await API.timeCards.create({
           worker_name:entry.name,
           date:report.date,
-          project_id:project.id,
+          project_id:project._mfg?null:project.id,
+          mfg_job_id:project._mfg?project.id:null,
           division:project.division,
           classification:entry.classification||"",
           reg_hours:reg,
@@ -2183,7 +2198,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
     if(!isEdit&&!rpt.report_no){
       (async()=>{
         try{
-          const prior=await API.reports.forProject(project.id);
+          const prior=await reportsFor(project);
           const nums=(prior||[]).map(r=>{
             const n=parseInt((r.report_no||"0").replace(/\D/g,""));
             return isNaN(n)?0:n;
@@ -2208,7 +2223,8 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
     setSaving(true);
     const{rental_equipment,...rptClean}=rpt;
     const reportData={...rptClean,submitted_by:isEdit?(existing.submitted_by||user.name):user.name,
-      status:"submitted",project_id:project.id,rental_equipment:rental_equipment||[]};
+      status:"submitted",...reportOwnerFields(project),rental_equipment:rental_equipment||[],
+      ...(project._mfg?{_job_name:project.name}:{})};
 
     /* ── Edit ── */
     if(isEdit){
@@ -2229,7 +2245,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
     /* ── New ── */
     if(isOnline){
       try{
-        const prior=await API.reports.forProject(project.id);
+        const prior=await reportsFor(project);
         const dupe=(prior||[]).find(r=>r.date===rpt.date);
         if(dupe){
           const proceed=window.confirm(
@@ -2257,7 +2273,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
         const tcResult=await autoPopulateTimeCards(reportData,project);
 
       }catch(e){}
-      await notify("report_submitted","New Report Submitted",`${user.name} submitted a report for ${project.name}`,{project_id:project.id});
+      await notify("report_submitted","New Report Submitted",`${user.name} submitted a report for ${project.name}`,project._mfg?{mfg_job_id:project.id}:{project_id:project.id});
     }catch(e){
       try{
         addToQueue({type:'report',data:reportData});
@@ -13214,7 +13230,7 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
-        {[["overview","📊 Overview"],["time","⏱️ Time"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["daily","📝 Daily Reports"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"12px 4px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -13234,6 +13250,8 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
         {!loading&&tab==="billing"&&canAdmin&&<MfgBillingTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="docs"&&<MfgDocsTab job={job} user={user} canAdmin={canAdmin} onErr={m=>setFormErr(m)}/>}
+
+        {!loading&&tab==="daily"&&<MfgDailyReportsTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
 
         {}
         {!loading&&tab==="overview"&&<>
@@ -16781,11 +16799,14 @@ function AppInner(){
     for(const item of queue){
       try{
         if(item.type==="report"){
-          const {rental_equipment,...dbData}=item.data;
-          try{await API.reports.create({...dbData,rental_equipment,project_id:item.data.project_id});}
-          catch{await API.reports.create({...dbData,project_id:item.data.project_id});}
+          const {rental_equipment,...raw}=item.data;
+          const dbData=Object.fromEntries(Object.entries(raw).filter(([k])=>!k.startsWith("_")));
+          try{await API.reports.create({...dbData,rental_equipment});}
+          catch{await API.reports.create(dbData);}
           removeFromQueue(item.qid);
-          const proj=projects.find(p=>p.id===item.data.project_id);
+          const proj=item.data.mfg_job_id
+            ?{id:item.data.mfg_job_id,_mfg:true,name:item.data._job_name||"Shop job",division:"Manufacturing"}
+            :projects.find(p=>p.id===item.data.project_id);
           if(proj) await autoPopulateTimeCards(item.data,proj).catch(()=>{});
           synced++;
         }
@@ -18448,6 +18469,80 @@ function PullMfgLaborModal({job,onClose,onPull,onErr}){
 }
 
 /* ── Manufacturing billing tab — invoices only, no AIA ── */
+/* ── Manufacturing job daily reports ─────────────────────────── */
+function MfgDailyReportsTab({job,user,onErr}){
+  const project=useMemo(()=>mfgJobAsProject(job),[job]);
+  const [reports,setReports]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [mode,setMode]=useState("list");      // list | new | detail
+  const [active,setActive]=useState(null);
+  const isOnline=typeof navigator!=="undefined"?navigator.onLine:true;
+
+  async function load(){
+    setLoading(true);
+    try{setReports(await API.reports.forMfgJob(job.id)||[]);}catch(e){onErr&&onErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[job.id]);
+
+  async function saveReport(d){
+    const {rental_equipment,...raw}=d;
+    const dbData=Object.fromEntries(Object.entries(raw).filter(([k])=>!k.startsWith("_")));
+    try{await API.reports.create({...dbData,rental_equipment});}
+    catch(colErr){
+      if(colErr.message&&colErr.message.includes("rental_equipment"))await API.reports.create(dbData);
+      else throw colErr;
+    }
+    await load();setMode("list");
+  }
+  const upd=async(id,body,patch)=>{try{await API.reports.update(id,body);setActive(r=>r?{...r,...patch}:r);await load();}catch(e){onErr&&onErr(e.message);}};
+
+  if(mode==="new")return <DailyReportForm user={user} project={project} isOnline={isOnline} onSave={saveReport} onCancel={()=>setMode("list")}/>;
+  if(mode==="detail"&&active)return(
+    <ReportDetail report={active} project={project} user={user}
+      onBack={()=>{setMode("list");setActive(null);load();}}
+      onDelete={async(id)=>{try{await API.reports.remove(id);setActive(null);setMode("list");await load();}catch(e){onErr&&onErr(e.message);}}}
+      onApprove={(id)=>upd(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()},{status:"approved"})}
+      onFlag={(id,pm_notes)=>upd(id,{status:"flagged",pm_notes},{status:"flagged",pm_notes})}
+      onArchive={(id,archived)=>upd(id,{archived},{archived})}/>
+  );
+
+  const tot=reports.reduce((s,r)=>{const t=reportTotals(r,"Manufacturing");return{h:s.h+t.labor_hrs,g:s.g+t.grand};},{h:0,g:0});
+  const stColor=(st)=>st==="approved"?T.green:st==="flagged"?T.red:T.yellow;
+  return(
+    <div>
+      {can(user,"submit_report")&&<button onClick={()=>setMode("new")} style={{...primBtn,borderRadius:14,marginBottom:12,background:T.purple}}>+ New Daily Report</button>}
+      <div style={{...cardS,marginBottom:12,fontSize:12,color:T.sub,display:"flex",gap:18}}>
+        <span>📝 <b style={{color:T.text}}>{reports.length}</b> report{reports.length!==1?"s":""}</span>
+        <span>⏱ <b style={{color:T.text}}>{tot.h.toFixed(1)}</b> labor hrs</span>
+        <span style={{marginLeft:"auto",color:T.muted}}>Hours flow to time cards automatically</span>
+      </div>
+      {loading&&<Spinner/>}
+      {!loading&&reports.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+        <div style={{fontSize:44,marginBottom:12}}>📝</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Daily Reports Yet</div>
+        <div style={{fontSize:12}}>File one to log the crew's hours, materials, and shop notes for {job.job_number}.</div>
+      </div>}
+      {reports.map(r=>{
+        const t=reportTotals(r,"Manufacturing");
+        const crew=(r.labor||[]).filter(l=>l.name&&(l.classification||"")!==PER_DIEM_CLASS).length;
+        return(
+          <div key={r.id} onClick={()=>{setActive(r);setMode("detail");}} style={{...cardS,marginBottom:8,cursor:"pointer",borderLeft:`3px solid ${stColor(r.status)}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <div style={{fontSize:13.5,fontWeight:800,color:T.text}}>Report #{r.report_no||"—"} · {r.date}</div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{r.submitted_by||"—"} · {crew} on crew · {t.labor_hrs.toFixed(1)} hrs</div>
+                {r.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:520}}>{r.description}</div>}
+              </div>
+              <span style={pill(stColor(r.status))}>{r.status||"submitted"}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Manufacturing job documents ─────────────────────────────── */
 function MfgDocsTab({job,user,canAdmin,onErr}){
   const [docs,setDocs]=useState([]);
