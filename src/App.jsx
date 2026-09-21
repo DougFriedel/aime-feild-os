@@ -239,10 +239,14 @@ const API={
   },
   reports:{
     forProject:(pid)=>sb(`/daily_reports?project_id=eq.${pid}&order=date.desc`),
-    all:()=>sb("/daily_reports?select=*,projects(id,name,division)&order=date.desc&limit=3000"),
-    // Ranged pull for the report builder. all() caps at 300 rows, which would
+    // Dashboard / rollups read daily_reports_light: same rows, but receipt
+    // images are stripped out of materials. Pulling them for every report in
+    // the system blew past the statement timeout. Detail views still use the
+    // full table (forProject) so receipts are there when a report is opened.
+    all:()=>sb("/daily_reports_light?select=*,projects(id,name,division)&order=date.desc&limit=3000"),
+    // Ranged pull for the report builder. all() caps rows, which would
     // silently drop older reports from a wide date range.
-    inRange:(from,to)=>sb(`/daily_reports?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`),
+    inRange:(from,to)=>sb(`/daily_reports_light?select=*,projects(id,name,division)&date=gte.${from}&date=lte.${to}&order=date.asc&limit=2000`),
     pending:()=>sb("/daily_reports?status=eq.submitted&select=*,projects(id,name,division)&order=created_at.desc"),
     create:(d)=>sb("/daily_reports",{method:"POST",body:d,prefer:"return=representation"}),
     update:(id,d)=>sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
