@@ -680,6 +680,32 @@ function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(d
 function RentedEquipCard({row,onChange,onRemove}){
   const set=(k,v)=>onChange({...row,[k]:v});
   const amt=(parseFloat(row.qty)||0)*(parseFloat(row.rate)||0)*(parseFloat(row.usage)||1);
+  const camRef=useRef(null),fileRef=useRef(null);
+  const [busy,setBusy]=useState("");
+  const att=row.attachments||[];
+  // Photos are compressed and kept inline (works offline, prints inline).
+  // PDFs / documents go to Storage and the row keeps the link.
+  async function handleFiles(files){
+    const added=[];
+    for(const f of files){
+      try{
+        if(f.type.startsWith("image/")){
+          setBusy(`Adding ${f.name}…`);
+          added.push({id:uid(),kind:"image",name:f.name,src:await compressImg(f,1000,0.7)});
+        }else{
+          if(!navigator.onLine){alert(`${f.name}: documents need a connection to upload. Photos can be added offline.`);continue;}
+          setBusy(`Uploading ${f.name}…`);
+          const path=`rental-docs/${row.id||uid()}/${Date.now()}-${f.name.replace(/[^A-Za-z0-9._-]/g,"_")}`;
+          await storageUpload("documents",path,f,f.type||undefined);
+          added.push({id:uid(),kind:"file",name:f.name,type:f.type||"",size:f.size,storage_path:path,src:storagePublicUrl("documents",path)});
+        }
+      }catch(e){alert(`${f.name}: ${e.message}`);}
+    }
+    setBusy("");
+    if(added.length)onChange({...row,attachments:[...att,...added]});
+  }
+  const removeAtt=(a)=>{onChange({...row,attachments:att.filter(x=>x.id!==a.id)});if(a.storage_path)storageRemove("documents",a.storage_path).catch(()=>{});};
+  const fileIcon=(a)=>a.type==="application/pdf"||/\.pdf$/i.test(a.name)?"📄":/sheet|excel|csv/.test(a.type)||/\.(xlsx?|csv)$/i.test(a.name)?"📊":/word|\.docx?$/i.test(a.type+a.name)?"📝":"📎";
   return(
     <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.purple}`}}>
       <div style={{marginBottom:8}}>
@@ -702,6 +728,25 @@ function RentedEquipCard({row,onChange,onRemove}){
           <input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>set("tax_amount",e.target.value)} style={inp}/></div>
         <div><label style={lbl}>Line Total</label>
           <div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(rentalLineTotal(row))}</div></div>
+      </div>
+      <div style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginBottom:8}}>
+        <label style={{...lbl,marginBottom:8}}>📎 Receipts / Invoices / Photos</label>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          {att.map(a=>(
+            <div key={a.id} style={{position:"relative"}}>
+              {a.kind==="image"
+                ?<img src={a.src} alt="" onClick={()=>window.open(a.src,"_blank")} style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.purple}40`,display:"block",cursor:"pointer"}}/>
+                :<a href={a.src} target="_blank" rel="noreferrer" title={a.name} style={{width:60,height:60,borderRadius:10,border:`2px solid ${T.purple}40`,background:T.purpleLow,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textDecoration:"none",color:T.text,fontSize:20}}>
+                  <span>{fileIcon(a)}</span><span style={{fontSize:8,maxWidth:54,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",padding:"0 3px"}}>{a.name}</span></a>}
+              <button onClick={()=>removeAtt(a)} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+            </div>
+          ))}
+          <button onClick={()=>camRef.current?.click()} title="Take a photo" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>CAMERA</span></button>
+          <button onClick={()=>fileRef.current?.click()} title="Photos, PDFs, invoices" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.green}40`,background:T.greenLow,color:T.green,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📎</span><span style={{fontSize:9,fontWeight:700}}>UPLOAD</span></button>
+          <input ref={camRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}}/>
+          <input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}}/>
+        </div>
+        {busy&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{busy}</div>}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}>
         <span style={{fontSize:11,color:T.muted}}>Qty × Rate × Days/Hrs{(parseFloat(row.markup_pct)||0)>0?` + ${row.markup_pct}%`:""}{(parseFloat(row.tax_amount)||0)>0?" + tax":""}</span>
@@ -2844,7 +2889,10 @@ ${sections.rental&&(report.rental_equipment||[]).filter(r=>r.description||parseF
   const mk=parseFloat(r.markup_pct)||0, tax=parseFloat(r.tax_amount)||0;
   return `<tr><td>${r.description||'—'}</td><td style="text-align:center">${r.qty||'—'}</td><td style="text-align:center">${r.usage||'—'}</td><td style="text-align:right">${r.rate?fmt2(r.rate):'—'}</td><td style="text-align:right">${fmt2(base)}</td><td style="text-align:center">${mk?mk+'%':'—'}</td><td style="text-align:right">${tax?fmt2(tax):'—'}</td><td style="text-align:right">${fmt2(rentalLineTotal(r))}</td></tr>`;
 }).join('')}
-</tbody><tfoot><tr class="total-row"><td colspan="7"><strong>TOTAL RENTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.rental||0)}</strong></td></tr></tfoot></table></div>`:''}
+</tbody><tfoot><tr class="total-row"><td colspan="7"><strong>TOTAL RENTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.rental||0)}</strong></td></tr></tfoot></table>
+${(()=>{const docs=(report.rental_equipment||[]).flatMap(r=>(r.attachments||[]).filter(a=>a.kind==="file").map(a=>({...a,eq:r.description||"Rental"})));
+  return docs.length?`<div style="font-size:8.5pt;color:#444;margin-top:4px"><strong>Attached documents:</strong> ${docs.map(a=>`${a.eq} — ${a.name}`).join(' · ')}</div>`:'';})()}
+</div>`:''}
 
 ${sections.materials&&(report.materials||[]).filter(m=>m.description||parseFloat(m.amount)).length>0?`<div class="section"><h2>Materials & Misc.${tot.mats>0?' · '+fmt2(tot.mats):''}</h2>
 <table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
@@ -3063,7 +3111,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   // Materials rows). They live in report.materials[].receipts, not in the
   // project_photos table, so they're folded into the photo picker here.
   function receiptsFromReport(){
-    return (report.materials||[]).flatMap((row,ri)=>(row.receipts||[]).filter(r=>r&&r.src).map((r,i)=>({
+    const mats=(report.materials||[]).flatMap((row,ri)=>(row.receipts||[]).filter(r=>r&&r.src).map((r,i)=>({
       id:`rcpt_${row.id||ri}_${r.id||i}`,
       src:r.src,
       category:"Receipt",
@@ -3071,6 +3119,15 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       date:report.date,
       _fromReport:true,
     })));
+    const rentals=(report.rental_equipment||[]).flatMap((row,ri)=>(row.attachments||[]).filter(a=>a&&a.kind==="image"&&a.src).map((a,i)=>({
+      id:`rent_${row.id||ri}_${a.id||i}`,
+      src:a.src,
+      category:"Receipt",
+      caption:`Rental: ${row.description||"equipment"}${a.name?" — "+a.name:""}`,
+      date:report.date,
+      _fromReport:true,
+    })));
+    return [...mats,...rentals];
   }
 
   async function loadPhotosForPrint(){
