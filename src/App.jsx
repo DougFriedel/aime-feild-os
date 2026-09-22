@@ -3098,6 +3098,17 @@ function SignaturePad({onSave,onCancel,reportName}){
 }
 
 
+// Thumbnail for a receipt / attachment on a report: image → photo tile
+// (opens the lightbox), document → icon tile that opens the file.
+function AttachTile({a,onImage,size=56,color}){
+  if(a.kind==="file"){
+    const icon=a.type==="application/pdf"||/\.pdf$/i.test(a.name||"")?"📄":/sheet|excel|csv/.test(a.type||"")||/\.(xlsx?|csv)$/i.test(a.name||"")?"📊":/word/.test(a.type||"")||/\.docx?$/i.test(a.name||"")?"📝":"📎";
+    return <a href={a.src} target="_blank" rel="noreferrer" title={a.name} style={{width:size,height:size,borderRadius:8,border:`1px solid ${(color||T.blue)}60`,background:T.surface,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textDecoration:"none",color:T.text,fontSize:20,flexShrink:0}}>
+      <span>{icon}</span><span style={{fontSize:8,maxWidth:size-6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",padding:"0 3px",color:T.sub}}>{a.name}</span></a>;
+  }
+  return <img src={a.src} alt="" onClick={()=>onImage&&onImage(a.src)} style={{width:size,height:size,objectFit:"cover",borderRadius:8,cursor:"pointer",flexShrink:0}}/>;
+}
+
 function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,onFlag,onArchive}){
   const [report,setReport]=useState(initReport);
   const [lb,setLb]=useState(null);const [flagNote,setFlagNote]=useState("");const [flagging,setFlagging]=useState(false);
@@ -3171,17 +3182,31 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
 
   // Project documents (Documents tab uploads) — same pattern as photos:
   // files uploaded on the report date float to the top and start selected.
+  // Documents attached directly to this report (material receipts, rental
+  // invoices) — shaped like project docs so the print flow can embed them.
+  function docsFromReport(){
+    const mats=(report.materials||[]).flatMap((row,ri)=>(row.receipts||[]).filter(a=>a&&a.kind==="file"&&a.src).map((a,i)=>({
+      id:`rdoc_${row.id||ri}_${a.id||i}`,name:`${row.description||"Material"} — ${a.name}`,file:a.src,file_name:a.name,
+      file_type:a.type||"",file_size:a.size||0,created_at:report.date,uploaded_by:report.submitted_by,_fromReport:true,_onDate:true})));
+    const rent=(report.rental_equipment||[]).flatMap((row,ri)=>(row.attachments||[]).filter(a=>a&&a.kind==="file"&&a.src).map((a,i)=>({
+      id:`rdoc_rent_${row.id||ri}_${a.id||i}`,name:`Rental: ${row.description||"equipment"} — ${a.name}`,file:a.src,file_name:a.name,
+      file_type:a.type||"",file_size:a.size||0,created_at:report.date,uploaded_by:report.submitted_by,_fromReport:true,_onDate:true})));
+    return [...mats,...rent];
+  }
   async function loadDocsForPrint(){
     setDocsLoading(true);
+    const attached=docsFromReport();
     try{
-      const d=await API.docs.forProject(project.id);
+      const d=project._mfg?[]:await API.docs.forProject(project.id);
       const list=(Array.isArray(d)?d:[]).filter(x=>!x.visible_to||x.visible_to.includes(user?.role||"crew"));
       const dayOf=(s)=>{if(!s)return"";const dt=new Date(s);if(isNaN(dt))return"";const p=n=>String(n).padStart(2,"0");return `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}`;};
       const onDate=list.filter(x=>dayOf(x.created_at)===report.date);
       const others=list.filter(x=>dayOf(x.created_at)!==report.date);
-      setReportDocs([...onDate,...others].map(x=>({...x,_onDate:dayOf(x.created_at)===report.date})));
-      setSelectedDocs(onDate.map(x=>x.id));
-    }catch(e){}
+      setReportDocs([...attached,...onDate,...others].map(x=>({...x,_onDate:x._onDate||dayOf(x.created_at)===report.date})));
+      setSelectedDocs([...attached,...onDate].map(x=>x.id));
+    }catch(e){
+      setReportDocs(attached);setSelectedDocs(attached.map(x=>x.id));
+    }
     setDocsLoading(false);
   }
 
@@ -3687,8 +3712,8 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
         ))}
       </div>}
 
-      {(report.rental_equipment||[]).length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`}}><div style={{fontSize:12,color:T.purple,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🔑 Rented Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt((report.rental_equipment||[]).reduce((s,r)=>s+(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1),0))}</span>}</div>{(report.rental_equipment||[]).map((r,i)=>{const amt=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);return(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.rental_equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty||0} × {r.usage||0} days/hrs @ ${r.rate||0}</div></div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(amt)}</div>}</div>);})}</div>}
-      {(report.materials||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Materials{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.mats)}</span>}</div>{report.materials.map((r,i)=>(<div key={i} style={{padding:"8px 0",borderBottom:i<report.materials.length-1?`1px solid ${T.border}`:"none"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:r.receipts?.length>0?8:0}}><span style={{fontSize:13}}>{r.qty?`${r.qty}x `:""}{r.description}</span>{can(user,"view_dashboard")&&<span style={{fontSize:13,fontWeight:700,color:T.green}}>${fmt(parseFloat(r.amount)||0)}</span>}</div>{r.receipts?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{r.receipts.map(rc=><img key={rc.id} src={rc.src} alt="" onClick={()=>setLb(rc.src)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer"}}/>)}</div>}</div>))}</div>}
+      {(report.rental_equipment||[]).length>0&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`}}><div style={{fontSize:12,color:T.purple,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>🔑 Rented Equipment{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt((report.rental_equipment||[]).reduce((s,r)=>s+(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1),0))}</span>}</div>{(report.rental_equipment||[]).map((r,i)=>{const amt=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);return(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:i<report.rental_equipment.length-1?`1px solid ${T.border}`:"none"}}><div style={{flex:1,paddingRight:10}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{r.description}</div><div style={{fontSize:11,color:T.muted}}>Qty {r.qty||0} × {r.usage||0} days/hrs @ ${r.rate||0}</div>{r.attachments?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:6}}>{r.attachments.map(a=><AttachTile key={a.id} a={a} onImage={setLb} color={T.purple}/>)}</div>}</div>{can(user,"view_dashboard")&&<div style={{fontSize:14,fontWeight:800,color:T.green}}>${fmt(amt)}</div>}</div>);})}</div>}
+      {(report.materials||[]).length>0&&<div style={{...cardS,marginBottom:12}}><div style={{fontSize:12,color:divColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Materials{can(user,"view_dashboard")&&<span style={{color:T.green}}> · ${fmt(tot.mats)}</span>}</div>{report.materials.map((r,i)=>(<div key={i} style={{padding:"8px 0",borderBottom:i<report.materials.length-1?`1px solid ${T.border}`:"none"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:r.receipts?.length>0?8:0}}><span style={{fontSize:13}}>{r.qty?`${r.qty}x `:""}{r.description}</span>{can(user,"view_dashboard")&&<span style={{fontSize:13,fontWeight:700,color:T.green}}>${fmt(parseFloat(r.amount)||0)}</span>}</div>{r.receipts?.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{r.receipts.map(rc=><AttachTile key={rc.id} a={rc} onImage={setLb}/>)}</div>}</div>))}</div>}
       {can(user,"view_dashboard")&&<div style={{...cardS,background:divColor+"12",border:`1px solid ${divColor}40`,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:15,fontWeight:800}}>Grand Total</span><span style={{fontSize:26,fontWeight:900,color:divColor,letterSpacing:"-1px"}}>${fmt(tot.grand)}</span></div>}
       {can(user,"approve_report")&&report.status==="submitted"&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}><button onClick={()=>onApprove&&onApprove(report.id)} style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12}}>✓ Approve</button><button onClick={()=>setFlagging(!flagging)} style={{...primBtn,background:T.redLow,color:T.red,border:`1px solid ${T.red}40`,borderRadius:12}}>🚩 Flag</button></div>)}
 
