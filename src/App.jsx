@@ -991,6 +991,13 @@ function LoginScreen({onLogin}){
   const [checking,setChecking]=useState(false);
   const [legacy,setLegacy]=useState(false);   // verify_pin not deployed yet
   const [err,setErr]=useState("");
+  const [rosterV,setRosterV]=useState(0);      // bumps when the crew list arrives
+  // Load the crew directory BEFORE sign-in so new hires appear in the list
+  // on a phone that has never logged in. Cached locally for offline.
+  useEffect(()=>{
+    try{const c=JSON.parse(localStorage.getItem("aime_roster_cache")||"[]");if(Array.isArray(c)&&c.length&&!EXTRA_NAMES.length){EXTRA_NAMES=c;setRosterV(v=>v+1);}}catch{}
+    (async()=>{await refreshRoster();try{localStorage.setItem("aime_roster_cache",JSON.stringify(EXTRA_NAMES));}catch{}setRosterV(v=>v+1);})();
+  },[]);
 
   async function handleNameChange(n){
     setName(n); setPin(""); setErr(""); setProfile(null); setHasPin(false);
