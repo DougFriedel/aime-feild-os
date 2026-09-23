@@ -8624,12 +8624,24 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
   // cards for crew whose profile is in this division.
   const divProjIds=division?new Set(projects.filter(p=>p.division===division).map(p=>p.id)):null;
   const profDiv=(name)=>(profiles.find(p=>p.name===name)||{}).division||null;
-  const inDivision=(c)=>{
-    if(!division)return true;
-    if(c.project_id)return divProjIds.has(c.project_id);
-    if(c.mfg_job_id)return division==="Manufacturing";
-    return profDiv(c.worker_name)===division;
-  };
+  // Which division "owns" a card = the division of the job it was worked on.
+  const cardDiv=(c)=>c.project_id?((projects.find(p=>p.id===c.project_id)||{}).division||null):c.mfg_job_id?"Manufacturing":(profDiv(c.worker_name)||null);
+  // A card is "ours" when its job is in this division. A borrowed card is one
+  // of our crew's days worked on another division's job — shown read-only so
+  // the home PM sees the whole week, but approved over there.
+  const isOurs=(c)=>!division||cardDiv(c)===division;
+  const isBorrowed=(c)=>!!division&&!isOurs(c)&&profDiv(c.worker_name)===division;
+  const inDivision=(c)=>!division||isOurs(c)||isBorrowed(c);
+  async function flagCard(c){
+    const note=window.prompt(`Flag ${c.worker_name}'s ${c.date} card for the ${cardDiv(c)||"other"} PM. What's wrong?`,"");
+    if(note===null)return;
+    const body={flagged_by:user.name,flagged_at:new Date().toISOString(),flag_note:note.trim()||null};
+    try{
+      await API.timeCards.update(c.id,body);
+      setCards(cs=>cs.map(x=>x.id===c.id?{...x,...body}:x));
+      await notify("timecard_flag",`Time card flagged — ${c.worker_name}`,`${user.name} (${division}) flagged ${c.worker_name}'s ${c.date} card on ${jobOf(c)||"a job"}${note.trim()?": "+note.trim():""}`,{project_id:c.project_id||null});
+    }catch(e){setErr(e.message);}
+  }
   useEffect(()=>{(async()=>{
     // A half-typed or cleared date box sends "" and Postgres rejects it.
     if(!fromDate||!toDate)return;
@@ -8838,7 +8850,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
   // Approval helpers (used on the worker cards)
   const approveIds=async(ids,status)=>{
     if(!ids.length)return;
-    const body=status==="approved"?{status,approved_by:user.name,approved_at:new Date().toISOString()}:{status:"pending",approved_by:null,approved_at:null};
+    const body=status==="approved"?{status,approved_by:user.name,approved_at:new Date().toISOString(),flagged_by:null,flagged_at:null,flag_note:null}:{status:"pending",approved_by:null,approved_at:null};
     try{for(const id of ids)await API.timeCards.update(id,body);setCards(cs=>cs.map(c=>ids.includes(c.id)?{...c,...body}:c));}catch(e){setErr(e.message);}
   };
   const byWorker={};
@@ -8860,12 +8872,13 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
       <div style={{padding:embedded?'0 0 100px':'12px 16px 100px'}}>
         <ErrBanner msg={err} onDismiss={()=>setErr('')}/>
         {(()=>{
-          const pend=filtered.filter(c=>(c.status||'pending')!=='approved'&&c.status!=='open');
+          const pend=filtered.filter(c=>isOurs(c)&&(c.status||'pending')!=='approved'&&c.status!=='open');
           const unconf=new Set(filtered.filter(c=>!c.employee_ack_at).map(c=>c.worker_name));
+          const flagged=filtered.filter(c=>isOurs(c)&&c.flagged_by).length;
           if(!canEdit)return null;
           return(
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:12}}>
-              {[["To approve",pend.length,pend.length?T.yellow:T.green],["Not confirmed by employee",unconf.size,unconf.size?T.red:T.muted],["Approved",filtered.length-pend.length,T.green]].map(([l,v,c])=>(
+              {[["To approve",pend.length,pend.length?T.yellow:T.green],["Not confirmed by employee",unconf.size,unconf.size?T.red:T.muted],[flagged?"Flagged by another PM":"Approved",flagged||filtered.filter(c=>isOurs(c)&&(c.status||'pending')==='approved').length,flagged?T.red:T.green]].map(([l,v,c])=>(
                 <div key={l} style={{...cardS,textAlign:'center',padding:10}}><div style={{fontSize:18,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:9.5,color:T.muted,textTransform:'uppercase',letterSpacing:'0.8px'}}>{l}</div></div>))}
               {pend.length>0&&<button onClick={()=>{if(window.confirm(`Approve all ${pend.length} pending time cards in this range?`))approveIds(pend.map(c=>c.id),'approved');}}
                 style={{...primBtn,gridColumn:'1 / -1',borderRadius:12,background:T.green,color:'#000',fontSize:13}}>✓ Approve all pending ({pend.length})</button>}
@@ -8949,8 +8962,9 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
           return(
           <div key={w.name} style={{...cardS,marginBottom:8,borderLeft:open?`3px solid ${T.orange}`:undefined}}>
             <div onClick={()=>setOpenWorker(open?null:w.name)} style={{cursor:'pointer'}}>
-              {(()=>{const pend=mine.filter(c=>(c.status||'pending')!=='approved'&&c.status!=='open');const unconf=mine.filter(c=>!c.employee_ack_at);
+              {(()=>{const ours=mine.filter(isOurs);const pend=ours.filter(c=>(c.status||'pending')!=='approved'&&c.status!=='open');const unconf=mine.filter(c=>!c.employee_ack_at);
                 const fromOther=division&&profDiv(w.name)&&profDiv(w.name)!==division;
+                const borrowed=mine.filter(isBorrowed);
                 return(<>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,gap:8}}>
                 <div style={{fontSize:14,fontWeight:800,color:T.orange,minWidth:0}}>{open?'▾':'▸'} {w.name}
@@ -8959,8 +8973,8 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
                   <div style={{fontSize:16,fontWeight:900,color:T.green}}>{fmt(w.total)}h</div>
-                  {canEdit&&pend.length>0&&<button onClick={e=>{e.stopPropagation();approveIds(pend.map(c=>c.id),'approved');}} style={{...primBtn,padding:'6px 10px',borderRadius:10,fontSize:11.5,background:T.green,color:'#000'}}>✓ Approve ({pend.length})</button>}
-                  {canEdit&&pend.length===0&&mine.length>0&&<span style={pill(T.green)}>Approved</span>}
+                  {canEdit&&pend.length>0&&<button onClick={e=>{e.stopPropagation();approveIds(pend.map(c=>c.id),'approved');}} style={{...primBtn,padding:'6px 10px',borderRadius:10,fontSize:11.5,background:T.green,color:'#000'}}>✓ Approve {borrowed.length?`${pend.length} day${pend.length!==1?'s':''}`:`(${pend.length})`}</button>}
+                  {canEdit&&pend.length===0&&ours.length>0&&<span style={pill(T.green)}>Approved</span>}
                 </div>
               </div>
               <div style={{display:'flex',gap:12,fontSize:11,color:T.muted,flexWrap:'wrap'}}>
@@ -8968,7 +8982,8 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
                 {w.ot>0&&<span>OT: <strong style={{color:T.yellow}}>{fmt(w.ot)}h</strong></span>}
                 {w.travel>0&&<span>Travel: <strong style={{color:T.blue}}>{fmt(w.travel)}h</strong></span>}
                 {unconf.length>0?<span style={{color:T.red}}>not confirmed by employee</span>:mine.length>0&&<span style={{color:T.green}}>confirmed by employee</span>}
-                <span style={{marginLeft:'auto'}}>{mine.length} entr{mine.length===1?'y':'ies'}</span>
+                {ours.some(c=>c.flagged_by)&&<span style={{color:T.red}}>⚑ flagged by {[...new Set(ours.filter(c=>c.flagged_by).map(c=>c.flagged_by))].join(', ')}</span>}
+                <span style={{marginLeft:'auto'}}>{mine.length} entr{mine.length===1?'y':'ies'}{borrowed.length?` · ${borrowed.length} on other divisions`:''}</span>
               </div>
                 </>);})()}
             </div>
@@ -8979,6 +8994,20 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
               {[...mine].sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(c=>{
                 const reg=parseFloat(gridVal(c,'reg_hours'))||0,ot=parseFloat(gridVal(c,'ot_hours'))||0,tr=parseFloat(gridVal(c,'travel_hours'))||0;
                 const changed=rowDirty(c);
+                if(isBorrowed(c)){
+                  const od=cardDiv(c)||'other';const ap=(c.status||'pending')==='approved';
+                  const dowB=c.date?new Date(c.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'}):'';
+                  return(
+                    <div key={c.id} style={{display:'grid',gridTemplateColumns:'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,alignItems:'center',marginBottom:5,padding:'6px 6px',margin:'0 -6px 5px',borderRadius:8,background:T.surface,color:T.muted,fontSize:12}}>
+                      <div style={{fontWeight:700}}>{dowB} <span style={{fontWeight:500}}>{(c.date||'').slice(5).replace('-','/')}</span></div>
+                      <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>→ {jobOf(c)||'—'} <span style={{...pill((DIV_META[od]||{}).color||T.muted),fontSize:9,marginLeft:4}}>{od}</span>{c.flagged_by&&<span title={c.flag_note||''} style={{color:T.red,marginLeft:6}}>⚑ flagged</span>}</div>
+                      <div style={{textAlign:'center'}}>{fmt(c.reg_hours)}</div><div style={{textAlign:'center'}}>{fmt(c.ot_hours)}</div><div style={{textAlign:'center'}}>{fmt(c.travel_hours)}</div>
+                      <div style={{textAlign:'right',fontWeight:800}}>{fmt(t(c))}</div>
+                      <div style={{textAlign:'center',fontSize:10,color:ap?T.green:T.yellow,lineHeight:1.2}}>{ap?`✓ ${od} PM`:`awaiting ${od}`}</div>
+                      {canEdit?<button onClick={()=>flagCard(c)} title="Flag this day for the other division's PM" style={{background:'none',border:'none',color:c.flagged_by?T.red:T.muted,cursor:'pointer',fontSize:13,padding:0}}>⚑</button>:<div/>}
+                    </div>
+                  );
+                }
                 const dateV=gridVal(c,'date')||'';
                 const dow=dateV?new Date(dateV+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'}):'';
                 const cell={...inp,padding:'6px 4px',fontSize:13,textAlign:'center',fontWeight:700,...(changed?{borderColor:T.blue,background:T.blueLow}:{})};
@@ -9013,7 +9042,8 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
                       {c.edited_by&&<span style={{fontSize:10,color:T.blue,marginRight:3}}>✎</span>}
                       {fmt(reg+ot+tr)}
                     </div>
-                    <div style={{textAlign:'center'}}>
+                    <div style={{textAlign:'center'}} title={c.flagged_by?`Flagged by ${c.flagged_by}${c.flag_note?': '+c.flag_note:''}`:''}>
+                      {c.flagged_by&&<div style={{fontSize:9.5,color:T.red,marginBottom:2}}>⚑ {c.flagged_by.split(' ')[0]}{c.flag_note?': '+c.flag_note.slice(0,18)+(c.flag_note.length>18?'…':''):''}</div>}
                       {canEdit?((c.status||'pending')==='approved'
                         ?<button onClick={()=>approveIds([c.id],'pending')} title="Un-approve" style={{...ghostBtn,padding:'4px 6px',fontSize:10,color:T.green,borderColor:T.green+'60'}}>✓ ok</button>
                         :<button onClick={()=>approveIds([c.id],'approved')} style={{...ghostBtn,padding:'4px 6px',fontSize:10,borderColor:T.yellow+'80',color:T.yellow}}>approve</button>)
@@ -9023,6 +9053,17 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
                   </div>
                 );
               })}
+              {division&&(()=>{
+                const ours=mine.filter(isOurs),bor=mine.filter(isBorrowed);
+                if(!bor.length)return null;
+                const oursAp=ours.filter(c=>(c.status||'pending')==='approved').length,borAp=bor.filter(c=>(c.status||'pending')==='approved').length;
+                const byDiv={};bor.forEach(c=>{const d=cardDiv(c)||'other';byDiv[d]=byDiv[d]||{ap:0,n:0};byDiv[d].n++;if((c.status||'pending')==='approved')byDiv[d].ap++;});
+                const complete=oursAp===ours.length&&borAp===bor.length;
+                return <div style={{marginTop:8,padding:'8px 10px',borderRadius:8,background:complete?T.greenLow:T.yellowLow,fontSize:11.5,color:complete?T.green:T.yellow,lineHeight:1.5}}>
+                  {complete?'Week complete: ':'Week not complete yet: '}{oursAp} of {ours.length} day{ours.length!==1?'s':''} approved by you
+                  {Object.entries(byDiv).map(([d,v])=>` · ${v.ap} of ${v.n} approved by ${d}`).join('')}. Grayed days are another division's — use ⚑ to question one.
+                </div>;
+              })()}
               {canEdit&&<>
                 {gridDirty(mine)&&<input value={gridNote} onChange={e=>setGridNote(e.target.value)} placeholder="Reason (optional) — e.g. left early Tue, rain-out Fri" style={{...inp,fontSize:12,margin:'8px 0'}}/>}
                 <div style={{display:'flex',gap:8,marginTop:gridDirty(mine)?0:8}}>
