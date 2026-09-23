@@ -10219,7 +10219,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
       {/* Tabs */}
       <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,padding:"0 24px",marginTop:10}}>
         {BID_TABS.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)}
+          <button key={t.id} onClick={()=>{if(window.__bidDirty&&!window.confirm("You have unsaved changes on this tab. Leave without saving?"))return;window.__bidDirty=false;setTab(t.id);}}
             style={{background:"none",border:"none",borderBottom:tab===t.id?`2px solid ${T.orange}`:"2px solid transparent",
               padding:"10px 16px",cursor:"pointer",fontFamily:"inherit",fontSize:13.5,
               fontWeight:tab===t.id?800:600,color:tab===t.id?T.text:T.sub}}>
@@ -10245,7 +10245,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
         {tab==="documents" &&<BidDocumentsTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="takeoff"   &&<TakeoffTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="estimating"&&<EstimatingTab bid={bid} user={user} onErr={setErr} onTotal={(t)=>{setBid(b=>({...b,total_sales:t}));onChanged&&onChanged();}}/>}
-        {tab==="scope"     &&<ScopeTab bid={bid} user={user} onErr={setErr}/>}
+        {tab==="scope"     &&<ScopeTab bid={bid} user={user} onErr={setErr} onSaved={(patch)=>{setBid(b=>({...b,...patch}));onChanged&&onChanged();}}/>}
         {tab==="proposal"  &&<ProposalTab bid={bid} user={user} onErr={setErr} onSaved={load}/>}
       </div>
     </div>
@@ -11047,7 +11047,7 @@ const COMMON_EXCLUSIONS=[
 const exclLabel=(x)=>typeof x==="string"?x:x.label;
 const exclText =(x)=>typeof x==="string"?x:x.text;
 
-function ScopeTab({bid,user,onErr}){
+function ScopeTab({bid,user,onErr,onSaved}){
   const asList=(v)=>{
     if(Array.isArray(v))return v;
     if(typeof v==="string"){ try{const p=JSON.parse(v);return Array.isArray(p)?p:[];}catch{return [];} }
@@ -11066,6 +11066,7 @@ function ScopeTab({bid,user,onErr}){
   const [draft,setDraft]=useState({inclusions:"",exclusions:""});
 
   const set=(k,v)=>{setF(s=>({...s,[k]:v}));setDirty(true);};
+  useEffect(()=>{window.__bidDirty=dirty;return()=>{window.__bidDirty=false;};},[dirty]);
 
   const addTo=(key,text)=>{
     const t=(text||"").trim();
@@ -11079,11 +11080,20 @@ function ScopeTab({bid,user,onErr}){
   async function save(){
     setSaving(true);
     try{
-      await API.estimates.update(bid.id,{...f,updated_at:new Date().toISOString()});
+      const body={...f,updated_at:new Date().toISOString()};
+      await API.estimates.update(bid.id,body);
       setDirty(false);
+      onSaved&&onSaved(body);   // push into the bid the other tabs read from
     }catch(e){onErr&&onErr(e.message);}
     setSaving(false);
   }
+  // Warn before losing unsaved edits on navigation / tab close
+  useEffect(()=>{
+    if(!dirty)return;
+    const h=(e)=>{e.preventDefault();e.returnValue="";};
+    window.addEventListener("beforeunload",h);
+    return()=>window.removeEventListener("beforeunload",h);
+  },[dirty]);
 
   const card={...cardS,padding:20,marginBottom:16};
 
@@ -11373,6 +11383,8 @@ function EstimatingTab({bid,user,onErr,onTotal}){
   const directCost=Object.values(catTotals).reduce((s,t)=>s+t.cost,0);
   const afterMarkup=Object.values(catTotals).reduce((s,t)=>s+t.marked,0);
   const totalHrs=Object.values(catTotals).reduce((s,t)=>s+t.hrs,0);
+  const totalLaborCost=Object.values(catTotals).reduce((s,t)=>s+(t.labor||0),0);
+  const totalMaterialCost=directCost-totalLaborCost;
   const overhead=afterMarkup*((Number(rates.overhead_pct)||0)/100);
   const discount=(afterMarkup+overhead)*((Number(rates.discount_pct)||0)/100);
   const preTaxTotal=afterMarkup+overhead-discount;
@@ -11456,6 +11468,16 @@ function EstimatingTab({bid,user,onErr,onTotal}){
                 {th("Cost Item")}{th("Description")}{th("Qty","right")}{th("UoM","center")}
                 {th("Unit Cost","right")}{th("Material Cost","right")}{th("Hrs/Unit","right")}
                 {th("Labor Rate","right")}{th("Labor Cost","right")}{th("Total","right")}{th("")}
+              </tr>
+              {/* Column totals pinned under the header so they're visible without scrolling */}
+              <tr style={{background:T.bg,borderBottom:`2px solid ${T.border}`}}>
+                <td style={{...td,fontWeight:800,color:T.muted,fontSize:10.5,textTransform:"uppercase",letterSpacing:"0.5px"}} colSpan={5}>Bid totals</td>
+                <td style={{...td,textAlign:"right",fontWeight:800,color:T.text}}>{money(totalMaterialCost)}</td>
+                <td style={{...td,textAlign:"right",fontWeight:800,color:T.blue}}>{num(totalHrs,1)} hrs</td>
+                <td style={td}/>
+                <td style={{...td,textAlign:"right",fontWeight:800,color:T.text}}>{money(totalLaborCost)}</td>
+                <td style={{...td,textAlign:"right",fontWeight:900,color:T.green}}>{money(directCost)}</td>
+                <td style={td}/>
               </tr></thead>
               <tbody>
                 {Object.keys(byCat).sort().map(cat=>{
