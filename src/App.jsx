@@ -13796,7 +13796,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
 
         {/* Dashboard tab toggle */}
         {!loading&&jobs.length>0&&<div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4}}>
-          {[["jobs","🔩 Jobs"],...(canAdmin||user.role==="admin"||user.role==="pm"?[["reports","📊 PM Dashboard"]]:[]),["dashboard","📊 Dashboard"]].map(([id,label])=>(
+          {[["jobs","🔩 Jobs"],...(canAdmin||user.role==="admin"||user.role==="pm"?[["reports","📊 PM Dashboard"]]:[])].map(([id,label])=>(
             <button key={id} onClick={()=>setBoardTab(id)}
               style={{flex:1,padding:"8px",background:boardTab===id?T.purple:"none",color:boardTab===id?"#fff":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
               {label}
@@ -13804,8 +13804,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
           ))}
         </div>}
 
-        {boardTab==="dashboard"&&jobs.length>0&&<ManufacturingDashboard jobs={jobs} user={user} onSelectJob={j=>onSelectJob(j)}/>}
-        {boardTab==="reports"&&<MfgReportsArea jobs={jobs} user={user}/>}
+        {boardTab==="reports"&&<MfgReportsArea jobs={jobs} user={user} onSelectJob={j=>onSelectJob(j)}/>}
         {boardTab==="jobs"&&active.length===0&&!loading&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
           <div style={{fontSize:48,marginBottom:12}}>🏭</div>
           <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No Manufacturing Jobs</div>
@@ -19342,16 +19341,18 @@ function PullMfgLaborModal({job,onClose,onPull,onErr}){
 }
 
 /* ── Manufacturing billing tab — invoices only, no AIA ── */
-function MfgReportsArea({jobs,user}){
-  const [tab,setTab]=useState("daily");
+function MfgReportsArea({jobs,user,onSelectJob}){
+  const [tab,setTab]=useState("overview");
   const [err,setErr]=useState("");
   return(
     <div>
-      <div style={{display:"flex",gap:6,marginBottom:12}}>
-        {[["daily","📝 Daily Reports"],["timecards","⏱️ Time Cards"]].map(([id,label])=>(
+      <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto"}}>
+        {[["overview","📊 Overview"],["daily","📝 Daily Reports"],["timecards","⏱️ Time Cards"]].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{padding:"8px 14px",borderRadius:"10px 10px 0 0",background:tab===id?T.bg:"transparent",border:"none",borderBottom:tab===id?`2px solid ${T.purple}`:"2px solid transparent",color:tab===id?T.text:T.muted,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>))}
       </div>
       <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+      {tab==="overview"&&(jobs.length>0?<ManufacturingDashboard jobs={jobs} user={user} onSelectJob={j=>onSelectJob&&onSelectJob(j)}/>
+        :<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>No manufacturing jobs yet.</div>)}
       {tab==="daily"&&<MfgDivisionReportsTab jobs={jobs} user={user}/>}
       {tab==="timecards"&&<TimeCardsScreen user={user} projects={[]} embedded division="Manufacturing"/>}
     </div>
