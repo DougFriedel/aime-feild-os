@@ -213,9 +213,17 @@ async function offloadReportImages(report){
    When the report is saved, every attachment with inv.track=true becomes
    a row in invoice_tracker (keyed by att_id, so re-saves update in place). */
 async function extractInvoice(att){
-  const res=await fetch("/.netlify/functions/receipt-extract",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({src:att.src,name:att.name||"",type:att.type||""})});
-  if(!res.ok)throw new Error((await res.text())||`extract failed (${res.status})`);
+  let res;
+  try{
+    res=await fetch("/.netlify/functions/receipt-extract",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({src:att.src,name:att.name||"",type:att.type||""})});
+  }catch(e){throw new Error("No connection to the receipt reader.");}
+  if(res.status===404)throw new Error("Receipt reader isn't deployed (receipt-extract function missing on Netlify).");
+  if(!res.ok){
+    const t=(await res.text())||"";
+    if(/ANTHROPIC_API_KEY/.test(t))throw new Error("Receipt reader has no API key (set ANTHROPIC_API_KEY in Netlify).");
+    throw new Error(`Receipt reader error ${res.status}: ${t.slice(0,140)}`);
+  }
   return await res.json();
 }
 function attachmentsWithInvoices(report){
@@ -263,7 +271,8 @@ function InvoiceFields({att,onChange,color}){
           <input type="checkbox" checked={!!inv.track} onChange={e=>set("track",e.target.checked)}/> Add to tracker
         </label>
       </div>
-      {inv.error&&<div style={{fontSize:10.5,color:T.yellow,marginBottom:6}}>Couldn't read it automatically — fill in below.</div>}
+      {inv.error&&<div style={{fontSize:10.5,color:T.yellow,marginBottom:6}}>⚠ {inv.error===true?"Couldn't read it automatically.":inv.error} Fill in below or <button onClick={()=>onChange({...att,inv:undefined,_retry:(att._retry||0)+1})} style={{background:"none",border:"none",color:T.blue,cursor:"pointer",fontSize:10.5,padding:0,fontFamily:"inherit",textDecoration:"underline"}}>read again</button>.</div>}
+      {!inv.error&&inv.confidence==="low"&&<div style={{fontSize:10.5,color:T.yellow,marginBottom:6}}>⚠ Low confidence — double-check these.</div>}
       <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr",gap:6,marginBottom:6}}>
         <input value={inv.supplier||""} onChange={e=>set("supplier",e.target.value)} placeholder="Supplier" style={{...inp,padding:"6px 8px",fontSize:12}}/>
         <input value={inv.invoice_no||""} onChange={e=>set("invoice_no",e.target.value)} placeholder="Invoice #" style={{...inp,padding:"6px 8px",fontSize:12}}/>
@@ -281,8 +290,8 @@ async function readReceiptInto(att,getList,commit){
   let inv;
   try{
     const r=await extractInvoice(att);
-    inv={supplier:r.supplier||"",invoice_no:r.invoice_no||"",amount:r.amount??"",date:r.date||"",track:!!(r.amount||r.supplier)};
-  }catch(e){inv={supplier:"",invoice_no:"",amount:"",date:"",track:false,error:true};}
+    inv={supplier:r.supplier||"",invoice_no:r.invoice_no||"",amount:r.amount??"",date:r.date||"",confidence:r.confidence||"",track:!!(r.amount||r.supplier)};
+  }catch(e){inv={supplier:"",invoice_no:"",amount:"",date:"",track:false,error:e.message||"Could not read receipt."};}
   commit(getList().map(x=>x.id===att.id?{...x,extracting:false,inv}:x));
 }
 
@@ -850,6 +859,8 @@ function RentedEquipCard({row,onChange,onRemove,trackInvoices}){
     }
   }
   const removeAtt=(a)=>{onChange({...row,attachments:att.filter(x=>x.id!==a.id)});if(a.storage_path)storageRemove("documents",a.storage_path).catch(()=>{});};
+  useEffect(()=>{if(!trackInvoices)return;const todo=att.filter(a=>a._retry&&!a.inv&&!a.extracting);if(!todo.length)return;
+    let cur=att;const commit=(l)=>{cur=l;onChange({...row,attachments:l});};todo.forEach(a=>readReceiptInto(a,()=>cur,commit));},[att.map(a=>a._retry||0).join(",")]);
   const fileIcon=(a)=>a.type==="application/pdf"||/\.pdf$/i.test(a.name)?"📄":/sheet|excel|csv/.test(a.type)||/\.(xlsx?|csv)$/i.test(a.name)?"📊":/word|\.docx?$/i.test(a.type+a.name)?"📝":"📎";
   return(
     <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.purple}`}}>
@@ -962,6 +973,8 @@ function MatCard({row,onChange,onRemove,trackInvoices}){const fileRef=useRef(nul
     if(trackInvoices&&navigator.onLine){let cur=next;const commit=(l)=>{cur=l;onChange({...row,receipts:l});};for(const a of n)readReceiptInto(a,()=>cur,commit);}
   }}
   const removeReceipt=(r)=>{onChange({...row,receipts:receipts.filter(x=>x.id!==r.id)});if(r.storage_path)storageRemove("documents",r.storage_path).catch(()=>{});};   // images and files alike
+  useEffect(()=>{if(!trackInvoices)return;const todo=receipts.filter(a=>a._retry&&!a.inv&&!a.extracting);if(!todo.length)return;
+    let cur=receipts;const commit=(l)=>{cur=l;onChange({...row,receipts:l});};todo.forEach(a=>readReceiptInto(a,()=>cur,commit));},[receipts.map(a=>a._retry||0).join(",")]);
   const fileIcon=(a)=>a.type==="application/pdf"||/\.pdf$/i.test(a.name||"")?"📄":/sheet|excel|csv/.test(a.type||"")||/\.(xlsx?|csv)$/i.test(a.name||"")?"📊":/word/.test(a.type||"")||/\.docx?$/i.test(a.name||"")?"📝":"📎";
   return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}><div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}><div><label style={lbl}>Markup %</label><input type="number" min="0" step="0.1" placeholder="12" value={row.markup_pct||""} onChange={e=>onChange({...row,markup_pct:e.target.value})} style={inp}/></div><div><label style={lbl}>Tax ($)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>onChange({...row,tax_amount:e.target.value})} style={inp}/></div><div><label style={lbl}>Line Total</label><div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(matLineTotal(row))}</div></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}>{r.kind==="file"
   ?<a href={r.src} target="_blank" rel="noreferrer" title={r.name} style={{width:60,height:60,borderRadius:10,border:`2px solid ${T.blue}40`,background:T.blueLow,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textDecoration:"none",color:T.text,fontSize:20}}><span>{fileIcon(r)}</span><span style={{fontSize:8,maxWidth:54,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",padding:"0 3px"}}>{r.name}</span></a>
