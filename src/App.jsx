@@ -2176,8 +2176,6 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
             </button>
           );
           const items=[];
-          if(can(user,"view_dashboard"))items.push(navBtn(onDash,"📊","Dashboard",T.orange,T.orangeLow));
-          if(user.role==="admin"||user.role==="pm")items.push(navBtn(onTimeCards,"⏱️","Time Cards",T.green,T.greenLow));
           if(can(user,"crew_directory"))items.push(navBtn(onCrew,"👥","Crew",T.blue,T.blueLow));
           if(canEstimate(user))items.push(navBtn(onEstimating,"📐","Estimating",T.purple,`${T.purple}15`));
           items.push(navBtn(onNotifications,notifCount>0?"🔔":"🔕","Alerts",T.sub,T.surface,
@@ -2544,11 +2542,9 @@ function DivisionReportsTab({user,division,projects,onErr}){
 function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefresh}){
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("active");
-  const [nav,setNav]=useState("jobs");          // jobs | reports
-  const [reportsTab,setReportsTab]=useState("daily");   // daily | invoices  (Pipeline only)
-  const [navErr,setNavErr]=useState("");
+  const [nav,setNav]=useState("jobs");          // jobs | pm
   const meta=DIV_META[division]||{icon:"🏗️",color:T.orange};
-  const isPipeline=division==="Pipeline";
+  const isPM=user.role==="admin"||user.role==="pm";
 
   const divProjects=projects.filter(p=>p.division===division);
   // Job numbers sort naturally: "2606-M" after "2599-P", and "26010" after "2609"
@@ -2583,18 +2579,13 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
           </div>
           {canCreate&&nav==="jobs"&&<button onClick={onNew} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Job</button>}
         </div>
-        {/* Division nav bar */}
-        <div style={{display:"flex",background:T.bg,borderRadius:12,padding:4,marginBottom:12,gap:4}}>
-          {[["jobs","🏗️ Jobs"],["reports","📝 Reports"]].map(([id,label])=>(
+        {/* Division nav bar — PM Dashboard is PM/admin only */}
+        {isPM&&<div style={{display:"flex",background:T.bg,borderRadius:12,padding:4,marginBottom:12,gap:4}}>
+          {[["jobs","🏗️ Jobs"],["pm","📊 PM Dashboard"]].map(([id,label])=>(
             <button key={id} onClick={()=>setNav(id)}
               style={{flex:1,padding:"9px",background:nav===id?meta.color:"none",color:nav===id?"#0D0D0F":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
               {label}
             </button>
-          ))}
-        </div>
-        {nav==="reports"&&<div style={{display:"flex",gap:6,marginBottom:10}}>
-          {[["daily","📝 Daily Reports"],["timecards","⏱️ Time Cards"],...(isPipeline?[["invoices","🧾 Invoices"]]:[])].map(([id,label])=>(
-            <button key={id} onClick={()=>setReportsTab(id)} style={{padding:"8px 14px",borderRadius:"10px 10px 0 0",background:reportsTab===id?T.bg:"transparent",border:"none",borderBottom:reportsTab===id?`2px solid ${meta.color}`:"2px solid transparent",color:reportsTab===id?T.text:T.muted,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
           ))}
         </div>}
         {nav==="jobs"&&<div style={{position:"relative",marginBottom:10}}>
@@ -2607,16 +2598,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
         </div>}
       </div>
 
-      {nav==="reports"&&<div style={{padding:"12px 16px 80px"}}>
-        <ErrBanner msg={navErr} onDismiss={()=>setNavErr("")}/>
-        {reportsTab==="daily"&&<DivisionReportsTab user={user} division={division} projects={projects} onErr={setNavErr}/>}
-        {reportsTab==="timecards"&&(can(user,"approve_report")||user.role==="admin"||user.role==="pm"
-          ?<TimeCardApprovalTab user={user} division={division} projects={projects} onErr={setNavErr}/>
-          :<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>Time card approval is for PMs and admins.</div>)}
-        {isPipeline&&reportsTab==="invoices"&&(user.role==="admin"||user.role==="pm"
-          ?<InvoiceTrackerScreen user={user} projects={projects} embedded division="Pipeline"/>
-          :<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>Invoices are visible to PMs and admins.</div>)}
-      </div>}
+      {nav==="pm"&&isPM&&<PMDashboard embedded lockedDiv={division} user={user} projects={projects} onRefresh={onRefresh} onErr={()=>{}}/>}
 
       {nav==="jobs"&&<PullToRefresh onRefresh={async()=>onRefresh&&await onRefresh()}>
       <div style={{padding:"12px 16px 80px"}}>
@@ -6432,7 +6414,7 @@ const PTABS=[
   {id:"info",icon:"ℹ️",label:"Info",perm:null},
 ];
 
-function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
+function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr,embedded,lockedDiv}){
   const [projects,setProjects]=useState(initProjects||[]);
   const [reports,setReports]=useState([]);
   const [pending,setPending]=useState([]);
@@ -6446,7 +6428,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const [buildingTM,setBuildingTM]=useState(false);
   const [showNotifs,setShowNotifs]=useState(false);
   const [tmPending,setTmPending]=useState([]);
-  const [pmDiv,setPmDiv]=useState(null);        // null = division picker
+  const [pmDiv,setPmDiv]=useState(lockedDiv||null);        // null = division picker
 
   /* ── Billing tab: fetches its own data for the chosen period ──
      reports.all() caps at 300 rows and reportTotals.grand omits
@@ -6687,7 +6669,10 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   const scopedTmPending=tmPending.filter(t=>divIds.has(t.project_id));
   const tmPendingValue=scopedTmPending.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
 
-  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},{id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"contracts",l:`📐 Contracts${overBudgetCount>0?" ("+overBudgetCount+")":""}`},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
+  const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},
+    {id:"daily",l:"📝 Daily Reports"},{id:"timecards",l:"⏱️ Time Cards"},
+    ...(pmDiv==="Pipeline"?[{id:"invoices",l:"🧾 Invoices"}]:[]),
+    {id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"contracts",l:`📐 Contracts${overBudgetCount>0?" ("+overBudgetCount+")":""}`},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
   const divOf=(r)=>(projects.find(p=>p.id===r.project_id)||r.projects||{}).division;
   const allTot=scopedReports.reduce((s,r)=>{const t=reportTotals(r,divOf(r));return{l:s.l+t.labor,e:s.e+t.equip,g:s.g+t.grand};},{l:0,e:0,g:0});
@@ -6885,9 +6870,9 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
   }
 
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
-      <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <button onClick={()=>setPmDiv(null)} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Divisions</button>
+    <div style={embedded?{}:{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
+      {!embedded&&<div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <button onClick={()=>lockedDiv?onBack&&onBack():setPmDiv(null)} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← {lockedDiv?"Back":"Divisions"}</button>
         <div style={{textAlign:"center"}}>
           <div style={{fontSize:15,fontWeight:900,color:(DIV_META[pmDiv]||{}).color||T.orange}}>
             {(DIV_META[pmDiv]||{}).icon} {pmDiv||"All"}
@@ -6895,7 +6880,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
           <div style={{fontSize:10,color:T.muted,letterSpacing:"0.5px"}}>PM DASHBOARD</div>
         </div>
         <button onClick={()=>setShowNotifs(true)} style={{background:"none",border:"none",color:T.muted,fontSize:20,cursor:"pointer"}}>{unread>0?"🔔":"🔕"}</button>
-      </div>
+      </div>}
       <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
 
       {/* Tab bar */}
@@ -6910,6 +6895,9 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr}){
         {loading&&<Spinner/>}
 
         {/* OVERVIEW */}
+        {pmTab==="daily"&&<div style={{padding:"12px 16px 80px"}}><DivisionReportsTab user={user} division={pmDiv} projects={projects} onErr={setErr}/></div>}
+        {pmTab==="timecards"&&<div style={{padding:"12px 16px 80px"}}><TimeCardsScreen user={user} projects={projects} embedded division={pmDiv}/></div>}
+        {pmTab==="invoices"&&pmDiv==="Pipeline"&&<div style={{padding:"12px 16px 80px"}}><InvoiceTrackerScreen user={user} projects={projects} embedded division="Pipeline"/></div>}
         {pmTab==="overview"&&!loading&&<div>
 
           {/* Waiting on approval */}
@@ -8619,7 +8607,7 @@ function ClockRoster({pmDiv,divIds,user,onErr}){
   );
 }
 
-function TimeCardsScreen({user,projects,onBack}){
+function TimeCardsScreen({user,projects,onBack,embedded,division}){
   const [cards,setCards]=useState([]);const [loading,setLoading]=useState(true);
   const [err,setErr]=useState('');
   const [fromDate,setFromDate]=useState(()=>{const d=new Date();d.setDate(d.getDate()-14);return d.toISOString().slice(0,10);});
@@ -8631,6 +8619,17 @@ function TimeCardsScreen({user,projects,onBack}){
   // Shop cards carry mfg_job_id rather than project_id, so the manufacturing
   // jobs have to be loaded as well or they show with no job at all.
   const [mfgJobs,setMfgJobs]=useState([]);
+  const [profiles,setProfiles]=useState([]);
+  // Division scope: cards on this division's jobs, plus manual/unassigned
+  // cards for crew whose profile is in this division.
+  const divProjIds=division?new Set(projects.filter(p=>p.division===division).map(p=>p.id)):null;
+  const profDiv=(name)=>(profiles.find(p=>p.name===name)||{}).division||null;
+  const inDivision=(c)=>{
+    if(!division)return true;
+    if(c.project_id)return divProjIds.has(c.project_id);
+    if(c.mfg_job_id)return division==="Manufacturing";
+    return profDiv(c.worker_name)===division;
+  };
   useEffect(()=>{(async()=>{
     // A half-typed or cleared date box sends "" and Postgres rejects it.
     if(!fromDate||!toDate)return;
@@ -8638,12 +8637,14 @@ function TimeCardsScreen({user,projects,onBack}){
     try{
       // byRange, not all() — all() caps at 500 rows ordered by date, so on a
       // busy month the oldest cards silently vanished from the report.
-      const [r,m]=await Promise.all([
+      const [r,m,pr]=await Promise.all([
         API.timeCards.byRange(fromDate,toDate),
         API.mfg.jobs.list().catch(()=>[]),
+        division?API.userProfiles.list().catch(()=>[]):Promise.resolve([]),
       ]);
       setCards(Array.isArray(r)?r:[]);
       setMfgJobs(Array.isArray(m)?m:[]);
+      setProfiles(Array.isArray(pr)?pr:[]);
     }catch(e){setErr(e.message);}
     setLoading(false);
   })();},[fromDate,toDate]);
@@ -8832,8 +8833,14 @@ function TimeCardsScreen({user,projects,onBack}){
     setTimeout(()=>setPrinting(false),1000);
   }
 
-  const filtered=cards.filter(c=>c.date&&c.date>=fromDate&&c.date<=toDate
+  const filtered=cards.filter(c=>c.date&&c.date>=fromDate&&c.date<=toDate&&inDivision(c)
     &&(selectedJobs.length===0||selectedJobs.includes(c.project_id)||selectedJobs.includes(c.mfg_job_id)));
+  // Approval helpers (used on the worker cards)
+  const approveIds=async(ids,status)=>{
+    if(!ids.length)return;
+    const body=status==="approved"?{status,approved_by:user.name,approved_at:new Date().toISOString()}:{status:"pending",approved_by:null,approved_at:null};
+    try{for(const id of ids)await API.timeCards.update(id,body);setCards(cs=>cs.map(c=>ids.includes(c.id)?{...c,...body}:c));}catch(e){setErr(e.message);}
+  };
   const byWorker={};
   filtered.forEach(c=>{
     const n=c.worker_name||'?';
@@ -8848,10 +8855,23 @@ function TimeCardsScreen({user,projects,onBack}){
   const totalOT=workerRows.reduce((s,w)=>s+w.ot,0);
 
   return(
-    <div style={{background:T.bg,minHeight:'100vh',fontFamily:'inherit'}}>
-      <TopBar title="⏱️ Time Cards" onBack={onBack}/>
-      <div style={{padding:'12px 16px 100px'}}>
+    <div style={embedded?{}:{background:T.bg,minHeight:'100vh',fontFamily:'inherit'}}>
+      {!embedded&&<TopBar title="⏱️ Time Cards" onBack={onBack}/>}
+      <div style={{padding:embedded?'0 0 100px':'12px 16px 100px'}}>
         <ErrBanner msg={err} onDismiss={()=>setErr('')}/>
+        {(()=>{
+          const pend=filtered.filter(c=>(c.status||'pending')!=='approved'&&c.status!=='open');
+          const unconf=new Set(filtered.filter(c=>!c.employee_ack_at).map(c=>c.worker_name));
+          if(!canEdit)return null;
+          return(
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:12}}>
+              {[["To approve",pend.length,pend.length?T.yellow:T.green],["Not confirmed by employee",unconf.size,unconf.size?T.red:T.muted],["Approved",filtered.length-pend.length,T.green]].map(([l,v,c])=>(
+                <div key={l} style={{...cardS,textAlign:'center',padding:10}}><div style={{fontSize:18,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:9.5,color:T.muted,textTransform:'uppercase',letterSpacing:'0.8px'}}>{l}</div></div>))}
+              {pend.length>0&&<button onClick={()=>{if(window.confirm(`Approve all ${pend.length} pending time cards in this range?`))approveIds(pend.map(c=>c.id),'approved');}}
+                style={{...primBtn,gridColumn:'1 / -1',borderRadius:12,background:T.green,color:'#000',fontSize:13}}>✓ Approve all pending ({pend.length})</button>}
+            </div>
+          );
+        })()}
 
         {/* Date Range Selector */}
         <div style={{...cardS,marginBottom:12}}>
@@ -8880,7 +8900,7 @@ function TimeCardsScreen({user,projects,onBack}){
             <span style={{color:T.muted}}>{showJobFilter?'▲':'▼'}</span>
           </button>
           {showJobFilter&&<div style={{marginTop:10,display:'flex',flexDirection:'column',gap:6}}>
-            {mfgJobs.filter(j=>j.status==='active').map(j=>(
+            {mfgJobs.filter(j=>j.status==='active'&&(!division||division==="Manufacturing")).map(j=>(
               <button key={j.id} onClick={()=>setSelectedJobs(s=>s.includes(j.id)?s.filter(x=>x!==j.id):[...s,j.id])}
                 style={{padding:'6px 12px',borderRadius:15,cursor:'pointer',fontFamily:'inherit',fontSize:11.5,
                   fontWeight:selectedJobs.includes(j.id)?800:600,
@@ -8890,7 +8910,7 @@ function TimeCardsScreen({user,projects,onBack}){
                 🏭 {j.job_number}
               </button>
             ))}
-            {projects.filter(p=>p.status==='active').map(p=>(
+            {projects.filter(p=>p.status==='active'&&(!division||p.division===division)).map(p=>(
               <label key={p.id} style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:13,color:T.sub}}>
                 <input type="checkbox" checked={selectedJobs.includes(p.id)}
                   onChange={e=>setSelectedJobs(s=>e.target.checked?[...s,p.id]:s.filter(x=>x!==p.id))}
@@ -8929,20 +8949,32 @@ function TimeCardsScreen({user,projects,onBack}){
           return(
           <div key={w.name} style={{...cardS,marginBottom:8,borderLeft:open?`3px solid ${T.orange}`:undefined}}>
             <div onClick={()=>setOpenWorker(open?null:w.name)} style={{cursor:'pointer'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
-                <div style={{fontSize:14,fontWeight:800,color:T.orange}}>{open?'▾':'▸'} {w.name}</div>
-                <div style={{fontSize:16,fontWeight:900,color:T.green}}>{fmt(w.total)}h</div>
+              {(()=>{const pend=mine.filter(c=>(c.status||'pending')!=='approved'&&c.status!=='open');const unconf=mine.filter(c=>!c.employee_ack_at);
+                const fromOther=division&&profDiv(w.name)&&profDiv(w.name)!==division;
+                return(<>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,gap:8}}>
+                <div style={{fontSize:14,fontWeight:800,color:T.orange,minWidth:0}}>{open?'▾':'▸'} {w.name}
+                  {unconf.length>0&&<span title="Employee hasn't confirmed these hours in My Hours" style={{color:T.red,marginLeft:8}}>⚑</span>}
+                  {fromOther&&<span style={{...pill(T.muted),marginLeft:8,fontSize:9}}>{profDiv(w.name)} crew</span>}
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                  <div style={{fontSize:16,fontWeight:900,color:T.green}}>{fmt(w.total)}h</div>
+                  {canEdit&&pend.length>0&&<button onClick={e=>{e.stopPropagation();approveIds(pend.map(c=>c.id),'approved');}} style={{...primBtn,padding:'6px 10px',borderRadius:10,fontSize:11.5,background:T.green,color:'#000'}}>✓ Approve ({pend.length})</button>}
+                  {canEdit&&pend.length===0&&mine.length>0&&<span style={pill(T.green)}>Approved</span>}
+                </div>
               </div>
-              <div style={{display:'flex',gap:12,fontSize:11,color:T.muted}}>
+              <div style={{display:'flex',gap:12,fontSize:11,color:T.muted,flexWrap:'wrap'}}>
                 <span>Reg: <strong style={{color:T.sub}}>{fmt(w.reg)}h</strong></span>
                 {w.ot>0&&<span>OT: <strong style={{color:T.yellow}}>{fmt(w.ot)}h</strong></span>}
                 {w.travel>0&&<span>Travel: <strong style={{color:T.blue}}>{fmt(w.travel)}h</strong></span>}
+                {unconf.length>0?<span style={{color:T.red}}>not confirmed by employee</span>:mine.length>0&&<span style={{color:T.green}}>confirmed by employee</span>}
                 <span style={{marginLeft:'auto'}}>{mine.length} entr{mine.length===1?'y':'ies'}</span>
               </div>
+                </>);})()}
             </div>
             {open&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-              <div style={{display:'grid',gridTemplateColumns:'150px 1fr 64px 64px 64px 64px 28px',gap:6,fontSize:10,fontWeight:800,color:T.muted,textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:4,alignItems:'end'}}>
-                <div>Date</div><div>Job</div><div style={{textAlign:'center'}}>Reg</div><div style={{textAlign:'center'}}>OT</div><div style={{textAlign:'center'}}>Travel</div><div style={{textAlign:'right'}}>Total</div><div></div>
+              <div style={{display:'grid',gridTemplateColumns:'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,fontSize:10,fontWeight:800,color:T.muted,textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:4,alignItems:'end'}}>
+                <div>Date</div><div>Job</div><div style={{textAlign:'center'}}>Reg</div><div style={{textAlign:'center'}}>OT</div><div style={{textAlign:'center'}}>Travel</div><div style={{textAlign:'right'}}>Total</div><div style={{textAlign:'center'}}>Status</div><div></div>
               </div>
               {[...mine].sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(c=>{
                 const reg=parseFloat(gridVal(c,'reg_hours'))||0,ot=parseFloat(gridVal(c,'ot_hours'))||0,tr=parseFloat(gridVal(c,'travel_hours'))||0;
@@ -8953,7 +8985,7 @@ function TimeCardsScreen({user,projects,onBack}){
                 const jobKey=gridVal(c,'job');
                 const jobKnown=jobKey===""||(jobKey.startsWith('p:')&&projects.some(p=>p.id===jobKey.slice(2)))||(jobKey.startsWith('m:')&&mfgJobs.some(j=>j.id===jobKey.slice(2)));
                 return(
-                  <div key={c.id} style={{display:'grid',gridTemplateColumns:'150px 1fr 64px 64px 64px 64px 28px',gap:6,alignItems:'center',marginBottom:5}}>
+                  <div key={c.id} style={{display:'grid',gridTemplateColumns:'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,alignItems:'center',marginBottom:5}}>
                     {canEdit
                       ?<div style={{display:'flex',alignItems:'center',gap:4}}>
                         <span style={{fontSize:11,fontWeight:800,color:T.text,width:28}}>{dow}</span>
@@ -8978,9 +9010,14 @@ function TimeCardsScreen({user,projects,onBack}){
                       <div style={{textAlign:'center',fontSize:13,color:T.blue}}>{fmt(tr)}</div>
                     </>}
                     <div style={{textAlign:'right',fontSize:14,fontWeight:900,color:T.green}} title={`${c.status||'pending'}${c.edited_by?` · edited by ${c.edited_by}${c.edit_reason?': '+c.edit_reason:''}`:''}`}>
-                      {c.status==='approved'&&<span style={{fontSize:10,color:T.green,marginRight:3}}>✓</span>}
                       {c.edited_by&&<span style={{fontSize:10,color:T.blue,marginRight:3}}>✎</span>}
                       {fmt(reg+ot+tr)}
+                    </div>
+                    <div style={{textAlign:'center'}}>
+                      {canEdit?((c.status||'pending')==='approved'
+                        ?<button onClick={()=>approveIds([c.id],'pending')} title="Un-approve" style={{...ghostBtn,padding:'4px 6px',fontSize:10,color:T.green,borderColor:T.green+'60'}}>✓ ok</button>
+                        :<button onClick={()=>approveIds([c.id],'approved')} style={{...ghostBtn,padding:'4px 6px',fontSize:10,borderColor:T.yellow+'80',color:T.yellow}}>approve</button>)
+                        :<span style={{fontSize:10,color:(c.status||'pending')==='approved'?T.green:T.yellow}}>{c.status||'pending'}</span>}
                     </div>
                     {canEdit?<button onClick={()=>remove(c.id)} title="Delete this day" style={{background:'none',border:'none',color:T.red,cursor:'pointer',fontSize:13,padding:0}}>🗑</button>:<div/>}
                   </div>
@@ -13759,7 +13796,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
 
         {/* Dashboard tab toggle */}
         {!loading&&jobs.length>0&&<div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4}}>
-          {[["jobs","🔩 Jobs"],["reports","📝 Reports"],["dashboard","📊 Dashboard"]].map(([id,label])=>(
+          {[["jobs","🔩 Jobs"],...(canAdmin||user.role==="admin"||user.role==="pm"?[["reports","📊 PM Dashboard"]]:[]),["dashboard","📊 Dashboard"]].map(([id,label])=>(
             <button key={id} onClick={()=>setBoardTab(id)}
               style={{flex:1,padding:"8px",background:boardTab===id?T.purple:"none",color:boardTab===id?"#fff":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
               {label}
@@ -19316,9 +19353,7 @@ function MfgReportsArea({jobs,user}){
       </div>
       <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
       {tab==="daily"&&<MfgDivisionReportsTab jobs={jobs} user={user}/>}
-      {tab==="timecards"&&(canMfg(user,"manage_jobs")||user.role==="admin"||user.role==="pm"
-        ?<TimeCardApprovalTab user={user} division="Manufacturing" projects={[]} mfgJobs={jobs} onErr={setErr}/>
-        :<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>Time card approval is for PMs and admins.</div>)}
+      {tab==="timecards"&&<TimeCardsScreen user={user} projects={[]} embedded division="Manufacturing"/>}
     </div>
   );
 }
