@@ -156,6 +156,136 @@ async function storageUpload(bucket,path,file,contentType){
 function storagePublicUrl(bucket,path){
   return `${SUPA_URL}/storage/v1/object/public/${bucket}/${path}`;
 }
+/* ── Receipt / attachment images live in Storage ────────────────
+   Inline base64 receipts made daily_reports rows huge (hundreds of KB) and
+   were the main reason the Nano instance fell over. New photos upload to
+   the "documents" bucket; if the upload fails (offline), the photo stays
+   inline as a data: URL and is moved the next time the report is saved
+   online. offloadReportImages() does that sweep for one report.        */
+function dataUrlToBlob(dataUrl){
+  const [head,b64]=dataUrl.split(",");const mime=(head.match(/data:([^;]+)/)||[])[1]||"image/jpeg";
+  const bin=atob(b64);const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);
+  return new Blob([u8],{type:mime});
+}
+async function uploadImageBlob(blob,folder,name){
+  const ext=(blob.type||"image/jpeg").split("/")[1]?.replace("jpeg","jpg")||"jpg";
+  const path=`${folder}/${Date.now()}-${Math.random().toString(36).slice(2,7)}-${(name||"photo").replace(/[^A-Za-z0-9._-]/g,"_").replace(/\.[^.]+$/,"")}.${ext}`;
+  await storageUpload("documents",path,blob,blob.type||"image/jpeg");
+  return {src:storagePublicUrl("documents",path),storage_path:path};
+}
+// Try Storage first; fall back to the inline data URL when offline.
+async function storeReceiptImage(dataUrl,folder,name){
+  if(!navigator.onLine)return {src:dataUrl,inline:true};
+  try{return await uploadImageBlob(dataUrlToBlob(dataUrl),folder,name);}
+  catch{return {src:dataUrl,inline:true};}
+}
+// Walk a report's receipts + rental attachments; move any inline images to
+// Storage. Returns {report, moved}. Never throws — a failed upload just
+// leaves that image inline for the next pass.
+async function offloadReportImages(report){
+  if(!navigator.onLine)return {report,moved:0};
+  let moved=0;const rid=report.id||report.report_no||"r";
+  const fix=async(list,folder)=>{
+    const out=[];
+    for(const a of (list||[])){
+      if(a&&typeof a.src==="string"&&a.src.startsWith("data:image")){
+        try{const r=await uploadImageBlob(dataUrlToBlob(a.src),folder,a.name);out.push({...a,...r,inline:undefined});moved++;continue;}
+        catch{}
+      }
+      out.push(a);
+    }
+    return out;
+  };
+  const materials=[];
+  for(const m of (report.materials||[])){
+    materials.push(m?.receipts?.length?{...m,receipts:await fix(m.receipts,`receipts/${rid}/${m.id||"m"}`)}:m);
+  }
+  const rental=[];
+  for(const r of (report.rental_equipment||[])){
+    rental.push(r?.attachments?.length?{...r,attachments:await fix(r.attachments,`rental-docs/${rid}/${r.id||"e"}`)}:r);
+  }
+  return {report:{...report,materials,rental_equipment:rental},moved};
+}
+/* ── Invoice tracker ──────────────────────────────────────────────
+   A receipt or invoice attached to a Materials or Rented Equipment row is
+   read by a vision model (Netlify function receipt-extract) and the
+   supplier / invoice # / amount / date land on the attachment as `inv`.
+   When the report is saved, every attachment with inv.track=true becomes
+   a row in invoice_tracker (keyed by att_id, so re-saves update in place). */
+async function extractInvoice(att){
+  const res=await fetch("/.netlify/functions/receipt-extract",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({src:att.src,name:att.name||"",type:att.type||""})});
+  if(!res.ok)throw new Error((await res.text())||`extract failed (${res.status})`);
+  return await res.json();
+}
+function attachmentsWithInvoices(report){
+  const out=[];
+  (report.materials||[]).forEach((m,mi)=>(m.receipts||[]).forEach(a=>{if(a?.inv?.track)out.push({a,item:m.description||"Material",kind:"material"});}));
+  (report.rental_equipment||[]).forEach((e,ei)=>(e.attachments||[]).forEach(a=>{if(a?.inv?.track)out.push({a,item:`Rental: ${e.description||"equipment"}`,kind:"rental"});}));
+  return out;
+}
+async function syncInvoiceTracker(report){
+  if(!report?.id||!navigator.onLine)return;
+  const wanted=attachmentsWithInvoices(report);
+  const existing=await API.invoices.forReport(report.id).catch(()=>[])||[];
+  const byAtt=Object.fromEntries((existing||[]).map(r=>[r.att_id,r.id]));
+  for(const {a,item,kind} of wanted){
+    const inv=a.inv||{};
+    const body={
+      report_id:report.id,att_id:a.id,project_id:report.project_id||null,mfg_job_id:report.mfg_job_id||null,
+      supplier:inv.supplier||null,invoice_no:inv.invoice_no?String(inv.invoice_no):null,
+      amount:inv.amount!==""&&inv.amount!=null?parseFloat(inv.amount):null,
+      billed_date:inv.date||report.date||null,
+      item,kind,file_url:/^https?:/.test(a.src||"")?a.src:null,file_name:a.name||null,
+      report_date:report.date||null,report_no:report.report_no||null,submitted_by:report.submitted_by||null,
+      updated_at:new Date().toISOString(),
+    };
+    if(byAtt[a.id])await API.invoices.update(byAtt[a.id],body).catch(()=>{});
+    else await API.invoices.create({...body,status:"auto"}).catch(()=>{});
+  }
+  // attachments that were removed or un-ticked drop out of the tracker
+  const keep=new Set(wanted.map(w=>w.a.id));
+  for(const r of (existing||[]))if(!keep.has(r.att_id))await API.invoices.remove(r.id).catch(()=>{});
+}
+
+/* Small editor shown under a receipt: what the AI read, editable, plus the
+   "add to invoice tracker" switch. */
+function InvoiceFields({att,onChange,color}){
+  const inv=att.inv||{};
+  const set=(k,v)=>onChange({...att,inv:{...inv,[k]:v}});
+  if(att.extracting)return <div style={{fontSize:11,color:T.muted,marginTop:6}}>🧾 Reading {att.name||"receipt"}…</div>;
+  if(!att.inv)return null;
+  return(
+    <div style={{marginTop:8,padding:"8px 10px",borderRadius:10,background:T.surface,border:`1px solid ${(color||T.blue)}30`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <span style={{fontSize:10.5,fontWeight:800,color:color||T.blue,textTransform:"uppercase",letterSpacing:"0.5px"}}>🧾 Invoice · {att.name||"receipt"}</span>
+        <label style={{fontSize:11,color:T.sub,display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}>
+          <input type="checkbox" checked={!!inv.track} onChange={e=>set("track",e.target.checked)}/> Add to tracker
+        </label>
+      </div>
+      {inv.error&&<div style={{fontSize:10.5,color:T.yellow,marginBottom:6}}>Couldn't read it automatically — fill in below.</div>}
+      <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr",gap:6,marginBottom:6}}>
+        <input value={inv.supplier||""} onChange={e=>set("supplier",e.target.value)} placeholder="Supplier" style={{...inp,padding:"6px 8px",fontSize:12}}/>
+        <input value={inv.invoice_no||""} onChange={e=>set("invoice_no",e.target.value)} placeholder="Invoice #" style={{...inp,padding:"6px 8px",fontSize:12}}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+        <input type="number" step="0.01" value={inv.amount??""} onChange={e=>set("amount",e.target.value)} placeholder="Amount" style={{...inp,padding:"6px 8px",fontSize:12,textAlign:"right"}}/>
+        <input type="date" value={inv.date||""} onChange={e=>set("date",e.target.value)} style={{...inp,padding:"6px 8px",fontSize:12}}/>
+      </div>
+    </div>
+  );
+}
+// Run extraction for one attachment and write the result back into the list.
+async function readReceiptInto(att,getList,commit){
+  commit(getList().map(x=>x.id===att.id?{...x,extracting:true}:x));
+  let inv;
+  try{
+    const r=await extractInvoice(att);
+    inv={supplier:r.supplier||"",invoice_no:r.invoice_no||"",amount:r.amount??"",date:r.date||"",track:!!(r.amount||r.supplier)};
+  }catch(e){inv={supplier:"",invoice_no:"",amount:"",date:"",track:false,error:true};}
+  commit(getList().map(x=>x.id===att.id?{...x,extracting:false,inv}:x));
+}
+
 async function storageRemove(bucket,path){
   const res=await fetch(`${SUPA_URL}/storage/v1/object/${bucket}/${path}`,{
     method:"DELETE",
@@ -174,7 +304,7 @@ async function storageRemove(bucket,path){
 const ESTIMATING_OWNER="";
 const canEstimate=(u)=>!!u&&can(u,"estimating")&&(!ESTIMATING_OWNER||u.name===ESTIMATING_OWNER);
 
-const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs"]);
+const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs","invoices"]);
 const SCREEN_MAX={estimating:1700};
 const shellMax=(screen)=>SCREEN_MAX[screen]||(WIDE_SCREENS.has(screen)?1180:480);
 
@@ -252,8 +382,8 @@ const API={
     pending:()=>sb("/daily_reports?status=eq.submitted&select=*,projects(id,name,division)&order=created_at.desc"),
     // Keys starting with "_" are app-side helpers (offline queue, mfg job
     // name) and never columns — drop them before the row goes to Postgres.
-    create:(d)=>sb("/daily_reports",{method:"POST",body:stripPrivate(d),prefer:"return=representation"}),
-    update:(id,d)=>sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:stripPrivate(d),prefer:"return=representation"}),count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
+    create:async(d)=>{const r=await sb("/daily_reports",{method:"POST",body:stripPrivate(d),prefer:"return=representation"});const row=Array.isArray(r)?r[0]:r;if(row?.id)syncInvoiceTracker({...d,...row}).catch(()=>{});return r;},
+    update:async(id,d)=>{const r=await sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:stripPrivate(d),prefer:"return=representation"});if(d.materials||d.rental_equipment)syncInvoiceTracker({...d,id}).catch(()=>{});return r;},count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
     remove:(id)=>sb(`/daily_reports?id=eq.${id}`,{method:"DELETE"}),
   },
   tmTickets:{
@@ -327,6 +457,13 @@ const API={
     list:(name)=>sb(`/notifications?or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc&limit=50`),
     unread:(name)=>sb(`/notifications?read=eq.false&or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc`),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:()=>sb("/notifications?read=eq.false",{method:"PATCH",body:{read:true}}),removeMany:(ids)=>sb(`/notifications?id=in.(${ids.map(encodeURIComponent).join(",")})`,{method:"DELETE"}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
   notifSettings:{get:(name)=>sb(`/notification_settings?pm_name=eq.${encodeURIComponent(name)}&limit=1`),upsert:(d)=>sb("/notification_settings",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"})},
+  invoices:{
+    list:()=>sb("/invoice_tracker?select=*&order=billed_date.desc.nullslast,created_at.desc&limit=5000"),
+    forReport:(rid)=>sb(`/invoice_tracker?report_id=eq.${rid}&select=id,att_id`),
+    create:(d)=>sb("/invoice_tracker",{method:"POST",body:d,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/invoice_tracker?id=eq.${id}`,{method:"PATCH",body:d}),
+    remove:(id)=>sb(`/invoice_tracker?id=eq.${id}`,{method:"DELETE"}),
+  },
   userProfiles:{
     list:()=>sb("/user_profiles?order=name.asc"),
     getByName:(name)=>sb(`/user_profiles?name=eq.${encodeURIComponent(name)}&limit=1`),
@@ -680,7 +817,7 @@ function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(d
               </label>
               <input type="number" min="0" step="0.5" placeholder="0" value={row.usage||""} onChange={e=>set("usage",e.target.value)} style={inp}/>
             </div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{eq?`$${eq.rate.toLocaleString()}/${eq.unit}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
-function RentedEquipCard({row,onChange,onRemove}){
+function RentedEquipCard({row,onChange,onRemove,trackInvoices}){
   const set=(k,v)=>onChange({...row,[k]:v});
   const amt=(parseFloat(row.qty)||0)*(parseFloat(row.rate)||0)*(parseFloat(row.usage)||1);
   const camRef=useRef(null),fileRef=useRef(null);
@@ -694,7 +831,9 @@ function RentedEquipCard({row,onChange,onRemove}){
       try{
         if(f.type.startsWith("image/")){
           setBusy(`Adding ${f.name}…`);
-          added.push({id:uid(),kind:"image",name:f.name,src:await compressImg(f,1000,0.7)});
+          const data=await compressImg(f,1000,0.7);
+          const st=await storeReceiptImage(data,`rental-docs/new/${row.id||"e"}`,f.name);
+          added.push({id:uid(),kind:"image",name:f.name,...st});
         }else{
           if(!navigator.onLine){alert(`${f.name}: documents need a connection to upload. Photos can be added offline.`);continue;}
           setBusy(`Uploading ${f.name}…`);
@@ -705,7 +844,10 @@ function RentedEquipCard({row,onChange,onRemove}){
       }catch(e){alert(`${f.name}: ${e.message}`);}
     }
     setBusy("");
-    if(added.length)onChange({...row,attachments:[...att,...added]});
+    if(added.length){
+      const next=[...att,...added];onChange({...row,attachments:next});
+      if(trackInvoices&&navigator.onLine){let cur=next;const commit=(l)=>{cur=l;onChange({...row,attachments:l});};for(const a of added)readReceiptInto(a,()=>cur,commit);}
+    }
   }
   const removeAtt=(a)=>{onChange({...row,attachments:att.filter(x=>x.id!==a.id)});if(a.storage_path)storageRemove("documents",a.storage_path).catch(()=>{});};
   const fileIcon=(a)=>a.type==="application/pdf"||/\.pdf$/i.test(a.name)?"📄":/sheet|excel|csv/.test(a.type)||/\.(xlsx?|csv)$/i.test(a.name)?"📊":/word|\.docx?$/i.test(a.type+a.name)?"📝":"📎";
@@ -750,6 +892,7 @@ function RentedEquipCard({row,onChange,onRemove}){
           <input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}}/>
         </div>
         {busy&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{busy}</div>}
+        {trackInvoices&&att.map(a=><InvoiceFields key={"inv"+a.id} att={a} color={T.purple} onChange={x=>onChange({...row,attachments:att.map(y=>y.id===x.id?x:y)})}/>)}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}>
         <span style={{fontSize:11,color:T.muted}}>Qty × Rate × Days/Hrs{(parseFloat(row.markup_pct)||0)>0?` + ${row.markup_pct}%`:""}{(parseFloat(row.tax_amount)||0)>0?" + tax":""}</span>
@@ -804,23 +947,27 @@ function SubCard({row,onChange,onRemove}){
   );
 }
 
-function MatCard({row,onChange,onRemove}){const fileRef=useRef(null);const camRef=useRef(null);const receipts=row.receipts||[];const [busy,setBusy]=useState("");
+function MatCard({row,onChange,onRemove,trackInvoices}){const fileRef=useRef(null);const camRef=useRef(null);const receipts=row.receipts||[];const [busy,setBusy]=useState("");
   // Photos compress and stay inline (offline-safe, print inline). PDFs and
   // other documents upload to Storage and the receipt keeps the link.
   async function handleFiles(files){const n=[];for(const f of files){try{
-    if(f.type.startsWith("image/")){setBusy(`Adding ${f.name}…`);n.push({id:uid(),src:await compressImg(f,800,0.6)});}
+    if(f.type.startsWith("image/")){setBusy(`Adding ${f.name}…`);const data=await compressImg(f,800,0.6);const st=await storeReceiptImage(data,`receipts/new/${row.id||"m"}`,f.name);n.push({id:uid(),name:f.name,...st});}
     else{if(!navigator.onLine){alert(`${f.name}: documents need a connection to upload. Photos can be added offline.`);continue;}
       setBusy(`Uploading ${f.name}…`);const path=`receipts/${row.id||uid()}/${Date.now()}-${f.name.replace(/[^A-Za-z0-9._-]/g,"_")}`;
       await storageUpload("documents",path,f,f.type||undefined);
       n.push({id:uid(),kind:"file",name:f.name,type:f.type||"",size:f.size,storage_path:path,src:storagePublicUrl("documents",path)});}
   }catch(e){alert(`${f.name}: ${e.message}`);}}
-  setBusy("");if(n.length)onChange({...row,receipts:[...receipts,...n]});}
-  const removeReceipt=(r)=>{onChange({...row,receipts:receipts.filter(x=>x.id!==r.id)});if(r.storage_path)storageRemove("documents",r.storage_path).catch(()=>{});};
+  setBusy("");if(n.length){
+    const next=[...receipts,...n];onChange({...row,receipts:next});
+    if(trackInvoices&&navigator.onLine){let cur=next;const commit=(l)=>{cur=l;onChange({...row,receipts:l});};for(const a of n)readReceiptInto(a,()=>cur,commit);}
+  }}
+  const removeReceipt=(r)=>{onChange({...row,receipts:receipts.filter(x=>x.id!==r.id)});if(r.storage_path)storageRemove("documents",r.storage_path).catch(()=>{});};   // images and files alike
   const fileIcon=(a)=>a.type==="application/pdf"||/\.pdf$/i.test(a.name||"")?"📄":/sheet|excel|csv/.test(a.type||"")||/\.(xlsx?|csv)$/i.test(a.name||"")?"📊":/word/.test(a.type||"")||/\.docx?$/i.test(a.name||"")?"📝":"📎";
   return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}><div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}><div><label style={lbl}>Markup %</label><input type="number" min="0" step="0.1" placeholder="12" value={row.markup_pct||""} onChange={e=>onChange({...row,markup_pct:e.target.value})} style={inp}/></div><div><label style={lbl}>Tax ($)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>onChange({...row,tax_amount:e.target.value})} style={inp}/></div><div><label style={lbl}>Line Total</label><div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(matLineTotal(row))}</div></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}>{r.kind==="file"
   ?<a href={r.src} target="_blank" rel="noreferrer" title={r.name} style={{width:60,height:60,borderRadius:10,border:`2px solid ${T.blue}40`,background:T.blueLow,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textDecoration:"none",color:T.text,fontSize:20}}><span>{fileIcon(r)}</span><span style={{fontSize:8,maxWidth:54,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",padding:"0 3px"}}>{r.name}</span></a>
   :<img src={r.src} alt="" onClick={()=>window.open(r.src,"_blank")} style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.blue}40`,display:"block",cursor:"pointer"}}/>}
-  <button onClick={()=>removeReceipt(r)} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>camRef.current?.click()} title="Take a photo" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>CAMERA</span></button><button onClick={()=>fileRef.current?.click()} title="Photos, PDFs, invoices" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.green}40`,background:T.greenLow,color:T.green,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📎</span><span style={{fontSize:9,fontWeight:700}}>UPLOAD</span></button><input ref={camRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /><input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div>{busy&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{busy}</div>}</div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{matLineTotal(row)>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(matLineTotal(row))}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
+  <button onClick={()=>removeReceipt(r)} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>camRef.current?.click()} title="Take a photo" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>CAMERA</span></button><button onClick={()=>fileRef.current?.click()} title="Photos, PDFs, invoices" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.green}40`,background:T.greenLow,color:T.green,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📎</span><span style={{fontSize:9,fontWeight:700}}>UPLOAD</span></button><input ref={camRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /><input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div>{busy&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{busy}</div>}
+{trackInvoices&&receipts.map(r=><InvoiceFields key={"inv"+r.id} att={r} onChange={a=>onChange({...row,receipts:receipts.map(x=>x.id===a.id?a:x)})}/>)}</div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{matLineTotal(row)>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(matLineTotal(row))}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
 
 function LoginScreen({onLogin}){
   const [name,setName]=useState("");
@@ -1484,6 +1631,283 @@ function PresenceBar({others}){
 /* ── Activity log ──
    The audit trail has been recording since it was added, but there was no way
    to browse it — only per-document history. */
+/* ── One-time admin tool: move inline receipt images already saved on
+   daily reports into Storage. Runs in the browser in batches; safe to
+   re-run — it only touches reports that still have data: URLs. ── */
+function ReceiptMigrationTool(){
+  const [open,setOpen]=useState(false);
+  const [scan,setScan]=useState(null);       // {total, withInline, bytes}
+  const [busy,setBusy]=useState("");
+  const [done,setDone]=useState(null);
+  const stopRef=useRef(false);
+  const hasInline=(r)=>(r.materials||[]).some(m=>(m.receipts||[]).some(a=>String(a?.src||"").startsWith("data:")))
+                   ||(r.rental_equipment||[]).some(e=>(e.attachments||[]).some(a=>String(a?.src||"").startsWith("data:")));
+  const inlineBytes=(r)=>[...(r.materials||[]).flatMap(m=>m.receipts||[]),...(r.rental_equipment||[]).flatMap(e=>e.attachments||[])]
+    .reduce((s,a)=>s+(String(a?.src||"").startsWith("data:")?a.src.length:0),0);
+  async function fetchBatch(offset,limit){
+    return await sb(`/daily_reports?select=id,report_no,materials,rental_equipment&order=created_at.asc&limit=${limit}&offset=${offset}`);
+  }
+  async function doScan(){
+    setBusy("Scanning reports…");setDone(null);
+    let offset=0,total=0,withInline=0,bytes=0;
+    try{
+      while(true){
+        const rows=await fetchBatch(offset,50);if(!rows||!rows.length)break;
+        rows.forEach(r=>{total++;if(hasInline(r)){withInline++;bytes+=inlineBytes(r);}});
+        offset+=rows.length;setBusy(`Scanning… ${total} reports`);
+        if(rows.length<50)break;
+      }
+      setScan({total,withInline,bytes});
+    }catch(e){setDone(`Scan failed: ${e.message}`);}
+    setBusy("");
+  }
+  async function migrate(){
+    stopRef.current=false;setDone(null);
+    let offset=0,moved=0,reports=0,failed=0;
+    try{
+      while(!stopRef.current){
+        const rows=await fetchBatch(offset,20);if(!rows||!rows.length)break;
+        for(const r of rows){
+          if(stopRef.current)break;
+          if(!hasInline(r))continue;
+          setBusy(`Moving photos… report #${r.report_no||r.id.slice(0,6)} (${reports} done, ${moved} photos)`);
+          try{
+            const res=await offloadReportImages(r);
+            if(res.moved>0){
+              await API.reports.update(r.id,{materials:res.report.materials,rental_equipment:res.report.rental_equipment});
+              moved+=res.moved;reports++;
+            }
+          }catch(e){failed++;}
+        }
+        offset+=rows.length;
+        if(rows.length<20)break;
+      }
+      setDone(`Done. ${moved} photo${moved!==1?"s":""} moved to Storage across ${reports} report${reports!==1?"s":""}${failed?` · ${failed} report(s) failed — run again`:""}.`);
+      setScan(null);
+    }catch(e){setDone(`Stopped: ${e.message}`);}
+    setBusy("");
+  }
+  const mb=(b)=>(b*0.75/1048576).toFixed(1)+" MB";   // base64 → bytes
+  return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.purple}`}}>
+      <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+        <div style={{fontSize:12,fontWeight:800,color:T.purple}}>🛠 Admin · Move receipt photos to Storage</div>
+        <span style={{color:T.muted,fontSize:12}}>{open?"▾":"▸"}</span>
+      </div>
+      {open&&<div style={{marginTop:10,fontSize:12,color:T.sub,lineHeight:1.6}}>
+        Older daily reports keep receipt photos inside the report row, which makes the database slow. This moves them into file storage. Nothing changes for users — receipts still show and print the same. Safe to run more than once, and safe to stop.
+        <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+          <button onClick={doScan} disabled={!!busy} style={{...ghostBtn,fontSize:12,padding:"8px 14px"}}>{busy&&!scan?"Scanning…":"1. Scan"}</button>
+          <button onClick={migrate} disabled={!!busy||!scan||!scan.withInline} style={{...primBtn,fontSize:12,padding:"8px 14px",borderRadius:10,background:T.purple,opacity:(!scan||!scan.withInline||busy)?0.5:1}}>2. Move photos</button>
+          {busy&&<button onClick={()=>{stopRef.current=true;}} style={{...ghostBtn,fontSize:12,padding:"8px 14px",color:T.red}}>Stop</button>}
+        </div>
+        {scan&&<div style={{marginTop:10,color:T.text}}>
+          {scan.total} reports scanned · <b>{scan.withInline}</b> still have inline photos · about <b>{mb(scan.bytes)}</b> to move.
+          {!scan.withInline&&<span style={{color:T.green}}> Nothing to do 🎉</span>}
+        </div>}
+        {busy&&<div style={{marginTop:8,color:T.muted}}>{busy}</div>}
+        {done&&<div style={{marginTop:8,color:T.green,fontWeight:700}}>{done}</div>}
+      </div>}
+    </div>
+  );
+}
+
+/* ── Invoice Tracker: receipts read off daily reports, one row each,
+   exportable as the office's Invoice_Tracker workbook. ── */
+const PO_STATUSES=["Open","Closed","Day Rate","APEX","On Hold"];
+function InvoiceTrackerScreen({user,projects,onBack}){
+  const [rows,setRows]=useState([]);
+  const [mfgJobs,setMfgJobs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState("");
+  const [q,setQ]=useState("");
+  const [po,setPo]=useState("");
+  const [edit,setEdit]=useState(null);
+  const [draft,setDraft]=useState({});
+  const [showAdd,setShowAdd]=useState(false);
+  const [add,setAdd]=useState({po_number:"",supplier:"",invoice_no:"",amount:"",billed_date:today(),notes:""});
+  const [poStatus,setPoStatus]=useState(()=>{try{return JSON.parse(localStorage.getItem("aime_po_status")||"{}");}catch{return{};}});
+
+  async function load(){
+    setLoading(true);setErr("");
+    try{
+      const [r,m]=await Promise.all([API.invoices.list(),API.mfg.jobs.list().catch(()=>[])]);
+      setRows(r||[]);setMfgJobs(m||[]);
+    }catch(e){setErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[]);
+
+  // PO # for a row: manual override, else the job's PO / work order, else job name
+  const poOf=(r)=>{
+    if(r.po_number)return r.po_number;
+    if(r.project_id){const p=projects.find(x=>x.id===r.project_id);return p?(p.work_order||p.name):"";}
+    if(r.mfg_job_id){const j=mfgJobs.find(x=>x.id===r.mfg_job_id);return j?(j.po_number||j.job_number):"";}
+    return "";
+  };
+  const jobOf=(r)=>{
+    if(r.project_id)return (projects.find(x=>x.id===r.project_id)||{}).name||"";
+    if(r.mfg_job_id)return (mfgJobs.find(x=>x.id===r.mfg_job_id)||{}).job_number||"";
+    return "";
+  };
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const missing=(r)=>[!r.amount&&r.amount!==0?"Missing amount":"",!r.billed_date?"Missing billed date":"",!r.invoice_no?"Missing invoice #":""].filter(Boolean).join("; ");
+
+  const pos=[...new Set(rows.map(poOf).filter(Boolean))].sort();
+  const filtered=rows.filter(r=>{
+    if(po&&poOf(r)!==po)return false;
+    if(q.trim()){const t=q.toLowerCase();return [poOf(r),r.supplier,r.invoice_no,jobOf(r),r.item,r.notes].some(v=>String(v||"").toLowerCase().includes(t));}
+    return true;
+  });
+  const total=filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const needs=filtered.filter(r=>missing(r)).length;
+
+  function startEdit(r){setEdit(r.id);setDraft({po_number:poOf(r),supplier:r.supplier||"",invoice_no:r.invoice_no||"",amount:r.amount??"",billed_date:r.billed_date||"",notes:r.notes||""});}
+  async function saveEdit(r){
+    const body={...draft,amount:draft.amount===""?null:parseFloat(draft.amount),billed_date:draft.billed_date||null,
+      po_number:draft.po_number&&draft.po_number!==poOf({...r,po_number:null})?draft.po_number:(draft.po_number||null),
+      status:"confirmed",confirmed_by:user.name,updated_at:new Date().toISOString()};
+    try{await API.invoices.update(r.id,body);setRows(rs=>rs.map(x=>x.id===r.id?{...x,...body}:x));setEdit(null);}catch(e){setErr(e.message);}
+  }
+  async function del(r){if(!window.confirm("Remove this invoice from the tracker? The receipt stays on the report."))return;
+    try{await API.invoices.remove(r.id);setRows(rs=>rs.filter(x=>x.id!==r.id));}catch(e){setErr(e.message);}}
+  async function saveAdd(){
+    if(!add.supplier.trim()&&!add.invoice_no.trim()){setErr("Supplier or invoice # is required.");return;}
+    const body={po_number:add.po_number||null,supplier:add.supplier||null,invoice_no:add.invoice_no||null,amount:add.amount===""?null:parseFloat(add.amount),
+      billed_date:add.billed_date||null,notes:add.notes||null,kind:"manual",status:"confirmed",confirmed_by:user.name,submitted_by:user.name};
+    try{const res=await API.invoices.create(body);const row=Array.isArray(res)?res[0]:res;setRows(rs=>[row||body,...rs]);setShowAdd(false);
+      setAdd({po_number:"",supplier:"",invoice_no:"",amount:"",billed_date:today(),notes:""});}catch(e){setErr(e.message);}
+  }
+  const setStatus=(p,st)=>{const n={...poStatus,[p]:st};setPoStatus(n);try{localStorage.setItem("aime_po_status",JSON.stringify(n));}catch{}};
+
+  /* ── Export: same three tabs, formulas and column widths as Invoice_Tracker_Clean.xlsx ── */
+  function exportXlsx(){
+    const list=(po?filtered:rows).slice().sort((a,b)=>(poOf(a)||"").localeCompare(poOf(b)||"")||String(a.billed_date||"").localeCompare(String(b.billed_date||"")));
+    const poList=[...new Set(list.map(poOf).filter(Boolean))].sort();
+    const dt=(s)=>{if(!s)return "";const [y,m,d]=String(s).split("-").map(Number);return new Date(y,m-1,d);};
+    // Invoices
+    const inv=[["PO #","Status","Supplier","Invoice #","Amount","Billed Date","Notes / Follow-up"]];
+    list.forEach((r,i)=>{const n=i+2;inv.push([poOf(r),{f:`IFERROR(INDEX('PO Summary'!$B:$B,MATCH(A${n},'PO Summary'!$A:$A,0)),"")`},r.supplier||"",r.invoice_no||"",
+      r.amount==null?"":Number(r.amount),dt(r.billed_date),{f:`_xlfn.TEXTJOIN("; ",TRUE(),IF(E${n}="","Missing amount",""),IF(F${n}="","Missing billed date",""),"${(r.notes||"").replace(/"/g,"'")}")`}]);});
+    const wsInv=XLSX.utils.aoa_to_sheet(inv,{cellDates:true});
+    wsInv["!cols"]=[10,11.5,31.5,14.8,14.4,16,59.7].map(w=>({wch:w}));
+    for(let i=2;i<=inv.length;i++){const e=wsInv[`E${i}`];if(e&&e.v!=="")e.z='$#,##0.00;($#,##0.00);-';const f=wsInv[`F${i}`];if(f&&f.v)f.z="mm-dd-yy";}
+    // PO Summary
+    const sum=[["PO #","Status","# Invoices","Total Amount","Needs Follow-up"]];
+    poList.forEach((p,i)=>{const n=i+2;sum.push([p,poStatus[p]||"Open",{f:`COUNTIF(Invoices!A:A,A${n})`},{f:`SUMIF(Invoices!A:A,A${n},Invoices!E:E)`},{f:`IF(COUNTIFS(Invoices!A:A,A${n},Invoices!G:G,"<>")>0,"Yes","")`}]);});
+    const wsSum=XLSX.utils.aoa_to_sheet(sum);wsSum["!cols"]=[10,14,12,16,13].map(w=>({wch:w}));
+    for(let i=2;i<=sum.length;i++){const d=wsSum[`D${i}`];if(d)d.z='$#,##0.00;($#,##0.00);-';}
+    // How to Use
+    const how=[["Invoice Tracker — How to Use"],[],["This workbook was exported from the AIME Field App."],
+      ["Every receipt or invoice a crew attaches to a daily report (Materials or Rented Equipment) is read automatically and becomes a row on the Invoices tab."],
+      ["PO # comes from the job's PO / work order. Fix it in the app (Invoices screen) if a receipt landed on the wrong PO."],[],
+      ["Adding a new invoice"],["1. Preferably: attach it to the daily report in the app and tick \"Add to tracker\"."],
+      ["2. Or add it by hand on the Invoices tab here — Status fills in from the PO Summary tab."],[],
+      ["Starting a new PO"],["Add a row on the PO Summary tab: PO #, then a Status (Open, Closed, Day Rate, APEX, On Hold). Counts and totals fill in automatically."],[],
+      ["Colors / flags"],["Notes / Follow-up on the Invoices tab flags a missing amount or billed date — worth chasing down."],[],
+      [`Exported ${new Date().toLocaleString()} by ${user.name}.`]];
+    const wsHow=XLSX.utils.aoa_to_sheet(how);wsHow["!cols"]=[{wch:120}];
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,wsSum,"PO Summary");XLSX.utils.book_append_sheet(wb,wsInv,"Invoices");XLSX.utils.book_append_sheet(wb,wsHow,"How to Use");
+    XLSX.writeFile(wb,`Invoice_Tracker_${today()}.xlsx`);
+  }
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+      <TopBar title="🧾 Invoice Tracker" sub={`${rows.length} invoices`} onBack={onBack}/>
+      <div style={{padding:"14px 16px 60px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        <div style={{...cardS,marginBottom:12,fontSize:12,color:T.sub,lineHeight:1.6,borderLeft:`3px solid ${T.teal}`}}>
+          Receipts and invoices attached to <b style={{color:T.text}}>Pipeline</b> daily reports land here automatically. Check the ones the AI read (marked <span style={pill(T.yellow)}>auto</span>), fix anything it got wrong, and export to Excel whenever the office needs it.
+        </div>
+
+        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search supplier, invoice #, job…" style={{...inp,flex:2,minWidth:200}}/>
+          <select value={po} onChange={e=>setPo(e.target.value)} style={{...inp,flex:1,minWidth:140}}>
+            <option value="">All POs</option>{pos.map(p=><option key={p} value={p}>{p}</option>)}
+          </select>
+          <button onClick={exportXlsx} disabled={!rows.length} style={{...primBtn,borderRadius:12,padding:"10px 16px",background:T.green,color:"#000",fontSize:13,opacity:rows.length?1:0.5}}>📊 Export Excel</button>
+          <button onClick={()=>setShowAdd(x=>!x)} style={{...ghostBtn,padding:"10px 14px",fontSize:13}}>+ Add by hand</button>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+          {[["Invoices",filtered.length,T.blue],["Total",money(total),T.green],["Need follow-up",needs,needs?T.yellow:T.muted]].map(([l,v,c])=>(
+            <div key={l} style={{...cardS,textAlign:"center",padding:12}}><div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>{l}</div></div>))}
+        </div>
+
+        {showAdd&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>
+            <div><label style={lbl}>PO #</label><input value={add.po_number} onChange={e=>setAdd(a=>({...a,po_number:e.target.value}))} style={inp}/></div>
+            <div><label style={lbl}>Supplier</label><input value={add.supplier} onChange={e=>setAdd(a=>({...a,supplier:e.target.value}))} style={inp}/></div>
+            <div><label style={lbl}>Invoice #</label><input value={add.invoice_no} onChange={e=>setAdd(a=>({...a,invoice_no:e.target.value}))} style={inp}/></div>
+            <div><label style={lbl}>Amount</label><input type="number" step="0.01" value={add.amount} onChange={e=>setAdd(a=>({...a,amount:e.target.value}))} style={inp}/></div>
+            <div><label style={lbl}>Billed Date</label><input type="date" value={add.billed_date} onChange={e=>setAdd(a=>({...a,billed_date:e.target.value}))} style={inp}/></div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <input value={add.notes} onChange={e=>setAdd(a=>({...a,notes:e.target.value}))} placeholder="Notes" style={{...inp,flex:1}}/>
+            <button onClick={saveAdd} style={{...primBtn,borderRadius:10,padding:"10px 16px",background:T.green,color:"#000",fontSize:12}}>Save</button>
+            <button onClick={()=>setShowAdd(false)} style={{...ghostBtn,padding:"10px 14px",fontSize:12}}>Cancel</button>
+          </div>
+        </div>}
+
+        {po&&<div style={{...cardS,marginBottom:12,display:"flex",alignItems:"center",gap:10,fontSize:12}}>
+          <span style={{color:T.muted}}>PO <b style={{color:T.text}}>{po}</b> status:</span>
+          {PO_STATUSES.map(st=><button key={st} onClick={()=>setStatus(po,st)} style={{...ghostBtn,padding:"5px 10px",fontSize:11,borderColor:(poStatus[po]||"Open")===st?T.teal:T.border,color:(poStatus[po]||"Open")===st?T.teal:T.sub}}>{st}</button>)}
+          <span style={{color:T.muted,fontSize:11}}>· used on the PO Summary tab of the export</span>
+        </div>}
+
+        {loading&&<Spinner/>}
+        {!loading&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
+          <div style={{fontSize:44,marginBottom:12}}>🧾</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No invoices yet</div>
+          <div style={{fontSize:12}}>Attach a receipt to a daily report and tick "Add to tracker" — it shows up here.</div>
+        </div>}
+
+        {filtered.length>0&&<div style={{...cardS,padding:0,overflowX:"auto"}}>
+          <div style={{display:"grid",gridTemplateColumns:"90px 1.4fr 1fr 110px 100px 1.2fr 1.2fr 80px",gap:8,padding:"10px 14px",fontSize:10,fontWeight:800,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",borderBottom:`1px solid ${T.border}`,minWidth:900}}>
+            <div>PO #</div><div>Supplier</div><div>Invoice #</div><div style={{textAlign:"right"}}>Amount</div><div>Billed</div><div>Job / Item</div><div>Notes / Follow-up</div><div></div>
+          </div>
+          {filtered.map(r=>{
+            const editing=edit===r.id;const flag=missing(r);
+            return(
+              <div key={r.id} style={{borderBottom:`1px solid ${T.border}`,background:flag?T.yellowLow:"transparent"}}>
+                {!editing&&<div style={{display:"grid",gridTemplateColumns:"90px 1.4fr 1fr 110px 100px 1.2fr 1.2fr 80px",gap:8,padding:"10px 14px",fontSize:12.5,alignItems:"center",minWidth:900}}>
+                  <div style={{fontWeight:800,color:T.text}}>{poOf(r)||"—"}</div>
+                  <div style={{color:T.text}}>{r.supplier||<span style={{color:T.muted}}>—</span>}{r.status==="auto"&&<span style={{...pill(T.yellow),marginLeft:6,fontSize:9}}>auto</span>}</div>
+                  <div>{r.invoice_no||<span style={{color:T.muted}}>—</span>}</div>
+                  <div style={{textAlign:"right",fontWeight:800,color:T.green}}>{r.amount!=null?money(r.amount):<span style={{color:T.muted}}>—</span>}</div>
+                  <div style={{color:T.sub}}>{r.billed_date||"—"}</div>
+                  <div style={{fontSize:11,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{jobOf(r)}{r.item?` · ${r.item}`:""}{r.report_no?` · #${r.report_no}`:""}</div>
+                  <div style={{fontSize:11,color:flag?T.yellow:T.muted}}>{flag||r.notes||""}</div>
+                  <div style={{display:"flex",gap:4,justifyContent:"flex-end"}}>
+                    {r.file_url&&<a href={r.file_url} target="_blank" rel="noreferrer" title="Open receipt" style={{textDecoration:"none",fontSize:14}}>📎</a>}
+                    <button onClick={()=>startEdit(r)} style={{background:"none",border:"none",color:T.blue,cursor:"pointer",fontSize:14}}>✏️</button>
+                    <button onClick={()=>del(r)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:14}}>🗑</button>
+                  </div>
+                </div>}
+                {editing&&<div style={{padding:"10px 14px"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"90px 1.4fr 1fr 110px 130px 1.4fr",gap:8,marginBottom:8}}>
+                    <input value={draft.po_number} onChange={e=>setDraft(d=>({...d,po_number:e.target.value}))} placeholder="PO #" style={{...inp,padding:"7px 8px",fontSize:12}}/>
+                    <input value={draft.supplier} onChange={e=>setDraft(d=>({...d,supplier:e.target.value}))} placeholder="Supplier" style={{...inp,padding:"7px 8px",fontSize:12}}/>
+                    <input value={draft.invoice_no} onChange={e=>setDraft(d=>({...d,invoice_no:e.target.value}))} placeholder="Invoice #" style={{...inp,padding:"7px 8px",fontSize:12}}/>
+                    <input type="number" step="0.01" value={draft.amount} onChange={e=>setDraft(d=>({...d,amount:e.target.value}))} placeholder="Amount" style={{...inp,padding:"7px 8px",fontSize:12,textAlign:"right"}}/>
+                    <input type="date" value={draft.billed_date} onChange={e=>setDraft(d=>({...d,billed_date:e.target.value}))} style={{...inp,padding:"7px 8px",fontSize:12}}/>
+                    <input value={draft.notes} onChange={e=>setDraft(d=>({...d,notes:e.target.value}))} placeholder="Notes" style={{...inp,padding:"7px 8px",fontSize:12}}/>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>saveEdit(r)} style={{...primBtn,borderRadius:10,padding:"8px 16px",fontSize:12,background:T.blue}}>✓ Save & confirm</button>
+                    <button onClick={()=>setEdit(null)} style={{...ghostBtn,padding:"8px 14px",fontSize:12}}>Cancel</button>
+                  </div>
+                </div>}
+              </div>
+            );
+          })}
+        </div>}
+      </div>
+    </div>
+  );
+}
+
 function ActivityScreen({user,onBack}){
   const [rows,setRows]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -1549,6 +1973,7 @@ function ActivityScreen({user,onBack}){
       <div style={{padding:"14px 16px 60px"}}>
         {err&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:10,
           padding:"10px 14px",marginBottom:12,fontSize:12,color:T.red,lineHeight:1.6}}>{err}</div>}
+        {user?.role==="admin"&&<ReceiptMigrationTool/>}
 
         {/* Filters */}
         <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,marginBottom:10}}>
@@ -1641,7 +2066,7 @@ function ActivityScreen({user,onBack}){
   );
 }
 
-function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onMyHours,onActivity,onNotifications,notifCount,isOnline,pendingCount,onSync}){
+function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onInvoices,onMyHours,onActivity,onNotifications,notifCount,isOnline,pendingCount,onSync}){
   // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
   // by division always returned zero for that card.
   const [mfgStats,setMfgStats]=useState(null);
@@ -1715,6 +2140,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           if(user.role==="admin"||user.role==="pm")items.push(navBtn(onTimeCards,"⏱️","Time Cards",T.green,T.greenLow));
           if(can(user,"crew_directory"))items.push(navBtn(onCrew,"👥","Crew",T.blue,T.blueLow));
           if(canEstimate(user))items.push(navBtn(onEstimating,"📐","Estimating",T.purple,`${T.purple}15`));
+          if(user.role==="admin"||user.role==="pm")items.push(navBtn(onInvoices,"🧾","Invoices",T.teal,`${T.teal}15`));
           items.push(navBtn(onNotifications,notifCount>0?"🔔":"🔕","Alerts",T.sub,T.surface,
             notifCount>0&&<span style={{position:"absolute",top:-6,right:-6,background:T.red,color:"#fff",
               borderRadius:9,minWidth:17,height:17,fontSize:10,fontWeight:800,display:"flex",
@@ -2286,9 +2712,12 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
   async function submit(){
     setSaving(true);
     const{rental_equipment,...rptClean}=rpt;
-    const reportData={...rptClean,submitted_by:isEdit?(existing.submitted_by||user.name):user.name,
+    let reportData={...rptClean,submitted_by:isEdit?(existing.submitted_by||user.name):user.name,
       status:"submitted",...reportOwnerFields(project),rental_equipment:rental_equipment||[],
       ...(project._mfg?{_job_name:project.name}:{})};
+    // Move any photos still inline (taken offline) into Storage so the row
+    // stays small. Offline: skipped; the sync pass does it later.
+    try{reportData={...reportData,...(await offloadReportImages({...reportData,id:existing?.id})).report};}catch{}
 
     /* ── Edit ── */
     if(isEdit){
@@ -2417,10 +2846,10 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
             </div>
             <div style={{fontSize:12,color:T.muted,marginTop:2,marginBottom:10}}>Equipment you don't own — type any description</div>
           </div>
-          {(rpt.rental_equipment||[]).map((row,i)=><RentedEquipCard key={row.id} row={row} onChange={r=>upd("rental_equipment",i,r)} onRemove={()=>del("rental_equipment",i)}/>)}
+          {(rpt.rental_equipment||[]).map((row,i)=><RentedEquipCard key={row.id} row={row} trackInvoices={project.division==="Pipeline"} onChange={r=>upd("rental_equipment",i,r)} onRemove={()=>del("rental_equipment",i)}/>)}
           <DashedAdd label="+ Add Rented Equipment" onClick={()=>add("rental_equipment",{id:uid(),description:"",qty:"",usage:"",rate:""})} color={T.purple}/>
         </div>)}
-        {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/>
+        {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} trackInvoices={project.division==="Pipeline"} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/>
           <div style={{fontSize:17,fontWeight:800,margin:"24px 0 12px"}}>🏢 Subcontractors</div>
           {(rpt.subcontractors||[]).map((row,i)=><SubCard key={row.id} row={row} onChange={r=>upd("subcontractors",i,r)} onRemove={()=>del("subcontractors",i)}/>)}
           <DashedAdd label="+ Add Subcontractor" onClick={()=>add("subcontractors",{id:uid(),company:"",description:"",workers:"",hours:"",amount:"",markup_pct:"",tax_amount:""})} color={T.orange}/>
@@ -16908,7 +17337,9 @@ function AppInner(){
     for(const item of queue){
       try{
         if(item.type==="report"){
-          const {rental_equipment,...raw}=item.data;
+          let data=item.data;
+          try{data=(await offloadReportImages(data)).report;}catch{}
+          const {rental_equipment,...raw}=data;
           const dbData=Object.fromEntries(Object.entries(raw).filter(([k])=>!k.startsWith("_")));
           try{await API.reports.create({...dbData,rental_equipment});}
           catch{await API.reports.create(dbData);}
@@ -16998,7 +17429,7 @@ function AppInner(){
       {user&&screen==="division"&&(
         <DivisionScreen user={user} projects={projects} onSelect={handleDivisionSelect} onLogout={handleLogout}
           onCrew={()=>setScreen("crewDirectory")} onDash={()=>setScreen("pmDashboard")}
-          onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")}
+          onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")} onInvoices={()=>setScreen("invoices")}
           onMyHours={()=>setScreen("myHours")} onActivity={()=>setScreen("activity")}
           onNotifications={()=>setScreen("notifications")} notifCount={notifCount}
           isOnline={isOnline} pendingCount={pendingCount} onSync={syncQueue}/>
@@ -17013,6 +17444,9 @@ function AppInner(){
       )}
       {user&&screen==="activity"&&can(user,"view_dashboard")&&(
         <ActivityScreen user={user} onBack={()=>setScreen("division")}/>
+      )}
+      {user&&screen==="invoices"&&(user.role==="admin"||user.role==="pm")&&(
+        <InvoiceTrackerScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="myHours"&&(
         <MyHoursScreen user={user} onBack={()=>setScreen("division")}/>
