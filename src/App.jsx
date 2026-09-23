@@ -227,7 +227,7 @@ function attachmentsWithInvoices(report){
 async function syncInvoiceTracker(report){
   if(!report?.id||!navigator.onLine)return;
   const wanted=attachmentsWithInvoices(report);
-  const existing=await API.invoices.forReport(report.id).catch(()=>[])||[];
+  const existing=await API.invoiceTracker.forReport(report.id).catch(()=>[])||[];
   const byAtt=Object.fromEntries((existing||[]).map(r=>[r.att_id,r.id]));
   for(const {a,item,kind} of wanted){
     const inv=a.inv||{};
@@ -240,12 +240,12 @@ async function syncInvoiceTracker(report){
       report_date:report.date||null,report_no:report.report_no||null,submitted_by:report.submitted_by||null,
       updated_at:new Date().toISOString(),
     };
-    if(byAtt[a.id])await API.invoices.update(byAtt[a.id],body).catch(()=>{});
-    else await API.invoices.create({...body,status:"auto"}).catch(()=>{});
+    if(byAtt[a.id])await API.invoiceTracker.update(byAtt[a.id],body).catch(()=>{});
+    else await API.invoiceTracker.create({...body,status:"auto"}).catch(()=>{});
   }
   // attachments that were removed or un-ticked drop out of the tracker
   const keep=new Set(wanted.map(w=>w.a.id));
-  for(const r of (existing||[]))if(!keep.has(r.att_id))await API.invoices.remove(r.id).catch(()=>{});
+  for(const r of (existing||[]))if(!keep.has(r.att_id))await API.invoiceTracker.remove(r.id).catch(()=>{});
 }
 
 /* Small editor shown under a receipt: what the AI read, editable, plus the
@@ -457,7 +457,7 @@ const API={
     list:(name)=>sb(`/notifications?or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc&limit=50`),
     unread:(name)=>sb(`/notifications?read=eq.false&or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc`),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:()=>sb("/notifications?read=eq.false",{method:"PATCH",body:{read:true}}),removeMany:(ids)=>sb(`/notifications?id=in.(${ids.map(encodeURIComponent).join(",")})`,{method:"DELETE"}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
   notifSettings:{get:(name)=>sb(`/notification_settings?pm_name=eq.${encodeURIComponent(name)}&limit=1`),upsert:(d)=>sb("/notification_settings",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"})},
-  invoices:{
+  invoiceTracker:{
     list:()=>sb("/invoice_tracker?select=*&order=billed_date.desc.nullslast,created_at.desc&limit=5000"),
     forReport:(rid)=>sb(`/invoice_tracker?report_id=eq.${rid}&select=id,att_id`),
     create:(d)=>sb("/invoice_tracker",{method:"POST",body:d,prefer:"return=representation"}),
@@ -1715,7 +1715,7 @@ function ReceiptMigrationTool(){
 /* ── Invoice Tracker: receipts read off daily reports, one row each,
    exportable as the office's Invoice_Tracker workbook. ── */
 const PO_STATUSES=["Open","Closed","Day Rate","APEX","On Hold"];
-function InvoiceTrackerScreen({user,projects,onBack}){
+function InvoiceTrackerScreen({user,projects,onBack,embedded,division}){
   const [rows,setRows]=useState([]);
   const [mfgJobs,setMfgJobs]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -1731,7 +1731,7 @@ function InvoiceTrackerScreen({user,projects,onBack}){
   async function load(){
     setLoading(true);setErr("");
     try{
-      const [r,m]=await Promise.all([API.invoices.list(),API.mfg.jobs.list().catch(()=>[])]);
+      const [r,m]=await Promise.all([API.invoiceTracker.list(),API.mfg.jobs.list().catch(()=>[])]);
       setRows(r||[]);setMfgJobs(m||[]);
     }catch(e){setErr(e.message);}
     setLoading(false);
@@ -1753,8 +1753,11 @@ function InvoiceTrackerScreen({user,projects,onBack}){
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
   const missing=(r)=>[!r.amount&&r.amount!==0?"Missing amount":"",!r.billed_date?"Missing billed date":"",!r.invoice_no?"Missing invoice #":""].filter(Boolean).join("; ");
 
-  const pos=[...new Set(rows.map(poOf).filter(Boolean))].sort();
-  const filtered=rows.filter(r=>{
+  // Division scope (Pipeline tab): rows whose job is in that division, plus hand-added rows
+  const divIds=division?new Set(projects.filter(p=>p.division===division).map(p=>p.id)):null;
+  const scoped=divIds?rows.filter(r=>!r.project_id&&!r.mfg_job_id?true:divIds.has(r.project_id)):rows;
+  const pos=[...new Set(scoped.map(poOf).filter(Boolean))].sort();
+  const filtered=scoped.filter(r=>{
     if(po&&poOf(r)!==po)return false;
     if(q.trim()){const t=q.toLowerCase();return [poOf(r),r.supplier,r.invoice_no,jobOf(r),r.item,r.notes].some(v=>String(v||"").toLowerCase().includes(t));}
     return true;
@@ -1767,22 +1770,22 @@ function InvoiceTrackerScreen({user,projects,onBack}){
     const body={...draft,amount:draft.amount===""?null:parseFloat(draft.amount),billed_date:draft.billed_date||null,
       po_number:draft.po_number&&draft.po_number!==poOf({...r,po_number:null})?draft.po_number:(draft.po_number||null),
       status:"confirmed",confirmed_by:user.name,updated_at:new Date().toISOString()};
-    try{await API.invoices.update(r.id,body);setRows(rs=>rs.map(x=>x.id===r.id?{...x,...body}:x));setEdit(null);}catch(e){setErr(e.message);}
+    try{await API.invoiceTracker.update(r.id,body);setRows(rs=>rs.map(x=>x.id===r.id?{...x,...body}:x));setEdit(null);}catch(e){setErr(e.message);}
   }
   async function del(r){if(!window.confirm("Remove this invoice from the tracker? The receipt stays on the report."))return;
-    try{await API.invoices.remove(r.id);setRows(rs=>rs.filter(x=>x.id!==r.id));}catch(e){setErr(e.message);}}
+    try{await API.invoiceTracker.remove(r.id);setRows(rs=>rs.filter(x=>x.id!==r.id));}catch(e){setErr(e.message);}}
   async function saveAdd(){
     if(!add.supplier.trim()&&!add.invoice_no.trim()){setErr("Supplier or invoice # is required.");return;}
     const body={po_number:add.po_number||null,supplier:add.supplier||null,invoice_no:add.invoice_no||null,amount:add.amount===""?null:parseFloat(add.amount),
       billed_date:add.billed_date||null,notes:add.notes||null,kind:"manual",status:"confirmed",confirmed_by:user.name,submitted_by:user.name};
-    try{const res=await API.invoices.create(body);const row=Array.isArray(res)?res[0]:res;setRows(rs=>[row||body,...rs]);setShowAdd(false);
+    try{const res=await API.invoiceTracker.create(body);const row=Array.isArray(res)?res[0]:res;setRows(rs=>[row||body,...rs]);setShowAdd(false);
       setAdd({po_number:"",supplier:"",invoice_no:"",amount:"",billed_date:today(),notes:""});}catch(e){setErr(e.message);}
   }
   const setStatus=(p,st)=>{const n={...poStatus,[p]:st};setPoStatus(n);try{localStorage.setItem("aime_po_status",JSON.stringify(n));}catch{}};
 
   /* ── Export: same three tabs, formulas and column widths as Invoice_Tracker_Clean.xlsx ── */
   function exportXlsx(){
-    const list=(po?filtered:rows).slice().sort((a,b)=>(poOf(a)||"").localeCompare(poOf(b)||"")||String(a.billed_date||"").localeCompare(String(b.billed_date||"")));
+    const list=(po?filtered:scoped).slice().sort((a,b)=>(poOf(a)||"").localeCompare(poOf(b)||"")||String(a.billed_date||"").localeCompare(String(b.billed_date||"")));
     const poList=[...new Set(list.map(poOf).filter(Boolean))].sort();
     const dt=(s)=>{if(!s)return "";const [y,m,d]=String(s).split("-").map(Number);return new Date(y,m-1,d);};
     // Invoices
@@ -1813,9 +1816,9 @@ function InvoiceTrackerScreen({user,projects,onBack}){
   }
 
   return(
-    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
-      <TopBar title="🧾 Invoice Tracker" sub={`${rows.length} invoices`} onBack={onBack}/>
-      <div style={{padding:"14px 16px 60px"}}>
+    <div style={embedded?{}:{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+      {!embedded&&<TopBar title="🧾 Invoice Tracker" sub={`${scoped.length} invoices`} onBack={onBack}/>}
+      <div style={{padding:embedded?"0 0 60px":"14px 16px 60px"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
         <div style={{...cardS,marginBottom:12,fontSize:12,color:T.sub,lineHeight:1.6,borderLeft:`3px solid ${T.teal}`}}>
           Receipts and invoices attached to <b style={{color:T.text}}>Pipeline</b> daily reports land here automatically. Check the ones the AI read (marked <span style={pill(T.yellow)}>auto</span>), fix anything it got wrong, and export to Excel whenever the office needs it.
@@ -2140,7 +2143,6 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           if(user.role==="admin"||user.role==="pm")items.push(navBtn(onTimeCards,"⏱️","Time Cards",T.green,T.greenLow));
           if(can(user,"crew_directory"))items.push(navBtn(onCrew,"👥","Crew",T.blue,T.blueLow));
           if(canEstimate(user))items.push(navBtn(onEstimating,"📐","Estimating",T.purple,`${T.purple}15`));
-          if(user.role==="admin"||user.role==="pm")items.push(navBtn(onInvoices,"🧾","Invoices",T.teal,`${T.teal}15`));
           items.push(navBtn(onNotifications,notifCount>0?"🔔":"🔕","Alerts",T.sub,T.surface,
             notifCount>0&&<span style={{position:"absolute",top:-6,right:-6,background:T.red,color:"#fff",
               borderRadius:9,minWidth:17,height:17,fontSize:10,fontWeight:800,display:"flex",
@@ -2278,10 +2280,88 @@ function PullToRefresh({onRefresh,children}){
   );
 }
 
+/* ── Division-wide Daily Reports (the "Reports" tab on a division board) ── */
+function DivisionReportsTab({user,division,projects,onErr}){
+  const [days,setDays]=useState(30);
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [status,setStatus]=useState("");
+  const [job,setJob]=useState("");
+  const [active,setActive]=useState(null);
+  const divProjects=projects.filter(p=>p.division===division);
+  const ids=new Set(divProjects.map(p=>p.id));
+  async function load(){
+    setLoading(true);
+    try{
+      const to=today();const from=new Date(Date.now()-days*86400000).toISOString().slice(0,10);
+      const r=await API.reports.inRange(from,to);
+      setRows((r||[]).filter(x=>ids.has(x.project_id)).sort((a,b)=>String(b.date).localeCompare(String(a.date))));
+    }catch(e){onErr&&onErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[division,days]);
+  const projOf=(r)=>divProjects.find(p=>p.id===r.project_id);
+  const filtered=rows.filter(r=>(!status||(r.status||"submitted")===status)&&(!job||r.project_id===job));
+  const stColor=(st)=>st==="approved"?T.green:st==="flagged"?T.red:T.yellow;
+  const upd=async(id,body,patch)=>{try{await API.reports.update(id,body);setActive(r=>r?{...r,...patch}:r);setRows(rs=>rs.map(x=>x.id===id?{...x,...patch}:x));}catch(e){onErr&&onErr(e.message);}};
+  if(active){
+    const proj=projOf(active);
+    return <ReportDetail report={active} project={proj} user={user}
+      onBack={()=>{setActive(null);load();}}
+      onDelete={async(id)=>{try{await API.reports.remove(id);setActive(null);await load();}catch(e){onErr&&onErr(e.message);}}}
+      onApprove={(id)=>upd(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()},{status:"approved"})}
+      onFlag={(id,pm_notes)=>upd(id,{status:"flagged",pm_notes},{status:"flagged",pm_notes})}
+      onArchive={(id,archived)=>upd(id,{archived},{archived})}/>;
+  }
+  const hrs=filtered.reduce((s,r)=>s+reportTotals(r,division).labor_hrs,0);
+  const pending=filtered.filter(r=>(r.status||"submitted")==="submitted").length;
+  return(
+    <div>
+      <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+        <select value={job} onChange={e=>setJob(e.target.value)} style={{...inp,flex:2,minWidth:160}}>
+          <option value="">All {division} jobs</option>
+          {divProjects.filter(p=>p.status==="active").map(p=><option key={p.id} value={p.id}>{p.name}{p.client?` · ${p.client}`:""}</option>)}
+        </select>
+        <select value={status} onChange={e=>setStatus(e.target.value)} style={{...inp,flex:1,minWidth:120}}>
+          <option value="">Any status</option><option value="submitted">Submitted</option><option value="approved">Approved</option><option value="flagged">Flagged</option>
+        </select>
+        <select value={days} onChange={e=>setDays(parseInt(e.target.value))} style={{...inp,flex:1,minWidth:110}}>
+          <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={365}>Last year</option>
+        </select>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+        {[["Reports",filtered.length,T.blue],["Labor hrs",hrs.toFixed(1),T.green],["Awaiting approval",pending,pending?T.yellow:T.muted]].map(([l,v,c])=>(
+          <div key={l} style={{...cardS,textAlign:"center",padding:12}}><div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>{l}</div></div>))}
+      </div>
+      {loading&&<Spinner/>}
+      {!loading&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}><div style={{fontSize:40,marginBottom:10}}>📝</div>No daily reports in this range.</div>}
+      {filtered.map(r=>{
+        const p=projOf(r);const t=reportTotals(r,division);const crew=(r.labor||[]).filter(l=>l.name&&!isPerDiemRow(l)).length;
+        return(
+          <div key={r.id} onClick={()=>setActive(r)} style={{...cardS,marginBottom:8,cursor:"pointer",borderLeft:`3px solid ${stColor(r.status)}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:13.5,fontWeight:800,color:T.text}}>{p?.name||"—"} <span style={{color:T.muted,fontWeight:500}}>· #{r.report_no||"—"} · {r.date}</span></div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{r.submitted_by||"—"} · {crew} on crew · {t.labor_hrs.toFixed(1)} hrs{can(user,"view_dashboard")?` · $${t.grand.toLocaleString("en-US",{minimumFractionDigits:2})}`:""}</div>
+                {r.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</div>}
+              </div>
+              <span style={pill(stColor(r.status))}>{r.status||"submitted"}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefresh}){
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("active");
+  const [nav,setNav]=useState("jobs");          // jobs | reports
+  const [reportsTab,setReportsTab]=useState("daily");   // daily | invoices  (Pipeline only)
+  const [navErr,setNavErr]=useState("");
   const meta=DIV_META[division]||{icon:"🏗️",color:T.orange};
+  const isPipeline=division==="Pipeline";
 
   const divProjects=projects.filter(p=>p.division===division);
   // Job numbers sort naturally: "2606-M" after "2599-P", and "26010" after "2609"
@@ -2314,19 +2394,41 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
             <div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{division}</div>
             <div style={{fontSize:11,color:T.muted}}>{active.length} active job{active.length!==1?"s":""}</div>
           </div>
-          {canCreate&&<button onClick={onNew} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Job</button>}
+          {canCreate&&nav==="jobs"&&<button onClick={onNew} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Job</button>}
         </div>
-        <div style={{position:"relative",marginBottom:10}}>
+        {/* Division nav bar */}
+        <div style={{display:"flex",background:T.bg,borderRadius:12,padding:4,marginBottom:12,gap:4}}>
+          {[["jobs","🏗️ Jobs"],["reports","📝 Reports"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setNav(id)}
+              style={{flex:1,padding:"9px",background:nav===id?meta.color:"none",color:nav===id?"#0D0D0F":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {nav==="reports"&&isPipeline&&<div style={{display:"flex",gap:6,marginBottom:10}}>
+          {[["daily","📝 Daily Reports"],["invoices","🧾 Invoices"]].map(([id,label])=>(
+            <button key={id} onClick={()=>setReportsTab(id)} style={{padding:"8px 14px",borderRadius:"10px 10px 0 0",background:reportsTab===id?T.bg:"transparent",border:"none",borderBottom:reportsTab===id?`2px solid ${meta.color}`:"2px solid transparent",color:reportsTab===id?T.text:T.muted,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
+          ))}
+        </div>}
+        {nav==="jobs"&&<div style={{position:"relative",marginBottom:10}}>
           <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",fontSize:14,pointerEvents:"none"}}>🔍</span>
           <input type="text" placeholder="Search jobs…" value={search} onChange={e=>setSearch(e.target.value)} style={{...inp,paddingLeft:38,borderRadius:12,fontSize:14}}/>
           {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:18,padding:0}}>×</button>}
-        </div>
-        <div style={{display:"flex",gap:6}}>
+        </div>}
+        {nav==="jobs"&&<div style={{display:"flex",gap:6}}>
           {[["active","Active"],["archived","Archived"],["all","All"]].map(([v,l])=>(<button key={v} onClick={()=>setFilter(v)} style={{padding:"8px 14px",borderRadius:"10px 10px 0 0",background:filter===v?T.bg:"transparent",border:filter===v?`1px solid ${T.border}`:"1px solid transparent",borderBottom:filter===v?`1px solid ${T.bg}`:"none",color:filter===v?T.text:T.muted,fontSize:13,fontWeight:filter===v?700:500,cursor:"pointer",fontFamily:"inherit",position:"relative",zIndex:filter===v?1:0,marginBottom:filter===v?-1:0}}>{l}{v==="active"&&active.length>0&&<span style={{marginLeft:5,background:meta.color+"25",color:meta.color,borderRadius:20,padding:"1px 6px",fontSize:10,fontWeight:800}}>{active.length}</span>}</button>))}
-        </div>
+        </div>}
       </div>
 
-      <PullToRefresh onRefresh={async()=>onRefresh&&await onRefresh()}>
+      {nav==="reports"&&<div style={{padding:"12px 16px 80px"}}>
+        <ErrBanner msg={navErr} onDismiss={()=>setNavErr("")}/>
+        {(!isPipeline||reportsTab==="daily")&&<DivisionReportsTab user={user} division={division} projects={projects} onErr={setNavErr}/>}
+        {isPipeline&&reportsTab==="invoices"&&(user.role==="admin"||user.role==="pm"
+          ?<InvoiceTrackerScreen user={user} projects={projects} embedded division="Pipeline"/>
+          :<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>Invoices are visible to PMs and admins.</div>)}
+      </div>}
+
+      {nav==="jobs"&&<PullToRefresh onRefresh={async()=>onRefresh&&await onRefresh()}>
       <div style={{padding:"12px 16px 80px"}}>
         {loading&&<Spinner/>}
       {canCreate&&<div style={{position:"fixed",bottom:20,right:"max(16px,calc(50vw - 224px))",zIndex:100}}><button onClick={onNew} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:50,padding:"14px 22px",fontSize:15,fontWeight:900,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 24px rgba(249,115,22,0.5)",display:"flex",alignItems:"center",gap:8}}>＋ New Job</button></div>}
@@ -2339,7 +2441,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
         )}
         {!loading&&filtered.map(p=><JobCard key={p.id} p={p} onSelect={onSelect} divColor={meta.color}/>)}
       </div>
-      </PullToRefresh>
+      </PullToRefresh>}
     </div>
   );
 }
@@ -13467,7 +13569,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
 
         {/* Dashboard tab toggle */}
         {!loading&&jobs.length>0&&<div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4}}>
-          {[["jobs","🔩 Jobs"],["dashboard","📊 Dashboard"]].map(([id,label])=>(
+          {[["jobs","🔩 Jobs"],["reports","📝 Reports"],["dashboard","📊 Dashboard"]].map(([id,label])=>(
             <button key={id} onClick={()=>setBoardTab(id)}
               style={{flex:1,padding:"8px",background:boardTab===id?T.purple:"none",color:boardTab===id?"#fff":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
               {label}
@@ -13476,6 +13578,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
         </div>}
 
         {boardTab==="dashboard"&&jobs.length>0&&<ManufacturingDashboard jobs={jobs} user={user} onSelectJob={j=>onSelectJob(j)}/>}
+        {boardTab==="reports"&&<MfgDivisionReportsTab jobs={jobs} user={user}/>}
         {boardTab==="jobs"&&active.length===0&&!loading&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
           <div style={{fontSize:48,marginBottom:12}}>🏭</div>
           <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No Manufacturing Jobs</div>
@@ -19012,6 +19115,58 @@ function PullMfgLaborModal({job,onClose,onPull,onErr}){
 }
 
 /* ── Manufacturing billing tab — invoices only, no AIA ── */
+/* ── Manufacturing division-wide daily reports (Reports tab on the board) ── */
+function MfgDivisionReportsTab({jobs,user}){
+  const [days,setDays]=useState(30);
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState("");
+  const [active,setActive]=useState(null);
+  async function load(){
+    setLoading(true);
+    try{
+      const to=today();const from=new Date(Date.now()-days*86400000).toISOString().slice(0,10);
+      const r=await API.reports.inRange(from,to);
+      setRows((r||[]).filter(x=>x.mfg_job_id).sort((a,b)=>String(b.date).localeCompare(String(a.date))));
+    }catch(e){setErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[days]);
+  const jobOf=(r)=>jobs.find(j=>j.id===r.mfg_job_id);
+  const stColor=(st)=>st==="approved"?T.green:st==="flagged"?T.red:T.yellow;
+  const upd=async(id,body,patch)=>{try{await API.reports.update(id,body);setActive(r=>r?{...r,...patch}:r);setRows(rs=>rs.map(x=>x.id===id?{...x,...patch}:x));}catch(e){setErr(e.message);}};
+  if(active&&jobOf(active)){
+    return <ReportDetail report={active} project={mfgJobAsProject(jobOf(active))} user={user}
+      onBack={()=>{setActive(null);load();}}
+      onDelete={async(id)=>{try{await API.reports.remove(id);setActive(null);await load();}catch(e){setErr(e.message);}}}
+      onApprove={(id)=>upd(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()},{status:"approved"})}
+      onFlag={(id,pm_notes)=>upd(id,{status:"flagged",pm_notes},{status:"flagged",pm_notes})}
+      onArchive={(id,archived)=>upd(id,{archived},{archived})}/>;
+  }
+  return(
+    <div>
+      <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <select value={days} onChange={e=>setDays(parseInt(e.target.value))} style={{...inp,flex:1}}>
+          <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option>
+        </select>
+      </div>
+      {loading&&<Spinner/>}
+      {!loading&&rows.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}><div style={{fontSize:40,marginBottom:10}}>📝</div>No shop daily reports in this range.</div>}
+      {rows.map(r=>{const j=jobOf(r);const t=reportTotals(r,"Manufacturing");const crew=(r.labor||[]).filter(l=>l.name).length;return(
+        <div key={r.id} onClick={()=>setActive(r)} style={{...cardS,marginBottom:8,cursor:"pointer",borderLeft:`3px solid ${stColor(r.status)}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:13.5,fontWeight:800,color:T.text}}>🏭 {j?.job_number||"—"} <span style={{color:T.muted,fontWeight:500}}>· #{r.report_no||"—"} · {r.date}</span></div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{r.submitted_by||"—"} · {crew} on crew · {t.labor_hrs.toFixed(1)} hrs</div>
+            </div>
+            <span style={pill(stColor(r.status))}>{r.status||"submitted"}</span>
+          </div>
+        </div>);})}
+    </div>
+  );
+}
+
 /* ── Manufacturing job daily reports ─────────────────────────── */
 function MfgDailyReportsTab({job,user,onErr}){
   const project=useMemo(()=>mfgJobAsProject(job),[job]);
