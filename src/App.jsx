@@ -1424,6 +1424,30 @@ function MyHoursScreen({user,onBack}){
           {loading&&<Spinner/>}
 
           {!loading&&<>
+            {/* Employee confirmation of the week's field time cards */}
+            {(()=>{
+              const wk=cards.filter(c=>c.status!=="open");
+              const unconfirmed=wk.filter(c=>!c.employee_ack_at);
+              const confirmedAt=wk.length&&!unconfirmed.length?wk.map(c=>c.employee_ack_at).sort().slice(-1)[0]:null;
+              if(!wk.length)return null;
+              return(
+                <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${unconfirmed.length?T.yellow:T.green}`}}>
+                  {unconfirmed.length>0?<>
+                    <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:4}}>Do these hours look right?</div>
+                    <div style={{fontSize:12,color:T.sub,marginBottom:10,lineHeight:1.5}}>Check the days below. If anything's wrong, tell your foreman before confirming. Your PM approves the week after you do.</div>
+                    <button onClick={async()=>{
+                        setBusy(true);
+                        try{const at=new Date().toISOString();for(const c of unconfirmed)await API.timeCards.update(c.id,{employee_ack_at:at,employee_ack_by:user.name});await load();}
+                        catch(e){setErr(e.message);}
+                        setBusy(false);}}
+                      disabled={busy} style={{...primBtn,borderRadius:12,background:T.green,color:"#000",opacity:busy?0.6:1}}>
+                      ✓ Confirm my hours for {weekLabel.toLowerCase()} ({h1(tot.total)} hrs)
+                    </button>
+                  </>:<div style={{fontSize:12,color:T.green,fontWeight:700}}>✓ You confirmed this week on {new Date(confirmedAt).toLocaleDateString()}.</div>}
+                </div>
+              );
+            })()}
+
             {/* Week total */}
             <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.blue}`}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -2293,6 +2317,156 @@ function PullToRefresh({onRefresh,children}){
   );
 }
 
+/* ── Time Card Approval (Reports → Time Cards on each division board) ──
+   One card per employee per week. An employee belongs to a division by
+   their profile; time cards logged on this division's jobs show here too.
+   Yellow flag = the employee hasn't confirmed the week in My Hours yet. ── */
+function TimeCardApprovalTab({user,division,projects,mfgJobs=[],onErr}){
+  const monday=(d)=>{const x=new Date(d);x.setHours(0,0,0,0);const day=(x.getDay()+6)%7;x.setDate(x.getDate()-day);return x;};
+  const iso=(d)=>{const p=n=>String(n).padStart(2,"0");return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;};
+  const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
+  const [weekStart,setWeekStart]=useState(()=>monday(new Date()));
+  const [cards,setCards]=useState([]);
+  const [profiles,setProfiles]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState("");
+  const [openWorker,setOpenWorker]=useState(null);
+  const [show,setShow]=useState("all");   // all | needs | done
+  const from=iso(weekStart),to=iso(addDays(weekStart,6));
+  const divProjIds=new Set(projects.filter(p=>p.division===division).map(p=>p.id));
+  const divMfgIds=new Set((mfgJobs||[]).map(j=>j.id));
+
+  async function load(){
+    setLoading(true);
+    try{
+      const [tc,pr]=await Promise.all([API.timeCards.byRange(from,to),API.userProfiles.list().catch(()=>[])]);
+      setCards((tc||[]).filter(c=>c.status!=="open"));setProfiles(pr||[]);
+    }catch(e){onErr&&onErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[from,division]);
+
+  const profDiv=(name)=>(profiles.find(p=>p.name===name)||{}).division||null;
+  const inDivision=(c)=>{
+    if(c.project_id&&divProjIds.has(c.project_id))return true;
+    if(division==="Manufacturing"&&c.mfg_job_id&&divMfgIds.has(c.mfg_job_id))return true;
+    if(!c.project_id&&!c.mfg_job_id)return profDiv(c.worker_name)===division;   // manual / unassigned
+    return false;
+  };
+  // A worker "belongs" here if their profile says so, or any of their cards this week do.
+  const scoped=cards.filter(inDivision);
+  const names=new Set(scoped.map(c=>c.worker_name));
+  profiles.filter(p=>p.division===division&&p.active!==false&&(p.role==="crew"||p.role==="foreman")).forEach(p=>names.add(p.name));
+  const t=(c)=>{const r=parseFloat(c.reg_hours)||0,o=parseFloat(c.ot_hours)||0,v=parseFloat(c.travel_hours)||0;return c.total_hours!=null&&c.total_hours!==""?parseFloat(c.total_hours):r+o+v;};
+  const jobOf=(c)=>c.project_id?(projects.find(p=>p.id===c.project_id)||{}).name||"—":c.mfg_job_id?"🏭 "+((mfgJobs.find(j=>j.id===c.mfg_job_id)||{}).job_number||"Shop"):"—";
+
+  const workers=[...names].map(n=>{
+    const mine=scoped.filter(c=>c.worker_name===n).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    const total=mine.reduce((s,c)=>s+t(c),0);
+    const pending=mine.filter(c=>(c.status||"pending")!=="approved");
+    const unconfirmed=mine.filter(c=>!c.employee_ack_at);
+    const fromOtherDiv=profDiv(n)&&profDiv(n)!==division;
+    return{name:n,mine,total,pending,unconfirmed,fromOtherDiv,
+      state:!mine.length?"none":pending.length?"needs":"done"};
+  }).sort((a,b)=>(a.state==="needs"?0:a.state==="none"?2:1)-(b.state==="needs"?0:b.state==="none"?2:1)||a.name.localeCompare(b.name));
+  const visible=workers.filter(w=>show==="all"?true:show==="needs"?w.state==="needs":w.state==="done");
+  const totals={hrs:scoped.reduce((s,c)=>s+t(c),0),needs:workers.filter(w=>w.state==="needs").length,flag:workers.filter(w=>w.mine.length&&w.unconfirmed.length).length,none:workers.filter(w=>w.state==="none").length};
+
+  async function setStatus(ids,status){
+    if(!ids.length)return;
+    setSaving(status);
+    const body=status==="approved"?{status,approved_by:user.name,approved_at:new Date().toISOString()}:{status:"pending",approved_by:null,approved_at:null};
+    try{for(const id of ids)await API.timeCards.update(id,body);setCards(cs=>cs.map(c=>ids.includes(c.id)?{...c,...body}:c));}
+    catch(e){onErr&&onErr(e.message);}
+    setSaving("");
+  }
+  const isThisWeek=iso(weekStart)===iso(monday(new Date()));
+  const fmt=n=>Number(n||0).toFixed(1);
+  const meta=DIV_META[division]||{color:T.orange};
+
+  return(
+    <div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
+        <button onClick={()=>setWeekStart(addDays(weekStart,-7))} style={{...ghostBtn,padding:"9px 14px"}}>←</button>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:14,fontWeight:800,color:T.text}}>{isThisWeek?"This week":`Week of ${weekStart.toLocaleDateString("en-US",{month:"short",day:"numeric"})}`}</div>
+          <div style={{fontSize:10.5,color:T.muted}}>{from} → {to}</div>
+        </div>
+        <button onClick={()=>!isThisWeek&&setWeekStart(addDays(weekStart,7))} disabled={isThisWeek} style={{...ghostBtn,padding:"9px 14px",opacity:isThisWeek?0.35:1}}>→</button>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:12}}>
+        {[["Hours",fmt(totals.hrs),T.blue],["To approve",totals.needs,totals.needs?T.yellow:T.green],["Not confirmed",totals.flag,totals.flag?T.red:T.muted],["No hours",totals.none,T.muted]].map(([l,v,c])=>(
+          <div key={l} style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>{l}</div></div>))}
+      </div>
+
+      <div style={{display:"flex",gap:6,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
+        {[["all","All"],["needs","Needs approval"],["done","Approved"]].map(([id,l])=>(
+          <button key={id} onClick={()=>setShow(id)} style={{...ghostBtn,padding:"6px 12px",fontSize:12,borderColor:show===id?meta.color:T.border,color:show===id?meta.color:T.sub}}>{l}</button>))}
+        {totals.needs>0&&<button onClick={()=>{if(window.confirm(`Approve every pending time card in ${division} for this week?`))setStatus(workers.flatMap(w=>w.pending.map(c=>c.id)),"approved");}}
+          disabled={!!saving} style={{...primBtn,marginLeft:"auto",padding:"8px 14px",borderRadius:10,fontSize:12,background:T.green,color:"#000",opacity:saving?0.6:1}}>✓ Approve all pending</button>}
+      </div>
+
+      <div style={{fontSize:11,color:T.muted,marginBottom:10,lineHeight:1.5}}>
+        <span style={{color:T.red}}>⚑</span> = employee hasn't confirmed their hours in My Hours yet. You can still approve, but it's worth a nudge.
+      </div>
+
+      {loading&&<Spinner/>}
+      {!loading&&visible.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>No time cards for {division} this week.</div>}
+      {visible.map(w=>{
+        const open=openWorker===w.name;
+        const color=w.state==="needs"?T.yellow:w.state==="done"?T.green:T.border;
+        return(
+          <div key={w.name} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${color}`,opacity:w.state==="none"?0.6:1}}>
+            <div onClick={()=>w.mine.length&&setOpenWorker(open?null:w.name)} style={{cursor:w.mine.length?"pointer":"default",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:14,fontWeight:800,color:T.text}}>
+                  {w.mine.length?(open?"▾ ":"▸ "):""}{w.name}
+                  {w.mine.length>0&&w.unconfirmed.length>0&&<span title="Employee hasn't confirmed" style={{color:T.red,marginLeft:8}}>⚑</span>}
+                  {w.fromOtherDiv&&<span style={{...pill(T.muted),marginLeft:8,fontSize:9}}>{profDiv(w.name)} crew</span>}
+                </div>
+                <div style={{fontSize:11,color:T.muted,marginTop:2}}>
+                  {w.mine.length?`${w.mine.length} day${w.mine.length!==1?"s":""} · ${fmt(w.mine.reduce((s,c)=>s+(parseFloat(c.reg_hours)||0),0))} reg · ${fmt(w.mine.reduce((s,c)=>s+(parseFloat(c.ot_hours)||0),0))} OT`:"No hours logged this week"}
+                  {w.mine.length>0&&(w.unconfirmed.length?` · not confirmed by employee`:` · confirmed ${new Date(w.mine.map(c=>c.employee_ack_at).sort().slice(-1)[0]).toLocaleDateString()}`)}
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                <div style={{fontSize:18,fontWeight:900,color:T.green}}>{fmt(w.total)}h</div>
+                {w.state==="needs"&&<button onClick={e=>{e.stopPropagation();setStatus(w.pending.map(c=>c.id),"approved");}} disabled={!!saving} style={{...primBtn,padding:"7px 12px",borderRadius:10,fontSize:12,background:T.green,color:"#000"}}>✓ Approve week</button>}
+                {w.state==="done"&&<span style={pill(T.green)}>Approved</span>}
+              </div>
+            </div>
+            {open&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+              <div style={{display:"grid",gridTemplateColumns:"84px 1fr 56px 56px 56px 64px 96px",gap:6,fontSize:10,fontWeight:800,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:4}}>
+                <div>Date</div><div>Job</div><div style={{textAlign:"center"}}>Reg</div><div style={{textAlign:"center"}}>OT</div><div style={{textAlign:"center"}}>Trv</div><div style={{textAlign:"right"}}>Total</div><div></div>
+              </div>
+              {w.mine.map(c=>{
+                const dow=new Date(c.date+"T12:00:00").toLocaleDateString("en-US",{weekday:"short"});
+                const ap=(c.status||"pending")==="approved";
+                return(
+                  <div key={c.id} style={{display:"grid",gridTemplateColumns:"84px 1fr 56px 56px 56px 64px 96px",gap:6,alignItems:"center",fontSize:12.5,padding:"5px 0",borderBottom:`1px solid ${T.border}20`}}>
+                    <div style={{fontWeight:700}}>{dow} <span style={{color:T.muted,fontWeight:500}}>{c.date.slice(5).replace("-","/")}</span></div>
+                    <div style={{fontSize:11,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{jobOf(c)}{c.source==="daily"?" · report":c.source==="tm"?" · T&M":c.source==="manual"?" · manual":""}{c.edited_by?" ✎":""}</div>
+                    <div style={{textAlign:"center"}}>{fmt(c.reg_hours)}</div>
+                    <div style={{textAlign:"center",color:T.yellow}}>{fmt(c.ot_hours)}</div>
+                    <div style={{textAlign:"center",color:T.blue}}>{fmt(c.travel_hours)}</div>
+                    <div style={{textAlign:"right",fontWeight:800,color:T.green}}>{fmt(t(c))}</div>
+                    <div style={{textAlign:"right"}}>
+                      {ap?<button onClick={()=>setStatus([c.id],"pending")} style={{...ghostBtn,padding:"4px 8px",fontSize:10.5,color:T.yellow}}>↩ Undo</button>
+                        :<button onClick={()=>setStatus([c.id],"approved")} style={{...ghostBtn,padding:"4px 8px",fontSize:10.5,borderColor:T.green,color:T.green}}>✓ Approve</button>}
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{fontSize:10.5,color:T.muted,marginTop:8}}>Need to change hours? Use the Time Cards screen from the home menu.</div>
+            </div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Division-wide Daily Reports (the "Reports" tab on a division board) ── */
 function DivisionReportsTab({user,division,projects,onErr}){
   const [days,setDays]=useState(30);
@@ -2418,8 +2592,8 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
             </button>
           ))}
         </div>
-        {nav==="reports"&&isPipeline&&<div style={{display:"flex",gap:6,marginBottom:10}}>
-          {[["daily","📝 Daily Reports"],["invoices","🧾 Invoices"]].map(([id,label])=>(
+        {nav==="reports"&&<div style={{display:"flex",gap:6,marginBottom:10}}>
+          {[["daily","📝 Daily Reports"],["timecards","⏱️ Time Cards"],...(isPipeline?[["invoices","🧾 Invoices"]]:[])].map(([id,label])=>(
             <button key={id} onClick={()=>setReportsTab(id)} style={{padding:"8px 14px",borderRadius:"10px 10px 0 0",background:reportsTab===id?T.bg:"transparent",border:"none",borderBottom:reportsTab===id?`2px solid ${meta.color}`:"2px solid transparent",color:reportsTab===id?T.text:T.muted,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
           ))}
         </div>}
@@ -2435,7 +2609,10 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
 
       {nav==="reports"&&<div style={{padding:"12px 16px 80px"}}>
         <ErrBanner msg={navErr} onDismiss={()=>setNavErr("")}/>
-        {(!isPipeline||reportsTab==="daily")&&<DivisionReportsTab user={user} division={division} projects={projects} onErr={setNavErr}/>}
+        {reportsTab==="daily"&&<DivisionReportsTab user={user} division={division} projects={projects} onErr={setNavErr}/>}
+        {reportsTab==="timecards"&&(can(user,"approve_report")||user.role==="admin"||user.role==="pm"
+          ?<TimeCardApprovalTab user={user} division={division} projects={projects} onErr={setNavErr}/>
+          :<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>Time card approval is for PMs and admins.</div>)}
         {isPipeline&&reportsTab==="invoices"&&(user.role==="admin"||user.role==="pm"
           ?<InvoiceTrackerScreen user={user} projects={projects} embedded division="Pipeline"/>
           :<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>Invoices are visible to PMs and admins.</div>)}
@@ -13591,7 +13768,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
         </div>}
 
         {boardTab==="dashboard"&&jobs.length>0&&<ManufacturingDashboard jobs={jobs} user={user} onSelectJob={j=>onSelectJob(j)}/>}
-        {boardTab==="reports"&&<MfgDivisionReportsTab jobs={jobs} user={user}/>}
+        {boardTab==="reports"&&<MfgReportsArea jobs={jobs} user={user}/>}
         {boardTab==="jobs"&&active.length===0&&!loading&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
           <div style={{fontSize:48,marginBottom:12}}>🏭</div>
           <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No Manufacturing Jobs</div>
@@ -19128,6 +19305,24 @@ function PullMfgLaborModal({job,onClose,onPull,onErr}){
 }
 
 /* ── Manufacturing billing tab — invoices only, no AIA ── */
+function MfgReportsArea({jobs,user}){
+  const [tab,setTab]=useState("daily");
+  const [err,setErr]=useState("");
+  return(
+    <div>
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        {[["daily","📝 Daily Reports"],["timecards","⏱️ Time Cards"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{padding:"8px 14px",borderRadius:"10px 10px 0 0",background:tab===id?T.bg:"transparent",border:"none",borderBottom:tab===id?`2px solid ${T.purple}`:"2px solid transparent",color:tab===id?T.text:T.muted,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>))}
+      </div>
+      <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+      {tab==="daily"&&<MfgDivisionReportsTab jobs={jobs} user={user}/>}
+      {tab==="timecards"&&(canMfg(user,"manage_jobs")||user.role==="admin"||user.role==="pm"
+        ?<TimeCardApprovalTab user={user} division="Manufacturing" projects={[]} mfgJobs={jobs} onErr={setErr}/>
+        :<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>Time card approval is for PMs and admins.</div>)}
+    </div>
+  );
+}
+
 /* ── Manufacturing division-wide daily reports (Reports tab on the board) ── */
 function MfgDivisionReportsTab({jobs,user}){
   const [days,setDays]=useState(30);
