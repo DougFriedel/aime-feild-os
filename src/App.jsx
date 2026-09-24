@@ -17905,7 +17905,82 @@ const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:
 const money0=(n)=>"$"+Math.round(Number(n||0)).toLocaleString("en-US");
 const num2=(n)=>Number(n||0).toFixed(2);
 
+/* ── Contract / budget position for a project's Billing tab ──
+   Original → approved COs → current, against billed-to-date. Invoices count
+   when not draft/void; pay apps count by their latest "completed & stored"
+   (whichever is greater, so the strip never double-counts). */
+function useContractPosition(project,refreshKey){
+  const [d,setD]=useState({cos:[],invoices:[],payApps:[],loading:true});
+  useEffect(()=>{
+    let dead=false;
+    (async()=>{
+      const [cos,inv,pa]=await Promise.all([
+        API.changeOrders.forProject(project.id).catch(()=>[]),
+        API.invoices.forProject(project.id).catch(()=>[]),
+        API.payApps.forProject(project.id).catch(()=>[]),
+      ]);
+      if(!dead)setD({cos:cos||[],invoices:inv||[],payApps:pa||[],loading:false});
+    })();
+    return()=>{dead=true;};
+  },[project.id,refreshKey]);
+  const isContract=project.job_type==="Contract";
+  const original=parseFloat(isContract?project.contract_value:project.estimated_budget)||0;
+  const approvedCO=d.cos.filter(c=>c.status==="Approved").reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+  const pendingCO=d.cos.filter(c=>c.status==="Pending").reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
+  const current=original+(isContract?approvedCO:0);
+  const invoiced=d.invoices.filter(i=>!["draft","void"].includes(i.status)).reduce((s,i)=>s+(parseFloat(i.total)||0),0);
+  const payAppStored=d.payApps.reduce((m,a)=>Math.max(m,parseFloat(a.completed_stored)||0),0);
+  const billed=Math.max(invoiced,payAppStored);
+  const remaining=current-billed;
+  const pct=current>0?(billed/current)*100:0;
+  return {...d,isContract,original,approvedCO,pendingCO,current,invoiced,payAppStored,billed,remaining,pct};
+}
+function ContractStrip({project,refreshKey,compact}){
+  const c=useContractPosition(project,refreshKey);
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(c.loading)return null;
+  if(!c.original&&!c.billed)return(
+    <div style={{...cardS,marginBottom:14,fontSize:12,color:T.muted}}>
+      {c.isContract?"No contract value on this job yet — set it under Edit Job to track billing against it.":"No estimated budget on this job — set it under Edit Job to track billing against it."}
+    </div>
+  );
+  const over=c.remaining<0;
+  const cells=c.isContract?[
+    ["Original Contract",money(c.original),T.text],
+    ["Approved COs",(c.approvedCO>=0?"+":"")+money(c.approvedCO),c.approvedCO?T.blue:T.muted],
+    ["Current Contract",money(c.current),T.text],
+    ["Billed to Date",money(c.billed),T.green],
+    ["Remaining",money(c.remaining),over?T.red:T.yellow],
+    ["% Billed",c.pct.toFixed(0)+"%",over?T.red:T.sub],
+  ]:[
+    ["Estimated Budget",money(c.original),T.text],
+    ["Billed to Date",money(c.billed),T.green],
+    ["Remaining",money(c.remaining),over?T.red:T.yellow],
+    ["% Billed",c.pct.toFixed(0)+"%",over?T.red:T.sub],
+  ];
+  return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${over?T.red:T.green}`,padding:compact?"10px 14px":"14px 16px"}}>
+      <div style={{display:"grid",gridTemplateColumns:`repeat(${cells.length},1fr)`,gap:10}}>
+        {cells.map(([l,v,col])=>(
+          <div key={l} style={{minWidth:0}}>
+            <div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",whiteSpace:"nowrap"}}>{l}</div>
+            <div style={{fontSize:compact?14:16,fontWeight:900,color:col,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v}</div>
+          </div>))}
+      </div>
+      <div style={{height:6,background:T.surface,borderRadius:3,marginTop:10,overflow:"hidden"}}>
+        <div style={{height:"100%",width:`${Math.min(100,Math.max(0,c.pct))}%`,background:over?T.red:c.pct>90?T.yellow:T.green,transition:"width .3s"}}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:10.5,color:T.muted,marginTop:6,flexWrap:"wrap",gap:8}}>
+        <span>{c.payAppStored>c.invoiced?`Billed from pay applications (${money(c.payAppStored)} completed & stored)`:`Billed from ${c.invoices.filter(i=>!["draft","void"].includes(i.status)).length} invoice${c.invoices.length!==1?"s":""} (drafts and voided excluded)`}</span>
+        {c.isContract&&c.pendingCO>0&&<span style={{color:T.yellow}}>⏳ {money(c.pendingCO)} in pending COs — not billable until approved</span>}
+        {over&&<span style={{color:T.red,fontWeight:700}}>Over-billed by {money(-c.remaining)}</span>}
+      </div>
+    </div>
+  );
+}
+
 function BillingTab({project,user,onErr}){
+  const [refreshKey,setRefreshKey]=useState(0);
   const isContract=project.job_type==="Contract";
   const [view,setView]=useState("invoices");     // invoices | sov | payapps
   const [openInvoice,setOpenInvoice]=useState(null);
@@ -17922,11 +17997,11 @@ function BillingTab({project,user,onErr}){
 
   if(openInvoice!==null)return(
     <InvoiceForm project={project} user={user} invoice={openInvoice.id?openInvoice:null}
-      onBack={()=>setOpenInvoice(null)} onSaved={()=>setOpenInvoice(null)} onErr={onErr}/>
+      onBack={()=>{setOpenInvoice(null);setRefreshKey(k=>k+1);}} onSaved={()=>{setOpenInvoice(null);setRefreshKey(k=>k+1);}} onErr={onErr}/>
   );
   if(openPayApp!==null)return(
     <PayAppForm project={project} user={user} payApp={openPayApp.id?openPayApp:null}
-      onBack={()=>setOpenPayApp(null)} onSaved={()=>setOpenPayApp(null)} onErr={onErr}/>
+      onBack={()=>{setOpenPayApp(null);setRefreshKey(k=>k+1);}} onSaved={()=>{setOpenPayApp(null);setRefreshKey(k=>k+1);}} onErr={onErr}/>
   );
 
   const tabs=isContract
@@ -17935,6 +18010,7 @@ function BillingTab({project,user,onErr}){
 
   return(
     <div>
+      <ContractStrip project={project} refreshKey={refreshKey}/>
       {isContract&&<div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4,overflowX:"auto"}}>
         {tabs.map(([id,label])=>(
           <button key={id} onClick={()=>setView(id)}
@@ -18028,6 +18104,26 @@ function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
 }
 
 /* ─────────────── INVOICE FORM ─────────────── */
+// Shown on the invoice form: what this invoice does to the contract position.
+function OverBillingNotice({project,invoiceId,thisTotal}){
+  const c=useContractPosition(project,0);
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(c.loading||!c.current)return null;
+  const mine=invoiceId?(c.invoices.find(i=>i.id===invoiceId)||{}):{};
+  const otherBilled=Math.max(0,c.invoiced-(["draft","void"].includes(mine.status)?0:(parseFloat(mine.total)||0)));
+  const after=otherBilled+(thisTotal||0);
+  const remainingAfter=c.current-after;
+  const over=remainingAfter<0;
+  return(
+    <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${over?T.red:T.green}`,fontSize:12,color:T.sub,lineHeight:1.6}}>
+      <b style={{color:T.text}}>{c.isContract?"Current contract":"Budget"} {money(c.current)}</b> · billed on other invoices {money(otherBilled)} · this invoice {money(thisTotal||0)} →
+      {over
+        ?<span style={{color:T.red,fontWeight:800}}> over-billed by {money(-remainingAfter)}{c.pendingCO>0?` — ${money(c.pendingCO)} in COs is still pending approval`:""}</span>
+        :<span style={{color:T.green,fontWeight:700}}> {money(remainingAfter)} remaining after this invoice</span>}
+    </div>
+  );
+}
+
 function InvoiceForm({project,mfgJob,user,invoice,onBack,onSaved,onErr}){
   const isNew=!invoice;
   // One form, two owners: a field project or a manufacturing job.
@@ -18154,7 +18250,10 @@ tr:nth-child(even) td{background:#fafbff}
     <div class="sub" style="margin-top:4px">5730 Pennington Ave, Baltimore, MD 21226<br/>(410) 355-1869</div></div>
   <div><h1>INVOICE</h1>
     <div class="meta"><strong>${esc(f.invoice_no)}</strong><br/>
-    Date: ${esc(f.invoice_date)}${f.due_date?`<br/>Due: ${esc(f.due_date)}`:""}${f.terms?`<br/>Terms: ${esc(f.terms)}`:""}</div></div>
+    Date: ${esc(f.invoice_date)}${f.due_date?`<br/>Due: ${esc(f.due_date)}`:""}${f.terms?`<br/>Terms: ${esc(f.terms)}`:""}</div>
+    ${f.po_number?`<div style="margin-top:8px;display:inline-block;border:2px solid #1f3864;border-radius:6px;padding:5px 12px;text-align:left">
+      <div style="font-size:7.5pt;font-weight:700;letter-spacing:1px;color:#1f3864;text-transform:uppercase">Customer PO #</div>
+      <div style="font-size:14pt;font-weight:800;color:#000;letter-spacing:0.5px">${esc(f.po_number)}</div></div>`:""}</div>
 </div>
 <div class="boxes">
   <div class="box"><div class="bl">Bill To</div>
@@ -18162,7 +18261,8 @@ tr:nth-child(even) td{background:#fafbff}
     <div style="font-size:9pt;color:#444;line-height:1.5">${esc(f.bill_to_address).replace(/\n/g,"<br/>")}</div></div>
   <div class="box"><div class="bl">Project</div>
     <div style="font-weight:700">${esc(owner.name)}</div>
-    <div style="font-size:9pt;color:#444;line-height:1.5">${esc(owner.location||"")}${f.po_number?`<br/>PO: ${esc(f.po_number)}`:""}${owner.afe?`<br/>AFE: ${esc(owner.afe)}`:""}</div></div>
+    <div style="font-size:9pt;color:#444;line-height:1.5">${esc(owner.location||"")}${owner.afe?`<br/>AFE: ${esc(owner.afe)}`:""}</div>
+    ${f.po_number?`<div style="margin-top:6px;font-size:10pt;font-weight:800;color:#1f3864">PO # ${esc(f.po_number)}</div>`:""}</div>
 </div>
 ${f.description?`<div style="margin-bottom:12px;font-size:10pt"><strong>Description:</strong> ${esc(f.description)}</div>`:""}
 <table><thead><tr><th style="width:48%">Description</th><th style="text-align:center">Qty</th><th style="text-align:center">Unit</th>
@@ -18278,6 +18378,7 @@ ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/
         <textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/>
       </div>
 
+      {project&&!mfgJob&&<OverBillingNotice project={project} invoiceId={invoice?.id} thisTotal={total}/>}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         <button onClick={save} disabled={saving}
           style={{...primBtn,borderRadius:14,background:T.orange,color:"#000",opacity:saving?0.6:1}}>
