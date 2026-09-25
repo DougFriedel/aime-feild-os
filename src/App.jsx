@@ -18018,11 +18018,12 @@ function ContractStrip({project,refreshKey,compact}){
   ];
   return(
     <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${over?T.red:T.green}`,padding:compact?"10px 14px":"14px 16px"}}>
-      <div style={{display:"grid",gridTemplateColumns:`repeat(${cells.length},1fr)`,gap:10}}>
+      {/* Wraps to 2–3 columns on a phone; nothing gets clipped */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))",gap:"10px 14px"}}>
         {cells.map(([l,v,col])=>(
           <div key={l} style={{minWidth:0}}>
-            <div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",whiteSpace:"nowrap"}}>{l}</div>
-            <div style={{fontSize:compact?14:16,fontWeight:900,color:col,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v}</div>
+            <div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.6px",lineHeight:1.3}}>{l}</div>
+            <div style={{fontSize:compact?14:16,fontWeight:900,color:col,lineHeight:1.3,wordBreak:"break-word"}}>{v}</div>
           </div>))}
       </div>
       <div style={{height:6,background:T.surface,borderRadius:3,marginTop:10,overflow:"hidden"}}>
