@@ -119,6 +119,50 @@ async function supa(path,{method="GET",body,prefer}={}){
 let CURRENT_USER=null;
 function setAuditUser(name){CURRENT_USER=name||null;}
 
+/* ── Save / approve confirmation toasts ──────────────────────────
+   Every successful write through sb() (POST / PATCH / DELETE) flashes a
+   short confirmation at the bottom of the screen. Writes that land within
+   a moment of each other collapse into one toast, so approving a week of
+   time cards shows "Approved ✓" once, not seven times. Pass {silent:true}
+   in opts for background writes that shouldn't announce themselves. */
+const _toastListeners=new Set();
+let _toastPending=null,_toastTimer=null;
+function showToast(msg,kind="ok"){ _toastListeners.forEach(fn=>fn({msg,kind,id:Date.now()+Math.random()})); }
+function flashWrite(method,path,body){
+  let msg="Saved ✓",kind="ok";
+  const st=body&&typeof body==="object"&&!Array.isArray(body)?body.status:undefined;
+  if(method==="DELETE"){msg="Deleted";kind="warn";}
+  else if(st==="approved"||st==="Approved")msg="Approved ✓";
+  else if(st==="flagged")msg="Flagged";
+  else if(st==="submitted")msg="Submitted ✓";
+  else if(st==="paid")msg="Marked paid ✓";
+  else if(st==="sent")msg="Marked sent ✓";
+  else if(st==="signed")msg="Signed ✓";
+  const rank={"Approved ✓":5,"Submitted ✓":4,"Signed ✓":4,"Marked paid ✓":3,"Marked sent ✓":3,"Flagged":3,"Saved ✓":2,"Deleted":1};
+  if(!_toastPending||(rank[msg]||0)>=(rank[_toastPending.msg]||0))_toastPending={msg,kind};
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>{if(_toastPending)showToast(_toastPending.msg,_toastPending.kind);_toastPending=null;},400);
+}
+function ToastHost(){
+  const [toasts,setToasts]=useState([]);
+  useEffect(()=>{
+    const fn=(t)=>{setToasts(ts=>[...ts.slice(-2),t]);setTimeout(()=>setToasts(ts=>ts.filter(x=>x.id!==t.id)),2200);};
+    _toastListeners.add(fn);return()=>_toastListeners.delete(fn);
+  },[]);
+  if(!toasts.length)return null;
+  return(
+    <div style={{position:"fixed",left:0,right:0,bottom:"calc(24px + env(safe-area-inset-bottom, 0px))",display:"flex",flexDirection:"column",alignItems:"center",gap:8,zIndex:9999,pointerEvents:"none"}}>
+      {toasts.map(t=>(
+        <div key={t.id} style={{background:t.kind==="warn"?"#3a2a12":"#0f2e22",color:t.kind==="warn"?"#FBBF24":"#34D399",border:`1px solid ${t.kind==="warn"?"#FBBF2460":"#34D39960"}`,
+          borderRadius:999,padding:"10px 18px",fontSize:13.5,fontWeight:800,boxShadow:"0 6px 24px rgba(0,0,0,0.45)",fontFamily:"inherit",animation:"aimeToastIn .18s ease-out"}}>
+          {t.msg}
+        </div>
+      ))}
+      <style>{`@keyframes aimeToastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}`}</style>
+    </div>
+  );
+}
+
 async function sb(path,opts={}){
   const{method="GET",body,prefer}=opts;
   const headers={"apikey":SUPA_KEY,"Authorization":`Bearer ${SUPA_KEY}`,"Content-Type":"application/json"};
@@ -126,6 +170,7 @@ async function sb(path,opts={}){
   if(prefer)headers["Prefer"]=prefer;
   const res=await fetch(`${SUPA_URL}/rest/v1${path}`,{method,headers,...(body!==undefined?{body:JSON.stringify(body)}:{})});
   if(!res.ok)throw new Error(await res.text()||`HTTP ${res.status}`);
+  if(method!=="GET"&&!opts.silent)flashWrite(method,path,body);
   const t=await res.text();return t?JSON.parse(t):null;
 }
 
@@ -248,12 +293,12 @@ async function syncInvoiceTracker(report){
       report_date:report.date||null,report_no:report.report_no||null,submitted_by:report.submitted_by||null,
       updated_at:new Date().toISOString(),
     };
-    if(byAtt[a.id])await API.invoiceTracker.update(byAtt[a.id],body).catch(()=>{});
-    else await API.invoiceTracker.create({...body,status:"auto"}).catch(()=>{});
+    if(byAtt[a.id])await API.invoiceTracker.update(byAtt[a.id],body,true).catch(()=>{});
+    else await API.invoiceTracker.create({...body,status:"auto"},true).catch(()=>{});
   }
   // attachments that were removed or un-ticked drop out of the tracker
   const keep=new Set(wanted.map(w=>w.a.id));
-  for(const r of (existing||[]))if(!keep.has(r.att_id))await API.invoiceTracker.remove(r.id).catch(()=>{});
+  for(const r of (existing||[]))if(!keep.has(r.att_id))await API.invoiceTracker.remove(r.id,true).catch(()=>{});
 }
 
 /* Small editor shown under a receipt: what the AI read, editable, plus the
@@ -469,9 +514,9 @@ const API={
   invoiceTracker:{
     list:()=>sb("/invoice_tracker?select=*&order=billed_date.desc.nullslast,created_at.desc&limit=5000"),
     forReport:(rid)=>sb(`/invoice_tracker?report_id=eq.${rid}&select=id,att_id`),
-    create:(d)=>sb("/invoice_tracker",{method:"POST",body:d,prefer:"return=representation"}),
-    update:(id,d)=>sb(`/invoice_tracker?id=eq.${id}`,{method:"PATCH",body:d}),
-    remove:(id)=>sb(`/invoice_tracker?id=eq.${id}`,{method:"DELETE"}),
+    create:(d,silent)=>sb("/invoice_tracker",{method:"POST",body:d,prefer:"return=representation",silent}),
+    update:(id,d,silent)=>sb(`/invoice_tracker?id=eq.${id}`,{method:"PATCH",body:d,silent}),
+    remove:(id,silent)=>sb(`/invoice_tracker?id=eq.${id}`,{method:"DELETE",silent}),
   },
   userProfiles:{
     list:()=>sb("/user_profiles?order=name.asc"),
@@ -747,7 +792,7 @@ function calcHours(ci,co){if(!ci||!co)return 0;const[ih,im]=ci.split(":").map(Nu
 function getWeekStart(){const d=new Date();const day=d.getDay();d.setDate(d.getDate()-(day===0?6:day-1));return d.toISOString().split("T")[0];}
 async function compressImg(file,maxW=900,q=0.65){return new Promise(res=>{const rd=new FileReader();rd.onload=ev=>{const img=new Image();img.onload=()=>{const sc=Math.min(1,maxW/img.width);const c=document.createElement("canvas");c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);c.getContext("2d").drawImage(img,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",q));};img.src=ev.target.result;};rd.readAsDataURL(file);});}
 async function fetchWeather(location){const gR=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`);const gD=await gR.json();if(!gD.results?.length)throw new Error(`Cannot find: "${location}"`);const{latitude:lat,longitude:lon,name,admin1}=gD.results[0];const wR=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weathercode,windspeed_10m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&temperature_unit=fahrenheit&windspeed_unit=mph&precipitation_unit=inch&forecast_days=1`);const wD=await wR.json();return{...wD,locationName:`${name}, ${admin1}`};}
-async function notify(type,title,body,extra={}){try{await API.notifications.create({type,title,body,...extra});}catch{}}
+async function notify(type,title,body,extra={}){try{await sb("/notifications",{method:"POST",body:{type,title,body,...extra},silent:true});}catch{}}
 
 function Spinner(){return(<div style={{display:"flex",justifyContent:"center",padding:"48px 0"}}><div style={{width:32,height:32,border:`3px solid ${T.border}`,borderTopColor:T.orange,borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}} select{color-scheme:dark;} select{background:#1A1A20 !important;color:#F0F4FF !important;border-color:#26262E !important;} select option{background:#1A1A20 !important;color:#F0F4FF !important;} select option:hover{background:#26262E !important;} select:focus{outline:none !important;} select *{background:#1A1A20 !important;color:#F0F4FF !important;}`}</style></div>);}
 function ErrBanner({msg,onDismiss}){if(!msg)return null;return(<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:13,color:T.red}}>⚠️ {msg}</span><button onClick={onDismiss} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:18,padding:"0 0 0 10px"}}>×</button></div>);}
@@ -3116,8 +3161,8 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
           {rpt.equipment.map((row,i)=><EquipCard key={row.id} row={row} onChange={r=>upd("equipment",i,r)} onRemove={()=>del("equipment",i)} division={project.division}/>)}
           <DashedAdd label="+ Add Company Equipment" onClick={()=>add("equipment",{id:uid(),description:"",qty:"",usage:"",rate:"",unit:""})} color={T.yellow}/>
 
-          {/* Rented Equipment */}
-          <div style={{marginTop:18,marginBottom:10,paddingTop:14,borderTop:`2px dashed ${T.border}`}}>
+          {/* Rented Equipment — Pipeline logs rentals under Materials & Misc. instead */}
+          {project.division!=="Pipeline"&&<><div style={{marginTop:18,marginBottom:10,paddingTop:14,borderTop:`2px dashed ${T.border}`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{fontSize:17,fontWeight:800}}>🔑 Rented Equipment</div>
               {(rpt.rental_equipment||[]).length>0&&can(user,"view_dashboard")&&
@@ -3128,12 +3173,15 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
             <div style={{fontSize:12,color:T.muted,marginTop:2,marginBottom:10}}>Equipment you don't own — type any description</div>
           </div>
           {(rpt.rental_equipment||[]).map((row,i)=><RentedEquipCard key={row.id} row={row} trackInvoices={project.division==="Pipeline"} onChange={r=>upd("rental_equipment",i,r)} onRemove={()=>del("rental_equipment",i)}/>)}
-          <DashedAdd label="+ Add Rented Equipment" onClick={()=>add("rental_equipment",{id:uid(),description:"",qty:"",usage:"",rate:""})} color={T.purple}/>
+          <DashedAdd label="+ Add Rented Equipment" onClick={()=>add("rental_equipment",{id:uid(),description:"",qty:"",usage:"",rate:""})} color={T.purple}/></>}
         </div>)}
-        {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} trackInvoices={project.division==="Pipeline"} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/>
+        {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.{project.division==="Pipeline"?" (incl. rentals & subs)":""}</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} trackInvoices={project.division==="Pipeline"} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/>
+          {project.division!=="Pipeline"&&<>
           <div style={{fontSize:17,fontWeight:800,margin:"24px 0 12px"}}>🏢 Subcontractors</div>
           {(rpt.subcontractors||[]).map((row,i)=><SubCard key={row.id} row={row} onChange={r=>upd("subcontractors",i,r)} onRemove={()=>del("subcontractors",i)}/>)}
           <DashedAdd label="+ Add Subcontractor" onClick={()=>add("subcontractors",{id:uid(),company:"",description:"",workers:"",hours:"",amount:"",markup_pct:"",tax_amount:""})} color={T.orange}/>
+          </>}
+          {project.division==="Pipeline"&&<div style={{fontSize:11.5,color:T.muted,marginTop:12,lineHeight:1.5}}>Rented equipment and subcontractor charges go in here too — one line each, with the invoice attached.</div>}
         </div>)}
         {step===5&&(<div>
           <div style={{fontSize:17,fontWeight:800,marginBottom:16}}>📋 Site Notes</div>
@@ -3611,7 +3659,7 @@ ${sections.equipment&&(report.equipment||[]).length>0?`<div class="section"><h2>
 <tbody>${(report.equipment||[]).filter(e=>e.description||parseFloat(e.usage)).map(e=>{const rate=parseFloat(e.rate)||(getEquipList(division).find(x=>!x.section&&x.name===e.description)||{}).rate||0;return `<tr><td>${e.description||'—'}</td><td>${e.unit||'—'}</td>${showQty?`<td style="text-align:center">${e.qty||0}</td>`:''}<td style="text-align:center">${e.usage||'—'}</td><td style="text-align:right">${rate?fmt2(rate):'—'}</td><td style="text-align:right">${fmt2(equipAmt(e,division))}</td></tr>`;}).join('')}
 </tbody><tfoot><tr class="total-row"><td colspan="${showQty?5:4}"><strong>TOTAL EQUIPMENT</strong></td><td style="text-align:right"><strong>${fmt2(tot.equip||0)}</strong></td></tr></tfoot></table></div>`:''}
 
-${sections.rental&&(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).length>0?`<div class="section"><h2>Rental Equipment${tot.rental>0?' · '+fmt2(tot.rental):''}</h2>
+${sections.rental&&!isPipeline&&(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).length>0?`<div class="section"><h2>Rental Equipment${tot.rental>0?' · '+fmt2(tot.rental):''}</h2>
 <table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:center">Days/Hrs</th><th style="text-align:right">Rate</th><th style="text-align:right">Subtotal</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
 <tbody>${(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).map(r=>{
   const base=(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1);
@@ -3623,18 +3671,27 @@ ${(()=>{const docs=(report.rental_equipment||[]).flatMap(r=>(r.attachments||[]).
   return docs.length?`<div style="font-size:8.5pt;color:#444;margin-top:4px"><strong>Attached documents:</strong> ${docs.map(a=>`${a.eq} — ${a.name}`).join(' · ')}</div>`:'';})()}
 </div>`:''}
 
-${sections.materials&&(report.materials||[]).filter(m=>m.description||parseFloat(m.amount)).length>0?`<div class="section"><h2>Materials & Misc.${tot.mats>0?' · '+fmt2(tot.mats):''}</h2>
+${(()=>{
+  // Pipeline: rentals and subs print as lines inside Materials & Misc.
+  const extraRows=isPipeline?[
+    ...(report.rental_equipment||[]).filter(r=>r.description||parseFloat(r.qty)).map(r=>`<tr><td>Rental — ${r.description||'—'}</td><td style="text-align:center">${r.qty||'—'}${r.usage?` × ${r.usage}`:''}</td><td style="text-align:right">${fmt2((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1))}</td><td style="text-align:center">${parseFloat(r.markup_pct)?r.markup_pct+'%':'—'}</td><td style="text-align:right">${parseFloat(r.tax_amount)?fmt2(r.tax_amount):'—'}</td><td style="text-align:right">${fmt2(rentalLineTotal(r))}</td></tr>`),
+    ...(report.subcontractors||[]).filter(x=>x.company||x.description).map(x=>{const a=parseFloat(x.amount)||0,mk=parseFloat(x.markup_pct)||0,tx=parseFloat(x.tax_amount)||0;return `<tr><td>Sub — ${x.company||'—'}${x.description?` · ${x.description}`:''}</td><td style="text-align:center">${x.hours?x.hours+' hrs':'—'}</td><td style="text-align:right">${fmt2(a)}</td><td style="text-align:center">${mk?mk+'%':'—'}</td><td style="text-align:right">${tx?fmt2(tx):'—'}</td><td style="text-align:right">${fmt2(a*(1+mk/100)+tx)}</td></tr>`;}),
+  ]:[];
+  const combinedTotal=(tot.mats||0)+(isPipeline?(tot.rental||0)+subsTotal:0);
+  const hasMats=(report.materials||[]).filter(m=>m.description||parseFloat(m.amount)).length>0;
+  return sections.materials&&(hasMats||extraRows.length)?`<div class="section"><h2>Materials & Misc.${combinedTotal>0?' · '+fmt2(combinedTotal):''}</h2>
 <table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Amount</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
 <tbody>${(report.materials||[]).filter(m=>m.description||parseFloat(m.amount)).map(m=>{
   const mk=parseFloat(m.markup_pct)||0, tax=parseFloat(m.tax_amount)||0;
   return `<tr><td>${m.description||'—'}</td><td style="text-align:center">${m.qty||'—'}</td><td style="text-align:right">${m.amount?fmt2(m.amount):'—'}</td><td style="text-align:center">${mk?mk+'%':'—'}</td><td style="text-align:right">${tax?fmt2(tax):'—'}</td><td style="text-align:right">${fmt2(matLineTotal(m))}</td></tr>`;
-}).join('')}
-</tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL MATERIALS</strong></td><td style="text-align:right"><strong>${fmt2(tot.mats||0)}</strong></td></tr></tfoot></table>
-${(()=>{const docs=(report.materials||[]).flatMap(m=>(m.receipts||[]).filter(a=>a.kind==="file").map(a=>({...a,item:m.description||"Material"})));
+}).join('')}${extraRows.join('')}
+</tbody><tfoot><tr class="total-row"><td colspan="5"><strong>TOTAL MATERIALS${isPipeline&&extraRows.length?' &amp; MISC.':''}</strong></td><td style="text-align:right"><strong>${fmt2(combinedTotal)}</strong></td></tr></tfoot></table>
+${(()=>{const docs=[...(report.materials||[]).flatMap(m=>(m.receipts||[]).filter(a=>a.kind==="file").map(a=>({...a,item:m.description||"Material"}))),
+    ...(isPipeline?(report.rental_equipment||[]).flatMap(r=>(r.attachments||[]).filter(a=>a.kind==="file").map(a=>({...a,item:r.description||"Rental"}))):[])];
   return docs.length?`<div style="font-size:8.5pt;color:#444;margin-top:4px"><strong>Attached documents:</strong> ${docs.map(a=>`${a.item} — ${a.name}`).join(' · ')}</div>`:'';})()}
-</div>`:''}
+</div>`:'';})()}
 
-${(report.subcontractors||[]).length>0?`<div class="section"><h2>Subcontractors</h2>
+${!isPipeline&&(report.subcontractors||[]).length>0?`<div class="section"><h2>Subcontractors</h2>
 <table><thead><tr><th>Subcontractor</th><th>Work Performed</th><th style="text-align:center">Workers</th><th style="text-align:center">Hours</th><th style="text-align:right">Amount</th><th style="text-align:center">Markup</th><th style="text-align:right">Tax</th><th style="text-align:right">Total</th></tr></thead>
 <tbody>${(report.subcontractors||[]).filter(s=>s.company||s.description).map(s=>{
   const mk=parseFloat(s.markup_pct)||0, tax=parseFloat(s.tax_amount)||0;
@@ -3661,9 +3718,9 @@ ${(tot.grand>0||subsTotal>0)?`<div class="section" style="page-break-inside:avoi
 <tbody>
 ${tot.labor>0?`<tr><td>Labor</td><td style="text-align:right">${fmt2(tot.labor)}</td></tr>`:''}
 ${tot.equip>0?`<tr><td>Equipment</td><td style="text-align:right">${fmt2(tot.equip)}</td></tr>`:''}
-${tot.rental>0?`<tr><td>Rental Equipment</td><td style="text-align:right">${fmt2(tot.rental)}</td></tr>`:''}
-${tot.mats>0?`<tr><td>Materials &amp; Misc.</td><td style="text-align:right">${fmt2(tot.mats)}</td></tr>`:''}
-${subsTotal>0?`<tr><td>Subcontractors</td><td style="text-align:right">${fmt2(subsTotal)}</td></tr>`:''}
+${!isPipeline&&tot.rental>0?`<tr><td>Rental Equipment</td><td style="text-align:right">${fmt2(tot.rental)}</td></tr>`:''}
+${isPipeline?((tot.mats+tot.rental+subsTotal)>0?`<tr><td>Materials &amp; Misc.</td><td style="text-align:right">${fmt2(tot.mats+tot.rental+subsTotal)}</td></tr>`:''):(tot.mats>0?`<tr><td>Materials &amp; Misc.</td><td style="text-align:right">${fmt2(tot.mats)}</td></tr>`:'')}
+${!isPipeline&&subsTotal>0?`<tr><td>Subcontractors</td><td style="text-align:right">${fmt2(subsTotal)}</td></tr>`:''}
 </tbody>
 <tfoot><tr class="total-row"><td><strong>GRAND TOTAL</strong></td><td style="text-align:right"><strong>${fmt2((tot.grand||0)+subsTotal)}</strong></td></tr></tfoot>
 </table></div>`:''}
@@ -4157,7 +4214,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       {key:"weather",label:"🌤️ Site Conditions / Weather"},
       {key:"labor",label:"👷 Labor"},
       {key:"equipment",label:"🚜 Equipment"},
-      {key:"rental",label:"🔧 Rental Equipment"},
+      ...(project.division==="Pipeline"?[]:[{key:"rental",label:"🔧 Rental Equipment"}]),
       {key:"materials",label:"📦 Materials"},
       {key:"visitors",label:"🏗️ Visitor Log"},
       {key:"delays",label:"⚠️ Delays & Issues"},
@@ -17894,6 +17951,7 @@ function AppInner(){
 export default function App(){
   return(
     <ErrorBoundary>
+      <ToastHost/>
       <AppInner/>
     </ErrorBoundary>
   );
