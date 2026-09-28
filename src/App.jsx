@@ -20843,6 +20843,8 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
               rate:m(r.rate),
               otHours:r.ot_hours||0,
               otRate:m(r.ot_rate),
+              travelHours:r.travel_hours||0,
+              travelRate:m(r.travel_rate!==""&&r.travel_rate!=null?r.travel_rate:r.rate),
               amount:m(laborRowAmt(r)),
             })),
             equipment:equipment.map(r=>({
@@ -20917,7 +20919,8 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const laborRowAmt=(r)=>isPerDiemRow(r)
     ?perDiemCount(r)*(parseFloat(r.rate)||0)
     :(parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)
-     +(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0);
+     +(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0)
+     +(parseFloat(r.travel_hours)||0)*(parseFloat(r.travel_rate!==""&&r.travel_rate!=null?r.travel_rate:r.rate)||0);
   const workers=labor.filter(r=>!isPerDiemRow(r));
   const perDiemRow=labor.find(isPerDiemRow);
   const perDiemAmt=perDiemRow?laborRowAmt(perDiemRow):0;
@@ -20925,6 +20928,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const laborTotal=labor.reduce((s,r)=>s+laborRowAmt(r),0);
   const totalRegHrs=workers.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
   const totalOtHrs =workers.reduce((s,r)=>s+(parseFloat(r.ot_hours)||0),0);
+  const totalTrvHrs=workers.reduce((s,r)=>s+(parseFloat(r.travel_hours)||0),0);
   function setPerDiem(count,rate){
     const others=labor.filter(r=>!isPerDiemRow(r));
     const n=parseFloat(count);
@@ -21010,7 +21014,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       client_email:bsEmail||null,client_contact:(clientName||bsName)||null,
       show_markup:showMarkup,
       photos,
-      reg_hours:totalRegHrs,ot_hours:totalOtHrs,
+      reg_hours:totalRegHrs,ot_hours:totalOtHrs,travel_hours:totalTrvHrs,
       labor_total:laborTotal,equipment_total:equipTotal,
       materials_total:matsTotal,other_total:otherTotal,
       subtotal,markup_amount:markupAmt,grand_total:grandTotal,
@@ -21085,19 +21089,22 @@ ${labor.length?`<div style="margin-bottom:8px"><div style="background:#1f3864;co
 <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
   <th style="${thStyle}left">Name</th><th style="${thStyle}left">Classification</th>
   <th style="${thStyle}center">Reg Hrs</th><th style="${thStyle}right">Reg Rate</th>
-  <th style="${thStyle}center">OT Hrs</th><th style="${thStyle}right">OT Rate</th><th style="${thStyle}right">Amount</th>
+  <th style="${thStyle}center">OT Hrs</th><th style="${thStyle}right">OT Rate</th>
+  ${totalTrvHrs>0?`<th style="${thStyle}center">Travel Hrs</th><th style="${thStyle}right">Travel Rate</th>`:""}<th style="${thStyle}right">Amount</th>
 </tr></thead><tbody>
 ${workers.map(r=>`<tr><td style="${tdStyle}left">${laborName(r)}</td><td style="${tdStyle}left">${r.classification||""}</td>
   <td style="${tdStyle}center">${r.hours||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td>
   <td style="${tdStyle}center">${r.ot_hours||""}</td><td style="${tdStyle}right">${(parseFloat(r.ot_hours)||0)>0?fmt(r.ot_rate):""}</td>
+  ${totalTrvHrs>0?`<td style="${tdStyle}center">${r.travel_hours||""}</td><td style="${tdStyle}right">${(parseFloat(r.travel_hours)||0)>0?fmt(r.travel_rate!==""&&r.travel_rate!=null?r.travel_rate:r.rate):""}</td>`:""}
   <td style="${tdStyle}right">${fmt(laborRowAmt(r))}</td></tr>`).join("")}
 ${perDiemRow?`<tr><td style="${tdStyle}left"><em>Per Diem</em></td><td style="${tdStyle}left">${perDiemHeads} employee${perDiemHeads!==1?"s":""}</td>
-  <td style="${tdStyle}center">${perDiemHeads}</td><td style="${tdStyle}right">${fmt(perDiemRow.rate)}</td><td></td><td></td>
+  <td style="${tdStyle}center">${perDiemHeads}</td><td style="${tdStyle}right">${fmt(perDiemRow.rate)}</td><td></td><td></td>${totalTrvHrs>0?"<td></td><td></td>":""}
   <td style="${tdStyle}right">${fmt(perDiemAmt)}</td></tr>`:""}
 <tr style="font-weight:700;background:#f9fafb">
   <td colspan="2" style="${tdStyle}right">Labor Total</td>
   <td style="${tdStyle}center">${totalRegHrs||0}</td><td></td>
   <td style="${tdStyle}center">${totalOtHrs||""}</td><td></td>
+  ${totalTrvHrs>0?`<td style="${tdStyle}center">${totalTrvHrs}</td><td></td>`:""}
   <td style="${tdStyle}right">${fmt(laborTotal)}</td></tr>
 </tbody></table></div>`:""}
 ${equipment.length?`<div style="margin-bottom:8px"><div style="background:#374151;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Equipment</div>
@@ -21285,7 +21292,7 @@ ${(()=>{
 
         {/* ── LABOR TAB ── */}
         {tab==="labor"&&<div>
-          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:"",ot_hours:"",ot_rate:""})}
+          <button onClick={()=>addRow(setLabor,{name:"",classification:"",hours:"",rate:"",ot_hours:"",ot_rate:"",travel_hours:"",travel_rate:""})}
             style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Worker</button>
           {workers.map(r=>(
             <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}>
@@ -21358,9 +21365,22 @@ ${(()=>{
                     placeholder="0.00" style={ri}/>
                 </div>
               </div>
-              {(parseFloat(r.ot_hours)||0)>0&&<div style={{fontSize:11,color:T.muted,marginTop:6,display:"flex",justifyContent:"space-between"}}>
-                <span>{r.hours||0}h reg + <span style={{color:T.yellow}}>{r.ot_hours}h OT</span></span>
-                <span>{fmt((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))} + <span style={{color:T.yellow}}>{fmt((parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0))}</span></span>
+              {/* Travel time — billed at the regular rate unless a travel rate is entered. */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:8}}>
+                <div><label style={{...lbl,color:T.blue}}>Travel Hours</label>
+                  <input type="number" step="0.5" value={r.travel_hours||""}
+                    onChange={e=>updateRow(setLabor,r.id,"travel_hours",e.target.value)}
+                    placeholder="0" style={ri}/>
+                </div>
+                <div><label style={{...lbl,color:T.blue}}>Travel Rate / Hr ($) <span style={{color:T.muted,fontWeight:400}}>blank = reg rate</span></label>
+                  <input type="number" step="0.01" value={r.travel_rate||""}
+                    onChange={e=>updateRow(setLabor,r.id,"travel_rate",e.target.value)}
+                    placeholder={r.rate||"0.00"} style={ri}/>
+                </div>
+              </div>
+              {((parseFloat(r.ot_hours)||0)>0||(parseFloat(r.travel_hours)||0)>0)&&<div style={{fontSize:11,color:T.muted,marginTop:6,display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:6}}>
+                <span>{r.hours||0}h reg{(parseFloat(r.ot_hours)||0)>0?<> + <span style={{color:T.yellow}}>{r.ot_hours}h OT</span></>:null}{(parseFloat(r.travel_hours)||0)>0?<> + <span style={{color:T.blue}}>{r.travel_hours}h travel</span></>:null}</span>
+                <span>{fmt((parseFloat(r.hours)||0)*(parseFloat(r.rate)||0))}{(parseFloat(r.ot_hours)||0)>0?<> + <span style={{color:T.yellow}}>{fmt((parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0))}</span></>:null}{(parseFloat(r.travel_hours)||0)>0?<> + <span style={{color:T.blue}}>{fmt((parseFloat(r.travel_hours)||0)*(parseFloat(r.travel_rate!==""&&r.travel_rate!=null?r.travel_rate:r.rate)||0))}</span></>:null}</span>
               </div>}
             </div>
           ))}
