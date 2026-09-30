@@ -479,7 +479,7 @@ const API={
     travelers:{forPart:(pid)=>sb(`/mfg_travelers?part_id=eq.${pid}&limit=1`),upsert:(d)=>sb('/mfg_travelers',{method:'POST',body:d,prefer:'return=representation',resolution:'merge-duplicates'})},
     stageLog:{forPart:(pid)=>sb(`/mfg_stage_log?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_stage_log',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_stage_log?id=eq.${id}`,{method:'DELETE'})},
     assemblyLog:{forPart:(pid)=>sb(`/mfg_assembly_log?part_id=eq.${pid}&order=completion_date.desc`),forJob:(jid)=>sb(`/mfg_assembly_log?job_id=eq.${jid}&order=completion_date.desc`),create:(d)=>sb('/mfg_assembly_log',{method:'POST',body:d,prefer:'return=representation'})},
-    shippingLog:{forPart:(pid)=>sb(`/mfg_shipping_log?part_id=eq.${pid}&order=ship_date.desc`),forJob:(jid)=>sb(`/mfg_shipping_log?job_id=eq.${jid}&order=ship_date.desc`),create:(d)=>sb('/mfg_shipping_log',{method:'POST',body:d,prefer:'return=representation'})},
+    shippingLog:{forPart:(pid)=>sb(`/mfg_shipping_log?part_id=eq.${pid}&order=ship_date.desc`),forJob:(jid)=>sb(`/mfg_shipping_log?job_id=eq.${jid}&order=ship_date.desc`),create:(d)=>sb('/mfg_shipping_log',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_shipping_log?id=eq.${id}`,{method:'PATCH',body:d,silent:true})},
     ctq:{forJob:(jid)=>sb(`/mfg_ctq_sheets?job_id=eq.${jid}&order=created_at.desc`),
       create:(d)=>sb('/mfg_ctq_sheets',{method:'POST',body:d,prefer:'return=representation'}),
       update:(id,d)=>sb(`/mfg_ctq_sheets?id=eq.${id}`,{method:'PATCH',body:d}),
@@ -19900,6 +19900,12 @@ function MfgDocViewer({doc,onBack,onDownload,fmtSize}){
 }
 
 function MfgBillingTab({job,user,onErr}){
+  const [partsForPrice,setPartsForPrice]=useState([]);
+  useEffect(()=>{API.mfg.parts.forJob(job.id).then(p=>setPartsForPrice(p||[])).catch(()=>{});},[job.id]);
+  async function setPartPrice(p,v){
+    const unit_price=v===""?null:parseFloat(v);
+    try{await API.mfg.parts.update(p.id,{unit_price});setPartsForPrice(ps=>ps.map(x=>x.id===p.id?{...x,unit_price}:x));}catch(e){onErr&&onErr(e.message);}
+  }
   const [openInvoice,setOpenInvoice]=useState(null);
   const [rate,setRate]=useState(String(job.labor_rate??75));
   const [savingRate,setSavingRate]=useState(false);
@@ -19928,20 +19934,41 @@ function MfgBillingTab({job,user,onErr}){
 
   return(
     <div>
-      <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.purple}`}}>
-        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Shop Rate</div>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:15,color:T.muted}}>$</span>
-          <input type="number" step="0.01" value={rate} onChange={e=>setRate(e.target.value)}
-            onBlur={saveRate}
-            style={{...inp,width:110,fontSize:16,fontWeight:800,padding:"8px 10px",textAlign:"right"}}/>
-          <span style={{fontSize:13,color:T.sub}}>per man hour</span>
-          {savingRate&&<span style={{fontSize:11,color:T.muted}}>saving…</span>}
-        </div>
-        <div style={{fontSize:11,color:T.muted,marginTop:7,lineHeight:1.5}}>
-          Used when pulling labor onto an invoice. Each invoice records the rate it billed at, so changing this later won't restate anything already sent.
-        </div>
+      {/* Per-part pricing — the primary way manufacturing bills */}
+      <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:4}}>Price per part</div>
+        <div style={{fontSize:11,color:T.muted,marginBottom:10,lineHeight:1.5}}>Invoices are built from what shipped: pick a date range, tick the shipments, and each part bills at this price. You can override on any invoice.</div>
+        {partsForPrice.length===0&&<div style={{fontSize:12,color:T.muted}}>No finished parts on this job yet — add one on the Overview tab.</div>}
+        {partsForPrice.map(p=>(
+          <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 0",borderBottom:`1px solid ${T.border}`}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:800,color:T.text}}>{p.part_number}</div>
+              {p.description&&<div style={{fontSize:11,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.description}</div>}
+            </div>
+            <span style={{fontSize:13,color:T.muted}}>$</span>
+            <input type="number" step="0.01" defaultValue={p.unit_price??""} onBlur={e=>setPartPrice(p,e.target.value)} placeholder="0.00"
+              style={{...inp,width:110,fontSize:15,fontWeight:800,padding:"7px 10px",textAlign:"right"}}/>
+            <span style={{fontSize:12,color:T.sub,width:36}}>each</span>
+          </div>
+        ))}
       </div>
+
+      <details style={{marginBottom:14}}>
+        <summary style={{cursor:"pointer",fontSize:12,color:T.muted,padding:"6px 0"}}>Hourly shop rate (for labor-billed invoices) — ${rate}/man-hour</summary>
+        <div style={{...cardS,marginTop:8,borderLeft:`3px solid ${T.purple}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:15,color:T.muted}}>$</span>
+            <input type="number" step="0.01" value={rate} onChange={e=>setRate(e.target.value)}
+              onBlur={saveRate}
+              style={{...inp,width:110,fontSize:16,fontWeight:800,padding:"8px 10px",textAlign:"right"}}/>
+            <span style={{fontSize:13,color:T.sub}}>per man hour</span>
+            {savingRate&&<span style={{fontSize:11,color:T.muted}}>saving…</span>}
+          </div>
+          <div style={{fontSize:11,color:T.muted,marginTop:7,lineHeight:1.5}}>
+            Only used if you pull logged hours onto an invoice instead of shipped parts. Each invoice records the rate it billed at.
+          </div>
+        </div>
+      </details>
 
       <InvoiceList mfgJob={job} user={user}
         onNew={()=>setOpenInvoice({})} onOpen={inv=>setOpenInvoice(inv)} onErr={onErr}/>
@@ -20072,6 +20099,7 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
   const [rate,setRate]=useState(String(job.labor_rate??75));
   const [saving,setSaving]=useState(false);
   const [showPull,setShowPull]=useState(false);
+  const [showShip,setShowShip]=useState(false);
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
 
   // Each line has a unit: "hour" (employees × hours × rate, the original
@@ -20135,9 +20163,16 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
 
       // Flag the labour entries that were pulled onto this invoice.
       const stamp={invoiced:true,invoice_no:f.invoice_no,invoiced_at:new Date().toISOString()};
-      const ids=lines.flatMap(l=>l.source?.ids||[]);
+      const ids=lines.filter(l=>l.source?.type!=="shipments").flatMap(l=>l.source?.ids||[]);
       await Promise.all(ids.map(id=>
         API.mfg.labor.update(id,{...stamp,billed_rate:parseFloat(rate)||null}).catch(()=>{})));
+      // Stamp shipments billed on this invoice; release any that were removed from it.
+      const shipIds=lines.filter(l=>l.source?.type==="shipments").flatMap(l=>l.source.ids);
+      const prevShip=(invoice?.lines||[]).filter(l=>l.source?.type==="shipments").flatMap(l=>l.source.ids);
+      await Promise.all([
+        ...shipIds.map(id=>API.mfg.shippingLog.update(id,{billed_invoice_no:f.invoice_no,billed_at:new Date().toISOString()}).catch(()=>{})),
+        ...prevShip.filter(id=>!shipIds.includes(id)).map(id=>API.mfg.shippingLog.update(id,{billed_invoice_no:null,billed_at:null}).catch(()=>{})),
+      ]);
       onSaved&&onSaved();
     }catch(e){ onErr&&onErr(e.message); }
     setSaving(false);
@@ -20346,12 +20381,13 @@ table.tot .v{text-align:right;min-width:90px}
       </div>
 
       {/* Lines */}
+      <button onClick={()=>setShowShip(true)} style={{...primBtn,borderRadius:12,background:T.green,color:"#000",fontSize:14,marginBottom:8}}>
+        📤 Pull Shipped Parts (bill per part)
+      </button>
       <div style={{display:"flex",gap:8,marginBottom:10}}>
-        <button onClick={addLine} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ Add Week (hourly)</button>
-        <button onClick={addItemLine} style={{...primBtn,flex:1,borderRadius:12,background:T.purple,fontSize:13}}>+ Add Items (each)</button>
-        <button onClick={()=>setShowPull(true)} style={{...primBtn,flex:1,borderRadius:12,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,fontSize:13}}>
-          ↓ Pull Logged Hours
-        </button>
+        <button onClick={addItemLine} style={{...ghostBtn,flex:1,fontSize:12,padding:"9px",borderColor:T.purple+"60",color:T.purple}}>+ Add Items (each)</button>
+        <button onClick={addLine} style={{...ghostBtn,flex:1,fontSize:12,padding:"9px"}}>+ Add Week (hourly)</button>
+        <button onClick={()=>setShowPull(true)} style={{...ghostBtn,flex:1,fontSize:12,padding:"9px"}}>↓ Pull Logged Hours</button>
       </div>
 
       {lines.length===0&&<div style={{...cardS,textAlign:"center",padding:"24px",color:T.muted,fontSize:12,marginBottom:10}}>
@@ -20458,6 +20494,117 @@ table.tot .v{text-align:right;min-width:90px}
         onClose={()=>setShowPull(false)}
         onPull={(weeks)=>{setLines(ls=>[...ls,...weeks]);setShowPull(false);}}
         onErr={onErr}/>}
+      {showShip&&<PullShippedPartsModal job={job} invoiceNo={f.invoice_no}
+        onClose={()=>setShowShip(false)}
+        onPull={(newLines)=>{setLines(ls=>[...ls,...newLines]);setShowShip(false);}}
+        onErr={onErr}/>}
+    </div>
+  );
+}
+
+/* ── Pull shipped parts onto a manufacturing invoice ──────────────
+   Pick a ship-date window, tick the shipments, set the price per part
+   (remembered on the part), and one "each" line per part is added. The
+   shipping-log rows are stamped with the invoice number when it saves, so
+   they don't get billed twice; "Show already billed" reveals them. */
+function PullShippedPartsModal({job,invoiceNo,onClose,onPull,onErr}){
+  const first=new Date();first.setDate(1);
+  const [from,setFrom]=useState(first.toISOString().slice(0,10));
+  const [to,setTo]=useState(today());
+  const [ships,setShips]=useState([]);
+  const [parts,setParts]=useState([]);
+  const [sel,setSel]=useState({});
+  const [price,setPrice]=useState({});      // partKey → unit price
+  const [showBilled,setShowBilled]=useState(false);
+  const [loading,setLoading]=useState(true);
+  useEffect(()=>{(async()=>{
+    try{
+      const [sh,p]=await Promise.all([API.mfg.shippingLog.forJob(job.id).catch(()=>[]),API.mfg.parts.forJob(job.id).catch(()=>[])]);
+      setShips(sh||[]);setParts(p||[]);
+      const pr={};(p||[]).forEach(x=>{if(x.unit_price!=null)pr["p:"+x.id]=String(x.unit_price);});setPrice(pr);
+    }catch(e){onErr&&onErr(e.message);}
+    setLoading(false);
+  })();},[job.id]);
+  const keyOf=(s)=>s.part_id?"p:"+s.part_id:"d:"+(s.item_description||"item").toLowerCase();
+  const labelOf=(s)=>{if(s.part_id){const p=parts.find(x=>x.id===s.part_id);return p?`${p.part_number}${p.description?" — "+p.description:""}`:"Part";}return s.item_description||"Item";};
+  const inRange=ships.filter(s=>s.ship_date>=from&&s.ship_date<=to&&(showBilled||!s.billed_invoice_no));
+  // group by part
+  const groups={};inRange.forEach(s=>{const k=keyOf(s);(groups[k]=groups[k]||{key:k,label:labelOf(s),rows:[]}).rows.push(s);});
+  const glist=Object.values(groups).sort((a,b)=>a.label.localeCompare(b.label));
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const selRows=inRange.filter(s=>sel[s.id]);
+  const toggleGroup=(g,on)=>setSel(x=>{const n={...x};g.rows.forEach(r=>{n[r.id]=on;});return n;});
+  const totalFor=(g)=>g.rows.filter(r=>sel[r.id]).reduce((s,r)=>s+(parseInt(r.qty_shipped)||0),0)*(parseFloat(price[g.key])||0);
+  const grand=glist.reduce((s,g)=>s+totalFor(g),0);
+  const dt=(d)=>{const [y,m,dd]=String(d||"").split("-");return dd?`${m}/${dd}`:d;};
+  async function pull(){
+    const out=[];
+    for(const g of glist){
+      const rows=g.rows.filter(r=>sel[r.id]);if(!rows.length)continue;
+      const qty=rows.reduce((s,r)=>s+(parseInt(r.qty_shipped)||0),0);
+      const unit=parseFloat(price[g.key])||0;
+      const dates=rows.map(r=>r.ship_date).sort();
+      const bols=[...new Set(rows.map(r=>r.bol_number).filter(Boolean))];
+      out.push({id:uid(),unit:"each",period_start:dates[0],period_end:dates[dates.length-1],
+        description:`${g.label} — ${qty} shipped ${dt(dates[0])}${dates.length>1&&dates[0]!==dates[dates.length-1]?"–"+dt(dates[dates.length-1]):""}${bols.length?" · BOL "+bols.join(", "):""}`,
+        qty:String(qty),rate:unit.toFixed(2),source:{type:"shipments",ids:rows.map(r=>r.id)}});
+      // remember the price on the part for next time
+      if(g.key.startsWith("p:")){const pid=g.key.slice(2);const p=parts.find(x=>x.id===pid);if(p&&String(p.unit_price??"")!==String(unit))API.mfg.parts.update(pid,{unit_price:unit}).catch(()=>{});}
+    }
+    if(!out.length){onErr&&onErr("Tick at least one shipment.");return;}
+    onPull(out);
+  }
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:400,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{...cardS,width:"100%",maxWidth:640,maxHeight:"92vh",overflowY:"auto",padding:18}}>
+        <div style={{fontSize:15,fontWeight:900,color:T.text,marginBottom:2}}>📤 Pull Shipped Parts</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:12}}>Bill by the piece. Pick the ship-date window, tick what to invoice, set the price each.</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"end",marginBottom:10}}>
+          <div><label style={lbl}>Shipped from</label><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>to</label><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={inp}/></div>
+          <label style={{fontSize:11,color:T.muted,display:"flex",alignItems:"center",gap:6,paddingBottom:10,cursor:"pointer",whiteSpace:"nowrap"}}><input type="checkbox" checked={showBilled} onChange={e=>setShowBilled(e.target.checked)}/> Show already billed</label>
+        </div>
+        {loading&&<Spinner/>}
+        {!loading&&glist.length===0&&<div style={{textAlign:"center",padding:"30px 12px",color:T.muted,fontSize:12}}>No unbilled shipments between {from} and {to}.</div>}
+        {glist.map(g=>{
+          const all=g.rows.every(r=>sel[r.id]),some=g.rows.some(r=>sel[r.id]);
+          const qtySel=g.rows.filter(r=>sel[r.id]).reduce((s,r)=>s+(parseInt(r.qty_shipped)||0),0);
+          return(
+            <div key={g.key} style={{...cardS,marginBottom:8,padding:12,borderLeft:`3px solid ${some?T.green:T.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
+                <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",minWidth:0}}>
+                  <input type="checkbox" checked={all} ref={el=>{if(el)el.indeterminate=some&&!all;}} onChange={e=>toggleGroup(g,e.target.checked)}/>
+                  <span style={{fontSize:13,fontWeight:800,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.label}</span>
+                </label>
+                <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                  <span style={{fontSize:11,color:T.muted}}>$</span>
+                  <input type="number" step="0.01" value={price[g.key]||""} onChange={e=>setPrice(p=>({...p,[g.key]:e.target.value}))} placeholder="price each" style={{...inp,width:100,padding:"6px 8px",fontSize:13,textAlign:"right"}}/>
+                  <span style={{fontSize:11,color:T.muted}}>each</span>
+                </div>
+              </div>
+              {g.rows.map(r=>(
+                <label key={r.id} style={{display:"grid",gridTemplateColumns:"20px 80px 1fr auto",gap:8,alignItems:"center",fontSize:12,padding:"4px 0",color:r.billed_invoice_no?T.muted:T.sub,cursor:"pointer"}}>
+                  <input type="checkbox" checked={!!sel[r.id]} onChange={e=>setSel(x=>({...x,[r.id]:e.target.checked}))}/>
+                  <span>{r.ship_date}</span>
+                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.customer||""}{r.bol_number?` · BOL ${r.bol_number}`:""}{r.billed_invoice_no?` · billed on ${r.billed_invoice_no}`:""}</span>
+                  <span style={{fontWeight:800,color:T.text}}>{r.qty_shipped} pcs</span>
+                </label>
+              ))}
+              {some&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginTop:6,paddingTop:6,borderTop:`1px solid ${T.border}`}}>
+                <span style={{color:T.muted}}>{qtySel} × {money(price[g.key])}</span><span style={{fontWeight:900,color:T.green}}>{money(totalFor(g))}</span>
+              </div>}
+            </div>
+          );
+        })}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:12,marginBottom:12}}>
+          <span style={{fontSize:12,color:T.muted}}>{selRows.length} shipment{selRows.length!==1?"s":""} selected</span>
+          <span style={{fontSize:18,fontWeight:900,color:T.green}}>{money(grand)}</span>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={pull} disabled={!selRows.length} style={{...primBtn,flex:2,borderRadius:12,background:T.green,color:"#000",opacity:selRows.length?1:0.5}}>Add to Invoice</button>
+          <button onClick={onClose} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+        </div>
+      </div>
     </div>
   );
 }
