@@ -20222,9 +20222,21 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
     setSaving(false);
   }
 
-  function printInvoice(){
+  async function printInvoice(){
     const w=window.open("","_blank");
     if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups to print.");return;}
+    // Signed tickets: images print as-is; PDFs are rendered to page images
+    // so they come out as real pages in the same print job.
+    const chosen=ships.filter(s=>tickets.includes(s.id));
+    let ticketPages=[];
+    if(chosen.length){
+      w.document.write(`<html><body style="font-family:Arial;padding:40px;color:#444">Preparing ${chosen.length} signed ticket${chosen.length!==1?"s":""}…</body></html>`);
+      try{
+        const prepared=await prepareDocsForPrint(chosen.map(s=>({id:s.id,name:"ticket",file:s.signed_ticket_url,file_name:s.signed_ticket_path||s.signed_ticket_url,file_type:s.signed_ticket_type||""})),()=>{});
+        ticketPages=chosen.map((s,i)=>({s,pages:prepared[i]?.pages||[],error:prepared[i]?.error||""}));
+      }catch(e){ticketPages=chosen.map(s=>({s,pages:[],error:e.message}));}
+      w.document.open();
+    }
     const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
     const n0=(v)=>v?Number(v).toLocaleString("en-US"):"";
     const m2=(v)=>v?Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"";
@@ -20366,14 +20378,14 @@ table.tot .v{text-align:right;min-width:90px}
 
 <div class="end"><span>Thank you for your business.</span>
   <span>Atlantic Industrial Mechanical &amp; Environmental Inc.</span></div>
-${ships.filter(s=>tickets.includes(s.id)).map((s,i,arr)=>{
-  const isImg=/\.(png|jpe?g|gif|webp)(\?|$)/i.test(s.signed_ticket_url)||(s.signed_ticket_type||"").startsWith("image/");
-  return `<div style="page-break-before:always;padding-top:12px">
-  <div style="font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:1px">Proof of Delivery ${i+1} of ${arr.length} · Invoice ${esc(f.invoice_no)}</div>
-  <div style="font-size:11pt;font-weight:700;margin:2px 0 8px">Shipped ${esc(s.ship_date)} · ${esc(s.qty_shipped)} pcs${s.bol_number?" · BOL "+esc(s.bol_number):""}${s.customer?" · "+esc(s.customer):""}</div>
-  ${isImg?`<img src="${s.signed_ticket_url}" style="max-width:100%;max-height:9in;object-fit:contain;border:1px solid #ddd"/>`
-         :`<div style="border:1px solid #ddd;padding:24px;text-align:center;color:#444;font-size:10pt">Signed ticket is a PDF — attached separately: <br/><a href="${s.signed_ticket_url}">${s.signed_ticket_url}</a></div>`}
-</div>`;}).join("")}
+${ticketPages.map(({s,pages,error},i,arr)=>{
+  const head=(pg,n)=>`<div style="font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:1px">Proof of Delivery ${i+1} of ${arr.length}${n>1?` · page ${pg} of ${n}`:""} · Invoice ${esc(f.invoice_no)}</div>
+  <div style="font-size:11pt;font-weight:700;margin:2px 0 8px">Shipped ${esc(s.ship_date)} · ${esc(s.qty_shipped)} pcs${s.bol_number?" · BOL "+esc(s.bol_number):""}${s.customer?" · "+esc(s.customer):""}</div>`;
+  if(!pages.length)return `<div style="page-break-before:always;padding-top:12px">${head(1,1)}
+    <div style="border:1px solid #ddd;padding:24px;text-align:center;color:#444;font-size:10pt">Signed ticket could not be rendered${error?" ("+esc(error)+")":""}.<br/><a href="${s.signed_ticket_url}">${s.signed_ticket_url}</a></div></div>`;
+  return pages.map((src,pi)=>`<div style="page-break-before:always;padding-top:12px">${head(pi+1,pages.length)}
+    <img src="${src}" style="max-width:100%;max-height:9.2in;object-fit:contain;border:1px solid #ddd"/></div>`).join("");
+}).join("")}
 </body></html>`);
     w.document.close();setTimeout(()=>{w.focus();w.print();},400);
   }
