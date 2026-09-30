@@ -18134,7 +18134,7 @@ function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
       {!loading&&rows.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
         <div style={{fontSize:44,marginBottom:12}}>🧾</div>
         <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No Invoices</div>
-        <div style={{fontSize:12}}>Create one above. You can pull lines straight from {mfgJob?"unbilled shop labor":"unbilled daily reports and T&M tickets"}.</div>
+        <div style={{fontSize:12}}>Create one above. You can pull lines straight from {mfgJob?"shipped parts":"unbilled daily reports and T&M tickets"}.</div>
       </div>}
 
       {rows.map(inv=>(
@@ -19937,7 +19937,7 @@ function MfgBillingTab({job,user,onErr}){
       {/* Per-part pricing — the primary way manufacturing bills */}
       <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`}}>
         <div style={{fontSize:11,fontWeight:700,color:T.green,textTransform:"uppercase",letterSpacing:"1px",marginBottom:4}}>Price per part</div>
-        <div style={{fontSize:11,color:T.muted,marginBottom:10,lineHeight:1.5}}>Invoices are built from what shipped: pick a date range, tick the shipments, and each part bills at this price. You can override on any invoice.</div>
+        <div style={{fontSize:11,color:T.muted,marginBottom:10,lineHeight:1.5}}>Invoices are built from what shipped: open an invoice, tap <b style={{color:T.text}}>Pull Shipped Parts</b>, pick the date range, and each part bills at this price. You can override on any invoice.</div>
         {partsForPrice.length===0&&<div style={{fontSize:12,color:T.muted}}>No finished parts on this job yet — add one on the Overview tab.</div>}
         {partsForPrice.map(p=>(
           <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 0",borderBottom:`1px solid ${T.border}`}}>
@@ -19953,22 +19953,6 @@ function MfgBillingTab({job,user,onErr}){
         ))}
       </div>
 
-      <details style={{marginBottom:14}}>
-        <summary style={{cursor:"pointer",fontSize:12,color:T.muted,padding:"6px 0"}}>Hourly shop rate (for labor-billed invoices) — ${rate}/man-hour</summary>
-        <div style={{...cardS,marginTop:8,borderLeft:`3px solid ${T.purple}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:15,color:T.muted}}>$</span>
-            <input type="number" step="0.01" value={rate} onChange={e=>setRate(e.target.value)}
-              onBlur={saveRate}
-              style={{...inp,width:110,fontSize:16,fontWeight:800,padding:"8px 10px",textAlign:"right"}}/>
-            <span style={{fontSize:13,color:T.sub}}>per man hour</span>
-            {savingRate&&<span style={{fontSize:11,color:T.muted}}>saving…</span>}
-          </div>
-          <div style={{fontSize:11,color:T.muted,marginTop:7,lineHeight:1.5}}>
-            Only used if you pull logged hours onto an invoice instead of shipped parts. Each invoice records the rate it billed at.
-          </div>
-        </div>
-      </details>
 
       <InvoiceList mfgJob={job} user={user}
         onNew={()=>setOpenInvoice({})} onOpen={inv=>setOpenInvoice(inv)} onErr={onErr}/>
@@ -20369,15 +20353,6 @@ table.tot .v{text-align:right;min-width:90px}
           <div><label style={lbl}>Billing Period From</label><input type="date" value={f.period_from} onChange={e=>set("period_from",e.target.value)} style={ri}/></div>
           <div><label style={lbl}>Billing Period To</label><input type="date" value={f.period_to} onChange={e=>set("period_to",e.target.value)} style={ri}/></div>
         </div>
-      </div>
-
-      {/* Rate */}
-      <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`,display:"flex",alignItems:"center",gap:10}}>
-        <span style={{fontSize:12,fontWeight:700,color:T.sub}}>Rate</span>
-        <span style={{fontSize:15,color:T.muted}}>$</span>
-        <input type="number" step="0.01" value={rate} onChange={e=>setRate(e.target.value)}
-          style={{...inp,width:104,fontSize:16,fontWeight:800,padding:"7px 9px",textAlign:"right"}}/>
-        <span style={{fontSize:12,color:T.sub}}>per man-hour</span>
       </div>
 
       {/* Lines */}
