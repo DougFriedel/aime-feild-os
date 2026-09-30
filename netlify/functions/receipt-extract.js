@@ -5,7 +5,7 @@
 
 const MODEL = process.env.RECEIPT_MODEL || "claude-sonnet-4-6";
 
-exports.handler = async (event) => {
+export const handler = async (event) => {
   if (event.httpMethod !== "POST") return { statusCode: 405, body: "POST only" };
   if (!process.env.ANTHROPIC_API_KEY) return { statusCode: 500, body: "ANTHROPIC_API_KEY not set" };
 
