@@ -13985,6 +13985,36 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [receipts,setReceipts]=useState([]); // flat list of all receipts for this job
   const [assemblyLogs,setAssemblyLogs]=useState([]);
   const [shippingLogs,setShippingLogs]=useState([]);
+  // Signed shipping tickets: one per shipment, stored in the documents bucket
+  // and mirrored into the job's Docs tab under "Shipping Ticket".
+  const ticketTarget=useRef(null),ticketCam=useRef(null),ticketFile=useRef(null);
+  async function attachTicket(file){
+    const s0=ticketTarget.current;if(!s0||!file)return;
+    try{
+      let blob=file,type=file.type||"";
+      if(type.startsWith("image/")){const data=await compressImg(file,1400,0.8);blob=dataUrlToBlob(data);type=blob.type;}
+      const ext=type==="application/pdf"?"pdf":(type.split("/")[1]||"jpg").replace("jpeg","jpg");
+      const path=`shipping-tickets/${job.id}/${s0.id}/${Date.now()}.${ext}`;
+      await storageUpload("documents",path,blob,type||undefined);
+      const url=storagePublicUrl("documents",path);
+      const at=new Date().toISOString();
+      await sb(`/mfg_shipping_log?id=eq.${s0.id}`,{method:"PATCH",body:{signed_ticket_url:url,signed_ticket_path:path,signed_ticket_type:type,signed_ticket_at:at,signed_ticket_by:user.name}});
+      // Mirror into Docs so it's findable there too
+      const part=parts.find(p=>p.id===s0.part_id);
+      await API.mfg.docs.create({job_id:job.id,title:`Signed shipping ticket — ${s0.ship_date} · ${s0.qty_shipped} × ${part?.part_number||s0.item_description||"item"}${s0.bol_number?" · BOL "+s0.bol_number:""}`,
+        category:"Shipping Ticket",storage_path:path,file_name:file.name,file_type:type,file_size:blob.size,uploaded_by:user.name}).catch(()=>{});
+      await load();
+    }catch(e){setFormErr&&setFormErr(e.message);}
+  }
+  async function removeTicket(s0){
+    if(!window.confirm("Remove the signed ticket from this shipment?"))return;
+    try{
+      await sb(`/mfg_shipping_log?id=eq.${s0.id}`,{method:"PATCH",body:{signed_ticket_url:null,signed_ticket_path:null,signed_ticket_type:null,signed_ticket_at:null,signed_ticket_by:null}});
+      if(s0.signed_ticket_path){storageRemove("documents",s0.signed_ticket_path).catch(()=>{});
+        const docs=await API.mfg.docs.forJob(job.id).catch(()=>[]);const d=(docs||[]).find(x=>x.storage_path===s0.signed_ticket_path);if(d)API.mfg.docs.remove(d.id).catch(()=>{});}
+      await load();
+    }catch(e){setFormErr&&setFormErr(e.message);}
+  }
   const [loading,setLoading]=useState(true);
   const [tab,setTab]=useState("overview"); // overview | received | assembly | shipping
   const canAdmin=canMfg(user,"shop_floor");
@@ -14563,12 +14593,31 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
               <button onClick={()=>setShowShipForm(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
             </div>
           </div>}
+          <input ref={ticketCam} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{attachTicket(e.target.files?.[0]);e.target.value="";}}/>
+          <input ref={ticketFile} type="file" accept="image/*,.pdf" style={{display:"none"}} onChange={e=>{attachTicket(e.target.files?.[0]);e.target.value="";}}/>
           {shippingLogs.map(s=>{
             const part=parts.find(p=>p.id===s.part_id);
-            return(<div key={s.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.blue}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div>
+            const tk=s.signed_ticket_url;
+            const isImg=/\.(png|jpe?g|gif|webp)(\?|$)/i.test(tk||"")||(s.signed_ticket_type||"").startsWith("image/");
+            return(<div key={s.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${tk?T.green:T.blue}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+              <div style={{minWidth:0,flex:1}}>
                 <div style={{fontSize:14,fontWeight:800,color:T.blue}}>{s.qty_shipped} shipped — {part?.part_number||s.item_description||"—"}</div>
-                <div style={{fontSize:11,color:T.muted}}>{s.ship_date}{s.customer?" · "+s.customer:""}{s.bol_number?" · BOL: "+s.bol_number:""}</div>
+                <div style={{fontSize:11,color:T.muted}}>{s.ship_date}{s.customer?" · "+s.customer:""}{s.bol_number?" · BOL: "+s.bol_number:""}{s.billed_invoice_no?" · billed "+s.billed_invoice_no:""}</div>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+                  {tk
+                    ?<>
+                      <a href={tk} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:6,textDecoration:"none"}}>
+                        {isImg?<img src={tk} alt="" style={{width:44,height:44,objectFit:"cover",borderRadius:8,border:`1px solid ${T.green}60`}}/>:<span style={{fontSize:22}}>📄</span>}
+                        <span style={{fontSize:11,color:T.green,fontWeight:700}}>✓ Signed ticket{s.signed_ticket_at?` · ${new Date(s.signed_ticket_at).toLocaleDateString()}`:""}</span>
+                      </a>
+                      {canAdmin&&<button onClick={()=>removeTicket(s)} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:12}}>remove</button>}
+                    </>
+                    :<>
+                      <span style={{fontSize:11,color:T.yellow}}>No signed ticket yet</span>
+                      <button onClick={()=>{ticketTarget.current=s;ticketCam.current?.click();}} style={{...ghostBtn,padding:"4px 8px",fontSize:11,borderColor:T.blue+"60",color:T.blue}}>📷 Scan</button>
+                      <button onClick={()=>{ticketTarget.current=s;ticketFile.current?.click();}} style={{...ghostBtn,padding:"4px 8px",fontSize:11,borderColor:T.green+"60",color:T.green}}>📎 Upload</button>
+                    </>}
+                </div>
               </div>
               {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete?"))try{
                 await sb(`/mfg_shipping_log?id=eq.${s.id}`,{method:"DELETE"});
@@ -19725,7 +19774,7 @@ function MfgDocsTab({job,user,canAdmin,onErr}){
   const [q,setQ]=useState("");
   const fileRef=useRef(null);
 
-  const CATS=["Drawing","Customer PO","Spec / Procedure","Material Cert","Inspection / QC","Photo","Other"];
+  const CATS=["Drawing","Customer PO","Spec / Procedure","Material Cert","Inspection / QC","Shipping Ticket","Photo","Other"];
   const fmtSize=(b)=>!b?"":b<1048576?(b/1024).toFixed(0)+" KB":(b/1048576).toFixed(1)+" MB";
   const iconFor=(d)=>{const t=d.file_type||"",n=(d.file_name||"").toLowerCase();
     if(t.startsWith("image/"))return "🖼️";if(t==="application/pdf"||n.endsWith(".pdf"))return "📄";
@@ -20086,6 +20135,17 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
   const [showShip,setShowShip]=useState(false);
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
 
+  // Signed shipping tickets to attach as proof-of-delivery pages.
+  const [ships,setShips]=useState([]);
+  const [tickets,setTickets]=useState(()=>invoice?.attached_tickets||[]);   // shipment ids
+  useEffect(()=>{API.mfg.shippingLog.forJob(job.id).then(r=>setShips((r||[]).filter(x=>x.signed_ticket_url))).catch(()=>{});},[job.id]);
+  // When shipments are pulled onto the invoice, pre-select their tickets.
+  useEffect(()=>{
+    const pulled=new Set(lines.filter(l=>l.source?.type==="shipments").flatMap(l=>l.source.ids));
+    if(!pulled.size)return;
+    setTickets(t=>{const n=new Set(t);ships.forEach(s=>{if(pulled.has(s.id))n.add(s.id);});return [...n];});
+  },[lines,ships]);
+
   // Each line has a unit: "hour" (employees × hours × rate, the original
   // weekly-labor row) or "each" (qty × rate, for piece-priced items).
   const addLine=()=>setLines(ls=>[...ls,{id:uid(),unit:"hour",period_start:"",period_end:"",
@@ -20137,7 +20197,7 @@ function MfgInvoiceForm({job,user,invoice,onBack,onSaved,onErr}){
       retainage_pct:0,retainage_amount:0,
       amount_paid:paid,
       subtotal:linesSubtotal,total,
-      lines,
+      lines,attached_tickets:tickets,
       created_by:invoice?.created_by||user.name,
       updated_at:new Date().toISOString(),
     };
@@ -20306,6 +20366,14 @@ table.tot .v{text-align:right;min-width:90px}
 
 <div class="end"><span>Thank you for your business.</span>
   <span>Atlantic Industrial Mechanical &amp; Environmental Inc.</span></div>
+${ships.filter(s=>tickets.includes(s.id)).map((s,i,arr)=>{
+  const isImg=/\.(png|jpe?g|gif|webp)(\?|$)/i.test(s.signed_ticket_url)||(s.signed_ticket_type||"").startsWith("image/");
+  return `<div style="page-break-before:always;padding-top:12px">
+  <div style="font-size:8pt;color:#666;text-transform:uppercase;letter-spacing:1px">Proof of Delivery ${i+1} of ${arr.length} · Invoice ${esc(f.invoice_no)}</div>
+  <div style="font-size:11pt;font-weight:700;margin:2px 0 8px">Shipped ${esc(s.ship_date)} · ${esc(s.qty_shipped)} pcs${s.bol_number?" · BOL "+esc(s.bol_number):""}${s.customer?" · "+esc(s.customer):""}</div>
+  ${isImg?`<img src="${s.signed_ticket_url}" style="max-width:100%;max-height:9in;object-fit:contain;border:1px solid #ddd"/>`
+         :`<div style="border:1px solid #ddd;padding:24px;text-align:center;color:#444;font-size:10pt">Signed ticket is a PDF — attached separately: <br/><a href="${s.signed_ticket_url}">${s.signed_ticket_url}</a></div>`}
+</div>`;}).join("")}
 </body></html>`);
     w.document.close();setTimeout(()=>{w.focus();w.print();},400);
   }
@@ -20413,6 +20481,32 @@ table.tot .v{text-align:right;min-width:90px}
           </div>}
         </div>
       ))}
+
+      {/* Signed shipping tickets → proof-of-delivery pages on the printed invoice */}
+      {ships.length>0&&<div style={{...cardS,marginTop:12,borderLeft:`3px solid ${T.green}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.green}}>📎 Attach signed shipping tickets</div>
+          <div style={{display:"flex",gap:8,fontSize:11}}>
+            <button onClick={()=>setTickets(ships.map(s=>s.id))} style={{background:"none",border:"none",color:T.blue,cursor:"pointer",fontFamily:"inherit"}}>All</button>
+            <button onClick={()=>setTickets([])} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontFamily:"inherit"}}>None</button>
+          </div>
+        </div>
+        <div style={{fontSize:11,color:T.muted,marginBottom:8}}>Ticked tickets print after the invoice as proof-of-delivery pages. Shipments pulled onto this invoice are ticked automatically.</div>
+        {ships.slice().sort((a,b)=>String(b.ship_date).localeCompare(String(a.ship_date))).map(s=>{
+          const on=tickets.includes(s.id);
+          const onInvoice=lines.some(l=>l.source?.type==="shipments"&&l.source.ids.includes(s.id));
+          const isImg=/\.(png|jpe?g|gif|webp)(\?|$)/i.test(s.signed_ticket_url)||(s.signed_ticket_type||"").startsWith("image/");
+          return(
+            <label key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 0",borderBottom:`1px solid ${T.border}`,cursor:"pointer",fontSize:12,color:on?T.text:T.sub}}>
+              <input type="checkbox" checked={on} onChange={e=>setTickets(t=>e.target.checked?[...new Set([...t,s.id])]:t.filter(x=>x!==s.id))}/>
+              {isImg?<img src={s.signed_ticket_url} alt="" style={{width:36,height:36,objectFit:"cover",borderRadius:6}}/>:<span style={{fontSize:20,width:36,textAlign:"center"}}>📄</span>}
+              <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.ship_date} · {s.qty_shipped} pcs{s.bol_number?` · BOL ${s.bol_number}`:""}{s.customer?` · ${s.customer}`:""}</span>
+              {onInvoice&&<span style={pill(T.green)}>on invoice</span>}
+              <a href={s.signed_ticket_url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:11,color:T.blue,textDecoration:"none"}}>view</a>
+            </label>
+          );
+        })}
+      </div>}
 
       {/* Totals */}
       <div style={{...cardS,marginTop:12,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
