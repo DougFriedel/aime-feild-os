@@ -2591,10 +2591,693 @@ function DivisionReportsTab({user,division,projects,onErr}){
   );
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════
+   PIPELINE ESTIMATING
+   Two tools, one record type (pipeline_estimates, kind = "bid" | "estimate"):
+     • Bid Sheet — lump-sum bid: crew mix + equipment → revenue per manhour;
+       bid items priced as crew × days × 10 manhours + rentals/materials/subs
+       with markups; summary with SG&A, profit, mob/demob spread, unit prices.
+     • Estimate — T&M day-rate: crews priced per day on the Colonial daily
+       report layout; scopes priced as crew-days × qty + materials + rentals.
+   All numbers live in `data` (jsonb). Rates ship with CPL 2025 defaults and
+   are editable on every estimate. Exports: Excel (live formulas) and PDF.
+   ═══════════════════════════════════════════════════════════════════ */
+const PL_LABOR_RATES=[{"cls": "Project Manager", "rate": 64.5}, {"cls": "Foreman", "rate": 63.25}, {"cls": "Technician", "rate": 60.75}, {"cls": "Inspector", "rate": 53.75}, {"cls": "Certified Welder", "rate": 60.75}, {"cls": "Fitter", "rate": 58.5}, {"cls": "Mechanic", "rate": 58.5}, {"cls": "Operator", "rate": 58.5}, {"cls": "Truck Driver", "rate": 58.5}, {"cls": "Helper (Welder)", "rate": 57.25}, {"cls": "Laborer", "rate": 51.0}, {"cls": "Foreman (Elect)", "rate": 82.25}, {"cls": "Electrician", "rate": 82.25}, {"cls": "Helper (Elect)", "rate": 45.5}, {"cls": "Per Diem", "rate": 190.0}];
+const PL_EQUIP_RATES=[{"section": "Trucks and Trailers"}, {"name": "Truck - 1 Ton", "rate": 21.5, "unit": "Hours"}, {"name": "Truck - 3/4 Ton w/ Snow Plow", "rate": 350.0, "unit": "Days"}, {"name": "Truck - 1/2 Ton", "rate": 18.5, "unit": "Hours"}, {"name": "Truck - Boom (20-29 Ton)", "rate": 65.0, "unit": "Hours"}, {"name": "Truck - Bucket", "rate": 45.0, "unit": "Hours"}, {"name": "Truck - Dump Truck (3 Axle)", "rate": 35.0, "unit": "Hours"}, {"name": "Truck - Haul Truck - No trailer", "rate": 70.0, "unit": "Hours"}, {"name": "Truck - Tru-Vac", "rate": 13500.0, "unit": "Month"}, {"name": "Truck - Welding Rig", "rate": 35.0, "unit": "Hours"}, {"name": "Trailer - Electrical - Colonial", "rate": 147.0, "unit": "Month"}, {"name": "Trailer - Lowboy - 2 axle", "rate": 28.0, "unit": "Hours"}, {"name": "Trailer - Tag along", "rate": 50.0, "unit": "Days"}, {"name": "Trailer - Tool Trailer - 18-25'", "rate": 175.0, "unit": "Days"}, {"name": "Trailer - Tool Trailer - 26-40'", "rate": 200.0, "unit": "Days"}, {"section": "Earthmoving and ROW Equipment"}, {"name": "ATV - 4 Wheel", "rate": 125.0, "unit": "Days"}, {"name": "Backhoe Loader - 80-105 HP", "rate": 62.45, "unit": "Hours"}, {"name": "Excavator - Mini - 2-8K LB", "rate": 299.0, "unit": "Days"}, {"name": "Excavator - Mini - 9K LB", "rate": 335.0, "unit": "Days"}, {"name": "Excavator -Mini - 10-11K LB", "rate": 335.0, "unit": "Days"}, {"name": "Excavator - Mini - 12-16K LB", "rate": 475.0, "unit": "Days"}, {"name": "Excavator - Mini - 17-20K LB", "rate": 540.0, "unit": "Days"}, {"name": "Excavator - Small - 21-29K LB", "rate": 565.0, "unit": "Days"}, {"name": "Excavator - Small - 30-33K LB", "rate": 632.0, "unit": "Days"}, {"name": "Excavator - Small - 34-37K LB", "rate": 687.0, "unit": "Days"}, {"name": "Excavator - Small - 38-42K LB", "rate": 742.0, "unit": "Days"}, {"name": "Excavator - Small - 43-47K LB", "rate": 797.0, "unit": "Days"}, {"name": "Excavator - Medium - 48-55K LB", "rate": 852.0, "unit": "Days"}, {"name": "Excavator - Medium - 56-64K LB", "rate": 935.0, "unit": "Days"}, {"name": "Excavator - Medium - 65-79K LB", "rate": 975.0, "unit": "Days"}, {"name": "Excavator - Large - 80-89K LB", "rate": 1050.0, "unit": "Days"}, {"name": "Excavator - Large - 90-119K LB", "rate": 1350.0, "unit": "Days"}, {"name": "Excavator - Large - 120-175K LB", "rate": 1750.0, "unit": "Days"}, {"name": "Excavator - Large - 176-225K LB", "rate": 1925.0, "unit": "Days"}, {"name": "Mower - Riding/Zero Turn", "rate": 175.0, "unit": "Days"}, {"name": "Skidsteer Loader - 70-80HP", "rate": 440.0, "unit": "Days"}, {"name": "Skidsteer Loader - 81-100 HP", "rate": 475.0, "unit": "Days"}, {"name": "Tractor - 50 HP 4x4 Tractor w/ Bush Hog", "rate": 36.5, "unit": "Hours"}, {"name": "Tractor - Farm w/ Bush Hog 26-40 HP", "rate": 27.5, "unit": "Hours"}, {"section": "Air Comps Blast Equip and Tools"}, {"name": "Air Compressor - 185 CFM", "rate": 195.0, "unit": "Days"}, {"name": "Air Compressor - 375 CFM", "rate": 275.0, "unit": "Days"}, {"name": "Air Impact Wrench - 1\"", "rate": 50.0, "unit": "Days"}, {"name": "Air Spade / Knife", "rate": 55.0, "unit": "Days"}, {"name": "Blast Rig - 4 Bag Pot w/ 185 CFM AC", "rate": 55.5, "unit": "Hours"}, {"name": "Blast Rig - 1 Pot w/ 375 CFM AC", "rate": 500.0, "unit": "Days"}, {"section": "Testing Eqjuip and Misc. Tools"}, {"name": "Bench & Volt Meter", "rate": 875.5, "unit": "Month"}, {"name": "Beveling Band - 30\"", "rate": 25.0, "unit": "Days"}, {"name": "Dearman Pipe Clamps", "rate": 25.0, "unit": "Days"}, {"name": "FL-9 Fiat-Allis", "rate": 41.05, "unit": "Hours"}, {"name": "Gasoline Emergancy Response Equipment", "rate": 5000.0, "unit": "Week"}, {"name": "Grove Man Lift 40ft", "rate": 29.95, "unit": "Hours"}, {"name": "HEPA Vacuum", "rate": 100.0, "unit": "Days"}, {"name": "Holiday Detector / Pipe Jeep", "rate": 72.0, "unit": "Days"}, {"name": "Hydraulic Torque", "rate": 200.0, "unit": "Days"}, {"name": "Hydro test pump", "rate": 60.0, "unit": "Days"}, {"name": "Hydrotest - High Pressure Test Equipment", "rate": 3800.0, "unit": "Days"}, {"name": "Jack Hammer", "rate": 72.0, "unit": "Days"}, {"name": "Laser Pump Aligner", "rate": 50.0, "unit": "Hours"}, {"name": "LEL/Gas Monitor - 4 Gas", "rate": 50.0, "unit": "Days"}, {"name": "Line Locator", "rate": 50.0, "unit": "Days"}, {"name": "Pipe Band Crawler", "rate": 25.0, "unit": "Days"}, {"name": "Pipe Beveling Machine 1 1/2-3\"", "rate": 25.0, "unit": "Days"}, {"name": "Pipe Beveling Machine 10-14\"", "rate": 40.0, "unit": "Days"}, {"name": "Pipe Beveling Machine 16-22\"", "rate": 100.0, "unit": "Days"}, {"name": "Tap Machine - 2\"", "rate": 190.0, "unit": "Days"}, {"name": "Torque Wrench - Pneumatic J5", "rate": 175.0, "unit": "Days"}, {"name": "Torque Wrench w/Multiplier Hand", "rate": 25.0, "unit": "Days"}, {"name": "Torque Wrench w/Sockets Hyd/Pneu", "rate": 195.0, "unit": "Days"}, {"name": "Wach Pipe Cutting Saw", "rate": 30.0, "unit": "Hours"}];
+const PL_BID_CREW=[{"cls": "Project Manager", "count": 0.5, "rt": 64.5, "ot": 96.75, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Foreman", "count": 1, "rt": 63.25, "ot": 94.875, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Technician", "count": 0, "rt": 60.75, "ot": 58.5, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Inspector", "count": 0, "rt": 53.75, "ot": 80.625, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Certified Welder", "count": 1, "rt": 60.75, "ot": 91.125, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Fitter", "count": 0, "rt": 58.5, "ot": 87.75, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Mechanic", "count": 2, "rt": 58.5, "ot": 87.75, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Operator", "count": 1, "rt": 58.5, "ot": 87.75, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Truck Driver", "count": 0.5, "rt": 58.5, "ot": 87.75, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Welder Helper", "count": 0, "rt": 57.25, "ot": 85.875, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Laborer", "count": 2, "rt": 51, "ot": 76.5, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Spray Technician", "count": 0, "rt": 0, "ot": 0, "rtHrs": 0, "otHrs": 0}, {"cls": "Project Coordinator", "count": 0, "rt": 0, "ot": 0, "rtHrs": 0, "otHrs": 0}];
+const PL_BID_EQUIP_DEFAULT=PL_EQUIP_RATES.filter(e=>!e.section).map(e=>({name:e.name,rate:e.rate,unit:e.unit,count:0}));
+
+const plMoney=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const plNum=(v)=>parseFloat(v)||0;
+
+function plDefaultBid(){
+  return{
+    kind:"bid",
+    rates:{labor:PL_BID_CREW.map(c=>({...c})),equipment:PL_BID_EQUIP_DEFAULT.map(e=>({...e})),
+      sgaPerMh:7.5,costFactor:0.8,markups:{gp:0.20,cont:0.10,equip:0.10,mat:0.12,sub:0.10},contingencyPct:0.10,hoursPerDay:10},
+    items:[{id:uid(),num:"1",name:"Mob / Demob",crewSize:"",days:"",isMob:true,units:1,materials:[],equipment:[],subs:[],notes:""},
+           {id:uid(),num:"2",name:"",crewSize:"",days:"",isMob:false,units:1,materials:[],equipment:[],subs:[],notes:""}],
+    checklist:{},
+  };
+}
+function plDefaultEstimate(){
+  const crewId=uid();
+  return{
+    kind:"estimate",
+    rates:{labor:PL_LABOR_RATES.map(l=>({...l})),equipment:PL_EQUIP_RATES.filter(e=>!e.section).map(e=>({...e})),otFactor:1.5,travelFactor:1,perDiem:190},
+    crews:[{id:crewId,name:"Crew",labor:[{id:uid(),cls:"Foreman",reg:8,ot:2,travel:0},{id:uid(),cls:"Operator",reg:8,ot:2,travel:0},{id:uid(),cls:"Laborer",reg:8,ot:2,travel:0}],
+      equipment:[{id:uid(),name:"Truck - 1 Ton",qty:10}],rentals:[],perDiemCount:0}],
+    scopes:[{id:uid(),name:"Scope 1",sow:"",tasks:[{id:uid(),desc:"",crewId,qty:1,note:""}],materials:[],rentals:[],matTaxPct:0.06,matMarkupPct:0.12,rentMarkupPct:0.10}],
+  };
+}
+
+/* ── Bid Sheet math ── */
+function plBidCalc(d){
+  const r=d.rates,hpd=plNum(r.hoursPerDay)||10;
+  const crewSize=r.labor.reduce((s,c)=>s+plNum(c.count),0);
+  const laborTotal=r.labor.reduce((s,c)=>s+((plNum(c.rt)*plNum(c.rtHrs))+(plNum(c.ot)*plNum(c.otHrs)))*plNum(c.count),0);
+  const laborRevMh=crewSize>0?laborTotal/crewSize/hpd:0;
+  const equipTotal=r.equipment.reduce((s,e)=>s+plNum(e.rate)*plNum(e.count),0);
+  const equipRevMh=crewSize>0?equipTotal/(crewSize*hpd):0;
+  const revMh=laborRevMh+equipRevMh;
+  const costMh=revMh*(plNum(r.costFactor)||0.8);
+  const mk=r.markups;
+  const items=d.items.map(it=>{
+    const mh=plNum(it.crewSize)*plNum(it.days)*hpd;
+    const le=mh*revMh;
+    const sum=(arr)=>(arr||[]).reduce((s,x)=>s+plNum(x.qty)*plNum(x.unit),0);
+    const ext=sum(it.equipment),mat=sum(it.materials),sub=sum(it.subs);
+    const gp=le*plNum(mk.gp),cont=le*plNum(mk.cont),extMk=ext*plNum(mk.equip),matMk=mat*plNum(mk.mat),subMk=sub*plNum(mk.sub);
+    const stLE=le+gp+cont,stExt=ext+extMk,stMat=mat+matMk,stSub=sub+subMk;
+    const total=stLE+stExt+stMat+stSub;
+    return{...it,mh,le,ext,mat,sub,gp,cont,extMk,matMk,subMk,stLE,stExt,stMat,stSub,total};
+  });
+  const mobTotal=items.filter(i=>i.isMob).reduce((s,i)=>s+i.total,0);
+  const nonMob=items.filter(i=>!i.isMob);
+  const nonMobSum=nonMob.reduce((s,i)=>s+i.total,0);
+  const withDist=items.map(i=>{
+    if(i.isMob)return{...i,pct:0,dist:0,revised:i.total,unitPrice:i.total/(plNum(i.units)||1)};
+    const pct=nonMobSum>0?i.total/nonMobSum:0;const dist=pct*mobTotal;const revised=i.total+dist;
+    return{...i,pct,dist,revised,unitPrice:Math.ceil((revised/(plNum(i.units)||1))*100)/100};
+  });
+  const T=(k)=>items.reduce((s,i)=>s+(i[k]||0),0);
+  const tot={mh:T("mh"),le:T("le"),ext:T("ext"),mat:T("mat"),sub:T("sub"),gp:T("gp"),cont:T("cont"),extMk:T("extMk"),matMk:T("matMk"),subMk:T("subMk"),
+    stLE:T("stLE"),stExt:T("stExt"),stMat:T("stMat"),stSub:T("stSub"),total:T("total")};
+  tot.subtotalCost=tot.le+tot.ext+tot.mat+tot.sub;
+  tot.sga=tot.mh*plNum(r.sgaPerMh);
+  tot.sgaPct=tot.total>0?tot.sga/tot.total:0;
+  tot.totalCost=tot.subtotalCost+tot.sga;
+  tot.profit=tot.gp+tot.cont+tot.extMk+tot.matMk+tot.subMk;
+  tot.grossPct=tot.total>0?tot.profit/tot.total:0;
+  tot.net=tot.total-tot.totalCost;tot.netPct=tot.total>0?tot.net/tot.total:0;
+  tot.avgCrew=crewSize;tot.duration=crewSize>0?tot.mh/(crewSize*hpd):0;tot.dailyCrewCost=tot.duration>0?tot.stLE/tot.duration:0;
+  tot.costSummary={labor:tot.mh*laborRevMh*(plNum(r.costFactor)||0.8),internalEquip:tot.mh*equipRevMh*(plNum(r.costFactor)||0.8),sga:tot.sga,ext:tot.ext,mat:tot.mat,sub:tot.sub};
+  tot.costSummary.total=Object.values(tot.costSummary).reduce((s,v)=>s+v,0);
+  const margins=[["Labor",tot.le],["Equipment",tot.stExt],["Material",tot.stMat],["Subs",tot.stSub]].map(([k,v])=>({k,cost:v,m20:v*1.2,m25:v*1.25,m30:v*1.3}));
+  return{crewSize,laborTotal,laborRevMh,equipTotal,equipRevMh,revMh,costMh,items:withDist,tot,margins,mobTotal,hpd};
+}
+
+/* ── Estimate math ── */
+function plCrewDay(crew,rates){
+  const rateOf=(cls)=>plNum((rates.labor.find(l=>l.cls===cls)||{}).rate);
+  const labor=(crew.labor||[]).reduce((s,l)=>{const r=rateOf(l.cls);return s+plNum(l.reg)*r+plNum(l.ot)*r*plNum(rates.otFactor||1.5)+plNum(l.travel)*r*plNum(rates.travelFactor||1);},0);
+  const perDiem=plNum(crew.perDiemCount)*plNum(rates.perDiem);
+  const equipRate=(name)=>(rates.equipment.find(e=>e.name===name)||{});
+  const equipment=(crew.equipment||[]).reduce((s,e)=>s+plNum(e.qty)*plNum(e.rate!==undefined&&e.rate!==""?e.rate:equipRate(e.name).rate),0);
+  const rentals=(crew.rentals||[]).reduce((s,r)=>s+plNum(r.qty)*plNum(r.amount)+plNum(r.tax),0);
+  return{labor,perDiem,equipment,rentals,total:labor+perDiem+equipment+rentals,laborTotal:labor+perDiem};
+}
+function plEstCalc(d){
+  const crews=d.crews.map(c=>({...c,day:plCrewDay(c,d.rates)}));
+  const crewDay=(id)=>(crews.find(c=>c.id===id)||crews[0]||{day:{total:0}}).day.total;
+  const scopes=d.scopes.map(sc=>{
+    const tasks=(sc.tasks||[]).map(t=>({...t,dayCost:crewDay(t.crewId),total:plNum(t.qty)*crewDay(t.crewId)}));
+    const materials=(sc.materials||[]).map(m=>{const st=plNum(m.cost)*plNum(m.qty);const tax=st*plNum(sc.matTaxPct);const mk=st*plNum(sc.matMarkupPct);return{...m,st,tax,mk,total:st+tax+mk};});
+    const rentals=(sc.rentals||[]).map(r=>{const st=plNum(r.cost)*plNum(r.qty);const mk=st*plNum(sc.rentMarkupPct);return{...r,st,mk,total:st+mk};});
+    const laborTotal=tasks.reduce((s,t)=>s+t.total,0),matTotal=materials.reduce((s,m)=>s+m.total,0),rentTotal=rentals.reduce((s,r)=>s+r.total,0);
+    return{...sc,tasks,materials,rentals,laborTotal,matTotal,rentTotal,total:laborTotal+matTotal+rentTotal};
+  });
+  const total=scopes.reduce((s,x)=>s+x.total,0);
+  return{crews,scopes,total,crewDays:scopes.reduce((s,x)=>s+x.tasks.reduce((a,t)=>a+plNum(t.qty),0),0)};
+}
+
+/* ── Shared small UI ── */
+const plCell={...inp,padding:"6px 8px",fontSize:12.5};
+const plCellN={...inp,padding:"6px 8px",fontSize:12.5,textAlign:"right"};
+function PlSection({title,right,children,color}){
+  return(<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${color||T.blue}`}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
+      <div style={{fontSize:12,fontWeight:800,color:color||T.blue,textTransform:"uppercase",letterSpacing:"0.8px"}}>{title}</div>{right}
+    </div>{children}</div>);
+}
+function PlQtyList({rows,onChange,title,unitLabel="Unit Cost",color}){
+  const set=(i,k,v)=>onChange(rows.map((r,j)=>j===i?{...r,[k]:v}:r));
+  const total=rows.reduce((s,r)=>s+plNum(r.qty)*plNum(r.unit),0);
+  return(<div style={{marginBottom:8}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+      <span style={{fontSize:11,fontWeight:800,color:color||T.sub}}>{title}</span><span style={{fontSize:12,fontWeight:800,color:T.green}}>{plMoney(total)}</span></div>
+    {rows.map((r,i)=>(<div key={r.id||i} style={{display:"grid",gridTemplateColumns:"1fr 70px 100px 90px 26px",gap:6,marginBottom:4,alignItems:"center"}}>
+      <input value={r.desc||""} onChange={e=>set(i,"desc",e.target.value)} placeholder="Description" style={plCell}/>
+      <input type="number" value={r.qty??""} onChange={e=>set(i,"qty",e.target.value)} placeholder="Qty" style={plCellN}/>
+      <input type="number" step="0.01" value={r.unit??""} onChange={e=>set(i,"unit",e.target.value)} placeholder={unitLabel} style={plCellN}/>
+      <div style={{textAlign:"right",fontSize:12,color:T.text}}>{plMoney(plNum(r.qty)*plNum(r.unit))}</div>
+      <button onClick={()=>onChange(rows.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.red,cursor:"pointer"}}>×</button></div>))}
+    <button onClick={()=>onChange([...rows,{id:uid(),desc:"",qty:"",unit:""}])} style={{...ghostBtn,fontSize:11,padding:"5px 10px"}}>+ Add</button>
+  </div>);
+}
+
+/* ── Pipeline Estimating tab (list) ── */
+function PipelineEstimatingTab({user,onErr}){
+  const [rows,setRows]=useState([]);const [loading,setLoading]=useState(true);const [open,setOpen]=useState(null);const [q,setQ]=useState("");
+  async function load(){setLoading(true);try{setRows(await sb("/pipeline_estimates?select=*&order=updated_at.desc")||[]);}catch(e){onErr&&onErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[]);
+  async function create(kind){
+    const data=kind==="bid"?plDefaultBid():plDefaultEstimate();
+    try{const res=await sb("/pipeline_estimates",{method:"POST",body:{kind,name:kind==="bid"?"New Bid Sheet":"New Estimate",customer:"",description:"",location:"",status:"draft",data,created_by:user.name},prefer:"return=representation"});
+      const row=Array.isArray(res)?res[0]:res;await load();setOpen(row);}catch(e){onErr&&onErr(e.message);}
+  }
+  async function remove(r){if(!window.confirm(`Delete "${r.name}"?`))return;try{await sb(`/pipeline_estimates?id=eq.${r.id}`,{method:"DELETE"});await load();}catch(e){onErr&&onErr(e.message);}}
+  async function duplicate(r){try{await sb("/pipeline_estimates",{method:"POST",body:{kind:r.kind,name:r.name+" (copy)",customer:r.customer,description:r.description,location:r.location,status:"draft",data:r.data,created_by:user.name}});await load();}catch(e){onErr&&onErr(e.message);}}
+  if(open)return <PipelineEstimateEditor row={open} user={user} onBack={()=>{setOpen(null);load();}} onErr={onErr}/>;
+  const list=rows.filter(r=>!q||[r.name,r.customer,r.description,r.location].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase())));
+  const totalOf=(r)=>{try{return r.kind==="bid"?plBidCalc(r.data).tot.total:plEstCalc(r.data).total;}catch{return 0;}};
+  return(<div>
+    <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+      <button onClick={()=>create("bid")} style={{...primBtn,flex:1,borderRadius:12,background:T.blue,fontSize:13}}>+ New Bid Sheet</button>
+      <button onClick={()=>create("estimate")} style={{...primBtn,flex:1,borderRadius:12,background:T.teal,color:"#000",fontSize:13}}>+ New Estimate (T&M)</button>
+    </div>
+    <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search estimates…" style={{...inp,marginBottom:12}}/>
+    {loading&&<Spinner/>}
+    {!loading&&list.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}><div style={{fontSize:44,marginBottom:10}}>📐</div><div style={{fontSize:14,fontWeight:700,color:T.sub}}>No Pipeline estimates yet</div><div style={{fontSize:12,marginTop:4}}>Bid Sheet for lump-sum bids · Estimate for T&M day-rate work.</div></div>}
+    {list.map(r=>(<div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${r.kind==="bid"?T.blue:T.teal}`}}>
+      <div onClick={()=>setOpen(r)} style={{cursor:"pointer",display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:14,fontWeight:800,color:T.text}}>{r.name}<span style={{...pill(r.kind==="bid"?T.blue:T.teal),marginLeft:8,fontSize:9}}>{r.kind==="bid"?"BID SHEET":"ESTIMATE"}</span><span style={{...pill(r.status==="submitted"?T.green:T.muted),marginLeft:6,fontSize:9}}>{r.status||"draft"}</span></div>
+          <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{r.customer||"—"}{r.description?` · ${r.description}`:""}{r.location?` · ${r.location}`:""}</div>
+          <div style={{fontSize:10.5,color:T.muted,marginTop:2}}>Updated {new Date(r.updated_at||r.created_at).toLocaleDateString()} · {r.created_by||""}</div>
+        </div>
+        <div style={{fontSize:16,fontWeight:900,color:T.green,flexShrink:0}}>{plMoney(totalOf(r))}</div>
+      </div>
+      <div style={{display:"flex",gap:6,marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`}}>
+        <button onClick={()=>setOpen(r)} style={{...ghostBtn,flex:2,textAlign:"center",fontSize:12,padding:"7px"}}>Open</button>
+        <button onClick={()=>duplicate(r)} style={{...ghostBtn,fontSize:12,padding:"7px 12px"}}>Duplicate</button>
+        <button onClick={()=>remove(r)} style={{...ghostBtn,fontSize:12,padding:"7px 12px",color:T.red}}>🗑</button>
+      </div>
+    </div>))}
+  </div>);
+}
+
+/* ── Editor shell: header fields, save, export ── */
+function PipelineEstimateEditor({row,user,onBack,onErr}){
+  const [meta,setMeta]=useState({name:row.name||"",customer:row.customer||"",description:row.description||"",location:row.location||"",status:row.status||"draft"});
+  const [data,setData]=useState(row.data||(row.kind==="bid"?plDefaultBid():plDefaultEstimate()));
+  const [dirty,setDirty]=useState(false);const [saving,setSaving]=useState(false);const [tab,setTab]=useState(row.kind==="bid"?"items":"scopes");
+  const upd=(fn)=>{setData(d=>{const n=typeof fn==="function"?fn(d):fn;return n;});setDirty(true);};
+  const setM=(k,v)=>{setMeta(m=>({...m,[k]:v}));setDirty(true);};
+  useEffect(()=>{if(!dirty)return;const h=(e)=>{e.preventDefault();e.returnValue="";};window.addEventListener("beforeunload",h);return()=>window.removeEventListener("beforeunload",h);},[dirty]);
+  async function save(){setSaving(true);try{await sb(`/pipeline_estimates?id=eq.${row.id}`,{method:"PATCH",body:{...meta,data,updated_at:new Date().toISOString()}});setDirty(false);}catch(e){onErr&&onErr(e.message);}setSaving(false);}
+  const isBid=row.kind==="bid";
+  const calc=isBid?plBidCalc(data):plEstCalc(data);
+  const grand=isBid?calc.tot.total:calc.total;
+  const tabs=isBid?[["items","📋 Bid Items"],["rates","⚙️ Crew & Rates"],["summary","📊 Bid Summary"],["checklist","☑️ Checklist"]]:[["scopes","📋 Scopes"],["crews","👷 Crews"],["rates","⚙️ Rates"]];
+  return(<div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
+      <button onClick={()=>{if(dirty&&!window.confirm("Unsaved changes — leave anyway?"))return;onBack();}} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>← Estimates</button>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        <button onClick={()=>isBid?plExportBidXlsx(meta,data,calc):plExportEstXlsx(meta,data,calc)} style={{...ghostBtn,padding:"8px 12px",fontSize:12,borderColor:T.green+"60",color:T.green}}>📊 Excel</button>
+        <button onClick={()=>isBid?plPrintBid(meta,data,calc,user):plPrintEst(meta,data,calc,user)} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>🖨️ PDF</button>
+        <button onClick={save} disabled={saving||!dirty} style={{...primBtn,padding:"8px 16px",borderRadius:10,fontSize:12,background:dirty?T.green:T.blue,color:dirty?"#000":"#fff",opacity:saving?0.6:1}}>{saving?"Saving…":dirty?"💾 Save":"Saved"}</button>
+      </div>
+    </div>
+    <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${isBid?T.blue:T.teal}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}}>
+        <span style={pill(isBid?T.blue:T.teal)}>{isBid?"BID SHEET · lump sum":"ESTIMATE · T&M day rate"}</span>
+        <div style={{textAlign:"right"}}><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>{isBid?"Bid Total":"Project Total Estimate"}</div><div style={{fontSize:22,fontWeight:900,color:T.green}}>{plMoney(grand)}</div></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1.3fr 1fr 1fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>Name</label><input value={meta.name} onChange={e=>setM("name",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Customer</label><input value={meta.customer} onChange={e=>setM("customer",e.target.value)} placeholder="CPC" style={inp}/></div>
+        <div><label style={lbl}>Status</label><select value={meta.status} onChange={e=>setM("status",e.target.value)} style={inp}><option value="draft">Draft</option><option value="submitted">Submitted</option><option value="awarded">Awarded</option><option value="lost">Lost</option></select></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8}}>
+        <div><label style={lbl}>Job Description</label><input value={meta.description} onChange={e=>setM("description",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Location</label><input value={meta.location} onChange={e=>setM("location",e.target.value)} style={inp}/></div>
+      </div>
+    </div>
+    <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto"}}>
+      {tabs.map(([id,l])=><button key={id} onClick={()=>setTab(id)} style={{padding:"8px 14px",borderRadius:"10px 10px 0 0",background:tab===id?T.bg:"transparent",border:"none",borderBottom:tab===id?`2px solid ${isBid?T.blue:T.teal}`:"2px solid transparent",color:tab===id?T.text:T.muted,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{l}</button>)}
+    </div>
+    {isBid&&tab==="items"&&<PlBidItems data={data} calc={calc} upd={upd}/>}
+    {isBid&&tab==="rates"&&<PlBidRates data={data} calc={calc} upd={upd}/>}
+    {isBid&&tab==="summary"&&<PlBidSummary data={data} calc={calc} upd={upd}/>}
+    {isBid&&tab==="checklist"&&<PlChecklist data={data} upd={upd}/>}
+    {!isBid&&tab==="scopes"&&<PlEstScopes data={data} calc={calc} upd={upd}/>}
+    {!isBid&&tab==="crews"&&<PlEstCrews data={data} calc={calc} upd={upd}/>}
+    {!isBid&&tab==="rates"&&<PlEstRates data={data} upd={upd}/>}
+  </div>);
+}
+
+/* ── Bid Sheet: items ── */
+function PlBidItems({data,calc,upd}){
+  const setItem=(id,k,v)=>upd(d=>({...d,items:d.items.map(i=>i.id===id?{...i,[k]:v}:i)}));
+  const del=(id)=>{if(!window.confirm("Remove this bid item?"))return;upd(d=>({...d,items:d.items.filter(i=>i.id!==id)}));};
+  const add=()=>upd(d=>({...d,items:[...d.items,{id:uid(),num:String(d.items.length+1),name:"",crewSize:"",days:"",isMob:false,units:1,materials:[],equipment:[],subs:[],notes:""}]}));
+  const [openId,setOpenId]=useState(null);
+  return(<div>
+    <div style={{...cardS,marginBottom:12,fontSize:12,color:T.sub,lineHeight:1.6}}>
+      Revenue rate from Crew &amp; Rates: <b style={{color:T.text}}>{plMoney(calc.revMh)}/manhour</b> (labor {plMoney(calc.laborRevMh)} + equipment {plMoney(calc.equipRevMh)}) · crew of {calc.crewSize} · {calc.hpd} hrs/day. Each item: crew × days × {calc.hpd} = manhours.
+    </div>
+    {calc.items.map(it=>{const open=openId===it.id;return(
+      <div key={it.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${it.isMob?T.yellow:T.blue}`}}>
+        <div style={{display:"grid",gridTemplateColumns:"56px 1fr 90px 90px 110px 120px 28px",gap:8,alignItems:"end"}}>
+          <div><label style={lbl}>Item #</label><input value={it.num||""} onChange={e=>setItem(it.id,"num",e.target.value)} style={plCell}/></div>
+          <div><label style={lbl}>Description</label><input value={it.name||""} onChange={e=>setItem(it.id,"name",e.target.value)} placeholder="Excavation and Shoring 8'x8'x8'" style={plCell}/></div>
+          <div><label style={lbl}>Crew Size</label><input type="number" value={it.crewSize??""} onChange={e=>setItem(it.id,"crewSize",e.target.value)} style={plCellN}/></div>
+          <div><label style={lbl}>Days</label><input type="number" step="0.5" value={it.days??""} onChange={e=>setItem(it.id,"days",e.target.value)} style={plCellN}/></div>
+          <div><label style={lbl}>Manhours</label><div style={{...plCellN,background:T.surface,color:T.sub}}>{it.mh.toLocaleString()}</div></div>
+          <div><label style={lbl}>Total</label><div style={{...plCellN,background:T.surface,color:T.green,fontWeight:900}}>{plMoney(it.total)}</div></div>
+          <button onClick={()=>del(it.id)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:16,paddingBottom:6}}>×</button>
+        </div>
+        <div style={{display:"flex",gap:14,fontSize:11,color:T.muted,marginTop:8,flexWrap:"wrap",alignItems:"center"}}>
+          <span>L&amp;E {plMoney(it.le)}</span><span>Ext equip {plMoney(it.ext)}</span><span>Materials {plMoney(it.mat)}</span><span>Subs {plMoney(it.sub)}</span>
+          <label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",color:it.isMob?T.yellow:T.muted}}><input type="checkbox" checked={!!it.isMob} onChange={e=>setItem(it.id,"isMob",e.target.checked)}/> Mob/Demob (spread across other items)</label>
+          {!it.isMob&&<span>Units <input type="number" value={it.units??1} onChange={e=>setItem(it.id,"units",e.target.value)} style={{...plCellN,width:60,display:"inline-block",padding:"3px 6px"}}/> → unit price <b style={{color:T.text}}>{plMoney(it.unitPrice)}</b></span>}
+          <button onClick={()=>setOpenId(open?null:it.id)} style={{...ghostBtn,marginLeft:"auto",padding:"4px 10px",fontSize:11}}>{open?"▾ Hide":"▸ Equipment, materials, subs"}</button>
+        </div>
+        {open&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+          <PlQtyList title="External equipment / rentals" color={T.yellow} rows={it.equipment||[]} onChange={r=>setItem(it.id,"equipment",r)}/>
+          <PlQtyList title="Materials" color={T.purple} rows={it.materials||[]} onChange={r=>setItem(it.id,"materials",r)}/>
+          <PlQtyList title="Subcontracts" color={T.orange} rows={it.subs||[]} onChange={r=>setItem(it.id,"subs",r)}/>
+          <div><label style={lbl}>Notes / assumptions</label><input value={it.notes||""} onChange={e=>setItem(it.id,"notes",e.target.value)} placeholder="e.g. Colonial to supply materials for hydrotest header, studs, nuts, gaskets" style={plCell}/></div>
+        </div>}
+      </div>);})}
+    <button onClick={add} style={{...ghostBtn,width:"100%",fontSize:12,borderColor:T.blue,color:T.blue}}>+ Add Bid Item</button>
+  </div>);
+}
+
+/* ── Bid Sheet: crew & rates ── */
+function PlBidRates({data,calc,upd}){
+  const r=data.rates;
+  const setL=(i,k,v)=>upd(d=>({...d,rates:{...d.rates,labor:d.rates.labor.map((x,j)=>j===i?{...x,[k]:v,...(k==="rt"?{ot:plNum(v)*1.5}:{})}:x)}}));
+  const setE=(i,k,v)=>upd(d=>({...d,rates:{...d.rates,equipment:d.rates.equipment.map((x,j)=>j===i?{...x,[k]:v}:x)}}));
+  const setR=(k,v)=>upd(d=>({...d,rates:{...d.rates,[k]:v}}));
+  const setMk=(k,v)=>upd(d=>({...d,rates:{...d.rates,markups:{...d.rates.markups,[k]:plNum(v)/100}}}));
+  const [showAllEq,setShowAllEq]=useState(false);
+  const eqRows=r.equipment.map((e,i)=>({...e,i})).filter(e=>showAllEq||plNum(e.count)>0);
+  return(<div>
+    <PlSection title="Labor — crew mix (CPL 2025 rates, editable)" right={<span style={{fontSize:12,color:T.green,fontWeight:800}}>{plMoney(calc.laborRevMh)}/mh · crew {calc.crewSize}</span>}>
+      <div style={{display:"grid",gridTemplateColumns:"1.4fr 60px 80px 80px 70px 70px 100px",gap:6,fontSize:10,fontWeight:800,color:T.muted,textTransform:"uppercase",marginBottom:4}}><div>Classification</div><div>#</div><div>RT Rate</div><div>OT Rate</div><div>RT Hrs</div><div>OT Hrs</div><div style={{textAlign:"right"}}>Total/Day</div></div>
+      {r.labor.map((l,i)=>(<div key={i} style={{display:"grid",gridTemplateColumns:"1.4fr 60px 80px 80px 70px 70px 100px",gap:6,marginBottom:4,alignItems:"center"}}>
+        <input value={l.cls} onChange={e=>setL(i,"cls",e.target.value)} style={plCell}/>
+        <input type="number" step="0.5" value={l.count??""} onChange={e=>setL(i,"count",e.target.value)} style={plCellN}/>
+        <input type="number" step="0.01" value={l.rt??""} onChange={e=>setL(i,"rt",e.target.value)} style={plCellN}/>
+        <input type="number" step="0.01" value={l.ot??""} onChange={e=>setL(i,"ot",e.target.value)} style={plCellN}/>
+        <input type="number" step="0.5" value={l.rtHrs??""} onChange={e=>setL(i,"rtHrs",e.target.value)} style={plCellN}/>
+        <input type="number" step="0.5" value={l.otHrs??""} onChange={e=>setL(i,"otHrs",e.target.value)} style={plCellN}/>
+        <div style={{textAlign:"right",fontSize:12,color:T.text}}>{plMoney(((plNum(l.rt)*plNum(l.rtHrs))+(plNum(l.ot)*plNum(l.otHrs)))*plNum(l.count))}</div>
+      </div>))}
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginTop:6,paddingTop:6,borderTop:`1px solid ${T.border}`}}><span style={{color:T.muted}}>Total labor / day</span><b style={{color:T.text}}>{plMoney(calc.laborTotal)}</b></div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:12}}><span style={{color:T.muted}}>Revenue / manhour (÷ crew ÷ {calc.hpd})</span><b style={{color:T.green}}>{plMoney(calc.laborRevMh)}</b></div>
+      <button onClick={()=>upd(d=>({...d,rates:{...d.rates,labor:[...d.rates.labor,{cls:"",count:0,rt:0,ot:0,rtHrs:10.5,otHrs:2}]}}))} style={{...ghostBtn,fontSize:11,padding:"5px 10px",marginTop:6}}>+ Classification</button>
+    </PlSection>
+    <PlSection title="Equipment — company owned (CPL 2025 rates, editable)" color={T.yellow} right={<div style={{display:"flex",gap:10,alignItems:"center"}}><label style={{fontSize:11,color:T.muted,cursor:"pointer"}}><input type="checkbox" checked={showAllEq} onChange={e=>setShowAllEq(e.target.checked)}/> show full list</label><span style={{fontSize:12,color:T.green,fontWeight:800}}>{plMoney(calc.equipRevMh)}/mh</span></div>}>
+      <div style={{display:"grid",gridTemplateColumns:"1.6fr 70px 90px 80px 100px",gap:6,fontSize:10,fontWeight:800,color:T.muted,textTransform:"uppercase",marginBottom:4}}><div>Description</div><div>#</div><div>Rate</div><div>Per</div><div style={{textAlign:"right"}}>Total</div></div>
+      {eqRows.map(e=>(<div key={e.i} style={{display:"grid",gridTemplateColumns:"1.6fr 70px 90px 80px 100px",gap:6,marginBottom:4,alignItems:"center"}}>
+        <input value={e.name} onChange={ev=>setE(e.i,"name",ev.target.value)} style={plCell}/>
+        <input type="number" step="0.1" value={e.count??""} onChange={ev=>setE(e.i,"count",ev.target.value)} style={plCellN}/>
+        <input type="number" step="0.01" value={e.rate??""} onChange={ev=>setE(e.i,"rate",ev.target.value)} style={plCellN}/>
+        <select value={e.unit||"Days"} onChange={ev=>setE(e.i,"unit",ev.target.value)} style={plCell}>{["Hours","Days","Week","Month"].map(u=><option key={u}>{u}</option>)}</select>
+        <div style={{textAlign:"right",fontSize:12,color:T.text}}>{plMoney(plNum(e.rate)*plNum(e.count))}</div>
+      </div>))}
+      {!showAllEq&&eqRows.length===0&&<div style={{fontSize:11,color:T.muted}}>No equipment counted yet — tick "show full list" and enter a # for what the crew runs.</div>}
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginTop:6,paddingTop:6,borderTop:`1px solid ${T.border}`}}><span style={{color:T.muted}}>Total equipment / day</span><b style={{color:T.text}}>{plMoney(calc.equipTotal)}</b></div>
+      <button onClick={()=>{setShowAllEq(true);upd(d=>({...d,rates:{...d.rates,equipment:[...d.rates.equipment,{name:"",rate:0,unit:"Days",count:0}]}}));}} style={{...ghostBtn,fontSize:11,padding:"5px 10px",marginTop:6}}>+ Equipment</button>
+    </PlSection>
+    <PlSection title="Markups, SG&A, factors" color={T.purple}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8}}>
+        {[["gp","Gross profit %"],["cont","Contingency %"],["equip","Ext. equip markup %"],["mat","Material markup %"],["sub","Sub markup %"]].map(([k,l])=>(
+          <div key={k}><label style={lbl}>{l}</label><input type="number" step="0.5" value={Math.round(plNum(r.markups[k])*1000)/10} onChange={e=>setMk(k,e.target.value)} style={plCellN}/></div>))}
+        <div><label style={lbl}>SG&A $ / manhour</label><input type="number" step="0.25" value={r.sgaPerMh??7.5} onChange={e=>setR("sgaPerMh",e.target.value)} style={plCellN}/></div>
+        <div><label style={lbl}>Cost factor (cost = revenue ×)</label><input type="number" step="0.05" value={r.costFactor??0.8} onChange={e=>setR("costFactor",e.target.value)} style={plCellN}/></div>
+        <div><label style={lbl}>Hours / day</label><input type="number" step="0.5" value={r.hoursPerDay??10} onChange={e=>setR("hoursPerDay",e.target.value)} style={plCellN}/></div>
+        <div><label style={lbl}>Contingency % (summary)</label><input type="number" step="1" value={Math.round(plNum(r.contingencyPct)*100)} onChange={e=>setR("contingencyPct",plNum(e.target.value)/100)} style={plCellN}/></div>
+      </div>
+    </PlSection>
+  </div>);
+}
+
+/* ── Bid Sheet: summary ── */
+function PlBidSummary({data,calc}){
+  const t=calc.tot;const pct=(v)=>(v*100).toFixed(1)+"%";
+  const H=(cols)=>(<div style={{display:"grid",gridTemplateColumns:cols,gap:6,fontSize:10,fontWeight:800,color:T.muted,textTransform:"uppercase",marginBottom:4}}></div>);
+  return(<div>
+    <PlSection title="Bid summary by item">
+      <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:980}}>
+        <thead><tr style={{color:T.muted,fontSize:10,textTransform:"uppercase"}}>{["#","Item","Manhours","L&E","Ext Equip","Materials","Subs","GP","Cont.","Eq mk","Mat mk","Sub mk","Total","Dist.","Revised","Unit price"].map(h=><th key={h} style={{textAlign:h==="Item"?"left":"right",padding:"4px 6px",borderBottom:`1px solid ${T.border}`}}>{h}</th>)}</tr></thead>
+        <tbody>{calc.items.map(i=>(<tr key={i.id} style={{color:i.isMob?T.yellow:T.text}}>
+          <td style={{padding:"4px 6px"}}>{i.num}</td><td style={{padding:"4px 6px",textAlign:"left"}}>{i.name||"—"}{i.isMob?" (mob)":""}</td>
+          {[i.mh.toLocaleString(),plMoney(i.le),plMoney(i.ext),plMoney(i.mat),plMoney(i.sub),plMoney(i.gp),plMoney(i.cont),plMoney(i.extMk),plMoney(i.matMk),plMoney(i.subMk)].map((v,k)=><td key={k} style={{padding:"4px 6px",textAlign:"right"}}>{v}</td>)}
+          <td style={{padding:"4px 6px",textAlign:"right",fontWeight:800}}>{plMoney(i.total)}</td>
+          <td style={{padding:"4px 6px",textAlign:"right",color:T.muted}}>{i.isMob?"—":plMoney(i.dist)}</td>
+          <td style={{padding:"4px 6px",textAlign:"right",fontWeight:800,color:T.green}}>{i.isMob?"—":plMoney(i.revised)}</td>
+          <td style={{padding:"4px 6px",textAlign:"right"}}>{i.isMob?"—":plMoney(i.unitPrice)}</td></tr>))}
+          <tr style={{fontWeight:900,borderTop:`2px solid ${T.border}`,color:T.text}}><td colSpan={2} style={{padding:"6px"}}>TOTAL</td>
+            {[t.mh.toLocaleString(),plMoney(t.le),plMoney(t.ext),plMoney(t.mat),plMoney(t.sub),plMoney(t.gp),plMoney(t.cont),plMoney(t.extMk),plMoney(t.matMk),plMoney(t.subMk)].map((v,k)=><td key={k} style={{padding:"6px",textAlign:"right"}}>{v}</td>)}
+            <td style={{padding:"6px",textAlign:"right",color:T.green}}>{plMoney(t.total)}</td><td/><td style={{padding:"6px",textAlign:"right",color:T.green}}>{plMoney(calc.items.filter(i=>!i.isMob).reduce((s,i)=>s+i.revised,0))}</td><td/></tr>
+        </tbody></table></div>
+      {calc.mobTotal>0&&<div style={{fontSize:11,color:T.yellow,marginTop:6}}>Mob/Demob {plMoney(calc.mobTotal)} is spread across the other items by their share of the bid, so the revised amounts sum to the bid total.</div>}
+    </PlSection>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
+      <PlSection title="Cost & profit" color={T.green}>
+        {[["Subtotal cost (L&E + ext + mat + sub)",plMoney(t.subtotalCost)],[`SG&A (${t.mh.toLocaleString()} mh × ${plMoney(data.rates.sgaPerMh)})`,plMoney(t.sga)+" · "+pct(t.sgaPct)],["Total cost",plMoney(t.totalCost)],["Total profit (all markups)",plMoney(t.profit)],["Gross profit %",pct(t.grossPct)],["Net profit $",plMoney(t.net)],["Net profit %",pct(t.netPct)]].map(([l,v])=>(
+          <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"5px 0",borderBottom:`1px solid ${T.border}`}}><span style={{color:T.sub}}>{l}</span><b style={{color:T.text}}>{v}</b></div>))}
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:14,padding:"8px 0"}}><b>BID TOTAL</b><b style={{color:T.green}}>{plMoney(t.total)}</b></div>
+      </PlSection>
+      <PlSection title="Cost summary" color={T.purple}>
+        {[["Labor",t.costSummary.labor],["Internal equipment",t.costSummary.internalEquip],["SG&A",t.costSummary.sga],["External equipment",t.costSummary.ext],["Materials",t.costSummary.mat],["Subcontract",t.costSummary.sub]].map(([l,v])=>(
+          <div key={l} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"5px 0",borderBottom:`1px solid ${T.border}`}}><span style={{color:T.sub}}>{l}</span><span style={{color:T.text}}>{plMoney(v)}</span></div>))}
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"8px 0"}}><b>Total</b><b>{plMoney(t.costSummary.total)}</b></div>
+        <div style={{fontSize:11,color:T.muted,lineHeight:1.7,marginTop:6}}>Based on {plMoney(calc.costMh)}/manhour cost · avg crew {t.avgCrew} · {t.duration.toFixed(1)} days ({(t.duration/25).toFixed(1)} months) · {plMoney(t.dailyCrewCost)}/day crew cost</div>
+      </PlSection>
+      <PlSection title="Margin scenarios" color={T.yellow}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:4,fontSize:10,color:T.muted,textTransform:"uppercase",marginBottom:4}}><div>Bucket</div><div style={{textAlign:"right"}}>Cost</div><div style={{textAlign:"right"}}>×1.20</div><div style={{textAlign:"right"}}>×1.25</div><div style={{textAlign:"right"}}>×1.30</div></div>
+        {calc.margins.map(m=>(<div key={m.k} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:4,fontSize:11.5,padding:"3px 0"}}><div>{m.k}</div><div style={{textAlign:"right"}}>{plMoney(m.cost)}</div><div style={{textAlign:"right"}}>{plMoney(m.m20)}</div><div style={{textAlign:"right"}}>{plMoney(m.m25)}</div><div style={{textAlign:"right"}}>{plMoney(m.m30)}</div></div>))}
+        {(()=>{const s=calc.margins.reduce((a,m)=>({cost:a.cost+m.cost,m20:a.m20+m.m20,m25:a.m25+m.m25,m30:a.m30+m.m30}),{cost:0,m20:0,m25:0,m30:0});return(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:4,fontSize:12,fontWeight:800,paddingTop:6,borderTop:`1px solid ${T.border}`}}><div>Total</div><div style={{textAlign:"right"}}>{plMoney(s.cost)}</div><div style={{textAlign:"right"}}>{plMoney(s.m20)}</div><div style={{textAlign:"right"}}>{plMoney(s.m25)}</div><div style={{textAlign:"right"}}>{plMoney(s.m30)}</div></div>);})()}
+        <div style={{fontSize:11,color:T.muted,marginTop:6}}>Contingency {Math.round(plNum(data.rates.contingencyPct)*100)}% on cost: {plMoney(calc.margins.reduce((a,m)=>a+m.cost,0)*plNum(data.rates.contingencyPct))}</div>
+      </PlSection>
+    </div>
+  </div>);
+}
+
+/* ── Bid Sheet: job checklist ── */
+const PL_CHECKLIST=[["Pipe laying",["Length of pipe to lay","Size of pipe (in)","Extra welds not counting 40 ft joints","Thickness of pipe","Welds to be X-rayed","Approx. no. of pipe bends","Welds made in the ditch"]],
+["Tie-ins and cold cuts",["Number of tie-ins","Number of cold cuts","Schedule for tie-ins","Drain up or nitrogen push — assistance needed?"]],
+["Move in and out",["Round trip distance to job site from home base"]],
+["Clearing R/W",["Clearing length","Clearing width","Hauling off trees and stumps / burning / grinding"]],
+["Creeks and wet conditions",["Number of creek crossings and length of each","Wetlands / mats required","Dewatering (wellpoint system)"]],
+["Extra depth of ditch",["Length of ditch requiring 2-toning","Length of ditch over 3 ft cover","Approx. depth over 3 ft cover","Length requiring extra tamping","Depth requiring extra tamping"]],
+["Haul pipe and materials",["Haul distance for pipe not on job site"]],
+["Hydrotesting",["Length of pipe to hydrotest","Caliper pig runs"]],
+["Coatings",["Type of coating (coal tar / FBE / etc.)","Type of coating to remove","Total length of coating (not counting field joints)","Length of concrete coating","Thickness of concrete coating","Linear feet of rock shield"]],
+["Pipe removal",["Size of pipe to remove","Length of pipe to remove","Extra hauling of old pipe"]],
+["Boring and tunneling",["No. bore pits","Bore size (depth — trench boxes / shoring)","Length of bore","Length of foam bore","Moving in/out bore crew"]],
+["Grout old casing or pipe",["Size of pipe to grout","Length of pipe to grout"]],
+["Special conditions",["Erosion control","Traffic control","Overhead power restrictions","Permits","Night watchmen needed","Access to site","Swamp conditions (mats / dewatering)","Stone (access to site)","Rock in ditch","Earth bags","Bulk concrete (pipe supports)","Rip rap","Haz materials requirements","Fabricate and install pig traps","Cap and fill abandoned lines with nitrogen","Removal of asphalt or pavement","Removal of fencing","Access to water","Room for concrete trucks / cranes","Compaction testing required","X-ray required","Does driller supply pullhead"]]];
+function PlChecklist({data,upd}){
+  const c=data.checklist||{};const set=(k,f,v)=>upd(d=>({...d,checklist:{...(d.checklist||{}),[k]:{...((d.checklist||{})[k]||{}),[f]:v}}}));
+  return(<div>{PL_CHECKLIST.map(([sec,items],si)=>(<PlSection key={sec} title={`${si+1}. ${sec}`} color={T.sub}>
+    <div style={{display:"grid",gridTemplateColumns:"1.6fr 120px 1fr",gap:6,fontSize:10,color:T.muted,textTransform:"uppercase",marginBottom:4}}><div>Description</div><div>Length / No.</div><div>Additional requirements</div></div>
+    {items.map(it=>{const k=sec+"|"+it;const v=c[k]||{};return(<div key={it} style={{display:"grid",gridTemplateColumns:"1.6fr 120px 1fr",gap:6,marginBottom:4,alignItems:"center"}}><div style={{fontSize:12,color:T.sub}}>{it}</div><input value={v.qty||""} onChange={e=>set(k,"qty",e.target.value)} style={plCell}/><input value={v.note||""} onChange={e=>set(k,"note",e.target.value)} style={plCell}/></div>);})}
+  </PlSection>))}</div>);
+}
+
+/* ── Estimate: scopes ── */
+function PlEstScopes({data,calc,upd}){
+  const setScope=(id,k,v)=>upd(d=>({...d,scopes:d.scopes.map(s=>s.id===id?{...s,[k]:v}:s)}));
+  const addScope=()=>upd(d=>({...d,scopes:[...d.scopes,{id:uid(),name:`Scope ${d.scopes.length+1}`,sow:"",tasks:[],materials:[],rentals:[],matTaxPct:0.06,matMarkupPct:0.12,rentMarkupPct:0.10}]}));
+  const delScope=(id)=>{if(!window.confirm("Remove this scope?"))return;upd(d=>({...d,scopes:d.scopes.filter(s=>s.id!==id)}));};
+  return(<div>
+    {calc.scopes.map(sc=>(<div key={sc.id} style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.teal}`}}>
+      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+        <input value={sc.name} onChange={e=>setScope(sc.id,"name",e.target.value)} style={{...plCell,fontWeight:800,fontSize:14,flex:1}}/>
+        <div style={{fontSize:16,fontWeight:900,color:T.green}}>{plMoney(sc.total)}</div>
+        <button onClick={()=>delScope(sc.id)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:16}}>×</button>
+      </div>
+      <div style={{marginBottom:10}}><label style={lbl}>Scope of work (one line per item)</label><textarea value={sc.sow||""} onChange={e=>setScope(sc.id,"sow",e.target.value)} rows={3} placeholder={"500' gabion swale both sides of road\nReplace 12\" culvert with 18\" (3 places)"} style={{...inp,resize:"vertical",fontSize:12.5}}/></div>
+      {/* Tasks */}
+      <div style={{marginBottom:10}}>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,fontWeight:800,color:T.sub,marginBottom:4}}><span>AIME labor &amp; equipment (crew-days)</span><span style={{color:T.green}}>{plMoney(sc.laborTotal)}</span></div>
+        <div style={{display:"grid",gridTemplateColumns:"1.6fr 140px 110px 70px 110px 26px",gap:6,fontSize:10,color:T.muted,textTransform:"uppercase",marginBottom:3}}><div>Task</div><div>Crew</div><div style={{textAlign:"right"}}>Crew cost/day</div><div style={{textAlign:"right"}}>Days</div><div style={{textAlign:"right"}}>Total</div><div/></div>
+        {sc.tasks.map((t,i)=>(<div key={t.id} style={{display:"grid",gridTemplateColumns:"1.6fr 140px 110px 70px 110px 26px",gap:6,marginBottom:4,alignItems:"center"}}>
+          <input value={t.desc||""} onChange={e=>setScope(sc.id,"tasks",sc.tasks.map((x,j)=>j===i?{...x,desc:e.target.value}:x))} placeholder="Install swale · 2 days per 100'" style={plCell}/>
+          <select value={t.crewId||""} onChange={e=>setScope(sc.id,"tasks",sc.tasks.map((x,j)=>j===i?{...x,crewId:e.target.value}:x))} style={plCell}>{calc.crews.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+          <div style={{textAlign:"right",fontSize:12,color:T.sub}}>{plMoney(t.dayCost)}</div>
+          <input type="number" step="0.5" value={t.qty??""} onChange={e=>setScope(sc.id,"tasks",sc.tasks.map((x,j)=>j===i?{...x,qty:e.target.value}:x))} style={plCellN}/>
+          <div style={{textAlign:"right",fontSize:12,fontWeight:800,color:T.text}}>{plMoney(t.total)}</div>
+          <button onClick={()=>setScope(sc.id,"tasks",sc.tasks.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.red,cursor:"pointer"}}>×</button>
+        </div>))}
+        <button onClick={()=>setScope(sc.id,"tasks",[...sc.tasks,{id:uid(),desc:"",crewId:calc.crews[0]?.id,qty:1}])} style={{...ghostBtn,fontSize:11,padding:"5px 10px"}}>+ Task</button>
+      </div>
+      {/* Materials */}
+      <div style={{marginBottom:10}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11,fontWeight:800,color:T.purple,marginBottom:4,flexWrap:"wrap",gap:6}}>
+          <span>Materials</span>
+          <span style={{display:"flex",gap:8,alignItems:"center",color:T.muted,fontWeight:500}}>tax % <input type="number" step="0.5" value={Math.round(plNum(sc.matTaxPct)*1000)/10} onChange={e=>setScope(sc.id,"matTaxPct",plNum(e.target.value)/100)} style={{...plCellN,width:60,padding:"3px 6px"}}/> markup % <input type="number" step="0.5" value={Math.round(plNum(sc.matMarkupPct)*1000)/10} onChange={e=>setScope(sc.id,"matMarkupPct",plNum(e.target.value)/100)} style={{...plCellN,width:60,padding:"3px 6px"}}/><b style={{color:T.green}}>{plMoney(sc.matTotal)}</b></span>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1.4fr 90px 70px 90px 80px 80px 100px 26px",gap:6,fontSize:10,color:T.muted,textTransform:"uppercase",marginBottom:3}}><div>Material</div><div style={{textAlign:"right"}}>Cost</div><div style={{textAlign:"right"}}>Qty</div><div style={{textAlign:"right"}}>Subtotal</div><div style={{textAlign:"right"}}>Tax</div><div style={{textAlign:"right"}}>Markup</div><div style={{textAlign:"right"}}>Total</div><div/></div>
+        {sc.materials.map((m,i)=>(<div key={m.id} style={{display:"grid",gridTemplateColumns:"1.4fr 90px 70px 90px 80px 80px 100px 26px",gap:6,marginBottom:4,alignItems:"center"}}>
+          <input value={m.desc||""} onChange={e=>setScope(sc.id,"materials",sc.materials.map((x,j)=>j===i?{...x,desc:e.target.value}:x))} placeholder="Geotextile 15x300" style={plCell}/>
+          <input type="number" step="0.01" value={m.cost??""} onChange={e=>setScope(sc.id,"materials",sc.materials.map((x,j)=>j===i?{...x,cost:e.target.value}:x))} style={plCellN}/>
+          <input type="number" step="0.5" value={m.qty??""} onChange={e=>setScope(sc.id,"materials",sc.materials.map((x,j)=>j===i?{...x,qty:e.target.value}:x))} style={plCellN}/>
+          <div style={{textAlign:"right",fontSize:12}}>{plMoney(m.st)}</div><div style={{textAlign:"right",fontSize:12,color:T.muted}}>{plMoney(m.tax)}</div><div style={{textAlign:"right",fontSize:12,color:T.muted}}>{plMoney(m.mk)}</div>
+          <div style={{textAlign:"right",fontSize:12,fontWeight:800}}>{plMoney(m.total)}</div>
+          <button onClick={()=>setScope(sc.id,"materials",sc.materials.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.red,cursor:"pointer"}}>×</button>
+        </div>))}
+        <button onClick={()=>setScope(sc.id,"materials",[...sc.materials,{id:uid(),desc:"",cost:"",qty:1}])} style={{...ghostBtn,fontSize:11,padding:"5px 10px"}}>+ Material</button>
+      </div>
+      {/* Rentals */}
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11,fontWeight:800,color:T.yellow,marginBottom:4,flexWrap:"wrap",gap:6}}>
+          <span>Equipment rentals</span>
+          <span style={{display:"flex",gap:8,alignItems:"center",color:T.muted,fontWeight:500}}>markup % <input type="number" step="0.5" value={Math.round(plNum(sc.rentMarkupPct)*1000)/10} onChange={e=>setScope(sc.id,"rentMarkupPct",plNum(e.target.value)/100)} style={{...plCellN,width:60,padding:"3px 6px"}}/><b style={{color:T.green}}>{plMoney(sc.rentTotal)}</b></span>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1.4fr 90px 70px 90px 80px 100px 26px",gap:6,fontSize:10,color:T.muted,textTransform:"uppercase",marginBottom:3}}><div>Rental</div><div style={{textAlign:"right"}}>Cost</div><div style={{textAlign:"right"}}>Qty</div><div style={{textAlign:"right"}}>Subtotal</div><div style={{textAlign:"right"}}>Markup</div><div style={{textAlign:"right"}}>Total</div><div/></div>
+        {sc.rentals.map((r,i)=>(<div key={r.id} style={{display:"grid",gridTemplateColumns:"1.4fr 90px 70px 90px 80px 100px 26px",gap:6,marginBottom:4,alignItems:"center"}}>
+          <input value={r.desc||""} onChange={e=>setScope(sc.id,"rentals",sc.rentals.map((x,j)=>j===i?{...x,desc:e.target.value}:x))} placeholder="Excavator w/ tilt bucket" style={plCell}/>
+          <input type="number" step="0.01" value={r.cost??""} onChange={e=>setScope(sc.id,"rentals",sc.rentals.map((x,j)=>j===i?{...x,cost:e.target.value}:x))} style={plCellN}/>
+          <input type="number" step="0.5" value={r.qty??""} onChange={e=>setScope(sc.id,"rentals",sc.rentals.map((x,j)=>j===i?{...x,qty:e.target.value}:x))} style={plCellN}/>
+          <div style={{textAlign:"right",fontSize:12}}>{plMoney(r.st)}</div><div style={{textAlign:"right",fontSize:12,color:T.muted}}>{plMoney(r.mk)}</div>
+          <div style={{textAlign:"right",fontSize:12,fontWeight:800}}>{plMoney(r.total)}</div>
+          <button onClick={()=>setScope(sc.id,"rentals",sc.rentals.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.red,cursor:"pointer"}}>×</button>
+        </div>))}
+        <button onClick={()=>setScope(sc.id,"rentals",[...sc.rentals,{id:uid(),desc:"",cost:"",qty:1}])} style={{...ghostBtn,fontSize:11,padding:"5px 10px"}}>+ Rental</button>
+      </div>
+    </div>))}
+    <button onClick={addScope} style={{...ghostBtn,width:"100%",fontSize:12,borderColor:T.teal,color:T.teal}}>+ Add Scope</button>
+    <div style={{...cardS,marginTop:12,borderLeft:`3px solid ${T.green}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Project total estimate</div><div style={{fontSize:11,color:T.muted}}>{calc.crewDays} crew-days across {calc.scopes.length} scope{calc.scopes.length!==1?"s":""}</div></div><div style={{fontSize:24,fontWeight:900,color:T.green}}>{plMoney(calc.total)}</div></div>
+  </div>);
+}
+
+/* ── Estimate: crews (priced per day on the Colonial daily-report layout) ── */
+function PlEstCrews({data,calc,upd}){
+  const setCrew=(id,k,v)=>upd(d=>({...d,crews:d.crews.map(c=>c.id===id?{...c,[k]:v}:c)}));
+  const addCrew=()=>upd(d=>({...d,crews:[...d.crews,{id:uid(),name:`Crew ${d.crews.length+1}`,labor:[],equipment:[],rentals:[],perDiemCount:0}]}));
+  const delCrew=(id)=>{if(data.crews.length<=1){alert("Keep at least one crew.");return;}if(!window.confirm("Remove this crew? Tasks using it will switch to the first crew."))return;upd(d=>({...d,crews:d.crews.filter(c=>c.id!==id),scopes:d.scopes.map(s=>({...s,tasks:s.tasks.map(t=>t.crewId===id?{...t,crewId:d.crews.find(c=>c.id!==id)?.id}:t)}))}));};
+  const rateOf=(cls)=>plNum((data.rates.labor.find(l=>l.cls===cls)||{}).rate);
+  const eq=(name)=>data.rates.equipment.find(e=>e.name===name)||{};
+  return(<div>
+    {calc.crews.map(c=>(<div key={c.id} style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.teal}`}}>
+      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+        <input value={c.name} onChange={e=>setCrew(c.id,"name",e.target.value)} style={{...plCell,fontWeight:800,fontSize:14,flex:1}}/>
+        <div style={{textAlign:"right"}}><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Crew cost / day</div><div style={{fontSize:18,fontWeight:900,color:T.green}}>{plMoney(c.day.total)}</div></div>
+        <button onClick={()=>delCrew(c.id)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:16}}>×</button>
+      </div>
+      <div style={{fontSize:11,fontWeight:800,color:T.sub,marginBottom:4}}>Labor · {plMoney(c.day.laborTotal)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1.4fr 70px 70px 70px 90px 100px 26px",gap:6,fontSize:10,color:T.muted,textTransform:"uppercase",marginBottom:3}}><div>Classification</div><div style={{textAlign:"right"}}>Reg</div><div style={{textAlign:"right"}}>OT</div><div style={{textAlign:"right"}}>Travel</div><div style={{textAlign:"right"}}>Rate</div><div style={{textAlign:"right"}}>Amount</div><div/></div>
+      {(c.labor||[]).map((l,i)=>{const r=rateOf(l.cls);const amt=plNum(l.reg)*r+plNum(l.ot)*r*plNum(data.rates.otFactor)+plNum(l.travel)*r*plNum(data.rates.travelFactor);return(
+        <div key={l.id} style={{display:"grid",gridTemplateColumns:"1.4fr 70px 70px 70px 90px 100px 26px",gap:6,marginBottom:4,alignItems:"center"}}>
+          <select value={l.cls} onChange={e=>setCrew(c.id,"labor",c.labor.map((x,j)=>j===i?{...x,cls:e.target.value}:x))} style={plCell}>{data.rates.labor.map(x=><option key={x.cls}>{x.cls}</option>)}</select>
+          <input type="number" step="0.5" value={l.reg??""} onChange={e=>setCrew(c.id,"labor",c.labor.map((x,j)=>j===i?{...x,reg:e.target.value}:x))} style={plCellN}/>
+          <input type="number" step="0.5" value={l.ot??""} onChange={e=>setCrew(c.id,"labor",c.labor.map((x,j)=>j===i?{...x,ot:e.target.value}:x))} style={plCellN}/>
+          <input type="number" step="0.5" value={l.travel??""} onChange={e=>setCrew(c.id,"labor",c.labor.map((x,j)=>j===i?{...x,travel:e.target.value}:x))} style={plCellN}/>
+          <div style={{textAlign:"right",fontSize:12,color:T.sub}}>{plMoney(r)}</div><div style={{textAlign:"right",fontSize:12,fontWeight:800}}>{plMoney(amt)}</div>
+          <button onClick={()=>setCrew(c.id,"labor",c.labor.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.red,cursor:"pointer"}}>×</button>
+        </div>);})}
+      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+        <button onClick={()=>setCrew(c.id,"labor",[...(c.labor||[]),{id:uid(),cls:data.rates.labor[0]?.cls||"",reg:8,ot:2,travel:0}])} style={{...ghostBtn,fontSize:11,padding:"5px 10px"}}>+ Worker</button>
+        <span style={{fontSize:11,color:T.muted}}>Per diem: <input type="number" value={c.perDiemCount??0} onChange={e=>setCrew(c.id,"perDiemCount",e.target.value)} style={{...plCellN,width:60,display:"inline-block",padding:"3px 6px"}}/> × {plMoney(data.rates.perDiem)} = {plMoney(c.day.perDiem)}</span>
+      </div>
+      <div style={{fontSize:11,fontWeight:800,color:T.yellow,marginBottom:4}}>Equipment · {plMoney(c.day.equipment)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1.6fr 80px 80px 90px 100px 26px",gap:6,fontSize:10,color:T.muted,textTransform:"uppercase",marginBottom:3}}><div>Description</div><div style={{textAlign:"right"}}>Qty</div><div>Per</div><div style={{textAlign:"right"}}>Rate</div><div style={{textAlign:"right"}}>Amount</div><div/></div>
+      {(c.equipment||[]).map((e,i)=>{const r=e.rate!==undefined&&e.rate!==""?plNum(e.rate):plNum(eq(e.name).rate);return(
+        <div key={e.id} style={{display:"grid",gridTemplateColumns:"1.6fr 80px 80px 90px 100px 26px",gap:6,marginBottom:4,alignItems:"center"}}>
+          <select value={e.name} onChange={ev=>setCrew(c.id,"equipment",c.equipment.map((x,j)=>j===i?{...x,name:ev.target.value,rate:undefined}:x))} style={plCell}>{data.rates.equipment.map(x=><option key={x.name}>{x.name}</option>)}</select>
+          <input type="number" step="0.5" value={e.qty??""} onChange={ev=>setCrew(c.id,"equipment",c.equipment.map((x,j)=>j===i?{...x,qty:ev.target.value}:x))} style={plCellN}/>
+          <div style={{fontSize:11,color:T.muted}}>{eq(e.name).unit||""}</div>
+          <input type="number" step="0.01" value={e.rate!==undefined&&e.rate!==""?e.rate:plNum(eq(e.name).rate)} onChange={ev=>setCrew(c.id,"equipment",c.equipment.map((x,j)=>j===i?{...x,rate:ev.target.value}:x))} style={plCellN}/>
+          <div style={{textAlign:"right",fontSize:12,fontWeight:800}}>{plMoney(plNum(e.qty)*r)}</div>
+          <button onClick={()=>setCrew(c.id,"equipment",c.equipment.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.red,cursor:"pointer"}}>×</button>
+        </div>);})}
+      <button onClick={()=>setCrew(c.id,"equipment",[...(c.equipment||[]),{id:uid(),name:data.rates.equipment[0]?.name||"",qty:1}])} style={{...ghostBtn,fontSize:11,padding:"5px 10px",marginBottom:10}}>+ Equipment</button>
+      <div style={{fontSize:11,fontWeight:800,color:T.purple,marginBottom:4}}>Rental equipment / material on this crew (per day) · {plMoney(c.day.rentals)}</div>
+      {(c.rentals||[]).map((r,i)=>(<div key={r.id} style={{display:"grid",gridTemplateColumns:"1.6fr 70px 100px 90px 100px 26px",gap:6,marginBottom:4,alignItems:"center"}}>
+        <input value={r.desc||""} onChange={e=>setCrew(c.id,"rentals",c.rentals.map((x,j)=>j===i?{...x,desc:e.target.value}:x))} placeholder="Description" style={plCell}/>
+        <input type="number" value={r.qty??""} onChange={e=>setCrew(c.id,"rentals",c.rentals.map((x,j)=>j===i?{...x,qty:e.target.value}:x))} placeholder="Qty" style={plCellN}/>
+        <input type="number" step="0.01" value={r.amount??""} onChange={e=>setCrew(c.id,"rentals",c.rentals.map((x,j)=>j===i?{...x,amount:e.target.value}:x))} placeholder="Amount" style={plCellN}/>
+        <input type="number" step="0.01" value={r.tax??""} onChange={e=>setCrew(c.id,"rentals",c.rentals.map((x,j)=>j===i?{...x,tax:e.target.value}:x))} placeholder="Tax" style={plCellN}/>
+        <div style={{textAlign:"right",fontSize:12,fontWeight:800}}>{plMoney(plNum(r.qty)*plNum(r.amount)+plNum(r.tax))}</div>
+        <button onClick={()=>setCrew(c.id,"rentals",c.rentals.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.red,cursor:"pointer"}}>×</button>
+      </div>))}
+      <button onClick={()=>setCrew(c.id,"rentals",[...(c.rentals||[]),{id:uid(),desc:"",qty:1,amount:"",tax:""}])} style={{...ghostBtn,fontSize:11,padding:"5px 10px"}}>+ Rental / material</button>
+    </div>))}
+    <button onClick={addCrew} style={{...ghostBtn,width:"100%",fontSize:12,borderColor:T.teal,color:T.teal}}>+ Add Crew</button>
+  </div>);
+}
+
+/* ── Estimate: rate table ── */
+function PlEstRates({data,upd}){
+  const r=data.rates;const [q,setQ]=useState("");
+  const setL=(i,k,v)=>upd(d=>({...d,rates:{...d.rates,labor:d.rates.labor.map((x,j)=>j===i?{...x,[k]:v}:x)}}));
+  const setE=(i,k,v)=>upd(d=>({...d,rates:{...d.rates,equipment:d.rates.equipment.map((x,j)=>j===i?{...x,[k]:v}:x)}}));
+  const setR=(k,v)=>upd(d=>({...d,rates:{...d.rates,[k]:v}}));
+  return(<div>
+    <PlSection title="Factors" color={T.purple}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8}}>
+        <div><label style={lbl}>OT factor</label><input type="number" step="0.1" value={r.otFactor??1.5} onChange={e=>setR("otFactor",e.target.value)} style={plCellN}/></div>
+        <div><label style={lbl}>Travel factor</label><input type="number" step="0.1" value={r.travelFactor??1} onChange={e=>setR("travelFactor",e.target.value)} style={plCellN}/></div>
+        <div><label style={lbl}>Per diem $ / person / day</label><input type="number" step="1" value={r.perDiem??190} onChange={e=>setR("perDiem",e.target.value)} style={plCellN}/></div>
+      </div>
+    </PlSection>
+    <PlSection title="Labor rates (CPL 2025, editable)">
+      {r.labor.map((l,i)=>(<div key={i} style={{display:"grid",gridTemplateColumns:"1fr 120px 26px",gap:6,marginBottom:4,alignItems:"center"}}>
+        <input value={l.cls} onChange={e=>setL(i,"cls",e.target.value)} style={plCell}/><input type="number" step="0.01" value={l.rate??""} onChange={e=>setL(i,"rate",e.target.value)} style={plCellN}/>
+        <button onClick={()=>upd(d=>({...d,rates:{...d.rates,labor:d.rates.labor.filter((_,j)=>j!==i)}}))} style={{background:"none",border:"none",color:T.red,cursor:"pointer"}}>×</button></div>))}
+      <button onClick={()=>upd(d=>({...d,rates:{...d.rates,labor:[...d.rates.labor,{cls:"",rate:0}]}}))} style={{...ghostBtn,fontSize:11,padding:"5px 10px"}}>+ Position</button>
+    </PlSection>
+    <PlSection title="Equipment rates (CPL 2025, editable)" color={T.yellow} right={<input value={q} onChange={e=>setQ(e.target.value)} placeholder="filter…" style={{...plCell,width:160}}/>}>
+      {r.equipment.map((e,i)=>({...e,i})).filter(e=>!q||e.name.toLowerCase().includes(q.toLowerCase())).map(e=>(<div key={e.i} style={{display:"grid",gridTemplateColumns:"1fr 110px 90px 26px",gap:6,marginBottom:4,alignItems:"center"}}>
+        <input value={e.name} onChange={ev=>setE(e.i,"name",ev.target.value)} style={plCell}/><input type="number" step="0.01" value={e.rate??""} onChange={ev=>setE(e.i,"rate",ev.target.value)} style={plCellN}/>
+        <select value={e.unit||"Days"} onChange={ev=>setE(e.i,"unit",ev.target.value)} style={plCell}>{["Hours","Days","Week","Month"].map(u=><option key={u}>{u}</option>)}</select>
+        <button onClick={()=>upd(d=>({...d,rates:{...d.rates,equipment:d.rates.equipment.filter((_,j)=>j!==e.i)}}))} style={{background:"none",border:"none",color:T.red,cursor:"pointer"}}>×</button></div>))}
+      <button onClick={()=>upd(d=>({...d,rates:{...d.rates,equipment:[...d.rates.equipment,{name:"",rate:0,unit:"Days"}]}}))} style={{...ghostBtn,fontSize:11,padding:"5px 10px"}}>+ Equipment</button>
+    </PlSection>
+  </div>);
+}
+
+/* ── Excel export: Bid Sheet (live formulas) ── */
+function plExportBidXlsx(meta,data,calc){
+  const r=data.rates,hpd=plNum(r.hoursPerDay)||10;const wb=XLSX.utils.book_new();const money='$#,##0.00';
+  // Manhour Cost BD
+  const mh=[["Labor","**Rates for labor and equipment are based on CPL 2025 rates**"],["Classification","#","RT Rate","OT Rate","RT Hours","OT Hours","Labor Amount","Total Amount"]];
+  r.labor.forEach((l,i)=>{const n=i+3;mh.push([l.cls,plNum(l.count),plNum(l.rt),plNum(l.ot),plNum(l.rtHrs),plNum(l.otHrs),{f:`(C${n}*E${n})+(D${n}*F${n})`},{f:`G${n}*B${n}`}]);});
+  const lend=r.labor.length+2;const crewRow=lend+3;
+  mh.push([],["Crew Size"],[{f:`SUM(B3:B${lend})`},"","","","","Total Labor","",{f:`SUM(H3:H${lend})`}],["","","","","","Revenue / manhour","",{f:`H${crewRow}/B${crewRow}/${hpd}`}],["","","","","","Cost / manhour","",{f:`H${crewRow+1}*${plNum(r.costFactor)||0.8}`}],[],["Equipment"],["Description","#","Rate","Per","","","","Total Amount"]);
+  const eqStart=mh.length+1;r.equipment.forEach((e,i)=>{const n=eqStart+i;mh.push([e.name,plNum(e.count),plNum(e.rate),e.unit||"Days","","","",{f:`C${n}*B${n}`}]);});
+  const eqEnd=eqStart+r.equipment.length-1;mh.push([],["","","","","","Total Equipment","",{f:`SUM(H${eqStart}:H${eqEnd})`}],["","","","","","Equip revenue / manhour","",{f:`H${eqEnd+2}/(B${crewRow}*${hpd})`}],["","","","","","REVENUE / MANHOUR","",{f:`H${crewRow+1}+H${eqEnd+3}`}]);
+  const revCell=`'Manhour Cost BD'!$H$${eqEnd+4}`;
+  const wsMh=XLSX.utils.aoa_to_sheet(mh);wsMh["!cols"]=[{wch:36},{wch:7},{wch:10},{wch:10},{wch:9},{wch:9},{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,wsMh,"Manhour Cost BD");
+  // Bid Item Details
+  const bd=[["Revenue",{f:revCell},"per manhour"],[],["Item #","Description","Crew Size","Days","Manhours","Labor & Equip","Ext Equip","Materials","Subcontract","GP","Cont.","Ext mk","Mat mk","Sub mk","Subtotal L&E","Subtotal Ext","Subtotal Mat","Subtotal Sub","TOTAL"]];
+  const mk=r.markups;const itemRows=[];
+  data.items.forEach(it=>{const n=bd.length+1;itemRows.push(n);
+    const sum=(arr)=>(arr||[]).reduce((s,x)=>s+plNum(x.qty)*plNum(x.unit),0);
+    bd.push([it.num,it.name+(it.isMob?" (Mob/Demob)":""),plNum(it.crewSize),plNum(it.days),{f:`C${n}*D${n}*${hpd}`},{f:`E${n}*$B$1`},sum(it.equipment),sum(it.materials),sum(it.subs),
+      {f:`F${n}*${plNum(mk.gp)}`},{f:`F${n}*${plNum(mk.cont)}`},{f:`G${n}*${plNum(mk.equip)}`},{f:`H${n}*${plNum(mk.mat)}`},{f:`I${n}*${plNum(mk.sub)}`},
+      {f:`F${n}+J${n}+K${n}`},{f:`G${n}+L${n}`},{f:`H${n}+M${n}`},{f:`I${n}+N${n}`},{f:`SUM(O${n}:R${n})`}]);});
+  const f0=itemRows[0],f1=itemRows[itemRows.length-1];const tr=bd.length+1;
+  bd.push(["","TOTAL","","",{f:`SUM(E${f0}:E${f1})`},{f:`SUM(F${f0}:F${f1})`},{f:`SUM(G${f0}:G${f1})`},{f:`SUM(H${f0}:H${f1})`},{f:`SUM(I${f0}:I${f1})`},{f:`SUM(J${f0}:J${f1})`},{f:`SUM(K${f0}:K${f1})`},{f:`SUM(L${f0}:L${f1})`},{f:`SUM(M${f0}:M${f1})`},{f:`SUM(N${f0}:N${f1})`},{f:`SUM(O${f0}:O${f1})`},{f:`SUM(P${f0}:P${f1})`},{f:`SUM(Q${f0}:Q${f1})`},{f:`SUM(R${f0}:R${f1})`},{f:`SUM(S${f0}:S${f1})`}]);
+  const wsBd=XLSX.utils.aoa_to_sheet(bd);wsBd["!cols"]=[{wch:7},{wch:36},...Array(17).fill({wch:13})];
+  for(let i=f0;i<=tr;i++)for(const c of "FGHIJKLMNOPQRS"){const cell=wsBd[`${c}${i}`];if(cell)cell.z=money;}
+  XLSX.utils.book_append_sheet(wb,wsBd,"Bid Item Details");
+  // External Equip_Materials
+  const em=[];data.items.forEach(it=>{em.push([it.num,it.name]);em.push(["","","","QTY","Unit Cost","Total"]);
+    [["Equipment",it.equipment],["Materials",it.materials],["Subcontracts",it.subs]].forEach(([lab,arr])=>{if(!(arr||[]).length)return;em.push(["",lab]);const s=em.length+1;(arr||[]).forEach(x=>{const n=em.length+1;em.push(["","",x.desc,plNum(x.qty),plNum(x.unit),{f:`D${n}*E${n}`}]);});em.push(["","","Total","","",{f:`SUM(F${s}:F${em.length})`}]);});em.push([]);});
+  const wsEm=XLSX.utils.aoa_to_sheet(em.length?em:[["No external items"]]);wsEm["!cols"]=[{wch:7},{wch:14},{wch:34},{wch:8},{wch:12},{wch:14}];XLSX.utils.book_append_sheet(wb,wsEm,"External Equip_Materials");
+  // Bid Summary
+  const t=calc.tot;const bs=[["Customer:",meta.customer],["Job Description:",meta.description],["Location:",meta.location],[],
+    ["Item #","Job Name","Manhours","Total (L&E)","External Equip","Materials","SubContracts","Profit/Cont","Equip mk","Material mk","Sub mk","Labor & Equip","Equipment","Materials","Subcontract","TOTAL","% of Subtotal","Distr. Amt","Revised Amt","Units","Unit Price"]];
+  const sRows=[];data.items.forEach((it,i)=>{const n=bs.length+1;const bn=itemRows[i];sRows.push({n,isMob:it.isMob});
+    bs.push([it.num,it.name,{f:`'Bid Item Details'!E${bn}`},{f:`'Bid Item Details'!F${bn}`},{f:`'Bid Item Details'!G${bn}`},{f:`'Bid Item Details'!H${bn}`},{f:`'Bid Item Details'!I${bn}`},{f:`'Bid Item Details'!J${bn}+'Bid Item Details'!K${bn}`},{f:`'Bid Item Details'!L${bn}`},{f:`'Bid Item Details'!M${bn}`},{f:`'Bid Item Details'!N${bn}`},{f:`'Bid Item Details'!O${bn}`},{f:`'Bid Item Details'!P${bn}`},{f:`'Bid Item Details'!Q${bn}`},{f:`'Bid Item Details'!R${bn}`},{f:`'Bid Item Details'!S${bn}`},"","","",plNum(it.units)||1,""]);});
+  const s0=sRows[0].n,s1=sRows[sRows.length-1].n;const totN=bs.length+1;
+  const mobRows=sRows.filter(x=>x.isMob).map(x=>x.n),nonRows=sRows.filter(x=>!x.isMob).map(x=>x.n);
+  const nonSum=nonRows.length?nonRows.map(n=>`P${n}`).join("+"):"0";const mobSum=mobRows.length?mobRows.map(n=>`P${n}`).join("+"):"0";
+  sRows.forEach(x=>{if(x.isMob)return;const n=x.n;const ws_row=bs[n-1];ws_row[16]={f:`P${n}/(${nonSum})`};ws_row[17]={f:`Q${n}*(${mobSum})`};ws_row[18]={f:`R${n}+P${n}`};ws_row[20]={f:`ROUNDUP(S${n}/T${n},2)`};});
+  bs.push(["","TOTAL",{f:`SUM(C${s0}:C${s1})`},{f:`SUM(D${s0}:D${s1})`},{f:`SUM(E${s0}:E${s1})`},{f:`SUM(F${s0}:F${s1})`},{f:`SUM(G${s0}:G${s1})`},{f:`SUM(H${s0}:H${s1})`},{f:`SUM(I${s0}:I${s1})`},{f:`SUM(J${s0}:J${s1})`},{f:`SUM(K${s0}:K${s1})`},{f:`SUM(L${s0}:L${s1})`},{f:`SUM(M${s0}:M${s1})`},{f:`SUM(N${s0}:N${s1})`},{f:`SUM(O${s0}:O${s1})`},{f:`SUM(P${s0}:P${s1})`},"","",{f:`SUM(S${s0}:S${s1})`}]);
+  bs.push([],["","Subtotal Cost","",{f:`D${totN}+E${totN}+F${totN}+G${totN}`},"","","Total Profit",{f:`SUM(H${totN}:K${totN})`}],
+    ["",`SG&A (manhours × $${plNum(r.sgaPerMh)})`,"",{f:`C${totN}*${plNum(r.sgaPerMh)}`},"","","Gross Profit %",{f:`H${totN+2}/P${totN}`}],
+    ["","SG&A %","",{f:`D${totN+3}/P${totN}`},"","","Net Profit ($)",{f:`P${totN}-D${totN+5}`}],
+    ["","Total Cost","",{f:`D${totN+3}+D${totN+2}`},"","","Net Profit (%)",{f:`H${totN+4}/P${totN}`}],[],
+    ["Cost Summary"],["Labor","",{f:`C${totN}*'Manhour Cost BD'!H${crewRow+2}`}],["Internal Equipment","",{f:`C${totN}*'Manhour Cost BD'!H${eqEnd+3}*${plNum(r.costFactor)||0.8}`}],["SG&A","",{f:`C${totN}*${plNum(r.sgaPerMh)}`}],["External Equipment","",{f:`E${totN}`}],["Materials","",{f:`F${totN}`}],["Subcontract","",{f:`G${totN}`}],["Total","",{f:`SUM(C${totN+8}:C${totN+13})`}],[],
+    ["Above based on",{f:revCell},"/manhour (revenue)"],["Estimated average crew size",{f:`'Manhour Cost BD'!B${crewRow}`}],["Estimated duration (days)",{f:`C${totN}/(B${totN+17}*${hpd})`}],["Average daily crew cost",{f:`L${totN}/B${totN+18}`}]);
+  const wsBs=XLSX.utils.aoa_to_sheet(bs);wsBs["!cols"]=[{wch:14},{wch:34},...Array(19).fill({wch:13})];
+  for(let i=s0;i<=bs.length;i++)for(const c of "DEFGHIJKLMNOPRSU"){const cell=wsBs[`${c}${i}`];if(cell&&cell.f)cell.z=money;}
+  XLSX.utils.book_append_sheet(wb,wsBs,"Bid Summary");
+  // Checklist
+  const cl=[["ESTIMATE CHECKLIST FOR PIPE JOBS"],["","DESCRIPTION","LENGTH OR NO.","ADDITIONAL REQUIREMENTS"]];
+  PL_CHECKLIST.forEach(([sec,items],si)=>{cl.push([si+1,sec.toUpperCase()]);items.forEach(it=>{const v=(data.checklist||{})[sec+"|"+it]||{};cl.push(["",it,v.qty||"",v.note||""]);});});
+  const wsCl=XLSX.utils.aoa_to_sheet(cl);wsCl["!cols"]=[{wch:4},{wch:60},{wch:16},{wch:40}];XLSX.utils.book_append_sheet(wb,wsCl,"Job Checklist");
+  XLSX.writeFile(wb,`Bid_Sheet_${(meta.name||"bid").replace(/[^A-Za-z0-9]+/g,"_")}.xlsx`);
+}
+
+/* ── Excel export: Estimate ── */
+function plExportEstXlsx(meta,data,calc){
+  const wb=XLSX.utils.book_new();const money='$#,##0.00';const r=data.rates;
+  // WORK (rates)
+  const work=[["Position","Rate","","Factor","","Equipment","Rate","Per"],["","","Regular",1],["","","Over-time",plNum(r.otFactor)],["","","Travel",plNum(r.travelFactor)]];
+  const maxLen=Math.max(r.labor.length+1,r.equipment.length);
+  for(let i=0;i<maxLen;i++){const l=r.labor[i];const e=r.equipment[i];const row=work[i+1]||(work[i+1]=[]);row[0]=l?l.cls:(i===r.labor.length?"Per Diem":"");row[1]=l?plNum(l.rate):(i===r.labor.length?plNum(r.perDiem):"");row[5]=e?e.name:"";row[6]=e?plNum(e.rate):"";row[7]=e?e.unit:"";}
+  const wsW=XLSX.utils.aoa_to_sheet(work);wsW["!cols"]=[{wch:22},{wch:10},{wch:10},{wch:8},{wch:3},{wch:40},{wch:10},{wch:8}];XLSX.utils.book_append_sheet(wb,wsW,"WORK");
+  const rateRow=(cls)=>{const i=r.labor.findIndex(l=>l.cls===cls);return i>=0?i+2:null;};
+  const eqRow=(name)=>{const i=r.equipment.findIndex(e=>e.name===name);return i>=0?i+2:null;};
+  // Crew sheets (Colonial layout)
+  const crewTotals={};
+  calc.crews.forEach((c,ci)=>{const sh=[["COLONIAL PIPELINE COMPANY"],["DAILY REPORT-WORK PERFORMED BY CONTRACTOR"],["LOCATION",meta.location,"AFE NO.","","WORK ORDER","","REPORT DATE","","REGION"],[],["CONTRACTOR:","AIME","CONTRACTOR NO:"],["DESCRIPTION OF WORK DONE:",meta.description],[],["LABOR"],["NAME","","CLASSIFICATION","","REG. HRS.","O.T. HRS.","TRAVEL HRS.","REGULAR RATE","AMOUNT"]];
+    const l0=sh.length+1;(c.labor||[]).forEach(l=>{const n=sh.length+1;const rr=rateRow(l.cls);sh.push(["","",l.cls,"",plNum(l.reg),plNum(l.ot),plNum(l.travel),rr?{f:`WORK!$B$${rr}`}:0,{f:`E${n}*H${n}+F${n}*H${n}*WORK!$D$3+G${n}*H${n}*WORK!$D$4`}]);});
+    const pdN=sh.length+1;sh.push(["","","Per Diem","",plNum(c.perDiemCount),"","",plNum(r.perDiem),{f:`E${pdN}*H${pdN}`}]);
+    const lt=sh.length+1;sh.push(["","","","","","","","TOTAL LABOR",{f:`SUM(I${l0}:I${pdN})`}]);
+    sh.push([],["EQUIPMENT"],["DESCRIPTION","","","","","Quantity","Hours/Days","RATE","AMOUNT"]);
+    const e0=sh.length+1;(c.equipment||[]).forEach(e=>{const n=sh.length+1;const er=eqRow(e.name);const rate=e.rate!==undefined&&e.rate!==""?plNum(e.rate):null;sh.push([e.name,"","","","",plNum(e.qty),er?{f:`WORK!$H$${er}`}:"",rate!=null?rate:(er?{f:`WORK!$G$${er}`}:0),{f:`F${n}*H${n}`}]);});
+    const et=sh.length+1;sh.push(["","","","","","","","TOTAL EQUIPMENT",(c.equipment||[]).length?{f:`SUM(I${e0}:I${et-1})`}:0]);
+    sh.push([],["RENTAL EQUIPMENT / MATERIAL & MISCELLANEOUS"],["QUANTITY","DESCRIPTION","","","","","AMOUNT","TAX","TOTAL"]);
+    const r0=sh.length+1;(c.rentals||[]).forEach(x=>{const n=sh.length+1;sh.push([plNum(x.qty),x.desc,"","","","",plNum(x.amount),plNum(x.tax),{f:`A${n}*G${n}+H${n}`}]);});
+    const rt=sh.length+1;sh.push(["","","","","","","","TOTAL RENTAL",(c.rentals||[]).length?{f:`SUM(I${r0}:I${rt-1})`}:0]);
+    const gt=sh.length+1;sh.push(["","","","","","","","GRAND TOTAL / DAY",{f:`I${lt}+I${et}+I${rt}`}]);crewTotals[c.id]={sheet:c.name.replace(/[\[\]\*\?\/\\:]/g," ").slice(0,31)||`Crew ${ci+1}`,cell:`I${gt}`};
+    const ws=XLSX.utils.aoa_to_sheet(sh);ws["!cols"]=[{wch:12},{wch:16},{wch:22},{wch:4},{wch:10},{wch:10},{wch:11},{wch:12},{wch:14}];
+    for(let i=l0;i<=gt;i++)for(const col of "HI"){const cell=ws[`${col}${i}`];if(cell&&(cell.f||typeof cell.v==="number"))cell.z=money;}
+    XLSX.utils.book_append_sheet(wb,ws,crewTotals[c.id].sheet);});
+  // Scope sheets
+  const scopeCells=[];
+  calc.scopes.forEach((sc,si)=>{const sh=[["SOW"]];(sc.sow||"").split("\n").filter(Boolean).forEach(l=>sh.push([l]));sh.push([],[sc.name,"","","Project Total Estimate"]);const ptRow=sh.length;
+    sh.push([],["","","","AIME Labor & Equipment","","","","Material","Cost","QTY","Sub Total","Tax","Markup","Total","","Equipment Rentals","Cost","QTY","SubTotal","Markup","Total"],["Task","","","Crew Cost/Day","Days","Total","","","","","",plNum(sc.matTaxPct),plNum(sc.matMarkupPct),"","","","","","",plNum(sc.rentMarkupPct)]);
+    const hdr=sh.length;const n=Math.max(sc.tasks.length,sc.materials.length,sc.rentals.length,1);
+    for(let i=0;i<n;i++){const row=sh.length+1;const t=sc.tasks[i],m=sc.materials[i],rn=sc.rentals[i];const ct=t&&crewTotals[t.crewId];
+      sh.push([t?t.desc:"","","",t?(ct?{f:`'${ct.sheet}'!${ct.cell}`}:0):"",t?plNum(t.qty):"",t?{f:`D${row}*E${row}`}:"","",m?m.desc:"",m?plNum(m.cost):"",m?plNum(m.qty):"",m?{f:`I${row}*J${row}`}:"",m?{f:`K${row}*$L$${hdr}`}:"",m?{f:`K${row}*$M$${hdr}`}:"",m?{f:`SUM(K${row}:M${row})`}:"","",rn?rn.desc:"",rn?plNum(rn.cost):"",rn?plNum(rn.qty):"",rn?{f:`Q${row}*R${row}`}:"",rn?{f:`S${row}*$T$${hdr}`}:"",rn?{f:`S${row}+T${row}`}:""]);}
+    const first=hdr+1,last=sh.length;const tot=sh.length+1;
+    sh.push(["","","","Total",{f:""},{f:`SUM(F${first}:F${last})`},"","","","","","","Total",{f:`SUM(N${first}:N${last})`},"","","","","","Total",{f:`SUM(U${first}:U${last})`}]);sh[tot-1][4]="";
+    sh[ptRow-1][5]={f:`F${tot}+N${tot}+U${tot}`};
+    const name=(sc.name||`Scope ${si+1}`).replace(/[\[\]\*\?\/\\:]/g," ").slice(0,31);scopeCells.push({name,cell:`F${ptRow}`});
+    const ws=XLSX.utils.aoa_to_sheet(sh);ws["!cols"]=[{wch:30},{wch:3},{wch:3},{wch:14},{wch:7},{wch:14},{wch:3},{wch:26},{wch:10},{wch:7},{wch:12},{wch:10},{wch:10},{wch:12},{wch:3},{wch:26},{wch:10},{wch:7},{wch:12},{wch:10},{wch:12}];
+    for(let i=first;i<=tot;i++)for(const col of "DFIKLMNQSTU"){const cell=ws[`${col}${i}`];if(cell&&(cell.f||typeof cell.v==="number"))cell.z=money;}ws[`F${ptRow}`].z=money;
+    XLSX.utils.book_append_sheet(wb,ws,name);});
+  // Summary first
+  const sum=[[meta.name||"Estimate"],["Customer",meta.customer],["Description",meta.description],["Location",meta.location],[],["Scope","Total"]];
+  scopeCells.forEach(s=>sum.push([s.name,{f:`'${s.name}'!${s.cell}`}]));sum.push(["PROJECT TOTAL",{f:`SUM(B7:B${6+scopeCells.length})`}]);
+  const wsS=XLSX.utils.aoa_to_sheet(sum);wsS["!cols"]=[{wch:34},{wch:16}];for(let i=7;i<=sum.length;i++){const c=wsS[`B${i}`];if(c)c.z=money;}
+  XLSX.utils.book_append_sheet(wb,wsS,"Summary");wb.SheetNames.unshift(wb.SheetNames.pop());
+  XLSX.writeFile(wb,`Estimate_${(meta.name||"estimate").replace(/[^A-Za-z0-9]+/g,"_")}.xlsx`);
+}
+
+/* ── PDF (print) exports ── */
+const PL_PRINT_CSS=`@page{size:letter landscape;margin:0.45in}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0;font-size:9pt}
+h1{font-size:15pt;margin:0 0 2px}h2{font-size:11pt;margin:14px 0 4px;color:#1f3864;border-bottom:1.5px solid #1f3864;padding-bottom:2px}.sub{color:#555;font-size:9pt;margin-bottom:8px}
+table{width:100%;border-collapse:collapse;font-size:8.5pt}th{background:#1f3864;color:#fff;padding:4px 5px;text-align:left}td{padding:3px 5px;border-bottom:1px solid #ddd}.r{text-align:right}.c{text-align:center}
+tr.tot td{font-weight:700;background:#eef1f7;border-top:2px solid #1f3864}.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 14px;font-size:9pt}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}.pb{page-break-before:always}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1f3864;padding-bottom:6px;margin-bottom:8px}.big{font-size:14pt;font-weight:800;color:#1f3864}.foot{margin-top:12px;font-size:7.5pt;color:#777;display:flex;justify-content:space-between}`;
+function plOpenPrint(title,body,user){
+  const w=window.open("","_blank");if(!w){alert("Pop-up blocked — allow pop-ups to export PDF.");return;}
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${title}</title><style>${PL_PRINT_CSS}</style></head><body>${body}<div class="foot"><span>AIME · Pipeline Division · ${title}</span><span>Prepared by ${user?.name||""} · ${new Date().toLocaleString()}</span></div><script>window.onload=function(){window.print();}</script></body></html>`);w.document.close();
+}
+const plEsc=(v)=>String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function plPrintBid(meta,data,calc,user){
+  const t=calc.tot,r=data.rates;const m=plMoney;const pct=(v)=>(v*100).toFixed(1)+"%";
+  const hdr=`<div class="hdr"><div>${AIME_LOGO_IMG(48)}<div class="sub">Pipeline Division · Bid Sheet</div></div><div style="text-align:right"><h1>${plEsc(meta.name)}</h1><div class="sub">${plEsc(meta.customer)}${meta.description?" · "+plEsc(meta.description):""}${meta.location?" · "+plEsc(meta.location):""}</div><div class="big">Bid Total ${m(t.total)}</div></div></div>`;
+  const summary=`<h2>Bid Summary</h2><table><tr><th>#</th><th>Item</th><th class="r">Manhours</th><th class="r">L&amp;E</th><th class="r">Ext Equip</th><th class="r">Materials</th><th class="r">Subs</th><th class="r">Profit/Cont</th><th class="r">Markups</th><th class="r">Total</th><th class="r">Revised</th><th class="r">Units</th><th class="r">Unit Price</th></tr>
+    ${calc.items.map(i=>`<tr><td>${plEsc(i.num)}</td><td>${plEsc(i.name)}${i.isMob?" <em>(mob/demob)</em>":""}</td><td class="r">${i.mh.toLocaleString()}</td><td class="r">${m(i.le)}</td><td class="r">${m(i.ext)}</td><td class="r">${m(i.mat)}</td><td class="r">${m(i.sub)}</td><td class="r">${m(i.gp+i.cont)}</td><td class="r">${m(i.extMk+i.matMk+i.subMk)}</td><td class="r"><b>${m(i.total)}</b></td><td class="r">${i.isMob?"—":m(i.revised)}</td><td class="r">${i.isMob?"—":i.units}</td><td class="r">${i.isMob?"—":m(i.unitPrice)}</td></tr>`).join("")}
+    <tr class="tot"><td></td><td>TOTAL</td><td class="r">${t.mh.toLocaleString()}</td><td class="r">${m(t.le)}</td><td class="r">${m(t.ext)}</td><td class="r">${m(t.mat)}</td><td class="r">${m(t.sub)}</td><td class="r">${m(t.gp+t.cont)}</td><td class="r">${m(t.extMk+t.matMk+t.subMk)}</td><td class="r">${m(t.total)}</td><td class="r">${m(calc.items.filter(i=>!i.isMob).reduce((s,i)=>s+i.revised,0))}</td><td></td><td></td></tr></table>
+    <div class="grid2" style="margin-top:10px"><div><h2>Cost &amp; Profit</h2><div class="kv"><span>Subtotal cost</span><b>${m(t.subtotalCost)}</b><span>SG&amp;A (${t.mh.toLocaleString()} mh × ${m(r.sgaPerMh)})</span><b>${m(t.sga)} (${pct(t.sgaPct)})</b><span>Total cost</span><b>${m(t.totalCost)}</b><span>Total profit</span><b>${m(t.profit)}</b><span>Gross profit</span><b>${pct(t.grossPct)}</b><span>Net profit</span><b>${m(t.net)} (${pct(t.netPct)})</b></div></div>
+    <div><h2>Basis</h2><div class="kv"><span>Revenue / manhour</span><b>${m(calc.revMh)}</b><span>Cost / manhour</span><b>${m(calc.costMh)}</b><span>Average crew size</span><b>${t.avgCrew}</b><span>Estimated duration</span><b>${t.duration.toFixed(1)} days (${(t.duration/25).toFixed(1)} months)</b><span>Average daily crew cost</span><b>${m(t.dailyCrewCost)}</b><span>Markups</span><b>GP ${Math.round(r.markups.gp*100)}% · cont ${Math.round(r.markups.cont*100)}% · equip ${Math.round(r.markups.equip*100)}% · mat ${Math.round(r.markups.mat*100)}% · sub ${Math.round(r.markups.sub*100)}%</b></div></div></div>`;
+  const details=`<div class="pb">${hdr}<h2>Bid Item Details</h2>${calc.items.map(i=>`<div style="margin-bottom:10px"><b>${plEsc(i.num)} · ${plEsc(i.name)}</b> — crew ${i.crewSize||0} × ${i.days||0} days × ${calc.hpd} = ${i.mh.toLocaleString()} manhours · L&amp;E ${m(i.le)} · total ${m(i.total)}${i.notes?`<div class="sub">${plEsc(i.notes)}</div>`:""}
+    ${[["External equipment",i.equipment],["Materials",i.materials],["Subcontracts",i.subs]].filter(([,a])=>(a||[]).length).map(([l,a])=>`<table style="margin-top:4px"><tr><th>${l}</th><th class="r">Qty</th><th class="r">Unit cost</th><th class="r">Total</th></tr>${a.map(x=>`<tr><td>${plEsc(x.desc)}</td><td class="r">${plNum(x.qty)}</td><td class="r">${m(x.unit)}</td><td class="r">${m(plNum(x.qty)*plNum(x.unit))}</td></tr>`).join("")}</table>`).join("")}</div>`).join("")}</div>`;
+  const crew=`<div class="pb">${hdr}<h2>Manhour Cost Breakdown (CPL 2025)</h2><div class="grid2"><table><tr><th>Classification</th><th class="r">#</th><th class="r">RT</th><th class="r">OT</th><th class="r">RT hrs</th><th class="r">OT hrs</th><th class="r">Total/day</th></tr>${r.labor.filter(l=>plNum(l.count)>0).map(l=>`<tr><td>${plEsc(l.cls)}</td><td class="r">${l.count}</td><td class="r">${m(l.rt)}</td><td class="r">${m(l.ot)}</td><td class="r">${l.rtHrs}</td><td class="r">${l.otHrs}</td><td class="r">${m(((plNum(l.rt)*plNum(l.rtHrs))+(plNum(l.ot)*plNum(l.otHrs)))*plNum(l.count))}</td></tr>`).join("")}<tr class="tot"><td>Total labor / day</td><td class="r">${calc.crewSize}</td><td colspan="4"></td><td class="r">${m(calc.laborTotal)}</td></tr><tr><td colspan="6">Labor revenue / manhour</td><td class="r"><b>${m(calc.laborRevMh)}</b></td></tr></table>
+    <table><tr><th>Equipment</th><th class="r">#</th><th class="r">Rate</th><th>Per</th><th class="r">Total/day</th></tr>${r.equipment.filter(e=>plNum(e.count)>0).map(e=>`<tr><td>${plEsc(e.name)}</td><td class="r">${e.count}</td><td class="r">${m(e.rate)}</td><td>${e.unit}</td><td class="r">${m(plNum(e.rate)*plNum(e.count))}</td></tr>`).join("")}<tr class="tot"><td>Total equipment / day</td><td colspan="3"></td><td class="r">${m(calc.equipTotal)}</td></tr><tr><td colspan="4">Equipment revenue / manhour</td><td class="r"><b>${m(calc.equipRevMh)}</b></td></tr><tr><td colspan="4"><b>REVENUE / MANHOUR</b></td><td class="r"><b>${m(calc.revMh)}</b></td></tr></table></div></div>`;
+  const ck=Object.entries(data.checklist||{}).filter(([,v])=>v.qty||v.note);
+  const checklist=ck.length?`<div class="pb">${hdr}<h2>Estimate Checklist</h2><table><tr><th>Item</th><th>Length / No.</th><th>Additional requirements</th></tr>${ck.map(([k,v])=>`<tr><td>${plEsc(k.replace("|"," — "))}</td><td>${plEsc(v.qty)}</td><td>${plEsc(v.note)}</td></tr>`).join("")}</table></div>`:"";
+  plOpenPrint(`Bid Sheet — ${meta.name}`,hdr+summary+details+crew+checklist,user);
+}
+function plPrintEst(meta,data,calc,user){
+  const m=plMoney;const r=data.rates;const rateOf=(cls)=>plNum((r.labor.find(l=>l.cls===cls)||{}).rate);const eq=(n)=>r.equipment.find(e=>e.name===n)||{};
+  const hdr=`<div class="hdr"><div>${AIME_LOGO_IMG(48)}<div class="sub">Pipeline Division · T&amp;M Estimate</div></div><div style="text-align:right"><h1>${plEsc(meta.name)}</h1><div class="sub">${plEsc(meta.customer)}${meta.description?" · "+plEsc(meta.description):""}${meta.location?" · "+plEsc(meta.location):""}</div><div class="big">Project Total Estimate ${m(calc.total)}</div></div></div>`;
+  const scopes=calc.scopes.map((sc,i)=>`<div class="${i?"pb":""}">${i?hdr:""}<h2>${plEsc(sc.name)} — ${m(sc.total)}</h2>${sc.sow?`<div class="sub"><b>SOW:</b> ${(sc.sow||"").split("\n").filter(Boolean).map(plEsc).join(" · ")}</div>`:""}
+    <table><tr><th>AIME labor &amp; equipment</th><th>Crew</th><th class="r">Crew cost/day</th><th class="r">Days</th><th class="r">Total</th></tr>${sc.tasks.map(t=>`<tr><td>${plEsc(t.desc)}</td><td>${plEsc((calc.crews.find(c=>c.id===t.crewId)||{}).name||"")}</td><td class="r">${m(t.dayCost)}</td><td class="r">${t.qty}</td><td class="r">${m(t.total)}</td></tr>`).join("")}<tr class="tot"><td colspan="4">Labor &amp; equipment</td><td class="r">${m(sc.laborTotal)}</td></tr></table>
+    ${sc.materials.length?`<table style="margin-top:6px"><tr><th>Material</th><th class="r">Cost</th><th class="r">Qty</th><th class="r">Subtotal</th><th class="r">Tax ${Math.round(sc.matTaxPct*100)}%</th><th class="r">Markup ${Math.round(sc.matMarkupPct*100)}%</th><th class="r">Total</th></tr>${sc.materials.map(x=>`<tr><td>${plEsc(x.desc)}</td><td class="r">${m(x.cost)}</td><td class="r">${x.qty}</td><td class="r">${m(x.st)}</td><td class="r">${m(x.tax)}</td><td class="r">${m(x.mk)}</td><td class="r">${m(x.total)}</td></tr>`).join("")}<tr class="tot"><td colspan="6">Materials</td><td class="r">${m(sc.matTotal)}</td></tr></table>`:""}
+    ${sc.rentals.length?`<table style="margin-top:6px"><tr><th>Equipment rental</th><th class="r">Cost</th><th class="r">Qty</th><th class="r">Subtotal</th><th class="r">Markup ${Math.round(sc.rentMarkupPct*100)}%</th><th class="r">Total</th></tr>${sc.rentals.map(x=>`<tr><td>${plEsc(x.desc)}</td><td class="r">${m(x.cost)}</td><td class="r">${x.qty}</td><td class="r">${m(x.st)}</td><td class="r">${m(x.mk)}</td><td class="r">${m(x.total)}</td></tr>`).join("")}<tr class="tot"><td colspan="5">Rentals</td><td class="r">${m(sc.rentTotal)}</td></tr></table>`:""}</div>`).join("");
+  const summary=`<h2>Summary</h2><table><tr><th>Scope</th><th class="r">Labor &amp; equip</th><th class="r">Materials</th><th class="r">Rentals</th><th class="r">Total</th></tr>${calc.scopes.map(s=>`<tr><td>${plEsc(s.name)}</td><td class="r">${m(s.laborTotal)}</td><td class="r">${m(s.matTotal)}</td><td class="r">${m(s.rentTotal)}</td><td class="r"><b>${m(s.total)}</b></td></tr>`).join("")}<tr class="tot"><td>PROJECT TOTAL</td><td class="r">${m(calc.scopes.reduce((s,x)=>s+x.laborTotal,0))}</td><td class="r">${m(calc.scopes.reduce((s,x)=>s+x.matTotal,0))}</td><td class="r">${m(calc.scopes.reduce((s,x)=>s+x.rentTotal,0))}</td><td class="r">${m(calc.total)}</td></tr></table>`;
+  const crews=calc.crews.map(c=>`<div class="pb">${hdr}<h2>Crew — ${plEsc(c.name)} · ${m(c.day.total)} per day</h2>
+    <div style="text-align:center;font-weight:800;font-size:10pt">COLONIAL PIPELINE COMPANY<br/>DAILY REPORT — WORK PERFORMED BY CONTRACTOR</div><div class="sub" style="text-align:center">Contractor: AIME · ${plEsc(meta.description||"")} · ${plEsc(meta.location||"")}</div>
+    <table><tr><th>Name</th><th>Classification</th><th class="r">Reg. hrs</th><th class="r">O.T. hrs</th><th class="r">Travel hrs</th><th class="r">Regular rate</th><th class="r">Amount</th></tr>${(c.labor||[]).map(l=>{const rt=rateOf(l.cls);return `<tr><td></td><td>${plEsc(l.cls)}</td><td class="r">${l.reg||0}</td><td class="r">${l.ot||0}</td><td class="r">${l.travel||0}</td><td class="r">${m(rt)}</td><td class="r">${m(plNum(l.reg)*rt+plNum(l.ot)*rt*plNum(r.otFactor)+plNum(l.travel)*rt*plNum(r.travelFactor))}</td></tr>`;}).join("")}${plNum(c.perDiemCount)?`<tr><td></td><td>Per Diem</td><td class="r">${c.perDiemCount}</td><td></td><td></td><td class="r">${m(r.perDiem)}</td><td class="r">${m(c.day.perDiem)}</td></tr>`:""}<tr class="tot"><td colspan="6">TOTAL LABOR</td><td class="r">${m(c.day.laborTotal)}</td></tr></table>
+    <table style="margin-top:6px"><tr><th>Equipment</th><th class="r">Quantity</th><th>Hours/Days</th><th class="r">Rate</th><th class="r">Amount</th></tr>${(c.equipment||[]).map(e=>{const rate=e.rate!==undefined&&e.rate!==""?plNum(e.rate):plNum(eq(e.name).rate);return `<tr><td>${plEsc(e.name)}</td><td class="r">${e.qty}</td><td>${plEsc(eq(e.name).unit||"")}</td><td class="r">${m(rate)}</td><td class="r">${m(plNum(e.qty)*rate)}</td></tr>`;}).join("")}<tr class="tot"><td colspan="4">TOTAL EQUIPMENT</td><td class="r">${m(c.day.equipment)}</td></tr></table>
+    ${(c.rentals||[]).length?`<table style="margin-top:6px"><tr><th>Rental equipment / material</th><th class="r">Qty</th><th class="r">Amount</th><th class="r">Tax</th><th class="r">Total</th></tr>${c.rentals.map(x=>`<tr><td>${plEsc(x.desc)}</td><td class="r">${x.qty}</td><td class="r">${m(x.amount)}</td><td class="r">${m(x.tax)}</td><td class="r">${m(plNum(x.qty)*plNum(x.amount)+plNum(x.tax))}</td></tr>`).join("")}<tr class="tot"><td colspan="4">TOTAL RENTAL</td><td class="r">${m(c.day.rentals)}</td></tr></table>`:""}
+    <div style="text-align:right;font-size:11pt;font-weight:800;margin-top:6px">GRAND TOTAL / DAY ${m(c.day.total)}</div></div>`).join("");
+  plOpenPrint(`Estimate — ${meta.name}`,hdr+summary+scopes+crews,user);
+}
+
 function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefresh}){
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("active");
-  const [nav,setNav]=useState("jobs");          // jobs | pm
+  const [nav,setNav]=useState("jobs");          // jobs | estimating | pm
+  const [estErr,setEstErr]=useState("");
   const meta=DIV_META[division]||{icon:"🏗️",color:T.orange};
   const isPM=user.role==="admin"||user.role==="pm";
 
@@ -2633,7 +3316,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
         </div>
         {/* Division nav bar — PM Dashboard is PM/admin only */}
         {isPM&&<div style={{display:"flex",background:T.bg,borderRadius:12,padding:4,marginBottom:12,gap:4}}>
-          {[["jobs","🏗️ Jobs"],["pm","📊 PM Dashboard"]].map(([id,label])=>(
+          {[["jobs","🏗️ Jobs"],...(division==="Pipeline"?[["estimating","📐 Estimating"]]:[]),["pm","📊 PM Dashboard"]].map(([id,label])=>(
             <button key={id} onClick={()=>setNav(id)}
               style={{flex:1,padding:"9px",background:nav===id?meta.color:"none",color:nav===id?"#0D0D0F":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
               {label}
@@ -2651,6 +3334,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
       </div>
 
       {nav==="pm"&&isPM&&<PMDashboard embedded lockedDiv={division} user={user} projects={projects} onRefresh={onRefresh} onErr={()=>{}}/>}
+      {nav==="estimating"&&isPM&&division==="Pipeline"&&<div style={{padding:"12px 16px 80px"}}><ErrBanner msg={estErr} onDismiss={()=>setEstErr("")}/><PipelineEstimatingTab user={user} onErr={setEstErr}/></div>}
 
       {nav==="jobs"&&<PullToRefresh onRefresh={async()=>onRefresh&&await onRefresh()}>
       <div style={{padding:"12px 16px 80px"}}>
