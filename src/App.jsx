@@ -1804,6 +1804,23 @@ function ReceiptMigrationTool(){
 }
 
 
+
+/* ── Accounting: AP Invoices + approved time cards for payroll ── */
+function AccountingScreen({user,projects,onBack}){
+  const [tab,setTab]=useState("ap");
+  return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+    <TopBar title="💵 Accounting" onBack={onBack}/>
+    <div style={{padding:"14px 16px 80px"}}>
+      <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4}}>
+        {[["ap","🧾 AP Invoices"],["timecards","⏱️ Time Cards (approved)"]].map(([id,l])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"9px",background:tab===id?T.teal:"none",color:tab===id?"#000":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>))}
+      </div>
+      {tab==="ap"&&<ApInvoicesScreen user={user} projects={projects} embedded/>}
+      {tab==="timecards"&&<TimeCardsScreen user={user} projects={projects} embedded approvedOnly readOnly={user.role!=="admin"}/>}
+    </div>
+  </div>);
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    AP INVOICES — vendor invoice intake → PM approval → accounting processing
    One row per vendor invoice. Duplicates are blocked two ways: the app
@@ -1815,7 +1832,7 @@ function ReceiptMigrationTool(){
    ═══════════════════════════════════════════════════════════════════ */
 const apNorm=(v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
 const AP_STATUS={entered:{l:"Awaiting PM approval",c:T.yellow},approved:{l:"Approved — add to Foundation",c:T.red},rejected:{l:"Rejected",c:T.red},processed:{l:"Added to Foundation",c:T.green},paid:{l:"Paid",c:T.teal}};
-function ApInvoicesScreen({user,projects,onBack}){
+function ApInvoicesScreen({user,projects,onBack,embedded}){
   const canEnter=can(user,"ap_enter"),canApprove=can(user,"ap_approve"),canProcess=can(user,"ap_process");
   const [rows,setRows]=useState([]);const [mfgJobs,setMfgJobs]=useState([]);const [pms,setPms]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
   const [tab,setTab]=useState(canApprove&&!canEnter?"entered":"all");const [q,setQ]=useState("");const [open,setOpen]=useState(null);const [showNew,setShowNew]=useState(false);
@@ -1847,9 +1864,9 @@ function ApInvoicesScreen({user,projects,onBack}){
   if(showNew||(open&&open._edit))return <ApInvoiceForm user={user} projects={projects} mfgJobs={mfgJobs} pms={pms} existing={open&&open._edit?open:null} rows={rows} onBack={()=>{setShowNew(false);setOpen(null);}} onSaved={async()=>{setShowNew(false);setOpen(null);await load();}}/>;
   if(showReport)return <ApInvoiceReport user={user} rows={rows} pms={pms} jobOf={jobOf} divOf={divOf} onBack={()=>setShowReport(false)}/>;
   const tabs=[["all",`All (${rows.length})`],["entered",`Needs approval (${counts.entered})`],["approved",`Add to Foundation (${counts.approved})`],["processed",`In Foundation (${counts.processed})`],["paid",`Paid (${counts.paid})`],["rejected",`Rejected (${counts.rejected})`]];
-  return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
-    <TopBar title="💵 AP Invoices" sub={`${counts.entered} awaiting approval · ${counts.approved} to add to Foundation`} onBack={onBack}/>
-    <div style={{padding:"14px 16px 80px"}}>
+  return(<div style={embedded?{}:{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+    {!embedded&&<TopBar title="💵 AP Invoices" sub={`${counts.entered} awaiting approval · ${counts.approved} to add to Foundation`} onBack={onBack}/>}
+    <div style={{padding:embedded?"0 0 80px":"14px 16px 80px"}}>
       <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
       <div style={{...cardS,marginBottom:12,fontSize:12,color:T.sub,lineHeight:1.6,borderLeft:`3px solid ${T.teal}`}}>
         Vendor invoices come in here once. <b style={{color:T.text}}>Accounting enters</b> → <b style={{color:T.text}}>PM approves</b> (or rejects with a reason) → <b style={{color:T.text}}>Accounting adds it to Foundation</b> and marks paid. A red button means it still needs to go into Foundation; green means it's in. The same vendor + invoice number can't be entered twice — you'll be shown the existing one instead.
@@ -2520,7 +2537,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           );
           const items=[];
           if(can(user,"crew_directory"))items.push(navBtn(onCrew,"👥","Crew",T.blue,T.blueLow));
-          if(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process"))items.push(navBtn(onApInvoices,"💵","AP Invoices",T.teal,`${T.teal}15`));
+          if(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process"))items.push(navBtn(onApInvoices,"💵","Accounting",T.teal,`${T.teal}15`));
           if(canEstimate(user))items.push(navBtn(onEstimating,"📐","Estimating",T.purple,`${T.purple}15`));
           items.push(navBtn(onNotifications,notifCount>0?"🔔":"🔕","Alerts",T.sub,T.surface,
             notifCount>0&&<span style={{position:"absolute",top:-6,right:-6,background:T.red,color:"#fff",
@@ -9647,7 +9664,7 @@ function ClockRoster({pmDiv,divIds,user,onErr}){
   );
 }
 
-function TimeCardsScreen({user,projects,onBack,embedded,division}){
+function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,readOnly}){
   const [cards,setCards]=useState([]);const [loading,setLoading]=useState(true);
   const [err,setErr]=useState('');
   const [fromDate,setFromDate]=useState(()=>{const d=new Date();d.setDate(d.getDate()-14);return d.toISOString().slice(0,10);});
@@ -9716,7 +9733,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
   }
 
   /* ── Edit any card (pending or approved) with an audit trail ── */
-  const canEdit=user.role==='admin'||user.role==='pm';
+  const canEdit=!readOnly&&(user.role==='admin'||user.role==='pm');
   const [edit,setEdit]=useState(null);       // card id
   const [draft,setDraft]=useState({});
   const [saving,setSaving]=useState(false);
@@ -9885,7 +9902,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
     setTimeout(()=>setPrinting(false),1000);
   }
 
-  const filtered=cards.filter(c=>c.date&&c.date>=fromDate&&c.date<=toDate&&inDivision(c)
+  const filtered=cards.filter(c=>c.date&&c.date>=fromDate&&c.date<=toDate&&inDivision(c)&&(!approvedOnly||(c.status||'pending')==='approved')
     &&(selectedJobs.length===0||selectedJobs.includes(c.project_id)||selectedJobs.includes(c.mfg_job_id)));
   // Approval helpers (used on the worker cards)
   const approveIds=async(ids,status)=>{
@@ -9911,11 +9928,14 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
       {!embedded&&<TopBar title="⏱️ Time Cards" onBack={onBack}/>}
       <div style={{padding:embedded?'0 0 100px':'12px 16px 100px'}}>
         <ErrBanner msg={err} onDismiss={()=>setErr('')}/>
+        {approvedOnly&&<div style={{...cardS,marginBottom:12,fontSize:12,color:T.sub,lineHeight:1.6,borderLeft:`3px solid ${T.green}`}}>
+          <b style={{color:T.green}}>Approved time cards only.</b> Hours show up here once the division PM has approved them. Anything still pending or flagged stays with the PM until it's approved.
+        </div>}
         {(()=>{
           const pend=filtered.filter(c=>isOurs(c)&&(c.status||'pending')!=='approved'&&c.status!=='open');
           const unconf=new Set(filtered.filter(c=>!c.employee_ack_at).map(c=>c.worker_name));
           const flagged=filtered.filter(c=>isOurs(c)&&c.flagged_by).length;
-          if(!canEdit)return null;
+          if(!canEdit||approvedOnly)return null;
           return(
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginBottom:12}}>
               {[["To approve",pend.length,pend.length?T.yellow:T.green],["Not confirmed by employee",unconf.size,unconf.size?T.red:T.muted],[flagged?"Flagged by another PM":"Approved",flagged||filtered.filter(c=>isOurs(c)&&(c.status||'pending')==='approved').length,flagged?T.red:T.green]].map(([l,v,c])=>(
@@ -9995,7 +10015,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division}){
         {!loading&&filtered.length===0&&<div style={{textAlign:'center',padding:'40px 0',color:T.muted}}><div style={{fontSize:32}}>⏱️</div><div style={{marginTop:8}}>No time cards in this date range</div></div>}
 
         {/* Worker summary cards */}
-        {canEdit&&workerRows.length>0&&<div style={{fontSize:11,color:T.muted,marginBottom:8}}>Tap a name to see and edit that person's daily entries.</div>}
+        {workerRows.length>0&&<div style={{fontSize:11,color:T.muted,marginBottom:8}}>Tap a name to see {canEdit?"and edit ":""}that person's daily entries.</div>}
         {workerRows.map(w=>{
           const open=openWorker===w.name;
           const mine=filtered.filter(c=>(c.worker_name||'?')===w.name).sort((a,b)=>b.date?.localeCompare(a.date));
@@ -18930,7 +18950,7 @@ function AppInner(){
         <InvoiceTrackerScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="apInvoices"&&(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process"))&&(
-        <ApInvoicesScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
+        <AccountingScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="myHours"&&(
         <MyHoursScreen user={user} onBack={()=>setScreen("division")}/>
