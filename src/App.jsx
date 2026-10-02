@@ -1817,9 +1817,11 @@ const apNorm=(v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
 const AP_STATUS={entered:{l:"Awaiting PM approval",c:T.yellow},approved:{l:"Approved — ready to process",c:T.green},rejected:{l:"Rejected",c:T.red},processed:{l:"Processed",c:T.blue},paid:{l:"Paid",c:T.teal}};
 function ApInvoicesScreen({user,projects,onBack}){
   const canEnter=can(user,"ap_enter"),canApprove=can(user,"ap_approve"),canProcess=can(user,"ap_process");
-  const [rows,setRows]=useState([]);const [mfgJobs,setMfgJobs]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
+  const [rows,setRows]=useState([]);const [mfgJobs,setMfgJobs]=useState([]);const [pms,setPms]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
   const [tab,setTab]=useState(canApprove&&!canEnter?"entered":"all");const [q,setQ]=useState("");const [open,setOpen]=useState(null);const [showNew,setShowNew]=useState(false);
-  async function load(){setLoading(true);try{const [r,m]=await Promise.all([sb("/ap_invoices?select=*&order=created_at.desc&limit=3000"),API.mfg.jobs.list().catch(()=>[])]);setRows(r||[]);setMfgJobs(m||[]);}catch(e){setErr(e.message);}setLoading(false);}
+  const [onlyMine,setOnlyMine]=useState(canApprove&&!canEnter);
+  async function load(){setLoading(true);try{const [r,m,u]=await Promise.all([sb("/ap_invoices?select=*&order=created_at.desc&limit=3000"),API.mfg.jobs.list().catch(()=>[]),API.userProfiles.list().catch(()=>[])]);
+    setRows(r||[]);setMfgJobs(m||[]);setPms((u||[]).filter(x=>(x.role==="pm"||x.role==="admin")&&x.active!==false));}catch(e){setErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[]);
   const jobOf=(r)=>r.project_id?(projects.find(p=>p.id===r.project_id)||{}).name||"":r.mfg_job_id?"🏭 "+((mfgJobs.find(j=>j.id===r.mfg_job_id)||{}).job_number||""):"";
   const divOf=(r)=>r.project_id?(projects.find(p=>p.id===r.project_id)||{}).division||"":r.mfg_job_id?"Manufacturing":"";
@@ -1827,7 +1829,8 @@ function ApInvoicesScreen({user,projects,onBack}){
   // PMs see their own divisions' invoices for approval; admin sees all
   const myDivs=user.role==="admin"?null:(user.division&&user.division!=="All"?[user.division]:null);
   const counts={entered:rows.filter(r=>r.status==="entered").length,approved:rows.filter(r=>r.status==="approved").length,processed:rows.filter(r=>r.status==="processed").length,paid:rows.filter(r=>r.status==="paid").length,rejected:rows.filter(r=>r.status==="rejected").length};
-  const filtered=rows.filter(r=>(tab==="all"||r.status===tab)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
+  const filtered=rows.filter(r=>(tab==="all"||r.status===tab)&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
+  const assignedToMe=rows.filter(r=>r.status==="entered"&&r.assigned_pm===user.name).length;
   const total=filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
   async function act(r,status,extra={},note){
     const entry={at:new Date().toISOString(),by:user.name,action:status,note:note||null};
@@ -1840,7 +1843,7 @@ function ApInvoicesScreen({user,projects,onBack}){
       if(status==="approved"||status==="rejected")notify("ap_invoice",`Invoice ${status}: ${r.vendor} #${r.invoice_no}`,`${user.name} ${status} ${r.vendor} #${r.invoice_no} (${money(r.amount)})${note?": "+note:""}`,{to:r.entered_by||null,project_id:r.project_id||null});
     }catch(e){setErr(e.message);}
   }
-  if(showNew||(open&&open._edit))return <ApInvoiceForm user={user} projects={projects} mfgJobs={mfgJobs} existing={open&&open._edit?open:null} rows={rows} onBack={()=>{setShowNew(false);setOpen(null);}} onSaved={async()=>{setShowNew(false);setOpen(null);await load();}}/>;
+  if(showNew||(open&&open._edit))return <ApInvoiceForm user={user} projects={projects} mfgJobs={mfgJobs} pms={pms} existing={open&&open._edit?open:null} rows={rows} onBack={()=>{setShowNew(false);setOpen(null);}} onSaved={async()=>{setShowNew(false);setOpen(null);await load();}}/>;
   const tabs=[["all",`All (${rows.length})`],["entered",`Needs approval (${counts.entered})`],["approved",`Ready to process (${counts.approved})`],["processed",`Processed (${counts.processed})`],["paid",`Paid (${counts.paid})`],["rejected",`Rejected (${counts.rejected})`]];
   return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
     <TopBar title="💵 AP Invoices" sub={`${counts.entered} awaiting approval · ${counts.approved} ready to process`} onBack={onBack}/>
@@ -1853,8 +1856,9 @@ function ApInvoicesScreen({user,projects,onBack}){
         <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search vendor, invoice #, PO, job…" style={{...inp,flex:2,minWidth:220}}/>
         {canEnter&&<button onClick={()=>setShowNew(true)} style={{...primBtn,borderRadius:12,padding:"10px 16px",background:T.teal,color:"#000",fontSize:13}}>+ Enter Invoice</button>}
       </div>
-      <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto"}}>
+      <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto",alignItems:"center"}}>
         {tabs.map(([id,l])=><button key={id} onClick={()=>setTab(id)} style={{...ghostBtn,padding:"7px 12px",fontSize:12,whiteSpace:"nowrap",borderColor:tab===id?T.teal:T.border,color:tab===id?T.teal:T.sub}}>{l}</button>)}
+        {canApprove&&<label style={{fontSize:11.5,color:onlyMine?T.yellow:T.muted,display:"flex",alignItems:"center",gap:5,cursor:"pointer",whiteSpace:"nowrap",marginLeft:"auto"}}><input type="checkbox" checked={onlyMine} onChange={e=>setOnlyMine(e.target.checked)}/> Assigned to me{assignedToMe?` (${assignedToMe})`:""}</label>}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
         <div style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:T.blue}}>{filtered.length}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Invoices shown</div></div>
@@ -1862,14 +1866,15 @@ function ApInvoicesScreen({user,projects,onBack}){
       </div>
       {loading&&<Spinner/>}
       {!loading&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}><div style={{fontSize:44,marginBottom:10}}>💵</div>Nothing here.</div>}
-      {filtered.map(r=>{const st=AP_STATUS[r.status]||AP_STATUS.entered;const isOpen=open&&open.id===r.id;const mine=!myDivs||myDivs.includes(divOf(r))||!divOf(r);
+      {filtered.map(r=>{const st=AP_STATUS[r.status]||AP_STATUS.entered;const isOpen=open&&open.id===r.id;
+        const mine=user.role==="admin"||(r.assigned_pm?r.assigned_pm===user.name:(!myDivs||myDivs.includes(divOf(r))||!divOf(r)));
         return(<div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${st.c}`}}>
           <div onClick={()=>setOpen(isOpen?null:r)} style={{cursor:"pointer",display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:14,fontWeight:800,color:T.text}}>{r.vendor} <span style={{color:T.muted,fontWeight:500}}>#{r.invoice_no}</span></div>
               <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{jobOf(r)||"No job"}{r.po_number?` · PO ${r.po_number}`:""}{r.invoice_date?` · dated ${r.invoice_date}`:""}{r.due_date?` · due ${r.due_date}`:""}</div>
               {r.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</div>}
-              <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>Entered {new Date(r.created_at).toLocaleDateString()} by {r.entered_by}{r.approved_by?` · approved by ${r.approved_by}`:""}{r.rejected_by?` · rejected by ${r.rejected_by}`:""}{r.processed_by?` · processed by ${r.processed_by}`:""}{r.paid_by?` · paid ${r.paid_at?new Date(r.paid_at).toLocaleDateString():""}`:""}</div>
+              <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>{r.assigned_pm&&r.status==="entered"?<span style={{color:r.assigned_pm===user.name?T.yellow:T.sub}}>Approver: {r.assigned_pm} · </span>:""}Entered {new Date(r.created_at).toLocaleDateString()} by {r.entered_by}{r.approved_by?` · approved by ${r.approved_by}`:""}{r.rejected_by?` · rejected by ${r.rejected_by}`:""}{r.processed_by?` · processed by ${r.processed_by}`:""}{r.paid_by?` · paid ${r.paid_at?new Date(r.paid_at).toLocaleDateString():""}`:""}</div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:16,fontWeight:900,color:T.green}}>{money(r.amount)}</div><span style={{...pill(st.c),fontSize:9.5,marginTop:4}}>{st.l}</span></div>
           </div>
@@ -1882,7 +1887,14 @@ function ApInvoicesScreen({user,projects,onBack}){
               {canApprove&&r.status==="entered"&&mine&&<>
                 <button onClick={()=>act(r,"approved")} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.green,color:"#000"}}>✓ Approve</button>
                 <button onClick={()=>{const n=window.prompt("Reason for rejecting (accounting will see this):","");if(n===null)return;act(r,"rejected",{},n);}} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.red,borderColor:T.red+"60"}}>✕ Reject</button></>}
-              {canApprove&&r.status==="entered"&&!mine&&<span style={{fontSize:11,color:T.muted,alignSelf:"center"}}>For the {divOf(r)} PM to approve.</span>}
+              {canApprove&&r.status==="entered"&&!mine&&<span style={{fontSize:11,color:T.muted,alignSelf:"center"}}>Assigned to {r.assigned_pm||`the ${divOf(r)} PM`} — reassign it if it's yours or you know whose it is.</span>}
+              {(canEnter||canApprove)&&r.status==="entered"&&<select value={r.assigned_pm||""} onChange={async e=>{const v=e.target.value||null;if(v===(r.assigned_pm||null))return;
+                  try{await sb(`/ap_invoices?id=eq.${r.id}`,{method:"PATCH",body:{assigned_pm:v,history:[...(r.history||[]),{at:new Date().toISOString(),by:user.name,action:"reassigned",note:v?`to ${v}`:"unassigned"}]}});setRows(rs=>rs.map(x=>x.id===r.id?{...x,assigned_pm:v}:x));
+                    if(v&&v!==user.name)notify("ap_invoice",`Invoice to approve: ${r.vendor} #${r.invoice_no}`,`${user.name} passed ${r.vendor} #${r.invoice_no} (${money(r.amount)}) to you for approval${r.entered_by?` (entered by ${r.entered_by})`:""}`,{to:v,project_id:r.project_id||null});
+                    if(r.entered_by&&r.entered_by!==user.name)notify("ap_invoice",`Invoice reassigned: ${r.vendor} #${r.invoice_no}`,`${user.name} reassigned it to ${v||"nobody"}`,{to:r.entered_by,project_id:r.project_id||null});
+                    if(onlyMine&&v!==user.name)setOpen(null);
+                  }catch(err){setErr(err.message);}}} style={{...inp,width:"auto",padding:"6px 8px",fontSize:12}}>
+                <option value="">{r.assigned_pm?"Reassign to…":"Assign approver…"}</option>{pms.map(p=><option key={p.name} value={p.name}>{p.name}{p.division&&p.division!=="All"?` · ${p.division}`:""}{p.name===user.name?" (me)":""}</option>)}</select>}
               {canApprove&&r.status==="approved"&&<button onClick={()=>act(r,"entered",{approved_by:null,approved_at:null},"approval withdrawn")} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.yellow}}>↩ Un-approve</button>}
               {canProcess&&r.status==="approved"&&<button onClick={()=>{const ref=window.prompt("Processed — enter check / ACH / batch reference (optional):","");if(ref===null)return;act(r,"processed",{payment_ref:ref||null},ref?"ref "+ref:null);}} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.blue}}>→ Mark processed</button>}
               {canProcess&&r.status==="processed"&&<button onClick={()=>{const d=window.prompt("Paid on (YYYY-MM-DD):",today());if(d===null)return;act(r,"paid",{payment_date:d||today()},"paid "+(d||today()));}} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.teal,color:"#000"}}>$ Mark paid</button>}
@@ -1898,11 +1910,15 @@ function ApInvoicesScreen({user,projects,onBack}){
   </div>);
 }
 
-function ApInvoiceForm({user,projects,mfgJobs,existing,rows,onBack,onSaved}){
+function ApInvoiceForm({user,projects,mfgJobs,pms=[],existing,rows,onBack,onSaved}){
   const [f,setF]=useState({vendor:existing?.vendor||"",invoice_no:existing?.invoice_no||"",invoice_date:existing?.invoice_date||today(),due_date:existing?.due_date||"",amount:existing?.amount??"",
     project_id:existing?.project_id||"",mfg_job_id:existing?.mfg_job_id||"",po_number:existing?.po_number||"",description:existing?.description||"",notes:existing?.notes||"",
-    file_url:existing?.file_url||"",file_path:existing?.file_path||"",file_name:existing?.file_name||""});
+    file_url:existing?.file_url||"",file_path:existing?.file_path||"",file_name:existing?.file_name||"",assigned_pm:existing?.assigned_pm||""});
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  // Suggest the approver from the job's division when none is picked yet.
+  const jobDiv=f.project_id?(projects.find(p=>p.id===f.project_id)||{}).division:(f.mfg_job_id?"Manufacturing":null);
+  const suggested=jobDiv?pms.filter(p=>p.role==="pm"&&p.division===jobDiv):[];
+  useEffect(()=>{if(!f.assigned_pm&&suggested.length===1)set("assigned_pm",suggested[0].name);},[jobDiv]);
   const [err,setErr]=useState("");const [saving,setSaving]=useState(false);const [reading,setReading]=useState("");const fileRef=useRef(null);
   const vendors=[...new Set(rows.map(r=>r.vendor).filter(Boolean))].sort();
   const dup=rows.find(r=>(!existing||r.id!==existing.id)&&apNorm(r.vendor)===apNorm(f.vendor)&&apNorm(r.invoice_no)===apNorm(f.invoice_no)&&apNorm(f.invoice_no));
@@ -1929,14 +1945,14 @@ function ApInvoiceForm({user,projects,mfgJobs,existing,rows,onBack,onSaved}){
     const proj=projects.find(p=>p.id===f.project_id);
     const body={vendor:f.vendor.trim(),vendor_key:apNorm(f.vendor),invoice_no:f.invoice_no.trim(),invoice_key:apNorm(f.invoice_no),invoice_date:f.invoice_date||null,due_date:f.due_date||null,amount:parseFloat(f.amount),
       project_id:f.project_id||null,mfg_job_id:f.mfg_job_id||null,division:proj?.division||(f.mfg_job_id?"Manufacturing":null),po_number:f.po_number||null,description:f.description||null,notes:f.notes||null,
-      file_url:f.file_url||null,file_path:f.file_path||null,file_name:f.file_name||null,updated_at:new Date().toISOString()};
+      file_url:f.file_url||null,file_path:f.file_path||null,file_name:f.file_name||null,assigned_pm:f.assigned_pm||null,updated_at:new Date().toISOString()};
     try{
       if(existing){
         const entry={at:body.updated_at,by:user.name,action:existing.status==="rejected"?"resubmitted":"edited"};
         await sb(`/ap_invoices?id=eq.${existing.id}`,{method:"PATCH",body:{...body,status:"entered",rejected_by:null,rejected_at:null,reject_reason:null,history:[...(existing.history||[]),entry]}});
       }else{
         await sb("/ap_invoices",{method:"POST",body:{...body,status:"entered",entered_by:user.name,history:[{at:body.updated_at,by:user.name,action:"entered"}]}});
-        notify("ap_invoice",`Invoice to approve: ${body.vendor} #${body.invoice_no}`,`${user.name} entered ${body.vendor} #${body.invoice_no} for ${money(body.amount)}${proj?" on "+proj.name:""}`,{project_id:body.project_id});
+        notify("ap_invoice",`Invoice to approve: ${body.vendor} #${body.invoice_no}`,`${user.name} entered ${body.vendor} #${body.invoice_no} for ${money(body.amount)}${proj?" on "+proj.name:""}${body.assigned_pm?" — assigned to "+body.assigned_pm:""}`,{project_id:body.project_id,to:body.assigned_pm||null});
       }
       onSaved();
     }catch(e){
@@ -1979,6 +1995,13 @@ function ApInvoiceForm({user,projects,mfgJobs,existing,rows,onBack,onSaved}){
           <div><label style={lbl}>PO #</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} style={inp}/></div>
           <div><label style={lbl}>Description</label><input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="What it's for" style={inp}/></div>
         </div>
+        <div style={{marginBottom:10}}><label style={lbl}>PM to approve</label>
+          <select value={f.assigned_pm} onChange={e=>set("assigned_pm",e.target.value)} style={{...inp,...(f.assigned_pm?{}:{borderColor:T.yellow+"80"})}}>
+            <option value="">— any {jobDiv||"division"} PM —</option>
+            {suggested.length>0&&<optgroup label={`${jobDiv} PMs`}>{suggested.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}</optgroup>}
+            <optgroup label="All PMs & admins">{pms.filter(p=>!suggested.includes(p)).map(p=><option key={p.name} value={p.name}>{p.name}{p.division&&p.division!=="All"?` · ${p.division}`:""}{p.role==="admin"?" · admin":""}</option>)}</optgroup>
+          </select>
+          <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>They get an Alert and it shows under "Assigned to me". Leave blank and any PM in the job's division can approve it.</div></div>
         <div><label style={lbl}>Notes for the PM</label><textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/></div>
       </div>
       <div style={{display:"flex",gap:8}}>
