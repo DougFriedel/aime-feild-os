@@ -358,7 +358,7 @@ async function storageRemove(bucket,path){
 const ESTIMATING_OWNER="";
 const canEstimate=(u)=>!!u&&can(u,"estimating")&&(!ESTIMATING_OWNER||u.name===ESTIMATING_OWNER);
 
-const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs","invoices"]);
+const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs","invoices","apInvoices"]);
 const SCREEN_MAX={estimating:1700};
 const shellMax=(screen)=>SCREEN_MAX[screen]||(WIDE_SCREENS.has(screen)?1180:480);
 
@@ -726,12 +726,14 @@ const DIVISIONS=["Mechanical","Pipeline","Structural","Manufacturing"];
    clock on manufacturing jobs is separate and unaffected. */
 const FIELD_CLOCK_ENABLED=false;
 const DIV_META={Mechanical:{icon:"⚙️",color:"#60A5FA",desc:"Mechanical projects and equipment"},Pipeline:{icon:"🔧",color:"#3B82F6",desc:"Pipeline construction and maintenance"},Structural:{icon:"🏗️",color:"#34D399",desc:"Structural steel and civil work"},Manufacturing:{icon:"🏭",color:"#8B5CF6",desc:"Shop fabrication & production"}};
-const ROLES=["crew","foreman","estimator","pm","admin"];
-const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Reports, time cards, photos, safety, schedule, weather"},foreman:{label:"Foreman",color:T.yellow,desc:"Everything crew can do, plus create and manage jobs"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, PM dashboard, custom reports"},estimator:{label:"Estimator",color:T.purple,desc:"Foreman access plus the estimating platform"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
+const ROLES=["crew","foreman","estimator","accounting","pm","admin"];
+const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Reports, time cards, photos, safety, schedule, weather"},foreman:{label:"Foreman",color:T.yellow,desc:"Everything crew can do, plus create and manage jobs"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, PM dashboard, custom reports"},estimator:{label:"Estimator",color:T.purple,desc:"Foreman access plus the estimating platform"},accounting:{label:"Accounting",color:T.teal,desc:"Enter and process vendor invoices, view jobs and docs"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
 
 const PERMS={
-  admin:     ["manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
-  pm:        ["create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
+  admin:     ["ap_enter","ap_approve","ap_process","manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
+  pm:        ["ap_approve","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
+  // Accounting enters vendor invoices and processes them after PM approval.
+  accounting:["ap_enter","ap_process","docs","crew_directory","photos","view_dashboard"],
   // Estimator = everything a Foreman can do, plus the estimating platform and the dashboard
   estimator: ["estimating","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
   // Foreman can now run jobs end to end, but still can't approve or flag reports —
@@ -1801,6 +1803,192 @@ function ReceiptMigrationTool(){
   );
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════
+   AP INVOICES — vendor invoice intake → PM approval → accounting processing
+   One row per vendor invoice. Duplicates are blocked two ways: the app
+   checks vendor + invoice # before saving, and the database has a unique
+   index on the normalized pair, so a second copy can't be stored even if
+   two people enter it at the same time.
+   Status flow: entered → approved | rejected → processed → paid
+   Every change is appended to `history` (who / when / what).
+   ═══════════════════════════════════════════════════════════════════ */
+const apNorm=(v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+const AP_STATUS={entered:{l:"Awaiting PM approval",c:T.yellow},approved:{l:"Approved — ready to process",c:T.green},rejected:{l:"Rejected",c:T.red},processed:{l:"Processed",c:T.blue},paid:{l:"Paid",c:T.teal}};
+function ApInvoicesScreen({user,projects,onBack}){
+  const canEnter=can(user,"ap_enter"),canApprove=can(user,"ap_approve"),canProcess=can(user,"ap_process");
+  const [rows,setRows]=useState([]);const [mfgJobs,setMfgJobs]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
+  const [tab,setTab]=useState(canApprove&&!canEnter?"entered":"all");const [q,setQ]=useState("");const [open,setOpen]=useState(null);const [showNew,setShowNew]=useState(false);
+  async function load(){setLoading(true);try{const [r,m]=await Promise.all([sb("/ap_invoices?select=*&order=created_at.desc&limit=3000"),API.mfg.jobs.list().catch(()=>[])]);setRows(r||[]);setMfgJobs(m||[]);}catch(e){setErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[]);
+  const jobOf=(r)=>r.project_id?(projects.find(p=>p.id===r.project_id)||{}).name||"":r.mfg_job_id?"🏭 "+((mfgJobs.find(j=>j.id===r.mfg_job_id)||{}).job_number||""):"";
+  const divOf=(r)=>r.project_id?(projects.find(p=>p.id===r.project_id)||{}).division||"":r.mfg_job_id?"Manufacturing":"";
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  // PMs see their own divisions' invoices for approval; admin sees all
+  const myDivs=user.role==="admin"?null:(user.division&&user.division!=="All"?[user.division]:null);
+  const counts={entered:rows.filter(r=>r.status==="entered").length,approved:rows.filter(r=>r.status==="approved").length,processed:rows.filter(r=>r.status==="processed").length,paid:rows.filter(r=>r.status==="paid").length,rejected:rows.filter(r=>r.status==="rejected").length};
+  const filtered=rows.filter(r=>(tab==="all"||r.status===tab)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
+  const total=filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  async function act(r,status,extra={},note){
+    const entry={at:new Date().toISOString(),by:user.name,action:status,note:note||null};
+    const body={status,...extra,history:[...(r.history||[]),entry],updated_at:entry.at};
+    if(status==="approved")Object.assign(body,{approved_by:user.name,approved_at:entry.at,rejected_by:null,rejected_at:null,reject_reason:null});
+    if(status==="rejected")Object.assign(body,{rejected_by:user.name,rejected_at:entry.at,reject_reason:note||null});
+    if(status==="processed")Object.assign(body,{processed_by:user.name,processed_at:entry.at});
+    if(status==="paid")Object.assign(body,{paid_by:user.name,paid_at:entry.at});
+    try{await sb(`/ap_invoices?id=eq.${r.id}`,{method:"PATCH",body});setRows(rs=>rs.map(x=>x.id===r.id?{...x,...body}:x));setOpen(o=>o&&o.id===r.id?{...o,...body}:o);
+      if(status==="approved"||status==="rejected")notify("ap_invoice",`Invoice ${status}: ${r.vendor} #${r.invoice_no}`,`${user.name} ${status} ${r.vendor} #${r.invoice_no} (${money(r.amount)})${note?": "+note:""}`,{to:r.entered_by||null,project_id:r.project_id||null});
+    }catch(e){setErr(e.message);}
+  }
+  if(showNew||(open&&open._edit))return <ApInvoiceForm user={user} projects={projects} mfgJobs={mfgJobs} existing={open&&open._edit?open:null} rows={rows} onBack={()=>{setShowNew(false);setOpen(null);}} onSaved={async()=>{setShowNew(false);setOpen(null);await load();}}/>;
+  const tabs=[["all",`All (${rows.length})`],["entered",`Needs approval (${counts.entered})`],["approved",`Ready to process (${counts.approved})`],["processed",`Processed (${counts.processed})`],["paid",`Paid (${counts.paid})`],["rejected",`Rejected (${counts.rejected})`]];
+  return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+    <TopBar title="💵 AP Invoices" sub={`${counts.entered} awaiting approval · ${counts.approved} ready to process`} onBack={onBack}/>
+    <div style={{padding:"14px 16px 80px"}}>
+      <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+      <div style={{...cardS,marginBottom:12,fontSize:12,color:T.sub,lineHeight:1.6,borderLeft:`3px solid ${T.teal}`}}>
+        Vendor invoices come in here once. <b style={{color:T.text}}>Accounting enters</b> → <b style={{color:T.text}}>PM approves</b> (or rejects with a reason) → <b style={{color:T.text}}>Accounting processes</b> and marks paid. The same vendor + invoice number can't be entered twice — you'll be shown the existing one instead.
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search vendor, invoice #, PO, job…" style={{...inp,flex:2,minWidth:220}}/>
+        {canEnter&&<button onClick={()=>setShowNew(true)} style={{...primBtn,borderRadius:12,padding:"10px 16px",background:T.teal,color:"#000",fontSize:13}}>+ Enter Invoice</button>}
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto"}}>
+        {tabs.map(([id,l])=><button key={id} onClick={()=>setTab(id)} style={{...ghostBtn,padding:"7px 12px",fontSize:12,whiteSpace:"nowrap",borderColor:tab===id?T.teal:T.border,color:tab===id?T.teal:T.sub}}>{l}</button>)}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+        <div style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:T.blue}}>{filtered.length}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Invoices shown</div></div>
+        <div style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:T.green}}>{money(total)}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Total shown</div></div>
+      </div>
+      {loading&&<Spinner/>}
+      {!loading&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}><div style={{fontSize:44,marginBottom:10}}>💵</div>Nothing here.</div>}
+      {filtered.map(r=>{const st=AP_STATUS[r.status]||AP_STATUS.entered;const isOpen=open&&open.id===r.id;const mine=!myDivs||myDivs.includes(divOf(r))||!divOf(r);
+        return(<div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${st.c}`}}>
+          <div onClick={()=>setOpen(isOpen?null:r)} style={{cursor:"pointer",display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:14,fontWeight:800,color:T.text}}>{r.vendor} <span style={{color:T.muted,fontWeight:500}}>#{r.invoice_no}</span></div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{jobOf(r)||"No job"}{r.po_number?` · PO ${r.po_number}`:""}{r.invoice_date?` · dated ${r.invoice_date}`:""}{r.due_date?` · due ${r.due_date}`:""}</div>
+              {r.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</div>}
+              <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>Entered {new Date(r.created_at).toLocaleDateString()} by {r.entered_by}{r.approved_by?` · approved by ${r.approved_by}`:""}{r.rejected_by?` · rejected by ${r.rejected_by}`:""}{r.processed_by?` · processed by ${r.processed_by}`:""}{r.paid_by?` · paid ${r.paid_at?new Date(r.paid_at).toLocaleDateString():""}`:""}</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:16,fontWeight:900,color:T.green}}>{money(r.amount)}</div><span style={{...pill(st.c),fontSize:9.5,marginTop:4}}>{st.l}</span></div>
+          </div>
+          {isOpen&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+            {r.reject_reason&&<div style={{fontSize:12,color:T.red,marginBottom:8}}>Rejected: {r.reject_reason}</div>}
+            {r.payment_ref&&<div style={{fontSize:12,color:T.sub,marginBottom:8}}>Payment ref: {r.payment_ref}{r.payment_date?` · ${r.payment_date}`:""}</div>}
+            {r.notes&&<div style={{fontSize:12,color:T.sub,marginBottom:8}}>{r.notes}</div>}
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+              {r.file_url&&<a href={r.file_url} target="_blank" rel="noreferrer" style={{...ghostBtn,padding:"7px 12px",fontSize:12,textDecoration:"none"}}>📎 View invoice</a>}
+              {canApprove&&r.status==="entered"&&mine&&<>
+                <button onClick={()=>act(r,"approved")} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.green,color:"#000"}}>✓ Approve</button>
+                <button onClick={()=>{const n=window.prompt("Reason for rejecting (accounting will see this):","");if(n===null)return;act(r,"rejected",{},n);}} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.red,borderColor:T.red+"60"}}>✕ Reject</button></>}
+              {canApprove&&r.status==="entered"&&!mine&&<span style={{fontSize:11,color:T.muted,alignSelf:"center"}}>For the {divOf(r)} PM to approve.</span>}
+              {canApprove&&r.status==="approved"&&<button onClick={()=>act(r,"entered",{approved_by:null,approved_at:null},"approval withdrawn")} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.yellow}}>↩ Un-approve</button>}
+              {canProcess&&r.status==="approved"&&<button onClick={()=>{const ref=window.prompt("Processed — enter check / ACH / batch reference (optional):","");if(ref===null)return;act(r,"processed",{payment_ref:ref||null},ref?"ref "+ref:null);}} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.blue}}>→ Mark processed</button>}
+              {canProcess&&r.status==="processed"&&<button onClick={()=>{const d=window.prompt("Paid on (YYYY-MM-DD):",today());if(d===null)return;act(r,"paid",{payment_date:d||today()},"paid "+(d||today()));}} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.teal,color:"#000"}}>$ Mark paid</button>}
+              {canEnter&&r.status==="rejected"&&<button onClick={()=>setOpen({...r,_edit:true})} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.blue}}>✏️ Fix & resubmit</button>}
+              {canEnter&&r.status==="entered"&&<button onClick={()=>setOpen({...r,_edit:true})} style={{...ghostBtn,padding:"7px 12px",fontSize:12}}>✏️ Edit</button>}
+              {user.role==="admin"&&<button onClick={async()=>{if(!window.confirm("Delete this invoice record? The vendor + invoice # could then be entered again."))return;try{await sb(`/ap_invoices?id=eq.${r.id}`,{method:"DELETE"});setRows(rs=>rs.filter(x=>x.id!==r.id));setOpen(null);}catch(e){setErr(e.message);}}} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.red}}>🗑</button>}
+            </div>
+            <div style={{fontSize:10.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:4}}>History</div>
+            {(r.history||[]).slice().reverse().map((h,i)=><div key={i} style={{fontSize:11,color:T.sub,padding:"2px 0"}}>{new Date(h.at).toLocaleString()} · <b style={{color:T.text}}>{h.by}</b> · {h.action}{h.note?` — ${h.note}`:""}</div>)}
+          </div>}
+        </div>);})}
+    </div>
+  </div>);
+}
+
+function ApInvoiceForm({user,projects,mfgJobs,existing,rows,onBack,onSaved}){
+  const [f,setF]=useState({vendor:existing?.vendor||"",invoice_no:existing?.invoice_no||"",invoice_date:existing?.invoice_date||today(),due_date:existing?.due_date||"",amount:existing?.amount??"",
+    project_id:existing?.project_id||"",mfg_job_id:existing?.mfg_job_id||"",po_number:existing?.po_number||"",description:existing?.description||"",notes:existing?.notes||"",
+    file_url:existing?.file_url||"",file_path:existing?.file_path||"",file_name:existing?.file_name||""});
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  const [err,setErr]=useState("");const [saving,setSaving]=useState(false);const [reading,setReading]=useState("");const fileRef=useRef(null);
+  const vendors=[...new Set(rows.map(r=>r.vendor).filter(Boolean))].sort();
+  const dup=rows.find(r=>(!existing||r.id!==existing.id)&&apNorm(r.vendor)===apNorm(f.vendor)&&apNorm(r.invoice_no)===apNorm(f.invoice_no)&&apNorm(f.invoice_no));
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  async function upload(file){
+    if(!file)return;setReading(`Uploading ${file.name}…`);
+    try{
+      const path=`ap-invoices/${new Date().getFullYear()}/${Date.now()}-${file.name.replace(/[^A-Za-z0-9._-]/g,"_")}`;
+      await storageUpload("documents",path,file,file.type||undefined);
+      const url=storagePublicUrl("documents",path);
+      setF(x=>({...x,file_url:url,file_path:path,file_name:file.name}));
+      setReading("Reading the invoice…");
+      try{const r=await extractInvoice({src:url,name:file.name,type:file.type});
+        setF(x=>({...x,vendor:x.vendor||r.supplier||"",invoice_no:x.invoice_no||r.invoice_no||"",amount:x.amount!==""&&x.amount!=null?x.amount:(r.amount??""),invoice_date:r.date||x.invoice_date}));
+      }catch{/* reader not deployed — manual entry */}
+    }catch(e){setErr(e.message);}
+    setReading("");
+  }
+  async function save(){
+    if(!f.vendor.trim()||!f.invoice_no.trim()){setErr("Vendor and invoice number are required.");return;}
+    if(f.amount===""||isNaN(parseFloat(f.amount))){setErr("Enter the invoice amount.");return;}
+    if(dup){setErr(`Already in the system: ${dup.vendor} #${dup.invoice_no} entered ${new Date(dup.created_at).toLocaleDateString()} by ${dup.entered_by} (${AP_STATUS[dup.status]?.l||dup.status}).`);return;}
+    setSaving(true);
+    const proj=projects.find(p=>p.id===f.project_id);
+    const body={vendor:f.vendor.trim(),vendor_key:apNorm(f.vendor),invoice_no:f.invoice_no.trim(),invoice_key:apNorm(f.invoice_no),invoice_date:f.invoice_date||null,due_date:f.due_date||null,amount:parseFloat(f.amount),
+      project_id:f.project_id||null,mfg_job_id:f.mfg_job_id||null,division:proj?.division||(f.mfg_job_id?"Manufacturing":null),po_number:f.po_number||null,description:f.description||null,notes:f.notes||null,
+      file_url:f.file_url||null,file_path:f.file_path||null,file_name:f.file_name||null,updated_at:new Date().toISOString()};
+    try{
+      if(existing){
+        const entry={at:body.updated_at,by:user.name,action:existing.status==="rejected"?"resubmitted":"edited"};
+        await sb(`/ap_invoices?id=eq.${existing.id}`,{method:"PATCH",body:{...body,status:"entered",rejected_by:null,rejected_at:null,reject_reason:null,history:[...(existing.history||[]),entry]}});
+      }else{
+        await sb("/ap_invoices",{method:"POST",body:{...body,status:"entered",entered_by:user.name,history:[{at:body.updated_at,by:user.name,action:"entered"}]}});
+        notify("ap_invoice",`Invoice to approve: ${body.vendor} #${body.invoice_no}`,`${user.name} entered ${body.vendor} #${body.invoice_no} for ${money(body.amount)}${proj?" on "+proj.name:""}`,{project_id:body.project_id});
+      }
+      onSaved();
+    }catch(e){
+      if(/duplicate key|ap_invoices_vendor_invoice_uq/i.test(e.message))setErr("That vendor + invoice number is already in the system.");else setErr(e.message);
+    }
+    setSaving(false);
+  }
+  return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+    <TopBar title={existing?"Edit Invoice":"Enter Vendor Invoice"} onBack={onBack}/>
+    <div style={{padding:"14px 16px 100px",maxWidth:760,margin:"0 auto"}}>
+      <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+      <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.teal}`}}>
+        <div style={{fontSize:12,fontWeight:800,color:T.teal,marginBottom:6}}>📎 Invoice file</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:8}}>Upload the PDF or a photo first — vendor, invoice #, amount and date are read off it automatically when the reader is available.</div>
+        <input ref={fileRef} type="file" accept="image/*,.pdf" style={{display:"none"}} onChange={e=>{upload(e.target.files?.[0]);e.target.value="";}}/>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <button onClick={()=>fileRef.current?.click()} style={{...ghostBtn,padding:"8px 14px",fontSize:12,borderColor:T.teal+"60",color:T.teal}}>{f.file_url?"Replace file":"Upload invoice"}</button>
+          {f.file_url&&<a href={f.file_url} target="_blank" rel="noreferrer" style={{fontSize:12,color:T.blue}}>{f.file_name||"view"}</a>}
+          {reading&&<span style={{fontSize:11,color:T.muted}}>{reading}</span>}
+        </div>
+      </div>
+      <div style={{...cardS,marginBottom:12}}>
+        <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Vendor *</label><input list="ap-vendors" value={f.vendor} onChange={e=>set("vendor",e.target.value)} placeholder="United Rentals" style={inp}/><datalist id="ap-vendors">{vendors.map(v=><option key={v} value={v}/>)}</datalist></div>
+          <div><label style={lbl}>Invoice # *</label><input value={f.invoice_no} onChange={e=>set("invoice_no",e.target.value)} style={{...inp,...(dup?{borderColor:T.red}:{})}}/></div>
+        </div>
+        {dup&&<div style={{background:T.redLow,border:`1px solid ${T.red}60`,borderRadius:10,padding:"8px 12px",fontSize:12,color:T.red,marginBottom:10,lineHeight:1.5}}>
+          ⚠ <b>Already in the system.</b> {dup.vendor} #{dup.invoice_no} for {money(dup.amount)} was entered {new Date(dup.created_at).toLocaleDateString()} by {dup.entered_by} — status: {AP_STATUS[dup.status]?.l||dup.status}. This one won't save.
+        </div>}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Amount *</label><input type="number" step="0.01" value={f.amount} onChange={e=>set("amount",e.target.value)} style={{...inp,textAlign:"right"}}/></div>
+          <div><label style={lbl}>Invoice date</label><input type="date" value={f.invoice_date} onChange={e=>set("invoice_date",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Due date</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Field job</label><select value={f.project_id} onChange={e=>setF(x=>({...x,project_id:e.target.value,mfg_job_id:e.target.value?"":x.mfg_job_id}))} style={inp}><option value="">— none —</option>{projects.filter(p=>p.status==="active"||p.id===f.project_id).map(p=><option key={p.id} value={p.id}>{p.name}{p.client?` · ${p.client}`:""}</option>)}</select></div>
+          <div><label style={lbl}>Shop job</label><select value={f.mfg_job_id} onChange={e=>setF(x=>({...x,mfg_job_id:e.target.value,project_id:e.target.value?"":x.project_id}))} style={inp}><option value="">— none —</option>{mfgJobs.filter(j=>j.status==="active"||j.id===f.mfg_job_id).map(j=><option key={j.id} value={j.id}>🏭 {j.job_number}</option>)}</select></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>PO #</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Description</label><input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="What it's for" style={inp}/></div>
+        </div>
+        <div><label style={lbl}>Notes for the PM</label><textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/></div>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={save} disabled={saving||!!dup} style={{...primBtn,flex:2,borderRadius:12,background:T.teal,color:"#000",opacity:saving||dup?0.5:1}}>{saving?"Saving…":existing?(existing.status==="rejected"?"Resubmit for approval":"Save changes"):"Submit for PM approval"}</button>
+        <button onClick={onBack} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+      </div>
+    </div>
+  </div>);
+}
+
 /* ── Invoice Tracker: receipts read off daily reports, one row each,
    exportable as the office's Invoice_Tracker workbook. ── */
 const PO_STATUSES=["Open","Closed","Day Rate","APEX","On Hold"];
@@ -2158,7 +2346,7 @@ function ActivityScreen({user,onBack}){
   );
 }
 
-function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onInvoices,onMyHours,onActivity,onNotifications,notifCount,isOnline,pendingCount,onSync}){
+function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onInvoices,onApInvoices,onMyHours,onActivity,onNotifications,notifCount,isOnline,pendingCount,onSync}){
   // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
   // by division always returned zero for that card.
   const [mfgStats,setMfgStats]=useState(null);
@@ -2229,6 +2417,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           );
           const items=[];
           if(can(user,"crew_directory"))items.push(navBtn(onCrew,"👥","Crew",T.blue,T.blueLow));
+          if(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process"))items.push(navBtn(onApInvoices,"💵","AP Invoices",T.teal,`${T.teal}15`));
           if(canEstimate(user))items.push(navBtn(onEstimating,"📐","Estimating",T.purple,`${T.purple}15`));
           items.push(navBtn(onNotifications,notifCount>0?"🔔":"🔕","Alerts",T.sub,T.surface,
             notifCount>0&&<span style={{position:"absolute",top:-6,right:-6,background:T.red,color:"#fff",
@@ -18618,7 +18807,7 @@ function AppInner(){
       {user&&screen==="division"&&(
         <DivisionScreen user={user} projects={projects} onSelect={handleDivisionSelect} onLogout={handleLogout}
           onCrew={()=>setScreen("crewDirectory")} onDash={()=>setScreen("pmDashboard")}
-          onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")} onInvoices={()=>setScreen("invoices")}
+          onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")} onInvoices={()=>setScreen("invoices")} onApInvoices={()=>setScreen("apInvoices")}
           onMyHours={()=>setScreen("myHours")} onActivity={()=>setScreen("activity")}
           onNotifications={()=>setScreen("notifications")} notifCount={notifCount}
           isOnline={isOnline} pendingCount={pendingCount} onSync={syncQueue}/>
@@ -18636,6 +18825,9 @@ function AppInner(){
       )}
       {user&&screen==="invoices"&&(user.role==="admin"||user.role==="pm")&&(
         <InvoiceTrackerScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
+      )}
+      {user&&screen==="apInvoices"&&(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process"))&&(
+        <ApInvoicesScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="myHours"&&(
         <MyHoursScreen user={user} onBack={()=>setScreen("division")}/>
