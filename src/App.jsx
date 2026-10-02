@@ -1814,12 +1814,13 @@ function ReceiptMigrationTool(){
    Every change is appended to `history` (who / when / what).
    ═══════════════════════════════════════════════════════════════════ */
 const apNorm=(v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
-const AP_STATUS={entered:{l:"Awaiting PM approval",c:T.yellow},approved:{l:"Approved — ready to process",c:T.green},rejected:{l:"Rejected",c:T.red},processed:{l:"Processed",c:T.blue},paid:{l:"Paid",c:T.teal}};
+const AP_STATUS={entered:{l:"Awaiting PM approval",c:T.yellow},approved:{l:"Approved — add to Foundation",c:T.red},rejected:{l:"Rejected",c:T.red},processed:{l:"Added to Foundation",c:T.green},paid:{l:"Paid",c:T.teal}};
 function ApInvoicesScreen({user,projects,onBack}){
   const canEnter=can(user,"ap_enter"),canApprove=can(user,"ap_approve"),canProcess=can(user,"ap_process");
   const [rows,setRows]=useState([]);const [mfgJobs,setMfgJobs]=useState([]);const [pms,setPms]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
   const [tab,setTab]=useState(canApprove&&!canEnter?"entered":"all");const [q,setQ]=useState("");const [open,setOpen]=useState(null);const [showNew,setShowNew]=useState(false);
   const [onlyMine,setOnlyMine]=useState(canApprove&&!canEnter);
+  const [showReport,setShowReport]=useState(false);
   async function load(){setLoading(true);try{const [r,m,u]=await Promise.all([sb("/ap_invoices?select=*&order=created_at.desc&limit=3000"),API.mfg.jobs.list().catch(()=>[]),API.userProfiles.list().catch(()=>[])]);
     setRows(r||[]);setMfgJobs(m||[]);setPms((u||[]).filter(x=>(x.role==="pm"||x.role==="admin")&&x.active!==false));}catch(e){setErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[]);
@@ -1844,17 +1845,19 @@ function ApInvoicesScreen({user,projects,onBack}){
     }catch(e){setErr(e.message);}
   }
   if(showNew||(open&&open._edit))return <ApInvoiceForm user={user} projects={projects} mfgJobs={mfgJobs} pms={pms} existing={open&&open._edit?open:null} rows={rows} onBack={()=>{setShowNew(false);setOpen(null);}} onSaved={async()=>{setShowNew(false);setOpen(null);await load();}}/>;
-  const tabs=[["all",`All (${rows.length})`],["entered",`Needs approval (${counts.entered})`],["approved",`Ready to process (${counts.approved})`],["processed",`Processed (${counts.processed})`],["paid",`Paid (${counts.paid})`],["rejected",`Rejected (${counts.rejected})`]];
+  if(showReport)return <ApInvoiceReport user={user} rows={rows} pms={pms} jobOf={jobOf} divOf={divOf} onBack={()=>setShowReport(false)}/>;
+  const tabs=[["all",`All (${rows.length})`],["entered",`Needs approval (${counts.entered})`],["approved",`Add to Foundation (${counts.approved})`],["processed",`In Foundation (${counts.processed})`],["paid",`Paid (${counts.paid})`],["rejected",`Rejected (${counts.rejected})`]];
   return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
-    <TopBar title="💵 AP Invoices" sub={`${counts.entered} awaiting approval · ${counts.approved} ready to process`} onBack={onBack}/>
+    <TopBar title="💵 AP Invoices" sub={`${counts.entered} awaiting approval · ${counts.approved} to add to Foundation`} onBack={onBack}/>
     <div style={{padding:"14px 16px 80px"}}>
       <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
       <div style={{...cardS,marginBottom:12,fontSize:12,color:T.sub,lineHeight:1.6,borderLeft:`3px solid ${T.teal}`}}>
-        Vendor invoices come in here once. <b style={{color:T.text}}>Accounting enters</b> → <b style={{color:T.text}}>PM approves</b> (or rejects with a reason) → <b style={{color:T.text}}>Accounting processes</b> and marks paid. The same vendor + invoice number can't be entered twice — you'll be shown the existing one instead.
+        Vendor invoices come in here once. <b style={{color:T.text}}>Accounting enters</b> → <b style={{color:T.text}}>PM approves</b> (or rejects with a reason) → <b style={{color:T.text}}>Accounting adds it to Foundation</b> and marks paid. A red button means it still needs to go into Foundation; green means it's in. The same vendor + invoice number can't be entered twice — you'll be shown the existing one instead.
       </div>
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
         <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search vendor, invoice #, PO, job…" style={{...inp,flex:2,minWidth:220}}/>
         {canEnter&&<button onClick={()=>setShowNew(true)} style={{...primBtn,borderRadius:12,padding:"10px 16px",background:T.teal,color:"#000",fontSize:13}}>+ Enter Invoice</button>}
+        <button onClick={()=>setShowReport(true)} style={{...ghostBtn,padding:"10px 14px",fontSize:13}}>📊 Report</button>
       </div>
       <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto",alignItems:"center"}}>
         {tabs.map(([id,l])=><button key={id} onClick={()=>setTab(id)} style={{...ghostBtn,padding:"7px 12px",fontSize:12,whiteSpace:"nowrap",borderColor:tab===id?T.teal:T.border,color:tab===id?T.teal:T.sub}}>{l}</button>)}
@@ -1880,7 +1883,7 @@ function ApInvoicesScreen({user,projects,onBack}){
           </div>
           {isOpen&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
             {r.reject_reason&&<div style={{fontSize:12,color:T.red,marginBottom:8}}>Rejected: {r.reject_reason}</div>}
-            {r.payment_ref&&<div style={{fontSize:12,color:T.sub,marginBottom:8}}>Payment ref: {r.payment_ref}{r.payment_date?` · ${r.payment_date}`:""}</div>}
+            {r.payment_ref&&<div style={{fontSize:12,color:T.sub,marginBottom:8}}>Foundation ref: {r.payment_ref}{r.payment_date?` · paid ${r.payment_date}`:""}</div>}
             {r.notes&&<div style={{fontSize:12,color:T.sub,marginBottom:8}}>{r.notes}</div>}
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
               {r.file_url&&<a href={r.file_url} target="_blank" rel="noreferrer" style={{...ghostBtn,padding:"7px 12px",fontSize:12,textDecoration:"none"}}>📎 View invoice</a>}
@@ -1896,7 +1899,8 @@ function ApInvoicesScreen({user,projects,onBack}){
                   }catch(err){setErr(err.message);}}} style={{...inp,width:"auto",padding:"6px 8px",fontSize:12}}>
                 <option value="">{r.assigned_pm?"Reassign to…":"Assign approver…"}</option>{pms.map(p=><option key={p.name} value={p.name}>{p.name}{p.division&&p.division!=="All"?` · ${p.division}`:""}{p.name===user.name?" (me)":""}</option>)}</select>}
               {canApprove&&r.status==="approved"&&<button onClick={()=>act(r,"entered",{approved_by:null,approved_at:null},"approval withdrawn")} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.yellow}}>↩ Un-approve</button>}
-              {canProcess&&r.status==="approved"&&<button onClick={()=>{const ref=window.prompt("Processed — enter check / ACH / batch reference (optional):","");if(ref===null)return;act(r,"processed",{payment_ref:ref||null},ref?"ref "+ref:null);}} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.blue}}>→ Mark processed</button>}
+              {canProcess&&r.status==="approved"&&<button onClick={()=>{const ref=window.prompt("Added to Foundation — enter the Foundation batch / reference (optional):","");if(ref===null)return;act(r,"processed",{payment_ref:ref||null},ref?"Foundation ref "+ref:"added to Foundation");}} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.red,color:"#fff"}}>⚠ Add to Foundation</button>}
+              {(r.status==="processed"||r.status==="paid")&&<button onClick={()=>{if(canProcess&&r.status==="processed"&&window.confirm("Undo — mark this invoice as NOT yet added to Foundation?"))act(r,"approved",{processed_by:null,processed_at:null,payment_ref:null},"removed from Foundation");}} title={r.processed_at?`Added ${new Date(r.processed_at).toLocaleDateString()} by ${r.processed_by}${r.payment_ref?" · ref "+r.payment_ref:""}`:""} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.green,color:"#000",cursor:canProcess&&r.status==="processed"?"pointer":"default"}}>✓ Added to Foundation</button>}
               {canProcess&&r.status==="processed"&&<button onClick={()=>{const d=window.prompt("Paid on (YYYY-MM-DD):",today());if(d===null)return;act(r,"paid",{payment_date:d||today()},"paid "+(d||today()));}} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.teal,color:"#000"}}>$ Mark paid</button>}
               {canEnter&&r.status==="rejected"&&<button onClick={()=>setOpen({...r,_edit:true})} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.blue}}>✏️ Fix & resubmit</button>}
               {canEnter&&r.status==="entered"&&<button onClick={()=>setOpen({...r,_edit:true})} style={{...ghostBtn,padding:"7px 12px",fontSize:12}}>✏️ Edit</button>}
@@ -1906,6 +1910,82 @@ function ApInvoicesScreen({user,projects,onBack}){
             {(r.history||[]).slice().reverse().map((h,i)=><div key={i} style={{fontSize:11,color:T.sub,padding:"2px 0"}}>{new Date(h.at).toLocaleString()} · <b style={{color:T.text}}>{h.by}</b> · {h.action}{h.note?` — ${h.note}`:""}</div>)}
           </div>}
         </div>);})}
+    </div>
+  </div>);
+}
+
+
+/* ── AP Invoice report: date range × PM × status, with Excel + PDF ── */
+function ApInvoiceReport({user,rows,pms,jobOf,divOf,onBack}){
+  const first=new Date();first.setDate(1);
+  const [from,setFrom]=useState(first.toISOString().slice(0,10));const [to,setTo]=useState(today());
+  const [dateBy,setDateBy]=useState("invoice_date");   // invoice_date | created_at | approved_at | paid_at
+  const [pm,setPm]=useState("");const [pmField,setPmField]=useState("assigned_pm");   // assigned_pm | approved_by
+  const [status,setStatus]=useState("");const [vendor,setVendor]=useState("");
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const dOf=(r)=>{const v=r[dateBy];if(!v)return "";return String(v).slice(0,10);};
+  const list=rows.filter(r=>{const d=dOf(r);return d&&d>=from&&d<=to&&(!pm||r[pmField]===pm)&&(!status||r.status===status)&&(!vendor||r.vendor===vendor);})
+    .sort((a,b)=>String(dOf(a)).localeCompare(String(dOf(b)))||String(a.vendor).localeCompare(String(b.vendor)));
+  const total=list.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const by=(key)=>{const m={};list.forEach(r=>{const k=key(r)||"—";m[k]=m[k]||{n:0,amt:0};m[k].n++;m[k].amt+=parseFloat(r.amount)||0;});return Object.entries(m).sort((a,b)=>b[1].amt-a[1].amt);};
+  const byStatus=by(r=>AP_STATUS[r.status]?.l||r.status),byVendor=by(r=>r.vendor),byJob=by(r=>jobOf(r)||"No job"),byPm=by(r=>r.assigned_pm||"Unassigned");
+  const vendors=[...new Set(rows.map(r=>r.vendor).filter(Boolean))].sort();
+  const label=`${from} to ${to}${pm?` · ${pmField==="assigned_pm"?"assigned to":"approved by"} ${pm}`:""}${status?` · ${AP_STATUS[status]?.l||status}`:""}${vendor?` · ${vendor}`:""}`;
+  function exportXlsx(){
+    const wb=XLSX.utils.book_new();const money='$#,##0.00';
+    const aoa=[["AP Invoice Report"],[label],[`By ${({invoice_date:"invoice date",created_at:"date entered",approved_at:"date approved",paid_at:"date paid"})[dateBy]}`],[],
+      ["Date","Vendor","Invoice #","Amount","Status","Job","Division","PO #","Assigned PM","Approved by","Approved","Added to Foundation by","Foundation ref","Paid","Entered by","Entered","Description"]];
+    list.forEach(r=>aoa.push([dOf(r),r.vendor,r.invoice_no,parseFloat(r.amount)||0,AP_STATUS[r.status]?.l||r.status,jobOf(r),divOf(r),r.po_number||"",r.assigned_pm||"",r.approved_by||"",r.approved_at?String(r.approved_at).slice(0,10):"",r.processed_by||"",r.payment_ref||"",r.payment_date||"",r.entered_by||"",String(r.created_at||"").slice(0,10),r.description||""]));
+    const tr=aoa.length+1;aoa.push(["","","TOTAL",{f:`SUM(D6:D${tr-1})`}]);
+    const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=[12,28,16,14,24,28,13,12,18,18,11,16,14,11,18,11,40].map(w=>({wch:w}));
+    for(let i=6;i<=tr;i++){const c=ws[`D${i}`];if(c)c.z=money;}
+    XLSX.utils.book_append_sheet(wb,ws,"Invoices");
+    const sum=[["Summary"],[label],[],["By status","Count","Amount"],...byStatus.map(([k,v])=>[k,v.n,v.amt]),[],["By PM (assigned)","Count","Amount"],...byPm.map(([k,v])=>[k,v.n,v.amt]),[],["By vendor","Count","Amount"],...byVendor.map(([k,v])=>[k,v.n,v.amt]),[],["By job","Count","Amount"],...byJob.map(([k,v])=>[k,v.n,v.amt]),[],["TOTAL",list.length,total]];
+    const ws2=XLSX.utils.aoa_to_sheet(sum);ws2["!cols"]=[{wch:34},{wch:8},{wch:16}];Object.keys(ws2).forEach(k=>{if(/^C\d+$/.test(k)&&typeof ws2[k].v==="number")ws2[k].z=money;});
+    XLSX.utils.book_append_sheet(wb,ws2,"Summary");
+    XLSX.writeFile(wb,`AP_Invoices_${from}_to_${to}${pm?"_"+pm.replace(/[^A-Za-z0-9]+/g,"_"):""}.xlsx`);
+  }
+  function printPdf(){
+    const esc=(v)=>String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const body=`<div class="hdr"><div>${AIME_LOGO_IMG(48)}<div class="sub">Accounts Payable</div></div><div style="text-align:right"><h1>AP Invoice Report</h1><div class="sub">${esc(label)}</div><div class="big">${list.length} invoices · ${money(total)}</div></div></div>
+      <table><tr><th>Date</th><th>Vendor</th><th>Invoice #</th><th class="r">Amount</th><th>Status</th><th>Job</th><th>PO</th><th>Assigned PM</th><th>Approved by</th><th>Paid</th></tr>
+      ${list.map(r=>`<tr><td>${esc(dOf(r))}</td><td>${esc(r.vendor)}</td><td>${esc(r.invoice_no)}</td><td class="r">${money(r.amount)}</td><td>${esc(AP_STATUS[r.status]?.l||r.status)}</td><td>${esc(jobOf(r))}</td><td>${esc(r.po_number||"")}</td><td>${esc(r.assigned_pm||"")}</td><td>${esc(r.approved_by||"")}</td><td>${esc(r.payment_date||"")}</td></tr>`).join("")}
+      <tr class="tot"><td colspan="3">TOTAL</td><td class="r">${money(total)}</td><td colspan="6"></td></tr></table>
+      <div class="grid2" style="margin-top:12px"><div><h2>By status</h2><table>${byStatus.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="r">${v.n}</td><td class="r">${money(v.amt)}</td></tr>`).join("")}</table><h2>By PM (assigned)</h2><table>${byPm.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="r">${v.n}</td><td class="r">${money(v.amt)}</td></tr>`).join("")}</table></div>
+      <div><h2>By vendor</h2><table>${byVendor.slice(0,25).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="r">${v.n}</td><td class="r">${money(v.amt)}</td></tr>`).join("")}</table><h2>By job</h2><table>${byJob.slice(0,25).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="r">${v.n}</td><td class="r">${money(v.amt)}</td></tr>`).join("")}</table></div></div>`;
+    plOpenPrint(`AP Invoice Report ${from} to ${to}`,body,user);
+  }
+  return(<div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+    <TopBar title="📊 AP Invoice Report" sub={`${list.length} invoices · ${money(total)}`} onBack={onBack}/>
+    <div style={{padding:"14px 16px 80px"}}>
+      <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.teal}`}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8}}>
+          <div><label style={lbl}>From</label><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>To</label><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Date means</label><select value={dateBy} onChange={e=>setDateBy(e.target.value)} style={inp}><option value="invoice_date">Invoice date</option><option value="created_at">Date entered</option><option value="approved_at">Date approved</option><option value="paid_at">Date paid</option></select></div>
+          <div><label style={lbl}>PM</label><select value={pm} onChange={e=>setPm(e.target.value)} style={inp}><option value="">All PMs</option>{pms.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}</select></div>
+          <div><label style={lbl}>PM means</label><select value={pmField} onChange={e=>setPmField(e.target.value)} style={inp}><option value="assigned_pm">Assigned to</option><option value="approved_by">Approved by</option></select></div>
+          <div><label style={lbl}>Status</label><select value={status} onChange={e=>setStatus(e.target.value)} style={inp}><option value="">Any</option>{Object.entries(AP_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</select></div>
+          <div><label style={lbl}>Vendor</label><select value={vendor} onChange={e=>setVendor(e.target.value)} style={inp}><option value="">All</option>{vendors.map(v=><option key={v}>{v}</option>)}</select></div>
+        </div>
+        <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+          {[["This month",()=>{const d=new Date();d.setDate(1);setFrom(d.toISOString().slice(0,10));setTo(today());}],["Last month",()=>{const d=new Date();d.setDate(0);const e=d.toISOString().slice(0,10);d.setDate(1);setFrom(d.toISOString().slice(0,10));setTo(e);}],["This quarter",()=>{const d=new Date();d.setMonth(Math.floor(d.getMonth()/3)*3,1);setFrom(d.toISOString().slice(0,10));setTo(today());}],["Year to date",()=>{setFrom(new Date().getFullYear()+"-01-01");setTo(today());}]].map(([l,fn])=><button key={l} onClick={fn} style={{...ghostBtn,padding:"5px 10px",fontSize:11}}>{l}</button>)}
+          <button onClick={exportXlsx} disabled={!list.length} style={{...primBtn,marginLeft:"auto",padding:"7px 14px",borderRadius:10,fontSize:12,background:T.green,color:"#000",opacity:list.length?1:0.5}}>📊 Excel</button>
+          <button onClick={printPdf} disabled={!list.length} style={{...ghostBtn,padding:"7px 14px",fontSize:12,opacity:list.length?1:0.5}}>🖨️ PDF</button>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:12}}>
+        {[["Invoices",list.length,T.blue],["Total",money(total),T.green],...byStatus.slice(0,3).map(([k,v])=>[k,money(v.amt),AP_STATUS[Object.keys(AP_STATUS).find(x=>AP_STATUS[x].l===k)]?.c||T.sub])].map(([l,v,c])=>(
+          <div key={l} style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:16,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.6px"}}>{l}</div></div>))}
+      </div>
+      {list.length===0&&<div style={{textAlign:"center",padding:"30px 16px",color:T.muted}}>No invoices match.</div>}
+      {list.length>0&&<div style={{...cardS,padding:0,overflowX:"auto"}}>
+        <div style={{display:"grid",gridTemplateColumns:"90px 1.4fr 110px 110px 1.2fr 1fr 1fr 1fr",gap:8,padding:"10px 14px",fontSize:10,fontWeight:800,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",borderBottom:`1px solid ${T.border}`,minWidth:900}}><div>Date</div><div>Vendor</div><div>Invoice #</div><div style={{textAlign:"right"}}>Amount</div><div>Job</div><div>Assigned PM</div><div>Approved by</div><div>Status</div></div>
+        {list.map(r=>(<div key={r.id} style={{display:"grid",gridTemplateColumns:"90px 1.4fr 110px 110px 1.2fr 1fr 1fr 1fr",gap:8,padding:"8px 14px",fontSize:12,borderBottom:`1px solid ${T.border}`,minWidth:900,alignItems:"center"}}>
+          <div style={{color:T.sub}}>{dOf(r)}</div><div style={{fontWeight:700}}>{r.vendor}</div><div>{r.invoice_no}</div><div style={{textAlign:"right",fontWeight:800,color:T.green}}>{money(r.amount)}</div>
+          <div style={{fontSize:11,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{jobOf(r)||"—"}</div><div style={{fontSize:11}}>{r.assigned_pm||"—"}</div><div style={{fontSize:11}}>{r.approved_by||"—"}</div><div><span style={{...pill(AP_STATUS[r.status]?.c||T.muted),fontSize:9}}>{AP_STATUS[r.status]?.l||r.status}</span></div>
+        </div>))}
+      </div>}
     </div>
   </div>);
 }
