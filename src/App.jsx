@@ -1827,16 +1827,24 @@ function AccountingScreen({user,projects,onBack}){
    checks vendor + invoice # before saving, and the database has a unique
    index on the normalized pair, so a second copy can't be stored even if
    two people enter it at the same time.
-   Status flow: entered → approved | rejected → processed → paid
+   Status flow: entered → pm_approved → approved | rejected → processed → paid
+   After the job's PM approves, every invoice goes to AP_FINAL_APPROVER for
+   final approval automatically; nobody has to assign it. Once final approval
+   is given, whoever entered the invoice is notified it's ready for Foundation.
    Every change is appended to `history` (who / when / what).
    ═══════════════════════════════════════════════════════════════════ */
 const apNorm=(v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
-const AP_STATUS={entered:{l:"Awaiting PM approval",c:T.yellow},approved:{l:"Approved — add to Foundation",c:T.red},rejected:{l:"Rejected",c:T.red},processed:{l:"Added to Foundation",c:T.green},paid:{l:"Paid",c:T.teal}};
+// Final approval on every AP invoice. Change the name here to hand it to someone else.
+const AP_FINAL_APPROVER="Clay Lau";
+const isApFinalApprover=(u)=>!!u&&u.name===AP_FINAL_APPROVER;
+const AP_ACTION={pm_approved:"PM approved"};
+const AP_STATUS={entered:{l:"Awaiting PM approval",c:T.yellow},pm_approved:{l:`Awaiting final approval (${AP_FINAL_APPROVER})`,c:T.purple},approved:{l:"Approved — add to Foundation",c:T.red},rejected:{l:"Rejected",c:T.red},processed:{l:"Added to Foundation",c:T.green},paid:{l:"Paid",c:T.teal}};
 function ApInvoicesScreen({user,projects,onBack,embedded}){
   const canEnter=can(user,"ap_enter"),canApprove=can(user,"ap_approve"),canProcess=can(user,"ap_process");
+  const canFinal=isApFinalApprover(user);
   const [rows,setRows]=useState([]);const [mfgJobs,setMfgJobs]=useState([]);const [pms,setPms]=useState([]);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
-  const [tab,setTab]=useState(canApprove&&!canEnter?"entered":"all");const [q,setQ]=useState("");const [open,setOpen]=useState(null);const [showNew,setShowNew]=useState(false);
-  const [onlyMine,setOnlyMine]=useState(canApprove&&!canEnter);
+  const [tab,setTab]=useState(canFinal?"pm_approved":canApprove&&!canEnter?"entered":"all");const [q,setQ]=useState("");const [open,setOpen]=useState(null);const [showNew,setShowNew]=useState(false);
+  const [onlyMine,setOnlyMine]=useState(canApprove&&!canEnter&&!canFinal);
   const [showReport,setShowReport]=useState(false);
   async function load(){setLoading(true);try{const [r,m,u]=await Promise.all([sb("/ap_invoices?select=*&order=created_at.desc&limit=3000"),API.mfg.jobs.list().catch(()=>[]),API.userProfiles.list().catch(()=>[])]);
     setRows(r||[]);setMfgJobs(m||[]);setPms((u||[]).filter(x=>(x.role==="pm"||x.role==="admin")&&x.active!==false));}catch(e){setErr(e.message);}setLoading(false);}
@@ -1846,30 +1854,46 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
   // PMs see their own divisions' invoices for approval; admin sees all
   const myDivs=user.role==="admin"?null:(user.division&&user.division!=="All"?[user.division]:null);
-  const counts={entered:rows.filter(r=>r.status==="entered").length,approved:rows.filter(r=>r.status==="approved").length,processed:rows.filter(r=>r.status==="processed").length,paid:rows.filter(r=>r.status==="paid").length,rejected:rows.filter(r=>r.status==="rejected").length};
+  const counts={entered:rows.filter(r=>r.status==="entered").length,pm_approved:rows.filter(r=>r.status==="pm_approved").length,approved:rows.filter(r=>r.status==="approved").length,processed:rows.filter(r=>r.status==="processed").length,paid:rows.filter(r=>r.status==="paid").length,rejected:rows.filter(r=>r.status==="rejected").length};
   const filtered=rows.filter(r=>(tab==="all"||r.status===tab)&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
   const assignedToMe=rows.filter(r=>r.status==="entered"&&r.assigned_pm===user.name).length;
   const total=filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
   async function act(r,status,extra={},note){
     const entry={at:new Date().toISOString(),by:user.name,action:status,note:note||null};
     const body={status,...extra,history:[...(r.history||[]),entry],updated_at:entry.at};
-    if(status==="approved")Object.assign(body,{approved_by:user.name,approved_at:entry.at,rejected_by:null,rejected_at:null,reject_reason:null});
+    // PM approval: goes to the final approver automatically.
+    const pmApproving=status==="pm_approved"&&r.status==="entered";
+    // Final approval (also covers the final approver approving their own job's invoice in one step).
+    const finalApproving=status==="approved"&&(r.status==="pm_approved"||r.status==="entered");
+    if(pmApproving)Object.assign(body,{approved_by:user.name,approved_at:entry.at,final_approver:AP_FINAL_APPROVER,final_approved_by:null,final_approved_at:null,rejected_by:null,rejected_at:null,reject_reason:null});
+    if(finalApproving)Object.assign(body,{final_approver:AP_FINAL_APPROVER,final_approved_by:user.name,final_approved_at:entry.at,rejected_by:null,rejected_at:null,reject_reason:null},
+      r.status==="entered"?{approved_by:user.name,approved_at:entry.at}:{});
     if(status==="rejected")Object.assign(body,{rejected_by:user.name,rejected_at:entry.at,reject_reason:note||null});
     if(status==="processed")Object.assign(body,{processed_by:user.name,processed_at:entry.at});
     if(status==="paid")Object.assign(body,{paid_by:user.name,paid_at:entry.at});
     try{await sb(`/ap_invoices?id=eq.${r.id}`,{method:"PATCH",body});setRows(rs=>rs.map(x=>x.id===r.id?{...x,...body}:x));setOpen(o=>o&&o.id===r.id?{...o,...body}:o);
-      if(status==="approved"||status==="rejected")notify("ap_invoice",`Invoice ${status}: ${r.vendor} #${r.invoice_no}`,`${user.name} ${status} ${r.vendor} #${r.invoice_no} (${money(r.amount)})${note?": "+note:""}`,{to:r.entered_by||null,project_id:r.project_id||null});
+      const what=`${r.vendor} #${r.invoice_no} (${money(r.amount)})`;
+      if(pmApproving&&user.name!==AP_FINAL_APPROVER)
+        notify("ap_invoice",`Final approval needed: ${r.vendor} #${r.invoice_no}`,`${user.name} approved ${what}. It needs your final approval.`,{to:AP_FINAL_APPROVER,project_id:r.project_id||null});
+      if(finalApproving&&r.entered_by)
+        notify("ap_invoice",`Approved, add to Foundation: ${r.vendor} #${r.invoice_no}`,`${user.name} gave final approval to ${what}${r.approved_by&&r.approved_by!==user.name?` (PM approval by ${r.approved_by})`:""}. It's ready to be added to Foundation.`,{to:r.entered_by,project_id:r.project_id||null});
+      if(status==="rejected"){
+        notify("ap_invoice",`Invoice rejected: ${r.vendor} #${r.invoice_no}`,`${user.name} rejected ${what}${note?": "+note:""}`,{to:r.entered_by||null,project_id:r.project_id||null});
+        // A final-approval rejection also tells the PM who approved it.
+        if(r.status==="pm_approved"&&r.approved_by&&r.approved_by!==user.name&&r.approved_by!==r.entered_by)
+          notify("ap_invoice",`Invoice rejected at final approval: ${r.vendor} #${r.invoice_no}`,`${user.name} rejected ${what} after your approval${note?": "+note:""}`,{to:r.approved_by,project_id:r.project_id||null});
+      }
     }catch(e){setErr(e.message);}
   }
   if(showNew||(open&&open._edit))return <ApInvoiceForm user={user} projects={projects} mfgJobs={mfgJobs} pms={pms} existing={open&&open._edit?open:null} rows={rows} onBack={()=>{setShowNew(false);setOpen(null);}} onSaved={async()=>{setShowNew(false);setOpen(null);await load();}}/>;
   if(showReport)return <ApInvoiceReport user={user} rows={rows} pms={pms} jobOf={jobOf} divOf={divOf} onBack={()=>setShowReport(false)}/>;
-  const tabs=[["all",`All (${rows.length})`],["entered",`Needs approval (${counts.entered})`],["approved",`Add to Foundation (${counts.approved})`],["processed",`In Foundation (${counts.processed})`],["paid",`Paid (${counts.paid})`],["rejected",`Rejected (${counts.rejected})`]];
+  const tabs=[["all",`All (${rows.length})`],["entered",`Needs PM approval (${counts.entered})`],["pm_approved",`Needs final approval (${counts.pm_approved})`],["approved",`Add to Foundation (${counts.approved})`],["processed",`In Foundation (${counts.processed})`],["paid",`Paid (${counts.paid})`],["rejected",`Rejected (${counts.rejected})`]];
   return(<div style={embedded?{}:{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
     {!embedded&&<TopBar title="💵 AP Invoices" sub={`${counts.entered} awaiting approval · ${counts.approved} to add to Foundation`} onBack={onBack}/>}
     <div style={{padding:embedded?"0 0 80px":"14px 16px 80px"}}>
       <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
       <div style={{...cardS,marginBottom:12,fontSize:12,color:T.sub,lineHeight:1.6,borderLeft:`3px solid ${T.teal}`}}>
-        Vendor invoices come in here once. <b style={{color:T.text}}>Accounting enters</b> → <b style={{color:T.text}}>PM approves</b> (or rejects with a reason) → <b style={{color:T.text}}>Accounting adds it to Foundation</b> and marks paid. A red button means it still needs to go into Foundation; green means it's in. The same vendor + invoice number can't be entered twice — you'll be shown the existing one instead.
+        Vendor invoices come in here once. <b style={{color:T.text}}>Accounting enters</b> → <b style={{color:T.text}}>PM approves</b> (or rejects with a reason) → <b style={{color:T.text}}>{AP_FINAL_APPROVER} gives final approval</b> (automatic, no need to assign it) → <b style={{color:T.text}}>Accounting adds it to Foundation</b> and marks paid. A red button means it still needs to go into Foundation; green means it's in. The same vendor + invoice number can't be entered twice — you'll be shown the existing one instead.
       </div>
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
         <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search vendor, invoice #, PO, job…" style={{...inp,flex:2,minWidth:220}}/>
@@ -1894,7 +1918,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
               <div style={{fontSize:14,fontWeight:800,color:T.text}}>{r.vendor} <span style={{color:T.muted,fontWeight:500}}>#{r.invoice_no}</span></div>
               <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{jobOf(r)||"No job"}{r.po_number?` · PO ${r.po_number}`:""}{r.invoice_date?` · dated ${r.invoice_date}`:""}{r.due_date?` · due ${r.due_date}`:""}</div>
               {r.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</div>}
-              <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>{r.assigned_pm&&r.status==="entered"?<span style={{color:r.assigned_pm===user.name?T.yellow:T.sub}}>Approver: {r.assigned_pm} · </span>:""}Entered {new Date(r.created_at).toLocaleDateString()} by {r.entered_by}{r.approved_by?` · approved by ${r.approved_by}`:""}{r.rejected_by?` · rejected by ${r.rejected_by}`:""}{r.processed_by?` · processed by ${r.processed_by}`:""}{r.paid_by?` · paid ${r.paid_at?new Date(r.paid_at).toLocaleDateString():""}`:""}</div>
+              <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>{r.assigned_pm&&r.status==="entered"?<span style={{color:r.assigned_pm===user.name?T.yellow:T.sub}}>Approver: {r.assigned_pm} · </span>:""}{r.status==="pm_approved"?<span style={{color:canFinal?T.purple:T.sub}}>Final approver: {AP_FINAL_APPROVER} · </span>:""}Entered {new Date(r.created_at).toLocaleDateString()} by {r.entered_by}{r.approved_by?` · PM approved by ${r.approved_by}`:""}{r.final_approved_by?` · final approval by ${r.final_approved_by}`:""}{r.rejected_by?` · rejected by ${r.rejected_by}`:""}{r.processed_by?` · processed by ${r.processed_by}`:""}{r.paid_by?` · paid ${r.paid_at?new Date(r.paid_at).toLocaleDateString():""}`:""}</div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:16,fontWeight:900,color:T.green}}>{money(r.amount)}</div><span style={{...pill(st.c),fontSize:9.5,marginTop:4}}>{st.l}</span></div>
           </div>
@@ -1905,7 +1929,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
               {r.file_url&&<a href={r.file_url} target="_blank" rel="noreferrer" style={{...ghostBtn,padding:"7px 12px",fontSize:12,textDecoration:"none"}}>📎 View invoice</a>}
               {canApprove&&r.status==="entered"&&mine&&<>
-                <button onClick={()=>act(r,"approved")} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.green,color:"#000"}}>✓ Approve</button>
+                <button onClick={()=>canFinal?act(r,"approved",{},"approved (PM and final)"):act(r,"pm_approved",{},`sent to ${AP_FINAL_APPROVER} for final approval`)} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.green,color:"#000"}}>{canFinal?"✓ Approve (final)":"✓ Approve"}</button>
                 <button onClick={()=>{const n=window.prompt("Reason for rejecting (accounting will see this):","");if(n===null)return;act(r,"rejected",{},n);}} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.red,borderColor:T.red+"60"}}>✕ Reject</button></>}
               {canApprove&&r.status==="entered"&&!mine&&<span style={{fontSize:11,color:T.muted,alignSelf:"center"}}>Assigned to {r.assigned_pm||`the ${divOf(r)} PM`} — reassign it if it's yours or you know whose it is.</span>}
               {(canEnter||canApprove)&&r.status==="entered"&&<select value={r.assigned_pm||""} onChange={async e=>{const v=e.target.value||null;if(v===(r.assigned_pm||null))return;
@@ -1915,7 +1939,14 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
                     if(onlyMine&&v!==user.name)setOpen(null);
                   }catch(err){setErr(err.message);}}} style={{...inp,width:"auto",padding:"6px 8px",fontSize:12}}>
                 <option value="">{r.assigned_pm?"Reassign to…":"Assign approver…"}</option>{pms.map(p=><option key={p.name} value={p.name}>{p.name}{p.division&&p.division!=="All"?` · ${p.division}`:""}{p.name===user.name?" (me)":""}</option>)}</select>}
-              {canApprove&&r.status==="approved"&&<button onClick={()=>act(r,"entered",{approved_by:null,approved_at:null},"approval withdrawn")} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.yellow}}>↩ Un-approve</button>}
+              {canFinal&&r.status==="pm_approved"&&<>
+                <button onClick={()=>act(r,"approved",{},"final approval")} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.green,color:"#000"}}>✓ Final approve</button>
+                <button onClick={()=>{const n=window.prompt("Reason for rejecting (accounting and the PM will see this):","");if(n===null)return;act(r,"rejected",{},n);}} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.red,borderColor:T.red+"60"}}>✕ Reject</button></>}
+              {!canFinal&&r.status==="pm_approved"&&<span style={{fontSize:11,color:T.muted,alignSelf:"center"}}>Waiting on {AP_FINAL_APPROVER} for final approval.</span>}
+              {r.status==="pm_approved"&&(r.approved_by===user.name||user.role==="admin")&&!canFinal&&<button onClick={()=>act(r,"entered",{approved_by:null,approved_at:null,final_approver:null},"PM approval withdrawn")} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.yellow}}>↩ Un-approve</button>}
+              {r.status==="approved"&&(canFinal||user.role==="admin")&&<button onClick={()=>r.final_approved_by
+                  ?act(r,"pm_approved",{final_approved_by:null,final_approved_at:null},"final approval withdrawn")
+                  :act(r,"entered",{approved_by:null,approved_at:null},"approval withdrawn")} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.yellow}}>↩ Un-approve</button>}
               {canProcess&&r.status==="approved"&&<button onClick={()=>{const ref=window.prompt("Added to Foundation — enter the Foundation batch / reference (optional):","");if(ref===null)return;act(r,"processed",{payment_ref:ref||null},ref?"Foundation ref "+ref:"added to Foundation");}} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.red,color:"#fff"}}>⚠ Add to Foundation</button>}
               {(r.status==="processed"||r.status==="paid")&&<button onClick={()=>{if(canProcess&&r.status==="processed"&&window.confirm("Undo — mark this invoice as NOT yet added to Foundation?"))act(r,"approved",{processed_by:null,processed_at:null,payment_ref:null},"removed from Foundation");}} title={r.processed_at?`Added ${new Date(r.processed_at).toLocaleDateString()} by ${r.processed_by}${r.payment_ref?" · ref "+r.payment_ref:""}`:""} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.green,color:"#000",cursor:canProcess&&r.status==="processed"?"pointer":"default"}}>✓ Added to Foundation</button>}
               {canProcess&&r.status==="processed"&&<button onClick={()=>{const d=window.prompt("Paid on (YYYY-MM-DD):",today());if(d===null)return;act(r,"paid",{payment_date:d||today()},"paid "+(d||today()));}} style={{...primBtn,padding:"7px 14px",borderRadius:10,fontSize:12,background:T.teal,color:"#000"}}>$ Mark paid</button>}
@@ -1924,7 +1955,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
               {user.role==="admin"&&<button onClick={async()=>{if(!window.confirm("Delete this invoice record? The vendor + invoice # could then be entered again."))return;try{await sb(`/ap_invoices?id=eq.${r.id}`,{method:"DELETE"});setRows(rs=>rs.filter(x=>x.id!==r.id));setOpen(null);}catch(e){setErr(e.message);}}} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.red}}>🗑</button>}
             </div>
             <div style={{fontSize:10.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:4}}>History</div>
-            {(r.history||[]).slice().reverse().map((h,i)=><div key={i} style={{fontSize:11,color:T.sub,padding:"2px 0"}}>{new Date(h.at).toLocaleString()} · <b style={{color:T.text}}>{h.by}</b> · {h.action}{h.note?` — ${h.note}`:""}</div>)}
+            {(r.history||[]).slice().reverse().map((h,i)=><div key={i} style={{fontSize:11,color:T.sub,padding:"2px 0"}}>{new Date(h.at).toLocaleString()} · <b style={{color:T.text}}>{h.by}</b> · {AP_ACTION[h.action]||h.action}{h.note?` — ${h.note}`:""}</div>)}
           </div>}
         </div>);})}
     </div>
@@ -1950,11 +1981,11 @@ function ApInvoiceReport({user,rows,pms,jobOf,divOf,onBack}){
   const label=`${from} to ${to}${pm?` · ${pmField==="assigned_pm"?"assigned to":"approved by"} ${pm}`:""}${status?` · ${AP_STATUS[status]?.l||status}`:""}${vendor?` · ${vendor}`:""}`;
   function exportXlsx(){
     const wb=XLSX.utils.book_new();const money='$#,##0.00';
-    const aoa=[["AP Invoice Report"],[label],[`By ${({invoice_date:"invoice date",created_at:"date entered",approved_at:"date approved",paid_at:"date paid"})[dateBy]}`],[],
-      ["Date","Vendor","Invoice #","Amount","Status","Job","Division","PO #","Assigned PM","Approved by","Approved","Added to Foundation by","Foundation ref","Paid","Entered by","Entered","Description"]];
-    list.forEach(r=>aoa.push([dOf(r),r.vendor,r.invoice_no,parseFloat(r.amount)||0,AP_STATUS[r.status]?.l||r.status,jobOf(r),divOf(r),r.po_number||"",r.assigned_pm||"",r.approved_by||"",r.approved_at?String(r.approved_at).slice(0,10):"",r.processed_by||"",r.payment_ref||"",r.payment_date||"",r.entered_by||"",String(r.created_at||"").slice(0,10),r.description||""]));
+    const aoa=[["AP Invoice Report"],[label],[`By ${({invoice_date:"invoice date",created_at:"date entered",approved_at:"date PM approved",final_approved_at:"date of final approval",paid_at:"date paid"})[dateBy]}`],[],
+      ["Date","Vendor","Invoice #","Amount","Status","Job","Division","PO #","Assigned PM","PM approved by","PM approved","Final approved by","Final approved","Added to Foundation by","Foundation ref","Paid","Entered by","Entered","Description"]];
+    list.forEach(r=>aoa.push([dOf(r),r.vendor,r.invoice_no,parseFloat(r.amount)||0,AP_STATUS[r.status]?.l||r.status,jobOf(r),divOf(r),r.po_number||"",r.assigned_pm||"",r.approved_by||"",r.approved_at?String(r.approved_at).slice(0,10):"",r.final_approved_by||"",r.final_approved_at?String(r.final_approved_at).slice(0,10):"",r.processed_by||"",r.payment_ref||"",r.payment_date||"",r.entered_by||"",String(r.created_at||"").slice(0,10),r.description||""]));
     const tr=aoa.length+1;aoa.push(["","","TOTAL",{f:`SUM(D6:D${tr-1})`}]);
-    const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=[12,28,16,14,24,28,13,12,18,18,11,16,14,11,18,11,40].map(w=>({wch:w}));
+    const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=[12,28,16,14,24,28,13,12,18,18,11,18,11,16,14,11,18,11,40].map(w=>({wch:w}));
     for(let i=6;i<=tr;i++){const c=ws[`D${i}`];if(c)c.z=money;}
     XLSX.utils.book_append_sheet(wb,ws,"Invoices");
     const sum=[["Summary"],[label],[],["By status","Count","Amount"],...byStatus.map(([k,v])=>[k,v.n,v.amt]),[],["By PM (assigned)","Count","Amount"],...byPm.map(([k,v])=>[k,v.n,v.amt]),[],["By vendor","Count","Amount"],...byVendor.map(([k,v])=>[k,v.n,v.amt]),[],["By job","Count","Amount"],...byJob.map(([k,v])=>[k,v.n,v.amt]),[],["TOTAL",list.length,total]];
@@ -1979,7 +2010,7 @@ function ApInvoiceReport({user,rows,pms,jobOf,divOf,onBack}){
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8}}>
           <div><label style={lbl}>From</label><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={inp}/></div>
           <div><label style={lbl}>To</label><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={inp}/></div>
-          <div><label style={lbl}>Date means</label><select value={dateBy} onChange={e=>setDateBy(e.target.value)} style={inp}><option value="invoice_date">Invoice date</option><option value="created_at">Date entered</option><option value="approved_at">Date approved</option><option value="paid_at">Date paid</option></select></div>
+          <div><label style={lbl}>Date means</label><select value={dateBy} onChange={e=>setDateBy(e.target.value)} style={inp}><option value="invoice_date">Invoice date</option><option value="created_at">Date entered</option><option value="approved_at">Date PM approved</option><option value="final_approved_at">Date of final approval</option><option value="paid_at">Date paid</option></select></div>
           <div><label style={lbl}>PM</label><select value={pm} onChange={e=>setPm(e.target.value)} style={inp}><option value="">All PMs</option>{pms.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}</select></div>
           <div><label style={lbl}>PM means</label><select value={pmField} onChange={e=>setPmField(e.target.value)} style={inp}><option value="assigned_pm">Assigned to</option><option value="approved_by">Approved by</option></select></div>
           <div><label style={lbl}>Status</label><select value={status} onChange={e=>setStatus(e.target.value)} style={inp}><option value="">Any</option>{Object.entries(AP_STATUS).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}</select></div>
@@ -2046,7 +2077,7 @@ function ApInvoiceForm({user,projects,mfgJobs,pms=[],existing,rows,onBack,onSave
     try{
       if(existing){
         const entry={at:body.updated_at,by:user.name,action:existing.status==="rejected"?"resubmitted":"edited"};
-        await sb(`/ap_invoices?id=eq.${existing.id}`,{method:"PATCH",body:{...body,status:"entered",rejected_by:null,rejected_at:null,reject_reason:null,history:[...(existing.history||[]),entry]}});
+        await sb(`/ap_invoices?id=eq.${existing.id}`,{method:"PATCH",body:{...body,status:"entered",rejected_by:null,rejected_at:null,reject_reason:null,approved_by:null,approved_at:null,final_approved_by:null,final_approved_at:null,history:[...(existing.history||[]),entry]}});
       }else{
         await sb("/ap_invoices",{method:"POST",body:{...body,status:"entered",entered_by:user.name,history:[{at:body.updated_at,by:user.name,action:"entered"}]}});
         notify("ap_invoice",`Invoice to approve: ${body.vendor} #${body.invoice_no}`,`${user.name} entered ${body.vendor} #${body.invoice_no} for ${money(body.amount)}${proj?" on "+proj.name:""}${body.assigned_pm?" — assigned to "+body.assigned_pm:""}`,{project_id:body.project_id,to:body.assigned_pm||null});
@@ -2537,7 +2568,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           );
           const items=[];
           if(can(user,"crew_directory"))items.push(navBtn(onCrew,"👥","Crew",T.blue,T.blueLow));
-          if(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process"))items.push(navBtn(onApInvoices,"💵","Accounting",T.teal,`${T.teal}15`));
+          if(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process")||isApFinalApprover(user))items.push(navBtn(onApInvoices,"💵","Accounting",T.teal,`${T.teal}15`));
           if(canEstimate(user))items.push(navBtn(onEstimating,"📐","Estimating",T.purple,`${T.purple}15`));
           // Training Videos tab: PMs and admins only.
           if(isTrainingManager(user)&&onTraining)items.push(navBtn(onTraining,"🎬","Training",T.yellow,T.yellowLow));
@@ -18955,7 +18986,7 @@ function AppInner(){
       {user&&screen==="invoices"&&(user.role==="admin"||user.role==="pm")&&(
         <InvoiceTrackerScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
       )}
-      {user&&screen==="apInvoices"&&(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process"))&&(
+      {user&&screen==="apInvoices"&&(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process")||isApFinalApprover(user))&&(
         <AccountingScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="myHours"&&(
