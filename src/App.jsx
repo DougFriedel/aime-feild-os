@@ -733,7 +733,8 @@ const PERMS={
   admin:     ["ap_enter","ap_approve","ap_process","manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
   pm:        ["ap_approve","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
   // Accounting enters vendor invoices and processes them after PM approval.
-  accounting:["ap_enter","ap_process","docs","crew_directory","photos","view_dashboard"],
+  // view_reports = can open Daily Reports and T&M tickets read-only.
+  accounting:["ap_enter","ap_process","docs","crew_directory","photos","view_dashboard","view_reports"],
   // Estimator = everything a Foreman can do, plus the estimating platform and the dashboard
   estimator: ["estimating","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
   // Foreman can now run jobs end to end, but still can't approve or flag reports —
@@ -742,6 +743,8 @@ const PERMS={
   crew:      ["submit_report","time_card","photos","crew_directory","safety","schedule","weather"],
 };
 const can=(user,action)=>(PERMS[user?.role]||PERMS.crew).includes(action);
+// Accounting can look at daily reports and T&M tickets but never add, edit or delete them.
+const reportsReadOnly=(user)=>!can(user,"submit_report")&&can(user,"view_reports");
 
 const uid=()=>Math.random().toString(36).slice(2,9);
 const today=()=>new Date().toISOString().split("T")[0];
@@ -4906,6 +4909,7 @@ function AttachTile({a,onImage,size=56,color}){
 }
 
 function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,onFlag,onArchive}){
+  const viewOnly=reportsReadOnly(user);
   const [report,setReport]=useState(initReport);
   const [lb,setLb]=useState(null);const [flagNote,setFlagNote]=useState("");const [flagging,setFlagging]=useState(false);
   const [showSigPad,setShowSigPad]=useState(false);const [sigSaving,setSigSaving]=useState(false);
@@ -5544,6 +5548,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
           {report.hellosign_status==="pending"&&<div style={{background:T.blueLow,border:`1px solid ${T.blue}40`,borderRadius:10,padding:"10px 14px",marginBottom:8,fontSize:12,color:T.blue,fontWeight:600}}>
             📦 Box Sign request sent — waiting for inspector to sign
           </div>}
+          {viewOnly?<div style={{fontSize:12,color:T.muted}}>Not signed yet.</div>:<>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
             <button onClick={()=>setShowSigPad(true)}
               style={{...primBtn,background:T.greenLow,color:T.green,border:`1px solid ${T.green}40`,borderRadius:12,fontSize:12}}>
@@ -5560,7 +5565,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
           </div>
           <div style={{fontSize:10,color:T.muted,textAlign:"center",marginTop:5}}>
             Sign Here = on this device · Send Link = inspector's phone · eSign = Box Sign email
-          </div>
+          </div></>}
         </div>
       )}
 
@@ -5596,7 +5601,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
           ✏️ Edit Report
         </button>
       )}
-      <button onClick={()=>window.confirm("Delete this report?")&&onDelete(report.id)} style={dangerBtn}>🗑 Delete Report</button>
+      {!viewOnly&&<button onClick={()=>window.confirm("Delete this report?")&&onDelete(report.id)} style={dangerBtn}>🗑 Delete Report</button>}
     </div>
   );
 }
@@ -7489,8 +7494,8 @@ function InfoTab({project,user,onEdit,onArchive,onDelete}){
 }
 
 const PTABS=[
-  {id:"reports",icon:"📋",label:"Reports",perm:"submit_report"},
-  {id:"tm",icon:"🧾",label:"T&M",perm:"submit_report"},
+  {id:"reports",icon:"📋",label:"Reports",perm:"submit_report",viewPerm:"view_reports"},
+  {id:"tm",icon:"🧾",label:"T&M",perm:"submit_report",viewPerm:"view_reports"},
   {id:"billing",icon:"💰",label:"Billing",perm:"approve_report"},
   {id:"time",icon:"⏱️",label:"Time",perm:"time_card"},
   {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
@@ -13867,7 +13872,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   const [editingTicket,setEditingTicket]=useState(null);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
   const [screen,setScreen]=useState("detail");const [activeReport,setActiveReport]=useState(null);const [editProject,setEditProject]=useState(false);
   const [projSaving,setProjSaving]=useState(false);
-  const visibleTabs=PTABS.filter(t=>!t.perm||can(user,t.perm));
+  const visibleTabs=PTABS.filter(t=>!t.perm||can(user,t.perm)||(t.viewPerm&&can(user,t.viewPerm)));
   const divMeta=DIV_META[project.division]||{color:T.orange,icon:"🏗️"};
 
   async function load(silent=false){if(!silent)setLoading(true);try{const[reps,saf,phs,wx]=await Promise.all([API.reports.forProject(project.id),API.safety.forProject(project.id),API.photos.forProject(project.id),API.weather.forProject(project.id)]);setReports(reps||[]);setSafety(saf||[]);setPhotos(phs||[]);setWeather(wx||[]);}catch(e){setErr(e.message);}if(!silent)setLoading(false);}
@@ -13945,6 +13950,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
           const shown=reportView==="completed"?done:reportView==="archived"?archived:open;
           return(<div>
           {can(user,"submit_report")&&<button onClick={()=>setScreen("newReport")} style={{...primBtn,marginBottom:12,borderRadius:14,padding:"18px",fontSize:17,background:divMeta.color}}>📋 + New Daily Report</button>}
+          {reportsReadOnly(user)&&<div style={{...cardS,marginBottom:12,padding:"10px 14px",fontSize:12.5,color:T.sub,borderLeft:`3px solid ${T.teal}`}}>👁 View only. You can open, print and export reports, but not change them.</div>}
 
           <div style={{display:"flex",gap:8,marginBottom:14}}>
             {[["daily","📋 Daily",open.length],["completed","✅ Completed",done.length],
@@ -22927,6 +22933,9 @@ async function feedTimeCardsFromTM(data,project){
 function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const isNew=!ticket?.id;
   const canEdit=user.role==="admin"||user.role==="pm"||user.role==="foreman";
+  // Accounting opens tickets view-only: fields can't be changed and every
+  // add / remove / sign / save / delete control is hidden. Print still works.
+  const readOnly=reportsReadOnly(user);
   const division=project.division||"Pipeline";
   const positions=getPositions(division);
   const equipList=getEquipList(division);
@@ -23453,6 +23462,10 @@ ${(()=>{
       </div>
 
       <div style={{padding:"12px 16px 100px"}}>
+        {readOnly&&<style>{`.tm-ro input,.tm-ro select,.tm-ro textarea{pointer-events:none;opacity:.9}.tm-ro button:not([data-ro-keep]),.tm-ro label:has(input[type=file]),.tm-ro input[type=file]{display:none!important}`}</style>}
+        {readOnly&&<div style={{...cardS,marginBottom:12,padding:"10px 14px",fontSize:12.5,color:T.sub,borderLeft:`3px solid ${T.teal}`}}>👁 View only. You can look through and print this ticket, but not change it.</div>}
+        <div className={readOnly?"tm-ro":undefined}
+          onKeyDownCapture={readOnly?(e=>{if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)&&e.key!=="Tab")e.preventDefault();}):undefined}>
         {/* Header info card */}
         <div style={{...cardS,marginBottom:12}}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
@@ -23493,7 +23506,7 @@ ${(()=>{
         <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:12,gap:3,overflowX:"auto"}}>
           {[["labor","👷 Labor"],["equipment","🚜 Equip"],["materials","🔩 Materials"],["other","➕ Other"],
             ["photos",`📷 Photos${photos.length?" ("+photos.length+")":""}`],["summary","📊 Summary"]].map(([id,label])=>(
-            <button key={id} onClick={()=>setTab(id)} style={{flexShrink:0,padding:"8px 10px",background:tab===id?T.orange:"transparent",color:tab===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            <button key={id} data-ro-keep onClick={()=>setTab(id)} style={{flexShrink:0,padding:"8px 10px",background:tab===id?T.orange:"transparent",color:tab===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               {label}
             </button>
           ))}
@@ -23990,6 +24003,10 @@ ${(()=>{
           </div>
         </div>}
 
+        </div>
+        {readOnly?(
+          <button onClick={printTicket} style={{...primBtn,borderRadius:14,background:"#1f3864",fontSize:15,marginTop:16}}>🖨️ Print</button>
+        ):(<>
         {/* Action buttons.
             A ticket used to save as "draft" and stay there — nothing ever set
             it to "submitted", so it never reached a PM's approval queue. */}
@@ -24016,6 +24033,7 @@ ${(()=>{
           style={{...primBtn,borderRadius:14,background:T.redLow,color:T.red,border:`1px solid ${T.red}30`,marginTop:8,width:"100%",fontSize:13}}>
           🗑 Delete Ticket
         </button>}
+        </>)}
       </div>
 
       {showSigPad&&<SignaturePad reportName={`T&M #${ticketNo} · ${project.name}`}
