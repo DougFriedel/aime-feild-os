@@ -358,7 +358,7 @@ async function storageRemove(bucket,path){
 const ESTIMATING_OWNER="";
 const canEstimate=(u)=>!!u&&can(u,"estimating")&&(!ESTIMATING_OWNER||u.name===ESTIMATING_OWNER);
 
-const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs","invoices","apInvoices"]);
+const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs","invoices","apInvoices","training"]);
 const SCREEN_MAX={estimating:1700};
 const shellMax=(screen)=>SCREEN_MAX[screen]||(WIDE_SCREENS.has(screen)?1180:480);
 
@@ -2466,7 +2466,7 @@ function ActivityScreen({user,onBack}){
   );
 }
 
-function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onInvoices,onApInvoices,onMyHours,onActivity,onNotifications,notifCount,isOnline,pendingCount,onSync}){
+function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onInvoices,onApInvoices,onMyHours,onActivity,onTraining,onMyTraining,onNotifications,notifCount,isOnline,pendingCount,onSync}){
   // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
   // by division always returned zero for that card.
   const [mfgStats,setMfgStats]=useState(null);
@@ -2539,6 +2539,8 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           if(can(user,"crew_directory"))items.push(navBtn(onCrew,"👥","Crew",T.blue,T.blueLow));
           if(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process"))items.push(navBtn(onApInvoices,"💵","Accounting",T.teal,`${T.teal}15`));
           if(canEstimate(user))items.push(navBtn(onEstimating,"📐","Estimating",T.purple,`${T.purple}15`));
+          // Training Videos tab: PMs and admins only.
+          if(isTrainingManager(user)&&onTraining)items.push(navBtn(onTraining,"🎬","Training",T.yellow,T.yellowLow));
           items.push(navBtn(onNotifications,notifCount>0?"🔔":"🔕","Alerts",T.sub,T.surface,
             notifCount>0&&<span style={{position:"absolute",top:-6,right:-6,background:T.red,color:"#fff",
               borderRadius:9,minWidth:17,height:17,fontSize:10,fontWeight:800,display:"flex",
@@ -2561,6 +2563,9 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
           </div>
           <span style={{color:T.blue,fontSize:18,flexShrink:0}}>→</span>
         </button>
+
+        {/* Shows only when this person has training videos assigned. */}
+        {onMyTraining&&<MyTrainingButton user={user} onOpen={onMyTraining}/>}
 
         <div style={{marginBottom:24}}>
           <div style={{fontSize:22,fontWeight:900,color:T.text,letterSpacing:"-0.5px",marginBottom:4}}>Select Division</div>
@@ -18932,6 +18937,7 @@ function AppInner(){
           onCrew={()=>setScreen("crewDirectory")} onDash={()=>setScreen("pmDashboard")}
           onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")} onInvoices={()=>setScreen("invoices")} onApInvoices={()=>setScreen("apInvoices")}
           onMyHours={()=>setScreen("myHours")} onActivity={()=>setScreen("activity")}
+          onTraining={()=>setScreen("training")} onMyTraining={()=>setScreen("myTraining")}
           onNotifications={()=>setScreen("notifications")} notifCount={notifCount}
           isOnline={isOnline} pendingCount={pendingCount} onSync={syncQueue}/>
       )}
@@ -18954,6 +18960,12 @@ function AppInner(){
       )}
       {user&&screen==="myHours"&&(
         <MyHoursScreen user={user} onBack={()=>setScreen("division")}/>
+      )}
+      {user&&screen==="training"&&isTrainingManager(user)&&(
+        <TrainingScreen user={user} onBack={()=>setScreen("division")}/>
+      )}
+      {user&&screen==="myTraining"&&(
+        <MyTrainingScreen user={user} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="estimating"&&canEstimate(user)&&(
         <BidBoard user={user} onBack={()=>setScreen("division")}/>
@@ -18992,6 +19004,945 @@ function AppInner(){
       {user&&screen==="userManagement"&&(
         <UserManagementScreen user={user} onBack={()=>setScreen("division")}/>
       )}
+    </div>
+  );
+}
+
+/* ══════════════ TRAINING VIDEOS ══════════════
+   PMs and admins get the Training tab: upload videos, write a quiz for each,
+   assign them to people, and track progress. Everyone else sees a
+   "My Training" card on the home screen once something is assigned to them.
+   Every read and write goes through the training_* database functions, which
+   check the session token — quiz answers never reach the browser. */
+const TRAINING_BUCKET="training-videos";
+const isTrainingManager=(u)=>u?.role==="admin"||u?.role==="pm";
+const trRpc=(fn,args={})=>rpc(fn,{p_token:getSessionToken(),...args});
+const trVideoUrl=(path)=>path?storagePublicUrl(TRAINING_BUCKET,path):null;
+const trKey=(u,v)=>`${u}|${v}`;
+const trSafeName=(n)=>String(n||"video").replace(/[^A-Za-z0-9._-]+/g,"_").slice(-100);
+
+function trDur(s){
+  const n=Number(s);
+  if(s===null||s===undefined||s===""||!isFinite(n))return "—";
+  const t=Math.round(n),h=Math.floor(t/3600),m=Math.floor((t%3600)/60),sec=t%60;
+  const p=(x)=>String(x).padStart(2,"0");
+  return h?`${h}:${p(m)}:${p(sec)}`:`${m}:${p(sec)}`;
+}
+function trSize(b){if(!b)return "—";return b>1e9?(b/1e9).toFixed(1)+" GB":Math.max(1,Math.round(b/1e6))+" MB";}
+// new | watching | quiz | done
+function trStatus(video,prog){
+  if(!prog)return "new";
+  if(prog.completed_at)return "done";
+  if(prog.watched_complete)return video?.quiz_count>0?"quiz":"done";
+  if(Number(prog.max_position)>0)return "watching";
+  return "new";
+}
+const TR_STATUS={new:{label:"Not started",color:T.muted},watching:{label:"In progress",color:T.blue},quiz:{label:"Quiz needed",color:T.yellow},done:{label:"Complete",color:T.green}};
+const trLate=(st,due)=>st!=="done"&&!!due&&due<today();
+function trPct(video,prog){
+  if(!prog)return 0;
+  if(prog.watched_complete)return 100;
+  const d=Number(video?.duration_seconds);
+  return d?Math.min(100,Math.round(100*Number(prog.max_position)/d)):0;
+}
+function TrStatusPill({st,late}){
+  const s=late?{label:"Overdue",color:T.red}:TR_STATUS[st]||TR_STATUS.new;
+  return <span style={{...pill(s.color),whiteSpace:"nowrap"}}>{s.label}</span>;
+}
+function TrBar({pct,color=T.green,h=6}){
+  return <div style={{height:h,borderRadius:h,background:T.border,overflow:"hidden",flex:1,minWidth:50}}><div style={{width:`${Math.max(0,Math.min(100,pct||0))}%`,height:"100%",background:color,transition:"width .3s"}}/></div>;
+}
+
+function trReadDuration(file){
+  return new Promise((resolve)=>{
+    const url=URL.createObjectURL(file);const v=document.createElement("video");let done=false;
+    const fin=(d)=>{if(done)return;done=true;URL.revokeObjectURL(url);resolve(d&&isFinite(d)?d:null);};
+    v.preload="metadata";v.onloadedmetadata=()=>fin(v.duration);v.onerror=()=>fin(null);
+    setTimeout(()=>fin(null),15000);v.src=url;
+  });
+}
+
+/* Resumable (TUS) upload straight to Supabase Storage in 6 MB pieces, so a
+   large video survives a dropped connection and shows real progress. */
+async function trUploadVideo(path,file,onProgress){
+  const CHUNK=6*1024*1024;
+  const b64=(s)=>btoa(unescape(encodeURIComponent(s)));
+  const base={apikey:SUPA_KEY,Authorization:`Bearer ${SUPA_KEY}`,"Tus-Resumable":"1.0.0"};
+  const endpoint=`${SUPA_URL}/storage/v1/upload/resumable`;
+  const meta=[["bucketName",TRAINING_BUCKET],["objectName",path],["contentType",file.type||"video/mp4"],["cacheControl","3600"]]
+    .map(([k,v])=>`${k} ${b64(v)}`).join(",");
+  const create=await fetch(endpoint,{method:"POST",headers:{...base,"Upload-Length":String(file.size),"Upload-Metadata":meta,"x-upsert":"false"}});
+  if(!create.ok)throw new Error((await create.text())||`Upload could not start (${create.status})`);
+  const locHeader=create.headers.get("Location");
+  if(!locHeader)throw new Error("Upload could not start: storage didn't return an upload address.");
+  const loc=new URL(locHeader,endpoint).href;
+  let offset=0,fails=0;
+  onProgress(0);
+  while(offset<file.size){
+    try{
+      const chunk=file.slice(offset,offset+CHUNK);
+      const r=await fetch(loc,{method:"PATCH",headers:{...base,"Upload-Offset":String(offset),"Content-Type":"application/offset+octet-stream"},body:chunk});
+      if(!r.ok)throw new Error((await r.text())||`Upload failed (${r.status})`);
+      const next=parseInt(r.headers.get("Upload-Offset"),10);
+      offset=Number.isFinite(next)?next:offset+chunk.size;
+      fails=0;onProgress(offset/file.size);
+    }catch(e){
+      if(++fails>5)throw new Error(`Upload stopped at ${Math.round(100*offset/file.size)}%: ${e.message}`);
+      await new Promise(res=>setTimeout(res,1500*fails));
+      try{const h=await fetch(loc,{method:"HEAD",headers:base});const o=parseInt(h.headers.get("Upload-Offset"),10);if(Number.isFinite(o))offset=o;}catch{}
+    }
+  }
+}
+
+function trCSV(filename,rows){
+  const esc=(v)=>`"${String(v??"").replace(/"/g,'""')}"`;
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([rows.map(r=>r.map(esc).join(",")).join("\r\n")],{type:"text/csv"}));
+  a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+
+/* ── Home screen card (everyone, shown only when something is assigned) ── */
+function MyTrainingButton({user,onOpen}){
+  const [items,setItems]=useState(null);
+  useEffect(()=>{
+    let c=false;
+    trRpc("training_my_data").then(d=>{if(!c)setItems(Array.isArray(d)?d:[]);}).catch(()=>{if(!c)setItems([]);});
+    return()=>{c=true;};
+  },[user?.name]);
+  if(!items||!items.length)return null;
+  const sts=items.map(i=>{const st=trStatus(i.video,i.progress);return{st,late:trLate(st,i.due_date)};});
+  const done=sts.filter(s=>s.st==="done").length,late=sts.filter(s=>s.late).length,left=items.length-done;
+  const color=late?T.red:left?T.yellow:T.green;
+  return(
+    <button onClick={onOpen} style={{width:"100%",background:color+"14",border:`1px solid ${color}40`,borderRadius:14,padding:"14px 16px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,cursor:"pointer",fontFamily:"inherit"}}>
+      <div style={{textAlign:"left",flex:1,minWidth:0}}>
+        <div style={{fontSize:15,fontWeight:800,color}}>🎓 My Training</div>
+        <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>
+          {left===0?"All your assigned videos are complete":late?`${late} overdue, ${left} left to finish`:`${left} of ${items.length} video${items.length===1?"":"s"} left to finish`}
+        </div>
+        <div style={{display:"flex",marginTop:8}}><TrBar pct={100*done/items.length} color={color}/></div>
+      </div>
+      <span style={{color,fontSize:18,flexShrink:0}}>→</span>
+    </button>
+  );
+}
+
+/* ── My Training (the trainee's list) ── */
+function MyTrainingScreen({user,onBack}){
+  const [items,setItems]=useState(null);
+  const [err,setErr]=useState("");
+  const [open,setOpen]=useState(null); // {id, mode:'watch'|'quiz'}
+  async function load(){
+    try{const d=await trRpc("training_my_data");setItems(Array.isArray(d)?d:[]);setErr("");}
+    catch(e){setErr(e.message);setItems(i=>i||[]);}
+  }
+  useEffect(()=>{load();},[]);
+  const close=()=>{setOpen(null);load();};
+  const cur=open&&items?.find(i=>i.video.id===open.id);
+  if(cur){
+    return open.mode==="quiz"
+      ?<TrainingQuiz video={cur.video} onBack={close} onRewatch={()=>setOpen({id:cur.video.id,mode:"watch"})}/>
+      :<TrainingWatch video={cur.video} progress={cur.progress} onBack={close} onQuiz={()=>setOpen({id:cur.video.id,mode:"quiz"})}/>;
+  }
+
+  const rows=(items||[]).map(i=>{const st=trStatus(i.video,i.progress);return{...i,st,late:trLate(st,i.due_date)};});
+  const total=rows.length,done=rows.filter(r=>r.st==="done").length;
+  const next=rows.filter(r=>r.st!=="done")
+    .sort((a,b)=>(a.due_date||"9999").localeCompare(b.due_date||"9999")||String(a.assigned_at).localeCompare(String(b.assigned_at)))[0];
+  const groups={};
+  for(const r of rows){const k=r.video.category_name||"General";(groups[k]||(groups[k]={name:k,sort:r.video.category_sort??1e9,rows:[]})).rows.push(r);}
+  const ordered=Object.values(groups).sort((a,b)=>a.sort-b.sort||a.name.localeCompare(b.name));
+  const openRow=(r)=>setOpen({id:r.video.id,mode:r.st==="quiz"?"quiz":"watch"});
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+      <TopBar title="🎓 My Training" sub="Videos your PM assigned to you" onBack={onBack}/>
+      <div style={{padding:"16px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {items===null?<Spinner/>:total===0?(
+          <div style={{...cardS,color:T.muted,fontSize:14}}>No training is assigned to you right now. It will show up here when your PM assigns it.</div>
+        ):(<>
+          <div style={{...cardS,marginBottom:14,display:"flex",alignItems:"center",gap:16}}>
+            <div style={{fontSize:46,fontWeight:900,lineHeight:1,letterSpacing:"-1px",color:done===total?T.green:T.text,fontVariantNumeric:"tabular-nums"}}>
+              {done}<span style={{fontSize:20,color:T.muted}}>/{total}</span>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,color:T.sub,marginBottom:8}}>{done===total?"All your training is complete.":`${total-done} video${total-done===1?"":"s"} left to finish`}</div>
+              <div style={{display:"flex"}}><TrBar pct={100*done/total} h={8}/></div>
+            </div>
+          </div>
+          {next&&(
+            <div style={{...cardS,borderLeft:`3px solid ${T.yellow}`,marginBottom:22}}>
+              <div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:4}}>Up next</div>
+              <div style={{fontSize:17,fontWeight:800,marginBottom:4}}>{next.video.title}</div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:12,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                <span>{trDur(next.video.duration_seconds)}{next.due_date?`, due ${fmtDate(next.due_date)}`:""}</span>
+                {next.late&&<TrStatusPill late/>}
+              </div>
+              <button onClick={()=>openRow(next)} style={{...primBtn,padding:"13px",fontSize:15}}>
+                {next.st==="quiz"?"Take the quiz":next.st==="watching"?"Keep watching":"Start video"}
+              </button>
+            </div>
+          )}
+          {ordered.map(g=>(
+            <div key={g.name} style={{marginBottom:18}}>
+              <div style={{...lbl,marginBottom:8}}>{g.name}</div>
+              {g.rows.map(r=>(
+                <div key={r.video.id} onClick={()=>openRow(r)} style={{...cardS,padding:"13px 14px",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:14.5,fontWeight:700}}>{r.video.title}</div>
+                    <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>
+                      {trDur(r.video.duration_seconds)}{r.video.quiz_count>0?`, ${r.video.quiz_count}-question quiz`:""}{r.due_date?`, due ${fmtDate(r.due_date)}`:""}
+                    </div>
+                    {r.st==="watching"&&<div style={{display:"flex",marginTop:8}}><TrBar pct={trPct(r.video,r.progress)} color={T.blue}/></div>}
+                  </div>
+                  <TrStatusPill st={r.st} late={r.late}/>
+                </div>
+              ))}
+            </div>
+          ))}
+        </>)}
+      </div>
+    </div>
+  );
+}
+
+/* ── Video player (records how far they've watched) ── */
+function TrainingWatch({video,progress,onBack,onQuiz}){
+  const [prog,setProg]=useState(progress||null);
+  const [pct,setPct]=useState(trPct(video,progress));
+  const [notice,setNotice]=useState("");
+  const [err,setErr]=useState("");
+  const maxPos=useRef(Number(progress?.max_position||0));
+  const lastSaved=useRef(maxPos.current);
+  const dur=useRef(Number(video.duration_seconds)||0);
+  const saving=useRef(false),again=useRef(false),noticeT=useRef(null);
+  const complete=!!prog?.watched_complete;
+  const locked=video.require_full_watch&&!complete;
+  const st=trStatus(video,prog);
+  const url=trVideoUrl(video.storage_path);
+
+  async function save(){
+    if(!dur.current)return;
+    if(saving.current){again.current=true;return;}
+    saving.current=true;lastSaved.current=maxPos.current;
+    try{const d=await trRpc("training_record_watch",{p_video:video.id,p_position:maxPos.current,p_duration:dur.current});if(d)setProg(d);}
+    catch(e){setErr(e.message);}
+    saving.current=false;
+    if(again.current){again.current=false;save();}
+  }
+  useEffect(()=>()=>{clearTimeout(noticeT.current);if(maxPos.current>lastSaved.current)save();},[]);
+
+  function onLoaded(e){
+    const el=e.currentTarget;
+    if(isFinite(el.duration)&&el.duration>0)dur.current=el.duration;
+    if(!complete&&maxPos.current>5&&maxPos.current<dur.current-5)el.currentTime=maxPos.current;
+  }
+  function onTime(e){
+    const el=e.currentTarget,t=el.currentTime;
+    if(!el.seeking&&t>maxPos.current&&(!video.require_full_watch||t-maxPos.current<3)){
+      maxPos.current=t;
+      if(dur.current)setPct(Math.min(100,Math.round(100*t/dur.current)));
+    }
+    if(maxPos.current-lastSaved.current>=10)save();
+  }
+  function onSeeking(e){
+    const el=e.currentTarget;
+    if(locked&&el.currentTime>maxPos.current+2){
+      el.currentTime=maxPos.current;
+      setNotice("You can skip ahead once you've watched that part.");
+      clearTimeout(noticeT.current);noticeT.current=setTimeout(()=>setNotice(""),4000);
+    }
+  }
+  function onEnded(){
+    if(dur.current){maxPos.current=dur.current;setPct(100);}
+    save();
+  }
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+      <TopBar title={video.title} sub={video.category_name||undefined} onBack={onBack}/>
+      <div style={{padding:"16px 16px 80px"}}>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        <div style={{background:"#000",borderRadius:14,overflow:"hidden",aspectRatio:"16 / 9",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:12,border:`1px solid ${T.border}`}}>
+          {url?(
+            <video src={url} controls playsInline preload="metadata" controlsList="nodownload noplaybackrate" disablePictureInPicture
+              onContextMenu={e=>e.preventDefault()} onLoadedMetadata={onLoaded} onTimeUpdate={onTime} onSeeking={onSeeking}
+              onPause={()=>{if(maxPos.current>lastSaved.current)save();}} onEnded={onEnded}
+              style={{width:"100%",height:"100%",display:"block",background:"#000"}}/>
+          ):<div style={{color:T.muted,fontSize:13,padding:20,textAlign:"center"}}>This video hasn't been uploaded yet. Let your PM know.</div>}
+        </div>
+        {notice&&<div style={{background:T.yellowLow,border:`1px solid ${T.yellow}40`,color:T.yellow,borderRadius:10,padding:"9px 12px",fontSize:12.5,fontWeight:600,marginBottom:12}} role="status">{notice}</div>}
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+          <TrBar pct={complete?100:pct} color={complete?T.green:T.blue}/>
+          <span style={{fontSize:12,color:T.muted,whiteSpace:"nowrap"}}>{complete?"Watched":`${pct}% watched`}</span>
+        </div>
+        {video.description&&<div style={{fontSize:14,color:T.sub,lineHeight:1.55,whiteSpace:"pre-wrap",marginBottom:16}}>{video.description}</div>}
+        {st==="quiz"&&(
+          <div style={{...cardS,borderLeft:`3px solid ${T.yellow}`}}>
+            <div style={{fontSize:15,fontWeight:800,marginBottom:4}}>Video done. One more step.</div>
+            <div style={{fontSize:12.5,color:T.muted,marginBottom:12}}>{video.quiz_count} question{video.quiz_count===1?"":"s"}. You need {video.pass_score}% to pass.</div>
+            <button onClick={onQuiz} style={{...primBtn,padding:"13px",fontSize:15}}>Take the quiz</button>
+          </div>
+        )}
+        {st==="done"&&(
+          <div style={{...cardS,borderColor:`${T.green}50`,background:T.greenLow,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+            <span style={{fontSize:14,fontWeight:700,color:T.green}}>✓ This training is complete.</span>
+            <button onClick={onBack} style={{...ghostBtn,padding:"8px 12px",fontSize:12}}>Back to my training</button>
+          </div>
+        )}
+        {!complete&&video.require_full_watch&&video.quiz_count>0&&<div style={{fontSize:12,color:T.muted}}>Watch the whole video to unlock the quiz.</div>}
+      </div>
+    </div>
+  );
+}
+
+/* ── Quiz (graded in the database) ── */
+function TrainingQuiz({video,onBack,onRewatch}){
+  const [qs,setQs]=useState(null);
+  const [answers,setAnswers]=useState({});
+  const [result,setResult]=useState(null);
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+  useEffect(()=>{trRpc("training_get_quiz",{p_video:video.id}).then(d=>setQs(Array.isArray(d)?d:[])).catch(e=>{setErr(e.message);setQs([]);});},[video.id]);
+
+  async function submit(){
+    if(qs.some(q=>answers[q.id]===undefined)){setErr("Answer every question before submitting.");return;}
+    setBusy(true);setErr("");
+    try{const d=await trRpc("training_submit_quiz",{p_video:video.id,p_answers:answers});setResult(d);window.scrollTo({top:0,behavior:"smooth"});}
+    catch(e){setErr(e.message);}
+    setBusy(false);
+  }
+  const retry=()=>{setAnswers({});setResult(null);window.scrollTo({top:0});};
+
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+      <TopBar title="Quiz" sub={video.title} onBack={onBack}/>
+      <div style={{padding:"16px 16px 80px"}}>
+        <div style={{fontSize:13,color:T.muted,marginBottom:14}}>You need {video.pass_score}% to pass. You can retake it as many times as you need.</div>
+        {result&&(
+          <div style={{...cardS,marginBottom:14,background:result.passed?T.greenLow:T.redLow,borderColor:(result.passed?T.green:T.red)+"50"}} role="status">
+            <div style={{fontSize:26,fontWeight:900,color:result.passed?T.green:T.red}}>{result.score}%</div>
+            <div style={{fontSize:13.5,color:T.sub,marginTop:4}}>
+              {result.passed?`Passed (${result.correct} of ${result.total}). This training is complete.`
+                :`${result.correct} of ${result.total} correct. You need ${result.pass_score}% to pass. Missed questions are marked below.`}
+            </div>
+          </div>
+        )}
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {qs===null?<Spinner/>:qs.length===0?<div style={{...cardS,color:T.muted}}>This video doesn't have a quiz.</div>:(
+          <div style={{...cardS,marginBottom:16}}>
+            {qs.map((q,qi)=>{
+              const mark=result?result.results?.[q.id]:null;
+              return(
+                <div key={q.id} style={{paddingTop:qi?16:0,marginTop:qi?16:0,borderTop:qi?`1px solid ${T.border}`:"none"}}>
+                  <div style={{fontSize:15,fontWeight:700,marginBottom:10,lineHeight:1.4}}>
+                    {qi+1}. {q.prompt}
+                    {result&&<span style={{marginLeft:8,fontSize:12,fontWeight:800,color:mark?T.green:T.red}}>{mark?"✓ Correct":"✕ Incorrect"}</span>}
+                  </div>
+                  {(q.options||[]).map((opt,oi)=>{
+                    const on=answers[q.id]===oi;
+                    return(
+                      <label key={oi} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"11px 12px",marginTop:6,borderRadius:10,
+                        border:`1px solid ${on?T.blue:T.border}`,background:on?T.blueLow:T.surface,cursor:result?"default":"pointer",fontSize:14,color:T.text}}>
+                        <input type="radio" name={q.id} checked={on} disabled={!!result} onChange={()=>setAnswers(a=>({...a,[q.id]:oi}))}
+                          style={{marginTop:3,accentColor:T.blue}}/>
+                        <span>{opt}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {!result&&qs&&qs.length>0&&<button onClick={submit} disabled={busy} style={{...primBtn,opacity:busy?0.6:1}}>{busy?"Checking…":"Submit answers"}</button>}
+        {result&&!result.passed&&(
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={retry} style={{...primBtn,flex:1}}>Try again</button>
+            <button onClick={onRewatch} style={{...ghostBtn,flex:1}}>Rewatch video</button>
+          </div>
+        )}
+        {result?.passed&&<button onClick={onBack} style={primBtn}>Back to my training</button>}
+      </div>
+    </div>
+  );
+}
+
+/* ── Training tab (PMs and admins) ── */
+function trMaps(data){
+  if(!data)return null;
+  const videoById=Object.fromEntries((data.videos||[]).map(v=>[v.id,v]));
+  const catById=Object.fromEntries((data.categories||[]).map(c=>[c.id,c]));
+  const prog=Object.fromEntries((data.progress||[]).map(p=>[trKey(p.user_name,p.video_id),p]));
+  const asgByUser={},asgByVideo={},asg={};
+  for(const a of data.assignments||[]){
+    (asgByUser[a.user_name]||(asgByUser[a.user_name]=[])).push(a);
+    (asgByVideo[a.video_id]||(asgByVideo[a.video_id]=[])).push(a);
+    asg[trKey(a.user_name,a.video_id)]=a;
+  }
+  return{videoById,catById,prog,asgByUser,asgByVideo,asg};
+}
+function trSummary(name,maps){
+  let total=0,done=0,overdue=0,last=null;
+  for(const a of maps.asgByUser[name]||[]){
+    const v=maps.videoById[a.video_id];if(!v)continue;total++;
+    const p=maps.prog[trKey(name,a.video_id)],st=trStatus(v,p);
+    if(st==="done")done++;else if(trLate(st,a.due_date))overdue++;
+    if(p?.last_activity&&(!last||p.last_activity>last))last=p.last_activity;
+  }
+  return{total,done,overdue,last};
+}
+function trGroupVideos(videos,categories){
+  const groups=categories.map(c=>({id:c.id,name:c.name,videos:[]}));
+  const byId=Object.fromEntries(groups.map(g=>[g.id,g]));
+  const loose={id:"none",name:"Uncategorized",videos:[]};
+  for(const v of videos)(byId[v.category_id]||loose).videos.push(v);
+  return [...groups,loose].filter(g=>g.videos.length);
+}
+
+function TrainingScreen({user,onBack}){
+  const [tab,setTab]=useState("people");
+  const [data,setData]=useState(null);
+  const [err,setErr]=useState("");
+  const [assignFor,setAssignFor]=useState(null);
+  async function load(){
+    try{const d=await trRpc("training_admin_data");setData(d);setErr("");}
+    catch(e){setErr(e.message);setData(x=>x||{categories:[],videos:[],assignments:[],progress:[],people:[]});}
+  }
+  useEffect(()=>{load();},[]);
+  const maps=useMemo(()=>trMaps(data),[data]);
+  if(!isTrainingManager(user))return null;
+  const tabs=[["people","👥 People"],["assign","📌 Assign"],["library","🎬 Video Library"]];
+  return(
+    <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+      <TopBar title="🎬 Training Videos" sub="Upload videos, assign them, and track who's finished" onBack={onBack}/>
+      <div style={{padding:"14px 16px 90px"}}>
+        <div style={{display:"flex",background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:4,marginBottom:16,gap:4}}>
+          {tabs.map(([id,label])=>(
+            <button key={id} onClick={()=>{setTab(id);if(id!=="assign")setAssignFor(null);}}
+              style={{flex:1,padding:"9px 6px",background:tab===id?T.yellow:"none",color:tab===id?"#0D0D0F":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+        {!data?<Spinner/>:<>
+          {tab==="people"&&<TrPeople data={data} maps={maps} reload={load} onAssign={(name)=>{setAssignFor(name);setTab("assign");}}/>}
+          {tab==="assign"&&<TrAssign key={assignFor||"all"} data={data} maps={maps} reload={load} preselect={assignFor}/>}
+          {tab==="library"&&<TrLibrary data={data} maps={maps} reload={load}/>}
+        </>}
+      </div>
+    </div>
+  );
+}
+
+function TrPeople({data,maps,reload,onAssign}){
+  const [q,setQ]=useState("");
+  const [div,setDiv]=useState("All");
+  const [onlyOpen,setOnlyOpen]=useState(false);
+  const [openName,setOpenName]=useState(null);
+  const person=openName&&data.people.find(p=>p.name===openName);
+  if(person)return <TrPersonDetail person={person} maps={maps} reload={reload} onBack={()=>setOpenName(null)} onAssign={onAssign}/>;
+
+  const needle=q.trim().toLowerCase();
+  const rows=data.people
+    .filter(p=>div==="All"||p.division===div)
+    .filter(p=>!needle||[p.name,p.division,ROLE_META[p.role]?.label].some(s=>(s||"").toLowerCase().includes(needle)))
+    .map(p=>({p,s:trSummary(p.name,maps)}))
+    .filter(r=>!onlyOpen||r.s.done<r.s.total)
+    .sort((a,b)=>(b.s.overdue-a.s.overdue)||((b.s.total-b.s.done)-(a.s.total-a.s.done))||a.p.name.localeCompare(b.p.name));
+
+  function exportCSV(){
+    const out=[["Name","Role","Division","Video","Category","Assigned","Due","Status","Watched %","Best quiz score","Quiz attempts","Completed"]];
+    for(const p of data.people)for(const a of maps.asgByUser[p.name]||[]){
+      const v=maps.videoById[a.video_id];if(!v)continue;
+      const pr=maps.prog[trKey(p.name,v.id)],st=trStatus(v,pr);
+      out.push([p.name,ROLE_META[p.role]?.label||p.role,p.division||"",v.title,maps.catById[v.category_id]?.name||"",
+        String(a.assigned_at||"").slice(0,10),a.due_date||"",trLate(st,a.due_date)?"Overdue":TR_STATUS[st].label,
+        trPct(v,pr),pr?.quiz_score??"",pr?.quiz_attempts||0,String(pr?.completed_at||"").slice(0,10)]);
+    }
+    trCSV(`AIME-training-${today()}.csv`,out);
+  }
+
+  return(
+    <div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+        <input type="text" placeholder="🔍 Search people…" value={q} onChange={e=>setQ(e.target.value)} style={{...inp,flex:"1 1 200px",width:"auto",padding:"10px 12px",fontSize:14}}/>
+        <select value={div} onChange={e=>setDiv(e.target.value)} style={{...inpSel,width:"auto",padding:"10px 12px",fontSize:14}}>
+          {["All",...DIVISIONS].map(d=><option key={d} value={d}>{d==="All"?"All divisions":d}</option>)}
+        </select>
+        <button onClick={exportCSV} style={{...ghostBtn,padding:"10px 14px",fontSize:13}}>⬇ Export CSV</button>
+      </div>
+      <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:T.sub,marginBottom:12,cursor:"pointer"}}>
+        <input type="checkbox" checked={onlyOpen} onChange={e=>setOnlyOpen(e.target.checked)} style={{accentColor:T.yellow,width:16,height:16}}/>
+        Only people with unfinished training
+      </label>
+      <div style={{fontSize:12,color:T.muted,marginBottom:12}}>Everyone active in User Management shows up here. Add new hires there first, then assign their videos.</div>
+      {rows.length===0&&<div style={{...cardS,color:T.muted,fontSize:14}}>No one matches. Clear the search or filters.</div>}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:10}}>
+        {rows.map(({p,s})=>(
+          <div key={p.name} onClick={()=>setOpenName(p.name)} style={{...cardS,padding:"13px 14px",cursor:"pointer",borderLeft:`3px solid ${s.overdue?T.red:s.total&&s.done===s.total?T.green:s.total?T.yellow:T.border}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:14.5,fontWeight:700}}>{p.name}</div>
+                <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{ROLE_META[p.role]?.label||p.role}{p.division&&p.division!=="All"?`, ${p.division}`:""}</div>
+              </div>
+              {s.overdue>0&&<span style={pill(T.red)}>{s.overdue} overdue</span>}
+            </div>
+            {s.total===0?<div style={{fontSize:12,color:T.muted,marginTop:10}}>Nothing assigned</div>:(
+              <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10}}>
+                <TrBar pct={100*s.done/s.total} color={s.done===s.total?T.green:T.yellow}/>
+                <span style={{fontSize:12,color:T.sub,whiteSpace:"nowrap"}}>{s.done} of {s.total}</span>
+              </div>
+            )}
+            {s.last&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>Last watched {fmtDate(String(s.last).slice(0,10))}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TrPersonDetail({person,maps,reload,onBack,onAssign}){
+  const [err,setErr]=useState("");
+  const rows=(maps.asgByUser[person.name]||[])
+    .map(a=>({a,v:maps.videoById[a.video_id],p:maps.prog[trKey(person.name,a.video_id)]}))
+    .filter(r=>r.v).sort((x,y)=>x.v.title.localeCompare(y.v.title));
+  const s=trSummary(person.name,maps);
+  async function reset(r){
+    if(!window.confirm(`Reset "${r.v.title}" for ${person.name}? They'll need to watch it and pass the quiz again.`))return;
+    try{await trRpc("training_reset",{p_user:person.name,p_video:r.v.id});showToast("Progress reset");reload();}catch(e){setErr(e.message);}
+  }
+  async function unassign(r){
+    if(!window.confirm(`Remove "${r.v.title}" from ${person.name}'s training?`))return;
+    try{await trRpc("training_unassign",{p_user:person.name,p_video:r.v.id});showToast("Removed","warn");reload();}catch(e){setErr(e.message);}
+  }
+  return(
+    <div>
+      <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",padding:0,marginBottom:10,fontFamily:"inherit"}}>← All people</button>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap",marginBottom:14}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:900}}>{person.name}</div>
+          <div style={{fontSize:12.5,color:T.muted,marginTop:2}}>{ROLE_META[person.role]?.label||person.role}{person.division?`, ${person.division}`:""}. {s.total?`${s.done} of ${s.total} complete.`:"Nothing assigned yet."}</div>
+        </div>
+        <button onClick={()=>onAssign(person.name)} style={{...primBtn,width:"auto",padding:"11px 18px",fontSize:14,background:T.yellow,color:"#0D0D0F"}}>📌 Assign videos</button>
+      </div>
+      <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+      {rows.length===0?<div style={{...cardS,color:T.muted,fontSize:14}}>No videos assigned. Use “Assign videos” to choose what {person.name} should watch.</div>:
+        rows.map(r=>{
+          const st=trStatus(r.v,r.p),late=trLate(st,r.a.due_date);
+          return(
+            <div key={r.a.id} style={{...cardS,padding:"13px 14px",marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:14.5,fontWeight:700}}>{r.v.title}</div>
+                  <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>
+                    {maps.catById[r.v.category_id]?.name||"Uncategorized"}
+                    {r.a.due_date?`, due ${fmtDate(r.a.due_date)}`:""}
+                    {r.p?.completed_at?`, completed ${fmtDate(String(r.p.completed_at).slice(0,10))}`:""}
+                  </div>
+                </div>
+                <TrStatusPill st={st} late={late}/>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10}}>
+                <TrBar pct={trPct(r.v,r.p)} color={st==="done"?T.green:T.blue}/>
+                <span style={{fontSize:11.5,color:T.muted,whiteSpace:"nowrap"}}>
+                  {r.v.quiz_count?(r.p?.quiz_score!=null?`Best quiz ${r.p.quiz_score}% (${r.p.quiz_attempts} tr${r.p.quiz_attempts===1?"y":"ies"})`:"Quiz not taken"):"No quiz"}
+                </span>
+              </div>
+              <div style={{display:"flex",gap:14,marginTop:10}}>
+                {r.p&&<button onClick={()=>reset(r)} style={{background:"none",border:"none",color:T.blue,fontSize:12.5,fontWeight:700,cursor:"pointer",padding:0,fontFamily:"inherit"}}>Reset progress</button>}
+                <button onClick={()=>unassign(r)} style={{background:"none",border:"none",color:T.red,fontSize:12.5,fontWeight:700,cursor:"pointer",padding:0,fontFamily:"inherit"}}>Remove</button>
+              </div>
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+function TrAssign({data,maps,reload,preselect}){
+  const [selPeople,setSelPeople]=useState(()=>new Set(preselect?[preselect]:[]));
+  const [selVideos,setSelVideos]=useState(()=>new Set());
+  const [q,setQ]=useState("");
+  const [div,setDiv]=useState("All");
+  const [due,setDue]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+  const [ok,setOk]=useState("");
+
+  const needle=q.trim().toLowerCase();
+  const people=data.people
+    .filter(p=>div==="All"||p.division===div||selPeople.has(p.name))
+    .filter(p=>!needle||selPeople.has(p.name)||[p.name,p.division].some(s=>(s||"").toLowerCase().includes(needle)));
+  const groups=trGroupVideos((data.videos||[]).filter(v=>v.storage_path),data.categories||[]);
+  const single=selPeople.size===1?[...selPeople][0]:null;
+  const toggle=(setter,id)=>setter(s=>{const n=new Set(s);n.has(id)?n.delete(id):n.add(id);return n;});
+  const allShownPicked=people.length>0&&people.every(p=>selPeople.has(p.name));
+  function toggleShownPeople(){setSelPeople(s=>{const n=new Set(s);people.forEach(p=>allShownPicked?n.delete(p.name):n.add(p.name));return n;});}
+  function toggleGroup(g){
+    const all=g.videos.every(v=>selVideos.has(v.id));
+    setSelVideos(s=>{const n=new Set(s);g.videos.forEach(v=>all?n.delete(v.id):n.add(v.id));return n;});
+  }
+  async function assign(){
+    setBusy(true);setErr("");setOk("");
+    try{
+      await trRpc("training_assign",{p_users:[...selPeople],p_videos:[...selVideos],p_due:due||null});
+      setOk(`Assigned ${selVideos.size} video${selVideos.size===1?"":"s"} to ${selPeople.size} ${selPeople.size===1?"person":"people"}.`);
+      showToast("Assigned ✓");setSelVideos(new Set());reload();
+    }catch(e){setErr(e.message);}
+    setBusy(false);
+  }
+  async function unassign(videoId){
+    if(!window.confirm(`Remove this video from ${single}'s training?`))return;
+    try{await trRpc("training_unassign",{p_user:single,p_video:videoId});showToast("Removed","warn");reload();}catch(e){setErr(e.message);}
+  }
+
+  if(!groups.length)return <div style={{...cardS,color:T.muted,fontSize:14}}>Upload videos in the Video Library first, then come back here to assign them.</div>;
+
+  const box={...cardS,padding:0,overflow:"hidden",display:"flex",flexDirection:"column",maxHeight:"62vh"};
+  const head={padding:"12px 14px",borderBottom:`1px solid ${T.border}`,background:T.surface};
+  const row={display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderTop:`1px solid ${T.border}`,cursor:"pointer"};
+  const chk={width:18,height:18,accentColor:T.yellow,flexShrink:0,margin:0};
+
+  return(
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
+        <div style={box}>
+          <div style={head}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style={{fontSize:14,fontWeight:800}}>1. Pick people</span>
+              <span style={{fontSize:12,color:T.muted}}>{selPeople.size} selected</span>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <input type="text" placeholder="Search…" value={q} onChange={e=>setQ(e.target.value)} style={{...inp,padding:"8px 10px",fontSize:13,flex:1,width:"auto"}}/>
+              <select value={div} onChange={e=>setDiv(e.target.value)} style={{...inpSel,padding:"8px 10px",fontSize:13,width:"auto"}}>
+                {["All",...DIVISIONS].map(d=><option key={d} value={d}>{d==="All"?"All":d}</option>)}
+              </select>
+            </div>
+            {people.length>1&&<button onClick={toggleShownPeople} style={{background:"none",border:"none",color:T.yellow,fontSize:12,fontWeight:700,cursor:"pointer",padding:0,marginTop:8,fontFamily:"inherit"}}>{allShownPicked?"Clear these":"Select everyone shown"}</button>}
+          </div>
+          <div style={{overflowY:"auto"}}>
+            {people.map(p=>{
+              const s=trSummary(p.name,maps);
+              return(
+                <label key={p.name} style={row}>
+                  <input type="checkbox" checked={selPeople.has(p.name)} onChange={()=>toggle(setSelPeople,p.name)} style={chk}/>
+                  <span style={{flex:1,minWidth:0}}>
+                    <span style={{display:"block",fontSize:14,fontWeight:600}}>{p.name}</span>
+                    <span style={{display:"block",fontSize:11.5,color:T.muted}}>{p.division||"No division"}{s.total?`, ${s.done} of ${s.total} done`:""}</span>
+                  </span>
+                </label>
+              );
+            })}
+            {people.length===0&&<div style={{padding:14,fontSize:13,color:T.muted}}>No one matches.</div>}
+          </div>
+        </div>
+
+        <div style={box}>
+          <div style={head}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:14,fontWeight:800}}>2. Pick videos</span>
+              <span style={{fontSize:12,color:T.muted}}>{selVideos.size} selected</span>
+            </div>
+            {single&&<div style={{fontSize:11.5,color:T.muted,marginTop:4}}>Showing {single}'s status on each video</div>}
+          </div>
+          <div style={{overflowY:"auto"}}>
+            {groups.map(g=>{
+              const all=g.videos.every(v=>selVideos.has(v.id));
+              return(
+                <div key={g.id}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 14px",background:T.bg,borderTop:`1px solid ${T.border}`}}>
+                    <span style={{...lbl,marginBottom:0}}>{g.name}</span>
+                    <button onClick={()=>toggleGroup(g)} style={{background:"none",border:"none",color:T.yellow,fontSize:12,fontWeight:700,cursor:"pointer",padding:0,fontFamily:"inherit"}}>{all?"Clear":"Select all"}</button>
+                  </div>
+                  {g.videos.map(v=>{
+                    const a=single&&maps.asg[trKey(single,v.id)];
+                    const st=a&&trStatus(v,maps.prog[trKey(single,v.id)]);
+                    return(
+                      <label key={v.id} style={row}>
+                        <input type="checkbox" checked={selVideos.has(v.id)} onChange={()=>toggle(setSelVideos,v.id)} style={chk}/>
+                        <span style={{flex:1,minWidth:0}}>
+                          <span style={{display:"block",fontSize:14,fontWeight:600}}>{v.title}</span>
+                          <span style={{display:"block",fontSize:11.5,color:T.muted}}>{trDur(v.duration_seconds)}{v.quiz_count?`, ${v.quiz_count}-question quiz`:", no quiz"}{!v.published?", hidden":""}</span>
+                        </span>
+                        {a&&<TrStatusPill st={st} late={trLate(st,a.due_date)}/>}
+                        {a&&<button onClick={e=>{e.preventDefault();unassign(v.id);}} style={{background:"none",border:"none",color:T.red,fontSize:12,fontWeight:700,cursor:"pointer",padding:0,fontFamily:"inherit"}}>Remove</button>}
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div style={{position:"sticky",bottom:12,marginTop:14,background:T.card,border:`1px solid ${T.yellow}50`,borderRadius:14,padding:"12px 14px",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",boxShadow:"0 8px 24px rgba(0,0,0,0.4)",zIndex:5}}>
+        <span style={{fontSize:13.5,fontWeight:700,flex:"1 1 160px"}}>{selVideos.size} video{selVideos.size===1?"":"s"} for {selPeople.size} {selPeople.size===1?"person":"people"}</span>
+        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:T.muted}}>Due
+          <input type="date" value={due} min={today()} onChange={e=>setDue(e.target.value)} style={{...inp,padding:"8px 10px",fontSize:13,width:"auto",colorScheme:"dark"}}/>
+        </label>
+        <button onClick={assign} disabled={busy||!selPeople.size||!selVideos.size}
+          style={{...primBtn,width:"auto",padding:"11px 20px",fontSize:14,background:T.yellow,color:"#0D0D0F",opacity:(busy||!selPeople.size||!selVideos.size)?0.45:1}}>
+          {busy?"Assigning…":"Assign"}
+        </button>
+      </div>
+      {ok&&<div style={{marginTop:10,fontSize:13,color:T.green,fontWeight:700}} role="status">✓ {ok}</div>}
+      <div style={{marginTop:10}}><ErrBanner msg={err} onDismiss={()=>setErr("")}/></div>
+    </div>
+  );
+}
+
+function TrLibrary({data,maps,reload}){
+  const [editing,setEditing]=useState(null); // "new" | video
+  const [newCat,setNewCat]=useState("");
+  const [err,setErr]=useState("");
+  if(editing)return <TrVideoEditor video={editing==="new"?null:editing} categories={data.categories||[]} onClose={(changed)=>{setEditing(null);if(changed)reload();}}/>;
+
+  async function addCategory(){
+    const name=newCat.trim();if(!name)return;
+    try{await trRpc("training_save_category",{p_name:name});setNewCat("");setErr("");showToast("Saved ✓");reload();}catch(e){setErr(e.message);}
+  }
+  async function removeCategory(c){
+    if(!window.confirm(`Delete the "${c.name}" category? Its videos move to Uncategorized.`))return;
+    try{await trRpc("training_delete_category",{p_id:c.id});showToast("Deleted","warn");reload();}catch(e){setErr(e.message);}
+  }
+  const groups=trGroupVideos(data.videos||[],data.categories||[]);
+
+  return(
+    <div>
+      <button onClick={()=>setEditing("new")} style={{...primBtn,background:T.yellow,color:"#0D0D0F",marginBottom:14}}>＋ Add video</button>
+      <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+      <div style={{...cardS,marginBottom:18}}>
+        <div style={{fontSize:14,fontWeight:800,marginBottom:10}}>Categories</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          {(data.categories||[]).length===0&&<span style={{fontSize:12.5,color:T.muted}}>None yet. Try Safety, Pipeline, Shop, or Company Policies.</span>}
+          {(data.categories||[]).map(c=>(
+            <span key={c.id} style={{display:"inline-flex",alignItems:"center",gap:4,background:T.surface,border:`1px solid ${T.border}`,borderRadius:20,padding:"4px 6px 4px 12px",fontSize:12.5,fontWeight:700}}>
+              {c.name}
+              <button onClick={()=>removeCategory(c)} aria-label={`Delete ${c.name}`} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:15,lineHeight:1,padding:"0 4px"}}>×</button>
+            </span>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <input type="text" placeholder="New category name" value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addCategory();}} style={{...inp,padding:"9px 12px",fontSize:14,flex:1,width:"auto"}}/>
+          <button onClick={addCategory} style={{...ghostBtn,padding:"9px 14px",fontSize:13}}>Add</button>
+        </div>
+      </div>
+      {groups.length===0&&<div style={{...cardS,color:T.muted,fontSize:14}}>No videos yet. Use “Add video” to upload your first one and write its quiz.</div>}
+      {groups.map(g=>(
+        <div key={g.id} style={{marginBottom:18}}>
+          <div style={{...lbl,marginBottom:8}}>{g.name}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:10}}>
+            {g.videos.map(v=>{
+              const asg=maps.asgByVideo[v.id]||[];
+              const doneN=asg.filter(a=>trStatus(v,maps.prog[trKey(a.user_name,v.id)])==="done").length;
+              return(
+                <div key={v.id} onClick={()=>setEditing(v)} style={{...cardS,padding:"13px 14px",cursor:"pointer"}}>
+                  <div style={{fontSize:14.5,fontWeight:700,marginBottom:4}}>{v.title}</div>
+                  <div style={{fontSize:11.5,color:T.muted}}>{trDur(v.duration_seconds)}, {v.quiz_count?`${v.quiz_count}-question quiz`:"no quiz"}, {trSize(v.file_size)}</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                    {!v.storage_path&&<span style={pill(T.red)}>No video file</span>}
+                    {!v.published&&<span style={pill(T.muted)}>Hidden</span>}
+                    <span style={pill(T.blue)}>{asg.length} assigned</span>
+                    <span style={pill(T.green)}>{doneN} complete</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+let trQKey=0;
+const trBlankQ=()=>({key:++trQKey,prompt:"",options:["",""],correct:0});
+
+function TrVideoEditor({video,categories,onClose}){
+  const [title,setTitle]=useState(video?.title||"");
+  const [description,setDescription]=useState(video?.description||"");
+  const [categoryId,setCategoryId]=useState(video?.category_id||"");
+  const [passScore,setPassScore]=useState(video?.pass_score??80);
+  const [requireFull,setRequireFull]=useState(video?.require_full_watch??true);
+  const [published,setPublished]=useState(video?.published??true);
+  const [file,setFile]=useState(null);
+  const [questions,setQuestions]=useState(video?null:[]);
+  const [quizDirty,setQuizDirty]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [stage,setStage]=useState("");
+  const [upPct,setUpPct]=useState(0);
+  const [err,setErr]=useState("");
+  const savedId=useRef(video?.id||null);
+  const changed=useRef(false);
+  const previewUrl=trVideoUrl(video?.storage_path);
+
+  useEffect(()=>{
+    if(!video)return;
+    trRpc("training_get_quiz_admin",{p_video:video.id})
+      .then(d=>setQuestions((Array.isArray(d)?d:[]).map(q=>({key:++trQKey,prompt:q.prompt,options:q.options,correct:q.correct_index}))))
+      .catch(e=>{setErr(e.message);setQuestions([]);});
+  },[video?.id]);
+
+  const editQ=(i,patch)=>{setQuizDirty(true);setQuestions(qs=>qs.map((q,j)=>j===i?{...q,...patch}:q));};
+  const editOpt=(i,oi,val)=>editQ(i,{options:questions[i].options.map((o,k)=>k===oi?val:o)});
+  const addOpt=(i)=>editQ(i,{options:[...questions[i].options,""]});
+  const removeOpt=(i,oi)=>{const q=questions[i];editQ(i,{options:q.options.filter((_,k)=>k!==oi),correct:q.correct===oi?0:q.correct>oi?q.correct-1:q.correct});};
+  const addQ=()=>{setQuizDirty(true);setQuestions(qs=>[...qs,trBlankQ()]);};
+  const removeQ=(i)=>{setQuizDirty(true);setQuestions(qs=>qs.filter((_,j)=>j!==i));};
+  const moveQ=(i,d)=>{setQuizDirty(true);setQuestions(qs=>{const n=[...qs];const[q]=n.splice(i,1);n.splice(i+d,0,q);return n;});};
+
+  function validate(){
+    if(!title.trim())return "Give the video a title.";
+    if(!savedId.current&&!file)return "Choose a video file to upload.";
+    const p=Number(passScore);if(!(p>=0&&p<=100))return "Passing score must be between 0 and 100.";
+    for(const [i,q] of (questions||[]).entries()){
+      if(!q.prompt.trim())return `Question ${i+1} needs a question.`;
+      if(q.options.length<2||q.options.some(o=>!o.trim()))return `Question ${i+1}: fill in every answer (at least two).`;
+    }
+    return "";
+  }
+
+  async function save(){
+    const v=validate();if(v){setErr(v);return;}
+    setErr("");setBusy(true);
+    try{
+      setStage("Saving details…");
+      const row=await trRpc("training_save_video",{p_id:savedId.current,p_data:{
+        title:title.trim(),description:description.trim(),category_id:categoryId||"",
+        pass_score:Number(passScore),require_full_watch:requireFull,published}});
+      savedId.current=row.id;changed.current=true;
+      const id=row.id,prevPath=row.storage_path;
+      if(questions&&(quizDirty||!video)){
+        setStage("Saving quiz…");
+        await trRpc("training_save_quiz",{p_video:id,p_questions:questions.map(q=>({prompt:q.prompt.trim(),options:q.options.map(o=>o.trim()),correct_index:q.correct}))});
+        setQuizDirty(false);
+      }
+      if(file){
+        const path=`${id}/${Date.now()}-${trSafeName(file.name)}`;
+        setStage("Reading video…");
+        const duration=await trReadDuration(file);
+        setStage("Uploading video…");
+        await trUploadVideo(path,file,setUpPct);
+        setStage("Finishing…");
+        await trRpc("training_save_video",{p_id:id,p_data:{storage_path:path,file_name:file.name,file_size:file.size,duration_seconds:duration}});
+        if(prevPath&&prevPath!==path)storageRemove(TRAINING_BUCKET,prevPath).catch(()=>{});
+        setFile(null);
+      }
+      showToast("Saved ✓");
+      onClose(true);
+    }catch(e){
+      setErr((e?.message||String(e))+(savedId.current?" Your other changes were saved. Press Save again to retry.":""));
+    }
+    setBusy(false);setStage("");
+  }
+
+  async function remove(){
+    if(!window.confirm(`Delete "${video.title}"? It's removed from everyone's training, along with its quiz and progress.`))return;
+    setBusy(true);
+    try{
+      const path=await trRpc("training_delete_video",{p_id:video.id});
+      if(path)storageRemove(TRAINING_BUCKET,path).catch(()=>{});
+      showToast("Deleted","warn");onClose(true);
+    }catch(e){setErr(e.message);setBusy(false);}
+  }
+
+  const uploading=stage==="Uploading video…";
+  const small={background:"none",border:"none",fontSize:12,fontWeight:700,cursor:"pointer",padding:0,fontFamily:"inherit"};
+
+  return(
+    <div style={{maxWidth:820}}>
+      <button onClick={()=>onClose(changed.current)} disabled={busy} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",padding:0,marginBottom:10,fontFamily:"inherit"}}>← Video library</button>
+      <div style={{fontSize:20,fontWeight:900,marginBottom:14}}>{video?"Edit video":"Add video"}</div>
+
+      <div style={{...cardS,marginBottom:12}}>
+        <label style={lbl}>Title</label>
+        <input type="text" value={title} onChange={e=>setTitle(e.target.value)} placeholder="Confined space entry basics" style={{...inp,marginBottom:14}}/>
+        <label style={lbl}>Description (shown under the video)</label>
+        <textarea value={description} onChange={e=>setDescription(e.target.value)} rows={3} style={{...inp,resize:"vertical",marginBottom:14}}/>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12,marginBottom:14}}>
+          <div>
+            <label style={lbl}>Category</label>
+            <select value={categoryId} onChange={e=>setCategoryId(e.target.value)} style={inpSel}>
+              <option value="">Uncategorized</option>
+              {categories.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Passing score (%)</label>
+            <input type="number" min={0} max={100} value={passScore} onChange={e=>setPassScore(e.target.value)} style={inp}/>
+          </div>
+        </div>
+        <label style={{display:"flex",alignItems:"center",gap:10,fontSize:13.5,color:T.sub,marginBottom:10,cursor:"pointer"}}>
+          <input type="checkbox" checked={requireFull} onChange={e=>setRequireFull(e.target.checked)} style={{width:18,height:18,accentColor:T.yellow}}/>
+          Don't let people skip ahead the first time they watch
+        </label>
+        <label style={{display:"flex",alignItems:"center",gap:10,fontSize:13.5,color:T.sub,cursor:"pointer"}}>
+          <input type="checkbox" checked={published} onChange={e=>setPublished(e.target.checked)} style={{width:18,height:18,accentColor:T.yellow}}/>
+          Visible to the people it's assigned to
+        </label>
+      </div>
+
+      <div style={{...cardS,marginBottom:12}}>
+        <div style={{fontSize:14,fontWeight:800,marginBottom:10}}>Video file</div>
+        {previewUrl&&!file&&(
+          <div style={{background:"#000",borderRadius:12,overflow:"hidden",aspectRatio:"16 / 9",maxWidth:560,marginBottom:8}}>
+            <video src={previewUrl} controls preload="metadata" style={{width:"100%",height:"100%",display:"block"}}/>
+          </div>
+        )}
+        {video?.file_name&&!file&&<div style={{fontSize:12,color:T.muted,marginBottom:10}}>{video.file_name}, {trSize(video.file_size)}, {trDur(video.duration_seconds)}</div>}
+        <label style={lbl}>{video?.storage_path?"Replace with a new file":"Choose a video file"} (MP4 works best)</label>
+        <input type="file" accept="video/mp4,video/quicktime,video/webm,video/x-m4v" disabled={busy}
+          onChange={e=>setFile(e.target.files?.[0]||null)} style={{fontSize:13,color:T.sub,fontFamily:"inherit"}}/>
+        {file&&<div style={{fontSize:12,color:T.sub,marginTop:8}}>{file.name}, {trSize(file.size)}</div>}
+        {uploading&&(
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:12}}>
+            <TrBar pct={Math.round(upPct*100)} color={T.yellow} h={10}/>
+            <span style={{fontSize:12,color:T.sub}}>{Math.round(upPct*100)}%</span>
+          </div>
+        )}
+      </div>
+
+      <div style={{...cardS,marginBottom:14}}>
+        <div style={{fontSize:14,fontWeight:800,marginBottom:4}}>Quiz</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:12}}>People take it after they finish the video. Leave it empty if this video doesn't need one.</div>
+        {questions===null?<Spinner/>:<>
+          {questions.map((q,i)=>(
+            <div key={q.key} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:12,marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8,flexWrap:"wrap"}}>
+                <span style={{fontSize:13,fontWeight:800,flex:1}}>Question {i+1}</span>
+                <button disabled={i===0} onClick={()=>moveQ(i,-1)} style={{...small,color:i===0?T.border:T.sub}}>↑ Up</button>
+                <button disabled={i===questions.length-1} onClick={()=>moveQ(i,1)} style={{...small,color:i===questions.length-1?T.border:T.sub}}>↓ Down</button>
+                <button onClick={()=>removeQ(i)} style={{...small,color:T.red}}>Delete</button>
+              </div>
+              <input type="text" value={q.prompt} onChange={e=>editQ(i,{prompt:e.target.value})} placeholder="What must you check before entering a confined space?" style={{...inp,padding:"10px 12px",fontSize:14,marginBottom:8}}/>
+              <div style={{fontSize:11.5,color:T.muted,marginBottom:4}}>Answers. Tap the circle next to the correct one.</div>
+              {q.options.map((o,oi)=>(
+                <div key={oi} style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+                  <input type="radio" name={`tr-correct-${q.key}`} checked={q.correct===oi} onChange={()=>editQ(i,{correct:oi})}
+                    aria-label={`Answer ${oi+1} is correct`} style={{width:18,height:18,accentColor:T.green,flexShrink:0}}/>
+                  <input type="text" value={o} onChange={e=>editOpt(i,oi,e.target.value)} placeholder={`Answer ${oi+1}`}
+                    style={{...inp,padding:"9px 12px",fontSize:14,flex:1,width:"auto",borderColor:q.correct===oi?`${T.green}70`:T.border}}/>
+                  <button disabled={q.options.length<=2} onClick={()=>removeOpt(i,oi)} style={{...small,color:q.options.length<=2?T.border:T.red}}>✕</button>
+                </div>
+              ))}
+              {q.options.length<6&&<button onClick={()=>addOpt(i)} style={{...small,color:T.blue,marginTop:8}}>＋ Add an answer</button>}
+            </div>
+          ))}
+          <button onClick={addQ} style={{...ghostBtn,padding:"10px 14px",fontSize:13}}>＋ Add question</button>
+        </>}
+      </div>
+
+      <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
+      {uploading&&<div style={{fontSize:12.5,color:T.yellow,marginBottom:10}}>Keep this screen open until the upload finishes.</div>}
+      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+        <button onClick={save} disabled={busy||questions===null} style={{...primBtn,flex:"1 1 200px",background:T.yellow,color:"#0D0D0F",opacity:busy?0.6:1}}>{busy?(stage||"Saving…"):video?"Save changes":"Save video"}</button>
+        <button onClick={()=>onClose(changed.current)} disabled={busy} style={{...ghostBtn,flex:"0 0 auto"}}>Cancel</button>
+        {video&&<button onClick={remove} disabled={busy} style={{...dangerBtn,width:"auto",flex:"0 0 auto"}}>Delete video</button>}
+      </div>
     </div>
   );
 }
