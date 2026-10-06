@@ -1839,6 +1839,8 @@ function AccountingScreen({user,projects,onBack}){
 const apNorm=(v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
 // Final approval on every AP invoice. Change the name here to hand it to someone else.
 const AP_FINAL_APPROVER="Clay Lau";
+// The only people offered in an estimate's Send for Review list (they also need an email on their user profile).
+const EST_REVIEWERS=["Clay Lau"];
 const isApFinalApprover=(u)=>!!u&&u.name===AP_FINAL_APPROVER;
 const AP_ACTION={pm_approved:"PM approved",billed:"billed to customer",not_billable:"marked not billable",billing_undone:"billing undone"};
 const AP_STATUS={entered:{l:"Awaiting PM approval",c:T.yellow},pm_approved:{l:`Awaiting final approval (${AP_FINAL_APPROVER})`,c:T.purple},approved:{l:"Approved — add to Foundation",c:T.red},rejected:{l:"Rejected",c:T.red},processed:{l:"Added to Foundation",c:T.green},paid:{l:"Paid",c:T.teal}};
@@ -11229,7 +11231,7 @@ function ReviewRequestModal({bid,user,onClose,onSent,onErr}){
       const rows=await API.userProfiles.list();
       // only people who can actually review, and who have somewhere to be emailed
       setPeople((rows||[]).filter(p=>p.active!==false&&p.email&&
-        ["admin","pm","estimator"].includes(p.role)));
+        EST_REVIEWERS.includes(p.name)));
     }catch(e){ /* typing an address still works */ }
   })();},[]);
 
@@ -11288,7 +11290,7 @@ function ReviewRequestModal({bid,user,onClose,onSent,onErr}){
           </select>
         ):(
           <div style={{fontSize:11.5,color:T.yellow,marginBottom:10,lineHeight:1.6}}>
-            No profiles have an email address yet. Add one under PM Dashboard → Users,
+            {EST_REVIEWERS.join(" / ")} has no email address on their profile yet. Add one under PM Dashboard → Users,
             or type an address below.
           </div>
         )}
