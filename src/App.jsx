@@ -1839,8 +1839,8 @@ function AccountingScreen({user,projects,onBack}){
 const apNorm=(v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
 // Final approval on every AP invoice. Change the name here to hand it to someone else.
 const AP_FINAL_APPROVER="Clay Lau";
-// The only people offered in an estimate's Send for Review list (they also need an email on their user profile).
-const EST_REVIEWERS=["Clay Lau"];
+// Every estimate sent for review goes to this person. Nobody else can be picked or typed in.
+const EST_REVIEWER="Clay Lau";
 const isApFinalApprover=(u)=>!!u&&u.name===AP_FINAL_APPROVER;
 const AP_ACTION={pm_approved:"PM approved",billed:"billed to customer",not_billable:"marked not billable",billing_undone:"billing undone"};
 const AP_STATUS={entered:{l:"Awaiting PM approval",c:T.yellow},pm_approved:{l:`Awaiting final approval (${AP_FINAL_APPROVER})`,c:T.purple},approved:{l:"Approved — add to Foundation",c:T.red},rejected:{l:"Rejected",c:T.red},processed:{l:"Added to Foundation",c:T.green},paid:{l:"Paid",c:T.teal}};
@@ -11220,38 +11220,37 @@ function BidBoard({user,onBack}){
 
 /* ── Send a bid for review ───────────────────────────────────── */
 function ReviewRequestModal({bid,user,onClose,onSent,onErr}){
-  const [people,setPeople]=useState([]);
-  const [name,setName]=useState(bid.reviewer_name||"");
-  const [email,setEmail]=useState(bid.reviewer_email||"");
+  // The reviewer is fixed. Their email comes from their user profile; without one, the
+  // bid still moves and they still get the in-app alert, just no email draft.
+  const name=EST_REVIEWER;
+  const [email,setEmail]=useState("");
   const [note,setNote]=useState("");
   const [sending,setSending]=useState(false);
 
   useEffect(()=>{(async()=>{
     try{
       const rows=await API.userProfiles.list();
-      // only people who can actually review, and who have somewhere to be emailed
-      setPeople((rows||[]).filter(p=>p.active!==false&&p.email&&
-        EST_REVIEWERS.includes(p.name)));
-    }catch(e){ /* typing an address still works */ }
+      const p=(rows||[]).find(x=>x.name===EST_REVIEWER);
+      setEmail(p?.email||"");
+    }catch(e){ /* the in-app alert still goes out */ }
   })();},[]);
 
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 
   async function send(){
-    if(!email.trim()){onErr&&onErr("Pick a reviewer or enter an email address.");return;}
     setSending(true);
     try{
       await API.estimates.update(bid.id,{
         status:"ready_review",
-        reviewer_name:name||null,reviewer_email:email.trim(),
+        reviewer_name:name,reviewer_email:email.trim()||null,
         review_note:note||null,review_requested_at:new Date().toISOString(),
         requested_review_by:user.name,
         updated_at:new Date().toISOString(),
       });
       // in-app notification lands immediately, whether or not the email is sent
       await notify("bid_review",`Bid ready for review — ${bid.name||"Untitled"}`,
-        `${user.name} moved this bid to Ready For Review${name?` for ${name}`:""}.${note?` Note: ${note}`:""}`,
-        {});
+        `${user.name} sent this bid to you for review.${note?` Note: ${note}`:""}`,
+        {to:name});
 
       const link=`${window.location.origin}${window.location.pathname}?bid=${bid.id}`;
       const subj=`Bid ready for review — ${bid.name||""}${bid.quote_number?` (Quote ${bid.quote_number})`:""}`;
@@ -11265,7 +11264,7 @@ function ReviewRequestModal({bid,user,onClose,onSent,onErr}){
         ...(note?["",`Note: ${note}`]:[]),
         "",link,"","Thanks,",user.name||"",
       ].join("\n");
-      window.location.href=`mailto:${encodeURIComponent(email.trim())}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+      if(email.trim())window.location.href=`mailto:${encodeURIComponent(email.trim())}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
       onSent&&onSent();
     }catch(e){onErr&&onErr(e.message);}
     setSending(false);
@@ -11280,24 +11279,10 @@ function ReviewRequestModal({bid,user,onClose,onSent,onErr}){
         </div>
 
         <label style={lbl}>Reviewer</label>
-        {people.length>0?(
-          <select value={email} onChange={e=>{
-            const p=people.find(x=>x.email===e.target.value);
-            setEmail(e.target.value); setName(p?p.name:"");
-          }} style={{...inp,marginBottom:12}}>
-            <option value="">Choose someone…</option>
-            {people.map(p=><option key={p.id} value={p.email}>{p.name} — {ROLE_META[p.role]?.label||p.role}</option>)}
-          </select>
-        ):(
-          <div style={{fontSize:11.5,color:T.yellow,marginBottom:10,lineHeight:1.6}}>
-            {EST_REVIEWERS.join(" / ")} has no email address on their profile yet. Add one under PM Dashboard → Users,
-            or type an address below.
-          </div>
-        )}
-
-        <label style={lbl}>Email {people.length>0?"(or type another)":""}</label>
-        <input type="email" value={email} onChange={e=>setEmail(e.target.value)}
-          placeholder="name@aimemd.com" style={{...inp,marginBottom:12}}/>
+        <div style={{...inp,marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <span style={{fontWeight:700}}>{name}</span>
+          <span style={{fontSize:11,color:T.muted}}>{email||"no email on file"}</span>
+        </div>
 
         <label style={lbl}>Note (optional)</label>
         <textarea value={note} onChange={e=>setNote(e.target.value)} rows={3}
@@ -11305,9 +11290,8 @@ function ReviewRequestModal({bid,user,onClose,onSent,onErr}){
           style={{...inp,marginBottom:16,resize:"vertical"}}/>
 
         <div style={{background:T.surface,borderRadius:10,padding:"10px 12px",fontSize:11.5,color:T.muted,lineHeight:1.6,marginBottom:16}}>
-          This opens an email draft in your mail client so it comes from you — review it
-          and hit send. The bid moves to Ready For Review either way, and the reviewer
-          also gets an in-app notification.
+          {name} gets an in-app alert and the bid moves to Ready For Review.
+          {email?" An email draft to him also opens in your mail client so it comes from you. Review it and hit send.":" Add his email under PM Dashboard → Users to also get an email draft."}
         </div>
 
         <div style={{display:"flex",gap:10}}>
