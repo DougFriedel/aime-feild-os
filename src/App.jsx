@@ -1840,8 +1840,277 @@ const apNorm=(v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
 // Final approval on every AP invoice. Change the name here to hand it to someone else.
 const AP_FINAL_APPROVER="Clay Lau";
 const isApFinalApprover=(u)=>!!u&&u.name===AP_FINAL_APPROVER;
-const AP_ACTION={pm_approved:"PM approved"};
+const AP_ACTION={pm_approved:"PM approved",billed:"billed to customer",not_billable:"marked not billable",billing_undone:"billing undone"};
 const AP_STATUS={entered:{l:"Awaiting PM approval",c:T.yellow},pm_approved:{l:`Awaiting final approval (${AP_FINAL_APPROVER})`,c:T.purple},approved:{l:"Approved — add to Foundation",c:T.red},rejected:{l:"Rejected",c:T.red},processed:{l:"Added to Foundation",c:T.green},paid:{l:"Paid",c:T.teal}};
+/* ── Billing vendor costs to the customer ──
+   Once an AP invoice has final approval, PMs and admins track whether that
+   cost has been billed to the customer. It's marked billed either by picking
+   the customer invoice on the job's Billing tab, or by typing the customer
+   invoice # and date. Overhead that never gets billed is marked "Not
+   billable" with a reason so it drops off the unbilled lists. */
+const AP_BILLABLE_STATUSES=["approved","processed","paid"];
+const apCanBill=(u)=>u?.role==="admin"||u?.role==="pm";
+const apBillState=(r)=>!r||!AP_BILLABLE_STATUSES.includes(r.status)?null
+  :(r.billing_status==="billed"||r.billing_status==="not_billable"?r.billing_status:"unbilled");
+const AP_BILL_META={unbilled:{l:"Not billed yet",c:T.yellow},billed:{l:"Billed to customer",c:T.green},not_billable:{l:"Not billable",c:T.muted}};
+const apMoney=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const apDaysSince=(ts)=>ts?Math.max(0,Math.floor((Date.now()-new Date(ts).getTime())/86400000)):null;
+function apBillLine(r){
+  const st=apBillState(r);
+  if(st==="billed")return `Billed on customer invoice ${r.billed_invoice_no||"(no #)"}${r.billed_date?` dated ${fmtDate(r.billed_date)}`:""}${r.billed_by?`, marked by ${r.billed_by}`:""}`;
+  if(st==="not_billable")return `Not billable${r.not_billable_reason?`: ${r.not_billable_reason}`:""}${r.billed_by?` (${r.billed_by})`:""}`;
+  if(st==="unbilled"){const d=apDaysSince(r.final_approved_at||r.approved_at);return `Approved and not billed yet${d!=null?`, ${d} day${d===1?"":"s"} since approval`:""}`;}
+  return "";
+}
+async function apSaveBilling(r,user,fields,action,note){
+  const entry={at:new Date().toISOString(),by:user.name,action,note:note||null};
+  const body={...fields,history:[...(r.history||[]),entry],updated_at:entry.at};
+  await sb(`/ap_invoices?id=eq.${r.id}`,{method:"PATCH",body});
+  return {...r,...body};
+}
+function ApBillingPill({r,style}){
+  const st=apBillState(r);if(!st)return null;
+  const m=AP_BILL_META[st];
+  return <span style={{...pill(m.c),fontSize:9.5,whiteSpace:"nowrap",...style}}>{st==="billed"?"💲 ":""}{m.l}</span>;
+}
+
+/* Mark billed (pick a customer invoice, or type the # and date) or not billable. */
+function ApBillDialog({r,user,onClose,onSaved}){
+  const [invoices,setInvoices]=useState(null);
+  const [mode,setMode]=useState("pick");      // pick | type | not
+  const [sel,setSel]=useState("");
+  const [no,setNo]=useState("");
+  const [date,setDate]=useState(today());
+  const [reason,setReason]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState("");
+  useEffect(()=>{
+    (async()=>{
+      try{
+        const list=r.project_id?await API.invoices.forProject(r.project_id)
+          :r.mfg_job_id?await API.invoices.forMfgJob(r.mfg_job_id):[];
+        const usable=(list||[]).filter(i=>i.status!=="void");
+        setInvoices(usable);if(!usable.length)setMode("type");
+      }catch{setInvoices([]);setMode("type");}
+    })();
+  },[r.id]);
+  async function save(){
+    let fields,action,note;
+    if(mode==="not"){
+      if(!reason.trim()){setErr("Say why this cost isn't billable.");return;}
+      fields={billing_status:"not_billable",not_billable_reason:reason.trim(),billed_by:user.name,billed_at:new Date().toISOString(),
+        billed_job_invoice_id:null,billed_invoice_no:null,billed_date:null};
+      action="not_billable";note=reason.trim();
+    }else if(mode==="pick"){
+      const inv=(invoices||[]).find(i=>String(i.id)===sel);
+      if(!inv){setErr("Pick the customer invoice this cost went on.");return;}
+      fields={billing_status:"billed",billed_job_invoice_id:String(inv.id),billed_invoice_no:inv.invoice_no||null,billed_date:inv.invoice_date||today(),
+        billed_by:user.name,billed_at:new Date().toISOString(),not_billable_reason:null};
+      action="billed";note=`customer invoice ${inv.invoice_no||"(no #)"}`;
+    }else{
+      if(!no.trim()){setErr("Enter the customer invoice number.");return;}
+      fields={billing_status:"billed",billed_job_invoice_id:null,billed_invoice_no:no.trim(),billed_date:date||today(),
+        billed_by:user.name,billed_at:new Date().toISOString(),not_billable_reason:null};
+      action="billed";note=`customer invoice ${no.trim()}`;
+    }
+    setBusy(true);setErr("");
+    try{const updated=await apSaveBilling(r,user,fields,action,note);onSaved(updated);}
+    catch(e){setErr(e.message);setBusy(false);}
+  }
+  const tabBtn=(id,label)=>(
+    <button key={id} onClick={()=>{setMode(id);setErr("");}} style={{flex:1,padding:"8px 6px",background:mode===id?T.teal:"none",color:mode===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{label}</button>
+  );
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16,fontFamily:"inherit"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,border:`1px solid ${T.teal}50`,borderRadius:16,padding:20,width:"100%",maxWidth:460,maxHeight:"88vh",overflowY:"auto",color:T.text}}>
+        <div style={{fontSize:16,fontWeight:900,marginBottom:2}}>💲 Billing for {r.vendor} #{r.invoice_no}</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:14}}>{apMoney(r.amount)}{r.description?` · ${r.description}`:""}</div>
+        <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,gap:4,marginBottom:14}}>
+          {invoices&&invoices.length>0&&tabBtn("pick","Pick invoice")}
+          {tabBtn("type","Type invoice #")}
+          {tabBtn("not","Not billable")}
+        </div>
+        {invoices===null?<Spinner/>:<>
+          {mode==="pick"&&<div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Customer invoices on this job:</div>
+            {invoices.map(i=>{const on=sel===String(i.id);return(
+              <label key={i.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",marginBottom:6,borderRadius:10,cursor:"pointer",
+                border:`1px solid ${on?T.teal:T.border}`,background:on?`${T.teal}14`:T.surface}}>
+                <input type="radio" name="ap-bill-inv" checked={on} onChange={()=>setSel(String(i.id))} style={{accentColor:T.teal}}/>
+                <span style={{flex:1,minWidth:0}}>
+                  <span style={{display:"block",fontSize:13.5,fontWeight:700}}>Invoice {i.invoice_no||"(no #)"}</span>
+                  <span style={{display:"block",fontSize:11.5,color:T.muted}}>{i.invoice_date?fmtDate(i.invoice_date):"No date"}{i.status?` · ${i.status}`:""}</span>
+                </span>
+                <span style={{fontSize:13,fontWeight:800,color:T.green}}>{apMoney(i.total)}</span>
+              </label>);})}
+          </div>}
+          {mode==="type"&&<div>
+            {invoices.length===0&&<div style={{fontSize:12,color:T.muted,marginBottom:10}}>{r.project_id||r.mfg_job_id?"This job has no customer invoices in the app yet, so type the invoice details.":"This vendor invoice isn't on a job, so type the customer invoice details."}</div>}
+            <label style={lbl}>Customer invoice #</label>
+            <input value={no} onChange={e=>setNo(e.target.value)} placeholder="e.g. 10452" style={{...inp,marginBottom:12}} autoFocus/>
+            <label style={lbl}>Date billed</label>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...inp,colorScheme:"dark"}}/>
+          </div>}
+          {mode==="not"&&<div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Use this for overhead and other costs that never get billed to a customer. It drops off the unbilled lists.</div>
+            <label style={lbl}>Why isn't it billable?</label>
+            <textarea value={reason} onChange={e=>setReason(e.target.value)} rows={3} placeholder="e.g. Shop supplies, overhead" style={{...inp,resize:"vertical"}} autoFocus/>
+          </div>}
+        </>}
+        {err&&<div style={{fontSize:12.5,color:T.red,marginTop:12}}>{err}</div>}
+        <div style={{display:"flex",gap:8,marginTop:16}}>
+          <button onClick={save} disabled={busy||invoices===null} style={{...primBtn,flex:2,padding:"12px",fontSize:14,borderRadius:12,background:mode==="not"?T.surface:T.teal,color:mode==="not"?T.text:"#000",border:mode==="not"?`1px solid ${T.border}`:"none",opacity:busy?0.6:1}}>
+            {busy?"Saving…":mode==="not"?"Mark not billable":"Mark billed"}
+          </button>
+          <button onClick={onClose} disabled={busy} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Mark billed / undo buttons for one AP invoice. PMs and admins only. */
+function ApBillingActions({r,user,onChange,onErr}){
+  const [open,setOpen]=useState(false);
+  const st=apBillState(r);
+  if(!st||!apCanBill(user))return null;
+  async function undo(){
+    if(!window.confirm(st==="billed"?"Mark this cost as NOT billed yet?":"Put this cost back on the unbilled list?"))return;
+    try{
+      const updated=await apSaveBilling(r,user,{billing_status:null,billed_by:null,billed_at:null,billed_job_invoice_id:null,billed_invoice_no:null,billed_date:null,not_billable_reason:null},"billing_undone",null);
+      onChange&&onChange(updated);
+    }catch(e){onErr&&onErr(e.message);}
+  }
+  return(<>
+    {st==="unbilled"
+      ?<button onClick={e=>{e.stopPropagation();setOpen(true);}} style={{...primBtn,width:"auto",padding:"7px 14px",borderRadius:10,fontSize:12,background:T.teal,color:"#000"}}>💲 Mark billed</button>
+      :<button onClick={e=>{e.stopPropagation();undo();}} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.yellow}}>↩ {st==="billed"?"Undo billed":"Undo not billable"}</button>}
+    {open&&<ApBillDialog r={r} user={user} onClose={()=>setOpen(false)} onSaved={u=>{setOpen(false);onChange&&onChange(u);}}/>}
+  </>);
+}
+
+/* Job Billing tab: approved vendor costs on this job and whether each is billed. */
+function ApUnbilledPanel({project,mfgJob,user}){
+  const [rows,setRows]=useState(null);
+  const [showDone,setShowDone]=useState(false);
+  const [err,setErr]=useState("");
+  const col=mfgJob?"mfg_job_id":"project_id",id=mfgJob?mfgJob.id:project?.id;
+  useEffect(()=>{
+    if(!id||!apCanBill(user))return;
+    sb(`/ap_invoices?${col}=eq.${id}&status=in.(${AP_BILLABLE_STATUSES.join(",")})&select=*&order=created_at.desc`)
+      .then(d=>setRows(Array.isArray(d)?d:[])).catch(e=>{setErr(e.message);setRows([]);});
+  },[id]);
+  if(!apCanBill(user)||!rows)return null;
+  if(!rows.length&&!err)return null;
+  const unbilled=rows.filter(r=>apBillState(r)==="unbilled");
+  const done=rows.filter(r=>apBillState(r)!=="unbilled");
+  const total=unbilled.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const change=(u)=>setRows(rs=>rs.map(x=>x.id===u.id?u:x));
+  const card=(r)=>(
+    <div key={r.id} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 12px",marginBottom:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:13.5,fontWeight:800}}>{r.vendor} <span style={{color:T.muted,fontWeight:500}}>#{r.invoice_no}</span></div>
+          {r.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:1}}>{r.description}</div>}
+          <div style={{fontSize:11,color:T.muted,marginTop:3}}>{apBillLine(r)}</div>
+        </div>
+        <div style={{textAlign:"right",flexShrink:0}}>
+          <div style={{fontSize:14.5,fontWeight:900,color:T.green}}>{apMoney(r.amount)}</div>
+          <ApBillingPill r={r} style={{marginTop:4}}/>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+        {r.file_url&&<a href={r.file_url} target="_blank" rel="noreferrer" style={{...ghostBtn,padding:"7px 12px",fontSize:12,textDecoration:"none"}}>📎 Vendor invoice</a>}
+        <ApBillingActions r={r} user={user} onChange={change} onErr={setErr}/>
+      </div>
+    </div>
+  );
+  return(
+    <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${unbilled.length?T.yellow:T.green}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:unbilled.length?10:0}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:800}}>💵 Vendor costs to bill</div>
+          <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{unbilled.length?`${unbilled.length} approved vendor invoice${unbilled.length===1?"":"s"} not billed to the customer yet`:"Every approved vendor cost on this job is billed or marked not billable ✓"}</div>
+        </div>
+        {unbilled.length>0&&<div style={{fontSize:17,fontWeight:900,color:T.yellow,whiteSpace:"nowrap"}}>{apMoney(total)}</div>}
+      </div>
+      {err&&<div style={{fontSize:12,color:T.red,marginBottom:8}}>{err}</div>}
+      {unbilled.map(card)}
+      {done.length>0&&<button onClick={()=>setShowDone(v=>!v)} style={{background:"none",border:"none",color:T.teal,fontSize:12,fontWeight:700,cursor:"pointer",padding:0,marginTop:4,fontFamily:"inherit"}}>
+        {showDone?"Hide":"Show"} billed and not billable ({done.length})
+      </button>}
+      {showDone&&<div style={{marginTop:8}}>{done.map(card)}</div>}
+    </div>
+  );
+}
+
+/* PM Dashboard: unbilled vendor costs across the division, by PM. */
+function ApUnbilledSummary({user,projects,division}){
+  const [rows,setRows]=useState(null);
+  const [open,setOpen]=useState(false);
+  const [mine,setMine]=useState(user.role==="pm");
+  const [err,setErr]=useState("");
+  useEffect(()=>{
+    if(!apCanBill(user))return;
+    sb(`/ap_invoices?status=in.(${AP_BILLABLE_STATUSES.join(",")})&or=(billing_status.is.null,billing_status.eq.unbilled)&select=*&order=created_at.asc&limit=2000`)
+      .then(d=>setRows(Array.isArray(d)?d:[])).catch(e=>{setErr(e.message);setRows([]);});
+  },[]);
+  if(!apCanBill(user))return null;
+  const pmOf=(r)=>r.approved_by||r.assigned_pm||"No PM";
+  const jobName=(r)=>r.project_id?((projects||[]).find(p=>p.id===r.project_id)||{}).name||"Job":r.mfg_job_id?"🏭 Shop job":"No job";
+  const scoped=(rows||[]).filter(r=>apBillState(r)==="unbilled"&&(!division||r.division===division));
+  const shown=scoped.filter(r=>!mine||pmOf(r)===user.name);
+  const total=shown.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const byPm={};scoped.forEach(r=>{const k=pmOf(r);(byPm[k]||(byPm[k]={n:0,amt:0}));byPm[k].n++;byPm[k].amt+=parseFloat(r.amount)||0;});
+  const pmRows=Object.entries(byPm).sort((a,b)=>b[1].amt-a[1].amt);
+  const oldest=shown.reduce((m,r)=>Math.max(m,apDaysSince(r.final_approved_at||r.approved_at)||0),0);
+  const change=(u)=>setRows(rs=>rs.map(x=>x.id===u.id?u:x));
+  const c=shown.length?T.yellow:T.green;
+  return(
+    <div style={{marginBottom:16}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>Vendor costs not billed</div>
+      <div style={{...cardS,borderLeft:`3px solid ${c}`}}>
+        {rows===null?<Spinner/>:<>
+          {err&&<div style={{fontSize:12,color:T.red,marginBottom:8}}>{err}</div>}
+          <div onClick={()=>shown.length&&setOpen(o=>!o)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,cursor:shown.length?"pointer":"default"}}>
+            <div>
+              <div style={{fontSize:28,fontWeight:900,color:c,lineHeight:1.1}}>{apMoney(total)}</div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:3}}>
+                {shown.length?`${shown.length} approved vendor invoice${shown.length===1?"":"s"}${oldest?`, oldest ${oldest} day${oldest===1?"":"s"}`:""}`:"Nothing waiting to be billed ✓"}
+              </div>
+            </div>
+            {shown.length>0&&<span style={{color:T.sub,fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>{open?"Hide ▴":"Show ▾"}</span>}
+          </div>
+          {user.role==="pm"&&<label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:T.sub,marginTop:10,cursor:"pointer"}}>
+            <input type="checkbox" checked={mine} onChange={e=>setMine(e.target.checked)} style={{accentColor:T.teal}}/> Only invoices I approved
+          </label>}
+          {!mine&&pmRows.length>1&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
+            {pmRows.map(([k,v])=>(
+              <div key={k} style={{display:"flex",justifyContent:"space-between",fontSize:12.5,padding:"3px 0"}}>
+                <span style={{color:T.sub}}>{k} <span style={{color:T.muted}}>({v.n})</span></span>
+                <span style={{fontWeight:800,color:T.text}}>{apMoney(v.amt)}</span>
+              </div>))}
+          </div>}
+          {open&&<div style={{marginTop:12}}>
+            {shown.slice(0,100).map(r=>(
+              <div key={r.id} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 12px",marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:10}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:13.5,fontWeight:800}}>{r.vendor} <span style={{color:T.muted,fontWeight:500}}>#{r.invoice_no}</span></div>
+                    <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{jobName(r)} · {pmOf(r)} · {apBillLine(r)}</div>
+                  </div>
+                  <div style={{fontSize:14,fontWeight:900,color:T.green,flexShrink:0}}>{apMoney(r.amount)}</div>
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:8}}><ApBillingActions r={r} user={user} onChange={change} onErr={setErr}/></div>
+              </div>))}
+            {shown.length>100&&<div style={{fontSize:12,color:T.muted}}>Showing the oldest 100. See Accounting, "Not billed", for the rest.</div>}
+          </div>}
+        </>}
+      </div>
+    </div>
+  );
+}
+
 function ApInvoicesScreen({user,projects,onBack,embedded}){
   const canEnter=can(user,"ap_enter"),canApprove=can(user,"ap_approve"),canProcess=can(user,"ap_process");
   const canFinal=isApFinalApprover(user);
@@ -1857,8 +2126,8 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
   // PMs see their own divisions' invoices for approval; admin sees all
   const myDivs=user.role==="admin"?null:(user.division&&user.division!=="All"?[user.division]:null);
-  const counts={entered:rows.filter(r=>r.status==="entered").length,pm_approved:rows.filter(r=>r.status==="pm_approved").length,approved:rows.filter(r=>r.status==="approved").length,processed:rows.filter(r=>r.status==="processed").length,paid:rows.filter(r=>r.status==="paid").length,rejected:rows.filter(r=>r.status==="rejected").length};
-  const filtered=rows.filter(r=>(tab==="all"||r.status===tab)&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
+  const counts={entered:rows.filter(r=>r.status==="entered").length,pm_approved:rows.filter(r=>r.status==="pm_approved").length,approved:rows.filter(r=>r.status==="approved").length,processed:rows.filter(r=>r.status==="processed").length,paid:rows.filter(r=>r.status==="paid").length,rejected:rows.filter(r=>r.status==="rejected").length,unbilled:rows.filter(r=>apBillState(r)==="unbilled").length};
+  const filtered=rows.filter(r=>(tab==="all"||(tab==="unbilled"?apBillState(r)==="unbilled":r.status===tab))&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
   const assignedToMe=rows.filter(r=>r.status==="entered"&&r.assigned_pm===user.name).length;
   const total=filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
   async function act(r,status,extra={},note){
@@ -1878,6 +2147,8 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
       const what=`${r.vendor} #${r.invoice_no} (${money(r.amount)})`;
       if(pmApproving&&user.name!==AP_FINAL_APPROVER)
         notify("ap_invoice",`Final approval needed: ${r.vendor} #${r.invoice_no}`,`${user.name} approved ${what}. It needs your final approval.`,{to:AP_FINAL_APPROVER,project_id:r.project_id||null});
+      if(finalApproving&&r.approved_by&&r.approved_by!==user.name)
+        notify("ap_invoice",`Approved, ready to bill: ${r.vendor} #${r.invoice_no}`,`${user.name} gave final approval to ${what}. Mark it billed once it's on a customer invoice.`,{to:r.approved_by,project_id:r.project_id||null});
       if(finalApproving&&r.entered_by)
         notify("ap_invoice",`Approved, add to Foundation: ${r.vendor} #${r.invoice_no}`,`${user.name} gave final approval to ${what}${r.approved_by&&r.approved_by!==user.name?` (PM approval by ${r.approved_by})`:""}. It's ready to be added to Foundation.`,{to:r.entered_by,project_id:r.project_id||null});
       if(status==="rejected"){
@@ -1890,7 +2161,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
   }
   if(showNew||(open&&open._edit))return <ApInvoiceForm user={user} projects={projects} mfgJobs={mfgJobs} pms={pms} existing={open&&open._edit?open:null} rows={rows} onBack={()=>{setShowNew(false);setOpen(null);}} onSaved={async()=>{setShowNew(false);setOpen(null);await load();}}/>;
   if(showReport)return <ApInvoiceReport user={user} rows={rows} pms={pms} jobOf={jobOf} divOf={divOf} onBack={()=>setShowReport(false)}/>;
-  const tabs=[["all",`All (${rows.length})`],["entered",`Needs PM approval (${counts.entered})`],["pm_approved",`Needs final approval (${counts.pm_approved})`],["approved",`Add to Foundation (${counts.approved})`],["processed",`In Foundation (${counts.processed})`],["paid",`Paid (${counts.paid})`],["rejected",`Rejected (${counts.rejected})`]];
+  const tabs=[["all",`All (${rows.length})`],["entered",`Needs PM approval (${counts.entered})`],["pm_approved",`Needs final approval (${counts.pm_approved})`],["approved",`Add to Foundation (${counts.approved})`],["processed",`In Foundation (${counts.processed})`],["paid",`Paid (${counts.paid})`],["unbilled",`Not billed to customer (${counts.unbilled})`],["rejected",`Rejected (${counts.rejected})`]];
   return(<div style={embedded?{}:{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
     {!embedded&&<TopBar title="💵 AP Invoices" sub={`${counts.entered} awaiting approval · ${counts.approved} to add to Foundation`} onBack={onBack}/>}
     <div style={{padding:embedded?"0 0 80px":"14px 16px 80px"}}>
@@ -1923,12 +2194,16 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
               {r.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</div>}
               <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>{r.assigned_pm&&r.status==="entered"?<span style={{color:r.assigned_pm===user.name?T.yellow:T.sub}}>Approver: {r.assigned_pm} · </span>:""}{r.status==="pm_approved"?<span style={{color:canFinal?T.purple:T.sub}}>Final approver: {AP_FINAL_APPROVER} · </span>:""}Entered {new Date(r.created_at).toLocaleDateString()} by {r.entered_by}{r.approved_by?` · PM approved by ${r.approved_by}`:""}{r.final_approved_by?` · final approval by ${r.final_approved_by}`:""}{r.rejected_by?` · rejected by ${r.rejected_by}`:""}{r.processed_by?` · processed by ${r.processed_by}`:""}{r.paid_by?` · paid ${r.paid_at?new Date(r.paid_at).toLocaleDateString():""}`:""}</div>
             </div>
-            <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:16,fontWeight:900,color:T.green}}>{money(r.amount)}</div><span style={{...pill(st.c),fontSize:9.5,marginTop:4}}>{st.l}</span></div>
+            <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:16,fontWeight:900,color:T.green}}>{money(r.amount)}</div><span style={{...pill(st.c),fontSize:9.5,marginTop:4}}>{st.l}</span>{apBillState(r)&&<div style={{marginTop:4}}><ApBillingPill r={r}/></div>}</div>
           </div>
           {isOpen&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
             {r.reject_reason&&<div style={{fontSize:12,color:T.red,marginBottom:8}}>Rejected: {r.reject_reason}</div>}
             {r.payment_ref&&<div style={{fontSize:12,color:T.sub,marginBottom:8}}>Foundation ref: {r.payment_ref}{r.payment_date?` · paid ${r.payment_date}`:""}</div>}
             {r.notes&&<div style={{fontSize:12,color:T.sub,marginBottom:8}}>{r.notes}</div>}
+            {apBillState(r)&&<div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:8,padding:"8px 10px",borderRadius:10,background:T.surface,border:`1px solid ${AP_BILL_META[apBillState(r)].c}40`}}>
+              <span style={{fontSize:12,color:T.sub,flex:"1 1 200px"}}>💲 {apBillLine(r)}</span>
+              <ApBillingActions r={r} user={user} onErr={setErr} onChange={u=>{setRows(rs=>rs.map(x=>x.id===u.id?u:x));setOpen(o=>o&&o.id===u.id?u:o);}}/>
+            </div>}
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
               {r.file_url&&<a href={r.file_url} target="_blank" rel="noreferrer" style={{...ghostBtn,padding:"7px 12px",fontSize:12,textDecoration:"none"}}>📎 View invoice</a>}
               {canApprove&&r.status==="entered"&&mine&&<>
@@ -1985,10 +2260,10 @@ function ApInvoiceReport({user,rows,pms,jobOf,divOf,onBack}){
   function exportXlsx(){
     const wb=XLSX.utils.book_new();const money='$#,##0.00';
     const aoa=[["AP Invoice Report"],[label],[`By ${({invoice_date:"invoice date",created_at:"date entered",approved_at:"date PM approved",final_approved_at:"date of final approval",paid_at:"date paid"})[dateBy]}`],[],
-      ["Date","Vendor","Invoice #","Amount","Status","Job","Division","PO #","Assigned PM","PM approved by","PM approved","Final approved by","Final approved","Added to Foundation by","Foundation ref","Paid","Entered by","Entered","Description"]];
-    list.forEach(r=>aoa.push([dOf(r),r.vendor,r.invoice_no,parseFloat(r.amount)||0,AP_STATUS[r.status]?.l||r.status,jobOf(r),divOf(r),r.po_number||"",r.assigned_pm||"",r.approved_by||"",r.approved_at?String(r.approved_at).slice(0,10):"",r.final_approved_by||"",r.final_approved_at?String(r.final_approved_at).slice(0,10):"",r.processed_by||"",r.payment_ref||"",r.payment_date||"",r.entered_by||"",String(r.created_at||"").slice(0,10),r.description||""]));
+      ["Date","Vendor","Invoice #","Amount","Status","Job","Division","PO #","Assigned PM","PM approved by","PM approved","Final approved by","Final approved","Added to Foundation by","Foundation ref","Paid","Billing","Customer invoice #","Billed date","Entered by","Entered","Description"]];
+    list.forEach(r=>aoa.push([dOf(r),r.vendor,r.invoice_no,parseFloat(r.amount)||0,AP_STATUS[r.status]?.l||r.status,jobOf(r),divOf(r),r.po_number||"",r.assigned_pm||"",r.approved_by||"",r.approved_at?String(r.approved_at).slice(0,10):"",r.final_approved_by||"",r.final_approved_at?String(r.final_approved_at).slice(0,10):"",r.processed_by||"",r.payment_ref||"",r.payment_date||"",apBillState(r)?AP_BILL_META[apBillState(r)].l:"",r.billed_invoice_no||"",r.billed_date||"",r.entered_by||"",String(r.created_at||"").slice(0,10),r.description||""]));
     const tr=aoa.length+1;aoa.push(["","","TOTAL",{f:`SUM(D6:D${tr-1})`}]);
-    const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=[12,28,16,14,24,28,13,12,18,18,11,18,11,16,14,11,18,11,40].map(w=>({wch:w}));
+    const ws=XLSX.utils.aoa_to_sheet(aoa);ws["!cols"]=[12,28,16,14,24,28,13,12,18,18,11,18,11,16,14,11,18,16,11,18,11,40].map(w=>({wch:w}));
     for(let i=6;i<=tr;i++){const c=ws[`D${i}`];if(c)c.z=money;}
     XLSX.utils.book_append_sheet(wb,ws,"Invoices");
     const sum=[["Summary"],[label],[],["By status","Count","Amount"],...byStatus.map(([k,v])=>[k,v.n,v.amt]),[],["By PM (assigned)","Count","Amount"],...byPm.map(([k,v])=>[k,v.n,v.amt]),[],["By vendor","Count","Amount"],...byVendor.map(([k,v])=>[k,v.n,v.amt]),[],["By job","Count","Amount"],...byJob.map(([k,v])=>[k,v.n,v.amt]),[],["TOTAL",list.length,total]];
@@ -8014,6 +8289,8 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr,embedded
               </div>
             ))}
           </div>
+
+          <ApUnbilledSummary user={user} projects={projects} division={pmDiv}/>
 
           {/* Month to date */}
           <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:8}}>
@@ -20106,6 +20383,7 @@ function BillingTab({project,user,onErr}){
   return(
     <div>
       <ContractStrip project={project} refreshKey={refreshKey}/>
+      <ApUnbilledPanel project={project} user={user}/>
       {isContract&&<div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4,overflowX:"auto"}}>
         {tabs.map(([id,label])=>(
           <button key={id} onClick={()=>setView(id)}
@@ -21990,6 +22268,7 @@ function MfgBillingTab({job,user,onErr}){
       </div>
 
 
+      <ApUnbilledPanel mfgJob={job} user={user}/>
       <InvoiceList mfgJob={job} user={user}
         onNew={()=>setOpenInvoice({})} onOpen={inv=>setOpenInvoice(inv)} onErr={onErr}/>
     </div>
