@@ -2393,21 +2393,17 @@ function ApInvoiceForm({user,projects,mfgJobs,pms=[],existing,rows,onBack,onSave
           <div><label style={lbl}>Invoice date</label><input type="date" value={f.invoice_date} onChange={e=>set("invoice_date",e.target.value)} style={inp}/></div>
           <div><label style={lbl}>Due date</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Field job</label><select value={f.project_id} onChange={e=>setF(x=>({...x,project_id:e.target.value,mfg_job_id:e.target.value?"":x.mfg_job_id}))} style={inp}><option value="">— none —</option>{projects.filter(p=>p.status==="active"||p.id===f.project_id).map(p=><option key={p.id} value={p.id}>{p.name}{p.client?` · ${p.client}`:""}</option>)}</select></div>
-          <div><label style={lbl}>Shop job</label><select value={f.mfg_job_id} onChange={e=>setF(x=>({...x,mfg_job_id:e.target.value,project_id:e.target.value?"":x.project_id}))} style={inp}><option value="">— none —</option>{mfgJobs.filter(j=>j.status==="active"||j.id===f.mfg_job_id).map(j=><option key={j.id} value={j.id}>🏭 {j.job_number}</option>)}</select></div>
-        </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10,marginBottom:10}}>
           <div><label style={lbl}>PO #</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} style={inp}/></div>
           <div><label style={lbl}>Description</label><input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="What it's for" style={inp}/></div>
         </div>
         <div style={{marginBottom:10}}><label style={lbl}>PM to approve</label>
           <select value={f.assigned_pm} onChange={e=>set("assigned_pm",e.target.value)} style={{...inp,...(f.assigned_pm?{}:{borderColor:T.yellow+"80"})}}>
-            <option value="">— any {jobDiv||"division"} PM —</option>
+            <option value="">— any PM —</option>
             {suggested.length>0&&<optgroup label={`${jobDiv} PMs`}>{suggested.map(p=><option key={p.name} value={p.name}>{p.name}</option>)}</optgroup>}
             <optgroup label="All PMs & admins">{pms.filter(p=>!suggested.includes(p)).map(p=><option key={p.name} value={p.name}>{p.name}{p.division&&p.division!=="All"?` · ${p.division}`:""}{p.role==="admin"?" · admin":""}</option>)}</optgroup>
           </select>
-          <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>They get an Alert and it shows under "Assigned to me". Leave blank and any PM in the job's division can approve it.</div></div>
+          <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>They get an Alert and it shows under "Assigned to me". Leave blank and any PM can approve it.</div></div>
         <div><label style={lbl}>Notes for the PM</label><textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inp,resize:"vertical"}}/></div>
       </div>
       <div style={{display:"flex",gap:8}}>
