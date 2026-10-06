@@ -13192,7 +13192,7 @@ function EstimateLineModal({estimateId,count,onClose,onSaved,onErr}){
             </select></div>
           <div><label style={lbl}>Unit</label>
             <select value={f.unit} onChange={e=>set("unit",e.target.value)} style={inp}>
-              {["EA","LF","SF","HRS","DAY","LS","TON"].map(u=><option key={u} value={u}>{u}</option>)}
+              {["EA","LF","SF","LBS","TON","HRS","DAY","LS"].map(u=><option key={u} value={u}>{u}</option>)}
             </select></div>
           <div><label style={lbl}>Budget Code</label>
             <input value={f.budget_code} onChange={e=>set("budget_code",e.target.value)} style={inp}/></div>
@@ -13875,6 +13875,7 @@ function TakeoffItemModal({estimateId,existing,item,onClose,onSaved,onErr}){
             <select value={f.unit} onChange={e=>set("unit",e.target.value)} style={inp}>
               <option value="EA">EA — counted</option>
               <option value="LF">LF — linear feet</option>
+              <option value="LBS">LBS — pounds</option>
               <option value="DAY">DAY — not marked on drawing</option>
               <option value="HRS">HRS — not marked on drawing</option>
               <option value="LS">LS — lump sum</option>
