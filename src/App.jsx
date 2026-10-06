@@ -1110,7 +1110,7 @@ function LoginScreen({onLogin}){
 
       </div>
 
-      <div style={{...cardS,maxWidth:420,margin:"0 auto",width:"100%",background:"rgba(8,10,18,0.88)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",borderRadius:20,border:"1px solid rgba(96,165,250,0.25)",padding:"28px 24px",boxShadow:"0 8px 32px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.05)"}}>
+      <div style={{...cardS,maxWidth:420,margin:"0 auto",width:"100%",boxSizing:"border-box",background:"rgba(8,10,18,0.88)",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",borderRadius:20,border:"1px solid rgba(96,165,250,0.25)",padding:"28px 24px",boxShadow:"0 8px 32px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.05)"}}>
         <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
         {legacy&&<div style={{background:T.redLow,border:`1px solid ${T.red}55`,borderRadius:10,
           padding:"9px 12px",marginBottom:12,fontSize:11.5,color:T.red,lineHeight:1.6}}>
@@ -2388,7 +2388,7 @@ function ApInvoiceForm({user,projects,mfgJobs,pms=[],existing,rows,onBack,onSave
         {dup&&<div style={{background:T.redLow,border:`1px solid ${T.red}60`,borderRadius:10,padding:"8px 12px",fontSize:12,color:T.red,marginBottom:10,lineHeight:1.5}}>
           ⚠ <b>Already in the system.</b> {dup.vendor} #{dup.invoice_no} for {money(dup.amount)} was entered {new Date(dup.created_at).toLocaleDateString()} by {dup.entered_by} — status: {AP_STATUS[dup.status]?.l||dup.status}. This one won't save.
         </div>}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:10}}>
           <div><label style={lbl}>Amount *</label><input type="number" step="0.01" value={f.amount} onChange={e=>set("amount",e.target.value)} style={{...inp,textAlign:"right"}}/></div>
           <div><label style={lbl}>Invoice date</label><input type="date" value={f.invoice_date} onChange={e=>set("invoice_date",e.target.value)} style={inp}/></div>
           <div><label style={lbl}>Due date</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
@@ -6364,9 +6364,6 @@ function SafetyTab({projectId,safety,user,onRefresh,onErr}){
   async function save(){if(!f.topic.trim())return;setSaving(true);try{await API.safety.create({...f,type,project_id:projectId,created_by:user.name});await onRefresh();setShowForm(false);setF({date:today(),topic:"",notes:"",severity:"low"});}catch(e){onErr(e.message);}setSaving(false);}
   async function del(id){try{await API.safety.remove(id);await onRefresh();}catch(e){onErr(e.message);}}
   return(<div>
-    <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
-      <strong>⚡ Auto-filled from daily reports</strong> — hours are added automatically when a foreman submits a daily report. Manual entries below for anything not on a daily.
-    </div>
     <button onClick={()=>setShowForm(!showForm)} style={{...primBtn,marginBottom:14,borderRadius:14}}>{showForm?"✕ Cancel":"⛑️ Log Safety Entry"}</button>
     {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.yellow}`}}>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>{Object.entries(TL).map(([k,v])=>(<button key={k} onClick={()=>setType(k)} style={{padding:"10px",borderRadius:10,border:`2px solid ${type===k?TC[k]:T.border}`,background:type===k?TC[k]+"20":T.surface,color:type===k?TC[k]:T.sub,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{v}</button>))}</div>
@@ -14692,7 +14689,7 @@ function PublicRFIForm({rfiId}){
     try{await sb(`/rfis?id=eq.${rfiId}`,{method:"PATCH",body:{response:resp,responded_by:respBy+(respTitle?" ("+respTitle+")":""),response_date:respDate||today(),status:"Answered",response_signature:sigData},prefer:"return=representation"});setSubmitted(true);}
     catch(e){setErr("Failed: "+e.message);}setSaving(false);
   }
-  const s={bg:"#0D0D0F",card:"#1A1A20",inp:{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
+  const s={bg:"#0D0D0F",card:"#1A1A20",inp:{width:"100%",boxSizing:"border-box",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
   if(loading)return <div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#fff"}}>Loading...</div></div>;
   if(err&&!rfi)return <div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}><div style={{background:s.card,borderRadius:16,padding:32,maxWidth:400,textAlign:"center"}}><div style={{fontSize:40}}>⚠️</div><div style={{color:"#fff",fontWeight:700,margin:"8px 0"}}>{err}</div></div></div>;
   if(submitted)return <div style={{background:s.bg,minHeight:"100vh",fontFamily:"system-ui",padding:20}}><div style={{maxWidth:600,margin:"0 auto",background:s.card,borderRadius:16,padding:32,textAlign:"center",border:"1px solid #22C55E40"}}><div style={{fontSize:48}}>✅</div><div style={{fontSize:20,fontWeight:800,color:"#34D399",margin:"8px 0"}}>Response Submitted!</div><div style={{color:"#A1A1AA"}}>RFI #{rfi?.rfi_number} response has been saved.</div></div></div>;
@@ -14762,7 +14759,7 @@ function PublicCOForm({coId}){
     try{await sb(`/change_orders?id=eq.${coId}`,{method:"PATCH",body:{client_signature:sigData,client_signed_by:signerName+(signerTitle?" ("+signerTitle+")":""),client_signed_date:today(),status:"Approved"},prefer:"return=representation"});setSubmitted(true);}
     catch(e){setErr("Failed: "+e.message);}setSaving(false);
   }
-  const s={bg:"#0D0D0F",card:"#1A1A20",inp:{width:"100%",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
+  const s={bg:"#0D0D0F",card:"#1A1A20",inp:{width:"100%",boxSizing:"border-box",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
   const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
   if(loading)return <div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#fff"}}>Loading...</div></div>;
   if(err&&!co)return <div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}><div style={{background:s.card,borderRadius:16,padding:32,maxWidth:400,textAlign:"center"}}><div style={{fontSize:40}}>⚠️</div><div style={{color:"#fff",fontWeight:700,margin:"8px 0"}}>{err}</div></div></div>;
@@ -14864,7 +14861,7 @@ function PublicInspectorForm({reportId}){
     }catch(e){setErr("Failed: "+e.message);}setSaving(false);
   }
 
-  const s={bg:"#0D0D0F",card:"#1A1A20",border:"#26262E",inp:{width:"100%",background:"#141418",border:"1px solid #26262E",borderRadius:10,color:"#F0F4FF",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#7080A0",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
+  const s={bg:"#0D0D0F",card:"#1A1A20",border:"#26262E",inp:{width:"100%",boxSizing:"border-box",background:"#141418",border:"1px solid #26262E",borderRadius:10,color:"#F0F4FF",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#7080A0",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
 
   if(loading)return<div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui"}}><div style={{color:"#F0F4FF"}}>Loading report...</div></div>;
   if(err&&!report)return<div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui",padding:20}}><div style={{background:s.card,borderRadius:16,padding:32,maxWidth:400,textAlign:"center"}}><div style={{fontSize:40}}>⚠️</div><div style={{color:"#F0F4FF",fontWeight:700,margin:"8px 0"}}>{err}</div></div></div>;
@@ -14978,7 +14975,7 @@ function PublicTMSignForm({ticketId}){
   }
 
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-  const s={bg:"#0D0D0F",card:"#1A1A20",border:"#26262E",inp:{width:"100%",background:"#141418",border:"1px solid #26262E",borderRadius:10,color:"#F0F4FF",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#7080A0",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
+  const s={bg:"#0D0D0F",card:"#1A1A20",border:"#26262E",inp:{width:"100%",boxSizing:"border-box",background:"#141418",border:"1px solid #26262E",borderRadius:10,color:"#F0F4FF",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#7080A0",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
 
   if(loading)return<div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui"}}><div style={{color:"#F0F4FF"}}>Loading ticket...</div></div>;
   if(err&&!ticket)return<div style={{background:s.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui",padding:20}}><div style={{background:s.card,borderRadius:16,padding:32,maxWidth:400,textAlign:"center"}}><div style={{fontSize:40}}>⚠️</div><div style={{color:"#F0F4FF",fontWeight:700,margin:"8px 0"}}>{err}</div></div></div>;
@@ -15364,6 +15361,10 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
   const [sf,setSf]=useState({part_id:"",item:"",qty:"",date:today(),customer:job.customer||"",bol:"",by:user.name});
 
   useEffect(()=>{load();},[job.id]);
+  // Billing and Time write shipments and labour behind this screen's back; refresh the
+  // shared lists when moving to a tab that shows them, so "billed" stamps show up.
+  const firstTab=useRef(true);
+  useEffect(()=>{if(firstTab.current){firstTab.current=false;return;}if(["overview","shipping","assembly","received"].includes(tab))load();},[tab]);
 
   async function load(){
     setLoading(true);
@@ -15568,9 +15569,9 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
       </div>}
 
       {/* Tabs */}
-      <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`}}>
+      <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
         {[["overview","📊 Overview"],["time","⏱️ Time"],["daily","📝 Daily Reports"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"12px 4px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+          <button key={id} onClick={()=>setTab(id)} style={{flex:"1 0 auto",padding:"12px 8px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
         ))}
@@ -20673,7 +20674,7 @@ ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/
               {["draft","sent","paid","void"].map(s=><option key={s} value={s}>{s}</option>)}
             </select></div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:10}}>
           <div><label style={lbl}>Invoice Date</label><input type="date" value={f.invoice_date} onChange={e=>set("invoice_date",e.target.value)} style={ri}/></div>
           <div><label style={lbl}>Due Date</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={ri}/></div>
           <div><label style={lbl}>Terms</label><input value={f.terms} onChange={e=>set("terms",e.target.value)} placeholder="Net 30" style={ri}/></div>
@@ -22678,7 +22679,7 @@ ${ticketPages.map(({s,pages,error},i,arr)=>{
               {["draft","sent","paid","void"].map(x=><option key={x} value={x}>{x}</option>)}
             </select></div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:10}}>
           <div><label style={lbl}>Invoice Date</label><input type="date" value={f.invoice_date} onChange={e=>set("invoice_date",e.target.value)} style={ri}/></div>
           <div><label style={lbl}>Due Date</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={ri}/></div>
           <div><label style={lbl}>Customer PO #</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} style={ri}/></div>
@@ -22720,7 +22721,7 @@ ${ticketPages.map(({s,pages,error},i,arr)=>{
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <div style={{fontSize:11,color:l.source?T.green:T.muted,fontWeight:l.source?700:400}}>
-                {l.source?`🏭 ${l.source.ids.length} labor entries`:isEach(l)?"Items":"Manual week"}
+                {l.source?(l.source.type==="shipments"?`📤 ${l.source.ids.length} shipment${l.source.ids.length===1?"":"s"}`:`🏭 ${l.source.ids.length} labor entries`):isEach(l)?"Items":"Manual week"}
               </div>
               {!l.source&&<select value={l.unit||"hour"} onChange={e=>setLine(l.id,"unit",e.target.value)}
                 style={{...inp,width:"auto",padding:"3px 6px",fontSize:11,fontWeight:700,color:isEach(l)?T.purple:T.blue}}>
@@ -22737,8 +22738,8 @@ ${ticketPages.map(({s,pages,error},i,arr)=>{
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-            <div><label style={lbl}>Week From</label><input type="date" value={l.period_start||""} onChange={e=>setLine(l.id,"period_start",e.target.value)} style={ri}/></div>
-            <div><label style={lbl}>Week To</label><input type="date" value={l.period_end||""} onChange={e=>setLine(l.id,"period_end",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>{l.source?.type==="shipments"?"Shipped From":"Week From"}</label><input type="date" value={l.period_start||""} onChange={e=>setLine(l.id,"period_start",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>{l.source?.type==="shipments"?"Shipped To":"Week To"}</label><input type="date" value={l.period_end||""} onChange={e=>setLine(l.id,"period_end",e.target.value)} style={ri}/></div>
           </div>
           <div style={{marginBottom:8}}><label style={lbl}>Description</label>
             <input value={l.description||""} onChange={e=>setLine(l.id,"description",e.target.value)}
@@ -22906,7 +22907,7 @@ function PullShippedPartsModal({job,invoiceNo,onClose,onPull,onErr}){
       <div onClick={e=>e.stopPropagation()} style={{...cardS,width:"100%",maxWidth:640,maxHeight:"92vh",overflowY:"auto",padding:18}}>
         <div style={{fontSize:15,fontWeight:900,color:T.text,marginBottom:2}}>📤 Pull Shipped Parts</div>
         <div style={{fontSize:12,color:T.muted,marginBottom:12}}>Bill by the piece. Pick the ship-date window, tick what to invoice, set the price each.</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"end",marginBottom:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8,alignItems:"end",marginBottom:10}}>
           <div><label style={lbl}>Shipped from</label><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={inp}/></div>
           <div><label style={lbl}>to</label><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={inp}/></div>
           <label style={{fontSize:11,color:T.muted,display:"flex",alignItems:"center",gap:6,paddingBottom:10,cursor:"pointer",whiteSpace:"nowrap"}}><input type="checkbox" checked={showBilled} onChange={e=>setShowBilled(e.target.checked)}/> Show already billed</label>
