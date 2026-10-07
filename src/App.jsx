@@ -7267,6 +7267,24 @@ function SignaturePackageScreen({project,user,onBack,onErr}){
   );
 }
 
+// Save a drawing PDF to the device under a readable name (the stored path has a timestamp prefix).
+function drawingFileName(d){
+  const base=`${d.sheet_number?d.sheet_number+" ":""}${d.title||"drawing"}${d.revision?` Rev ${d.revision}`:""}`;
+  return base.replace(/[\\/:*?"<>|]+/g,"-").trim()+".pdf";
+}
+async function downloadDrawing(d,bucket="drawings"){
+  const url=storagePublicUrl(bucket,d.storage_path);
+  try{
+    const r=await fetch(url);
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const blob=await r.blob();
+    const obj=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=obj;a.download=drawingFileName(d);
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(obj),10000);
+  }catch(e){ window.open(url,"_blank"); }
+}
+
 function DrawingsTab({projectId,user,onErr}){
   const canAdmin=user.role==="admin"||user.role==="pm";
   const [drawings,setDrawings]=useState([]);
@@ -7369,6 +7387,9 @@ function DrawingsTab({projectId,user,onErr}){
           <div style={{display:"flex",gap:8,marginTop:12}}>
             <button onClick={()=>setViewing(d)}
               style={{...primBtn,width:"auto",flex:1,padding:"11px",fontSize:13,borderRadius:10,background:"#1f3864"}}>Open</button>
+            <button onClick={()=>downloadDrawing(d)} title="Download PDF"
+              style={{...primBtn,width:"auto",flex:"0 0 auto",padding:"11px 16px",fontSize:13,borderRadius:10,
+                background:T.surface,color:T.text,border:`1px solid ${T.border}`}}>⬇️ Download</button>
             {canAdmin&&<button onClick={()=>del(d)} title="Delete"
               style={{...primBtn,width:"auto",flex:"0 0 auto",padding:"11px 16px",fontSize:13,borderRadius:10,
                 background:T.redLow,color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>}
@@ -7648,6 +7669,8 @@ function DrawingViewer({drawing,user,onBack,onErr,bucket="drawings",onPageCount}
         </div>
         {dirty&&<span style={{fontSize:10,color:T.orange,fontWeight:700,flexShrink:0}}>● unsaved</span>}
         {saving&&<span style={{fontSize:10,color:T.muted,flexShrink:0}}>saving…</span>}
+        <button onClick={()=>downloadDrawing(drawing,bucket)} title="Download PDF"
+          style={{...ghostBtn,padding:"7px 12px",fontSize:12,flexShrink:0}}>⬇️ Download</button>
       </div>
 
       <div ref={wrapRef}
