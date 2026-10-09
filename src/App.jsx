@@ -507,9 +507,9 @@ const API={
     recent:(limit=100)=>sb(`/audit_recent?order=changed_at.desc&limit=${limit}`),
   },
   notifications:{
-    // `to` null means everyone; otherwise only that person sees it.
-    list:(name)=>sb(`/notifications?or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc&limit=50`),
-    unread:(name)=>sb(`/notifications?read=eq.false&or=(to.is.null,to.eq.${encodeURIComponent(name||"")})&order=created_at.desc`),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:()=>sb("/notifications?read=eq.false",{method:"PATCH",body:{read:true}}),removeMany:(ids)=>sb(`/notifications?id=in.(${ids.map(encodeURIComponent).join(",")})`,{method:"DELETE"}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
+    // Every alert is addressed to one person (`to`); you only ever see your own.
+    list:(name)=>sb(`/notifications?to=eq.${encodeURIComponent(name||"")}&order=created_at.desc&limit=50`),
+    unread:(name)=>sb(`/notifications?read=eq.false&to=eq.${encodeURIComponent(name||"")}&order=created_at.desc`),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:(name)=>sb(`/notifications?read=eq.false&to=eq.${encodeURIComponent(name||"")}`,{method:"PATCH",body:{read:true}}),removeMany:(ids)=>sb(`/notifications?id=in.(${ids.map(encodeURIComponent).join(",")})`,{method:"DELETE"}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
   notifSettings:{get:(name)=>sb(`/notification_settings?pm_name=eq.${encodeURIComponent(name)}&limit=1`),upsert:(d)=>sb("/notification_settings",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"})},
   invoiceTracker:{
     list:()=>sb("/invoice_tracker?select=*&order=billed_date.desc.nullslast,created_at.desc&limit=5000"),
@@ -797,7 +797,32 @@ function calcHours(ci,co){if(!ci||!co)return 0;const[ih,im]=ci.split(":").map(Nu
 function getWeekStart(){const d=new Date();const day=d.getDay();d.setDate(d.getDate()-(day===0?6:day-1));return d.toISOString().split("T")[0];}
 async function compressImg(file,maxW=900,q=0.65){return new Promise(res=>{const rd=new FileReader();rd.onload=ev=>{const img=new Image();img.onload=()=>{const sc=Math.min(1,maxW/img.width);const c=document.createElement("canvas");c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);c.getContext("2d").drawImage(img,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",q));};img.src=ev.target.result;};rd.readAsDataURL(file);});}
 async function fetchWeather(location){const gR=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`);const gD=await gR.json();if(!gD.results?.length)throw new Error(`Cannot find: "${location}"`);const{latitude:lat,longitude:lon,name,admin1}=gD.results[0];const wR=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,weathercode,windspeed_10m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&temperature_unit=fahrenheit&windspeed_unit=mph&precipitation_unit=inch&forecast_days=1`);const wD=await wR.json();return{...wD,locationName:`${name}, ${admin1}`};}
-async function notify(type,title,body,extra={}){try{await sb("/notifications",{method:"POST",body:{type,title,body,...extra},silent:true});}catch{}}
+// Alerts go only to the people a thing concerns. `to` is a name or a list of names;
+// `except` (usually whoever did the action) is left off. With nobody to tell, nothing is sent.
+async function notify(type,title,body,extra={}){
+  const {to,except,...rest}=extra||{};
+  const names=[...new Set((Array.isArray(to)?to:[to]).filter(Boolean).map(String))].filter(n=>n!==except);
+  if(!names.length)return;
+  try{await sb("/notifications",{method:"POST",body:names.map(n=>({type,title,body,...rest,to:n})),silent:true});}catch{}
+}
+// PMs who look after a division's jobs. Falls back to all-division PMs, then admins,
+// so an alert is never dropped just because a division has no PM set up yet.
+let _notifPeople=null,_notifPeopleAt=0;
+async function notifPeople(){
+  if(!_notifPeople||Date.now()-_notifPeopleAt>300000){
+    try{_notifPeople=(await API.userProfiles.list())||[];_notifPeopleAt=Date.now();}catch{_notifPeople=_notifPeople||[];}
+  }
+  return _notifPeople.filter(p=>p.active!==false);
+}
+async function pmsForDivision(division){
+  const ppl=await notifPeople();
+  const pms=ppl.filter(p=>p.role==="pm");
+  if(!division)return pms.map(p=>p.name);
+  let hit=pms.filter(p=>p.division===division);
+  if(!hit.length)hit=pms.filter(p=>!p.division||p.division==="All");
+  if(!hit.length)hit=ppl.filter(p=>p.role==="admin");
+  return hit.map(p=>p.name);
+}
 
 function Spinner(){return(<div style={{display:"flex",justifyContent:"center",padding:"48px 0"}}><div style={{width:32,height:32,border:`3px solid ${T.border}`,borderTopColor:T.orange,borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}} select{color-scheme:dark;} select{background:#1A1A20 !important;color:#F0F4FF !important;border-color:#26262E !important;} select option{background:#1A1A20 !important;color:#F0F4FF !important;} select option:hover{background:#26262E !important;} select:focus{outline:none !important;} select *{background:#1A1A20 !important;color:#F0F4FF !important;}`}</style></div>);}
 function ErrBanner({msg,onDismiss}){if(!msg)return null;return(<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:13,color:T.red}}>⚠️ {msg}</span><button onClick={onDismiss} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:18,padding:"0 0 0 10px"}}>×</button></div>);}
@@ -2360,7 +2385,7 @@ function ApInvoiceForm({user,projects,mfgJobs,pms=[],existing,rows,onBack,onSave
         await sb(`/ap_invoices?id=eq.${existing.id}`,{method:"PATCH",body:{...body,status:"entered",rejected_by:null,rejected_at:null,reject_reason:null,approved_by:null,approved_at:null,final_approved_by:null,final_approved_at:null,history:[...(existing.history||[]),entry]}});
       }else{
         await sb("/ap_invoices",{method:"POST",body:{...body,status:"entered",entered_by:user.name,history:[{at:body.updated_at,by:user.name,action:"entered"}]}});
-        notify("ap_invoice",`Invoice to approve: ${body.vendor} #${body.invoice_no}`,`${user.name} entered ${body.vendor} #${body.invoice_no} for ${money(body.amount)}${proj?" on "+proj.name:""}${body.assigned_pm?" — assigned to "+body.assigned_pm:""}`,{project_id:body.project_id,to:body.assigned_pm||null});
+        notify("ap_invoice",`Invoice to approve: ${body.vendor} #${body.invoice_no}`,`${user.name} entered ${body.vendor} #${body.invoice_no} for ${money(body.amount)}${proj?" on "+proj.name:""}${body.assigned_pm?" — assigned to "+body.assigned_pm:""}`,{project_id:body.project_id,to:body.assigned_pm||await pmsForDivision(body.division||null),except:user.name});
       }
       onSaved();
     }catch(e){
@@ -4397,7 +4422,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
         const tcResult=await autoPopulateTimeCards(reportData,project);
 
       }catch(e){}
-      await notify("report_submitted","New Report Submitted",`${user.name} submitted a report for ${project.name}`,project._mfg?{mfg_job_id:project.id}:{project_id:project.id});
+      await notify("report_submitted","New Report Submitted",`${user.name} submitted a report for ${project.name}`,{...(project._mfg?{mfg_job_id:project.id}:{project_id:project.id}),to:await pmsForDivision(project._mfg?"Manufacturing":project.division),except:user.name});
     }catch(e){
       try{
         addToQueue({type:'report',data:reportData});
@@ -9768,7 +9793,7 @@ function NotificationsPanel({onCountChange,user}){
     }
     return(<div style={{padding:"14px 16px 120px"}}>
       {!nl&&notifs.length>0&&<div style={{display:"flex",gap:8,marginBottom:14}}>
-        {!selectMode&&unread>0&&<button onClick={async()=>{await API.notifications.markAllRead();await loadN();}} style={{...ghostBtn,flex:1,textAlign:"center"}}>Mark all read</button>}
+        {!selectMode&&unread>0&&<button onClick={async()=>{await API.notifications.markAllRead(user?.name);await loadN();}} style={{...ghostBtn,flex:1,textAlign:"center"}}>Mark all read</button>}
         {!selectMode&&<button onClick={()=>setSelectMode(true)} style={{...ghostBtn,flex:1,textAlign:"center",color:T.red,border:`1px solid ${T.red}40`}}>🗑️ Select to delete</button>}
         {selectMode&&<>
           <button onClick={()=>setSelected(notifs.map(n=>n.id))} style={{...ghostBtn,fontSize:11,padding:"6px 10px",color:T.green,border:`1px solid ${T.green}40`}}>✓ All ({notifs.length})</button>
@@ -10052,7 +10077,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
     try{
       await API.timeCards.update(c.id,body);
       setCards(cs=>cs.map(x=>x.id===c.id?{...x,...body}:x));
-      await notify("timecard_flag",`Time card flagged — ${c.worker_name}`,`${user.name} (${division}) flagged ${c.worker_name}'s ${c.date} card on ${jobOf(c)||"a job"}${note.trim()?": "+note.trim():""}`,{project_id:c.project_id||null});
+      await notify("timecard_flag",`Time card flagged — ${c.worker_name}`,`${user.name} (${division}) flagged ${c.worker_name}'s ${c.date} card on ${jobOf(c)||"a job"}${note.trim()?": "+note.trim():""}`,{project_id:c.project_id||null,to:[c.worker_name,...await pmsForDivision(cardDiv(c))],except:user.name});
     }catch(e){setErr(e.message);}
   }
   useEffect(()=>{(async()=>{
@@ -14181,7 +14206,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   async function saveReport(d){try{const{rental_equipment,...dbData}=d;let saved=false;try{await API.reports.create({...dbData,rental_equipment,project_id:project.id});saved=true;}catch(colErr){if(colErr.message&&colErr.message.includes("rental_equipment")){await API.reports.create({...dbData,project_id:project.id});saved=true;}else{throw colErr;}}if(!saved)throw new Error("Save failed");await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
   async function deleteReport(id){try{await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
   async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
-  async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));await notify("report_flagged","Report Flagged",pm_notes,{project_id:project.id,report_id:id});await load(true);}catch(e){setErr(e.message);}}
+  async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));{const rep=(reports||[]).find(r=>r.id===id)||activeReport||{};await notify("report_flagged",`Report Flagged — ${project.name}`,pm_notes,{project_id:project.id,report_id:id,to:rep.submitted_by,except:user.name});}await load(true);}catch(e){setErr(e.message);}}
   async function updateProject(data){
     setProjSaving(true);setErr("");
     try{
