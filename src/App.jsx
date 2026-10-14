@@ -7770,21 +7770,39 @@ function DrawingViewer({drawing,user,onBack,onErr,bucket="drawings",onPageCount}
 
 // PDF.js loaded from CDN at runtime so package.json and the Vite build stay untouched.
 let _pdfjsPromise=null;
+// PDF.js is fetched from a CDN when a drawing is first opened. Try three sources in turn,
+// and don't remember a failure, so the next click tries again instead of staying broken.
+const PDFJS_V="3.11.174";
+const PDFJS_SOURCES=[
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/"+PDFJS_V+"/",
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@"+PDFJS_V+"/build/",
+  "https://unpkg.com/pdfjs-dist@"+PDFJS_V+"/build/",
+];
+function _loadScript(src){
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src=src;s.async=true;
+    s.onload=()=>resolve();
+    s.onerror=()=>{s.remove();reject(new Error("failed: "+src));};
+    document.head.appendChild(s);
+  });
+}
 function loadPdfJs(){
   if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
   if(_pdfjsPromise)return _pdfjsPromise;
-  _pdfjsPromise=new Promise((resolve,reject)=>{
-    const s=document.createElement("script");
-    s.src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-    s.onload=()=>{
-      const lib=window.pdfjsLib;
-      if(!lib){reject(new Error("PDF.js failed to load"));return;}
-      lib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      resolve(lib);
-    };
-    s.onerror=()=>reject(new Error("Could not load PDF.js from CDN"));
-    document.head.appendChild(s);
-  });
+  _pdfjsPromise=(async()=>{
+    for(const base of PDFJS_SOURCES){
+      try{
+        await _loadScript(base+"pdf.min.js");
+        const lib=window.pdfjsLib;
+        if(!lib)continue;
+        lib.GlobalWorkerOptions.workerSrc=base+"pdf.worker.min.js";
+        return lib;
+      }catch(e){ /* try the next source */ }
+    }
+    throw new Error("Could not load the PDF viewer. Check your internet connection and try again.");
+  })();
+  _pdfjsPromise.catch(()=>{_pdfjsPromise=null;});
   return _pdfjsPromise;
 }
 
