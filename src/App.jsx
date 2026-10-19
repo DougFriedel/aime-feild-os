@@ -11687,7 +11687,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
         {tab==="overview"  &&<BidOverviewTab bid={bid} onSave={patch}/>}
         {tab==="documents" &&<BidDocumentsTab bid={bid} user={user} onErr={setErr}/>}
         {tab==="takeoff"   &&<TakeoffTab bid={bid} user={user} onErr={setErr}/>}
-        {tab==="estimating"&&<EstimatingTab bid={bid} user={user} onErr={setErr} onTotal={(t)=>{setBid(b=>({...b,total_sales:t}));onChanged&&onChanged();}}/>}
+        {tab==="estimating"&&<EstimatingTab bid={bid} user={user} onErr={setErr} onTotal={(t)=>{setBid(b=>({...b,total_sales:t}));onChanged&&onChanged();}} onRates={(r)=>setBid(b=>({...b,...r}))}/>}
         {tab==="scope"     &&<ScopeTab bid={bid} user={user} onErr={setErr} onSaved={(patch)=>{setBid(b=>({...b,...patch}));onChanged&&onChanged();}}/>}
         {tab==="proposal"  &&<ProposalTab bid={bid} user={user} onErr={setErr} onSaved={load}/>}
       </div>
@@ -12684,7 +12684,7 @@ const MARKUP_KEY={
   "Per Diem":"markup_perdiem",
 };
 
-function EstimatingTab({bid,user,onErr,onTotal}){
+function EstimatingTab({bid,user,onErr,onTotal,onRates}){
   const [lines,setLines]=useState([]);
   const [items,setItems]=useState([]);
   const [marks,setMarks]=useState([]);
@@ -12851,14 +12851,16 @@ function EstimatingTab({bid,user,onErr,onTotal}){
 
   async function saveRates(){
     setSaving(true);
-    try{ await API.estimates.update(bid.id,{...rates,updated_at:new Date().toISOString()}); setRatesDirty(false); }
+    try{ await API.estimates.update(bid.id,{...rates,updated_at:new Date().toISOString()}); setRatesDirty(false); onRates&&onRates(rates); }
     catch(e){onErr&&onErr(e.message);}
     setSaving(false);
   }
   async function pushTotalToBid(){
     setSaving(true);
     try{
-      await API.estimates.update(bid.id,{total_sales:estimateTotal,updated_at:new Date().toISOString()});
+      // Save any unsaved rates with the total, so the Proposal tab works from the same numbers.
+      await API.estimates.update(bid.id,{...(ratesDirty?rates:{}),total_sales:estimateTotal,updated_at:new Date().toISOString()});
+      if(ratesDirty){setRatesDirty(false);onRates&&onRates(rates);}
       onTotal&&onTotal(estimateTotal);
     }catch(e){onErr&&onErr(e.message);}
     setSaving(false);
