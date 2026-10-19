@@ -625,6 +625,21 @@ async function refreshRoster(){
     EXTRA_NAMES=(rows||[]).filter(r=>r.active!==false).map(r=>r.name).filter(Boolean);
   }catch{ /* offline or not deployed — the built-in list still works */ }
 }
+// One person, two records: a crew_members row (worker dropdowns, certs) and a user_profiles
+// row (login, permission level). Adding from either screen fills in the other, by exact name.
+async function ensureCrewMember(name,extra={}){
+  const n=(name||"").trim();if(!n)return;
+  const hit=await sb(`/crew_members?name=eq.${encodeURIComponent(n)}&limit=1`).catch(()=>[]);
+  if(hit&&hit.length)return;
+  await sb("/crew_members",{method:"POST",body:{name:n,classification:"",phone:"",email:"",certifications:[],notes:"",active:true,...extra},prefer:"return=representation"});
+  await refreshRoster();
+}
+async function ensureUserProfile(name,extra={}){
+  const n=(name||"").trim();if(!n)return;
+  const hit=await sb(`/user_profiles?name=eq.${encodeURIComponent(n)}&limit=1`).catch(()=>[]);
+  if(hit&&hit.length)return;
+  await sb("/user_profiles",{method:"POST",body:{name:n,role:"crew",division:null,email:null,active:true,...extra},prefer:"return=representation,resolution=merge-duplicates"});
+}
 
 const T={bg:"#0D0D0F",surface:"#141418",card:"#1A1A20",border:"#26262E",orange:"#60A5FA",orangeLow:"#60A5FA14",orangeMid:"#60A5FA30",green:"#34D399",greenLow:"#34D39914",red:"#FC8181",redLow:"#FC818114",yellow:"#FBBF24",yellowLow:"#FBBF2414",blue:"#60A5FA",blueLow:"#60A5FA14",purple:"#A78BFA",purpleLow:"#A78BFA14",teal:"#2DD4BF",text:"#F0F4FF",sub:"#C8D4F0",muted:"#7080A0"};
 const inp={width:"100%",boxSizing:"border-box",background:"#0C0C0F",border:`1px solid ${T.border}`,borderRadius:12,color:T.text,fontSize:15,padding:"13px 14px",outline:"none",fontFamily:"inherit",appearance:"none",WebkitAppearance:"none"};
@@ -8939,7 +8954,7 @@ function CrewDirectoryScreen({onBack,user}){
     setSaving(true);
     try{
       if(active){await API.crew.update(active.id,f);setActive({...active,...f});}
-      else{await API.crew.create(f);}
+      else{await API.crew.create(f);await ensureUserProfile(f.name,{email:f.email||null}).catch(()=>{});}
       await load();
       await refreshRoster();   // so a new name reaches the worker dropdowns now
       setMode("list");setActive(null);setF({...blank});setTypeName(false);
@@ -9081,7 +9096,8 @@ function UserManagementScreen({onBack,currentUser,user}){
       // function that verifies the caller is an admin. It is never written
       // to a column the browser can read back.
       if(active){await API.userProfiles.update(active.id,{role:f.role,division:f.division,email:f.email||null,active:f.active});}
-      else{await API.userProfiles.upsert({name:f.name,role:f.role,division:f.division||null,email:f.email||null,active:true});}
+      else{await API.userProfiles.upsert({name:f.name,role:f.role,division:f.division||null,email:f.email||null,active:true});
+        await ensureCrewMember(f.name,{email:f.email||""}).catch(()=>{});}
       if(f.pin&&f.pin.trim()){
         if(!adminPin.trim()){throw new Error("Enter your own admin PIN to set someone else's.");}
         await rpc("set_pin",{p_target:f.name,p_new_pin:f.pin.trim(),
