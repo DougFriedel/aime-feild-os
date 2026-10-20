@@ -2164,12 +2164,14 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
     setRows(r||[]);setMfgJobs(m||[]);setPms((u||[]).filter(x=>(x.role==="pm"||x.role==="admin")&&x.active!==false));}catch(e){setErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[]);
   const jobOf=(r)=>r.project_id?(projects.find(p=>p.id===r.project_id)||{}).name||"":r.mfg_job_id?"🏭 "+((mfgJobs.find(j=>j.id===r.mfg_job_id)||{}).job_number||""):"";
-  const divOf=(r)=>r.project_id?(projects.find(p=>p.id===r.project_id)||{}).division||"":r.mfg_job_id?"Manufacturing":"";
+  const divOf=(r)=>r.division||(r.project_id?(projects.find(p=>p.id===r.project_id)||{}).division||"":r.mfg_job_id?"Manufacturing":"");
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const [div,setDiv]=useState("");
   // PMs see their own divisions' invoices for approval; admin sees all
   const myDivs=user.role==="admin"?null:(user.division&&user.division!=="All"?[user.division]:null);
   const counts={entered:rows.filter(r=>r.status==="entered").length,pm_approved:rows.filter(r=>r.status==="pm_approved").length,approved:rows.filter(r=>r.status==="approved").length,processed:rows.filter(r=>r.status==="processed").length,paid:rows.filter(r=>r.status==="paid").length,rejected:rows.filter(r=>r.status==="rejected").length,unbilled:rows.filter(r=>apBillState(r)==="unbilled").length};
-  const filtered=rows.filter(r=>(tab==="all"||(tab==="unbilled"?apBillState(r)==="unbilled":r.status===tab))&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
+  const inTab=(r)=>tab==="all"||(tab==="unbilled"?apBillState(r)==="unbilled":r.status===tab);
+  const filtered=rows.filter(r=>inTab(r)&&(!div||divOf(r)===div||(div==="none"&&!divOf(r)))&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
   const assignedToMe=rows.filter(r=>r.status==="entered"&&r.assigned_pm===user.name).length;
   const total=filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
   async function act(r,status,extra={},note){
@@ -2220,6 +2222,12 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
         {tabs.map(([id,l])=><button key={id} onClick={()=>setTab(id)} style={{...ghostBtn,padding:"7px 12px",fontSize:12,whiteSpace:"nowrap",borderColor:tab===id?T.teal:T.border,color:tab===id?T.teal:T.sub}}>{l}</button>)}
         {canApprove&&<label style={{fontSize:11.5,color:onlyMine?T.yellow:T.muted,display:"flex",alignItems:"center",gap:5,cursor:"pointer",whiteSpace:"nowrap",marginLeft:"auto"}}><input type="checkbox" checked={onlyMine} onChange={e=>setOnlyMine(e.target.checked)}/> Assigned to me{assignedToMe?` (${assignedToMe})`:""}</label>}
       </div>
+      {(()=>{const inT=rows.filter(inTab);const sum=(l)=>l.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+        const chips=[["","All divisions",inT],...DIVISIONS.map(d=>[d,d,inT.filter(r=>divOf(r)===d)]),["none","No division",inT.filter(r=>!divOf(r))]].filter(([id,,l])=>id!=="none"||l.length);
+        return(<div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto"}}>
+          {chips.map(([id,l,list])=>{const m=DIV_META[id]||{};const on=div===id;const c=id?(m.color||T.muted):T.teal;return(<button key={id} onClick={()=>setDiv(id)} style={{...ghostBtn,padding:"7px 12px",fontSize:12,whiteSpace:"nowrap",textAlign:"left",borderColor:on?c:T.border,color:on?c:T.sub,background:on?c+"18":"transparent"}}>
+            <div style={{fontWeight:700}}>{m.icon?m.icon+" ":""}{l} <span style={{opacity:.7}}>({list.length})</span></div><div style={{fontSize:10.5,opacity:.85}}>{money(sum(list))}</div></button>);})}
+        </div>);})()}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
         <div style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:T.blue}}>{filtered.length}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Invoices shown</div></div>
         <div style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:T.green}}>{money(total)}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Total shown</div></div>
@@ -2232,7 +2240,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
           <div onClick={()=>setOpen(isOpen?null:r)} style={{cursor:"pointer",display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:14,fontWeight:800,color:T.text}}>{r.vendor} <span style={{color:T.muted,fontWeight:500}}>#{r.invoice_no}</span></div>
-              <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{jobOf(r)||"No job"}{r.po_number?` · PO ${r.po_number}`:""}{r.invoice_date?` · dated ${r.invoice_date}`:""}{r.due_date?` · due ${r.due_date}`:""}</div>
+              <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{divOf(r)?<span style={{color:(DIV_META[divOf(r)]||{}).color||T.sub,fontWeight:700}}>{divOf(r)}</span>:"No division"}{jobOf(r)?` · ${jobOf(r)}`:""}{r.po_number?` · PO ${r.po_number}`:""}{r.invoice_date?` · dated ${r.invoice_date}`:""}{r.due_date?` · due ${r.due_date}`:""}</div>
               {r.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</div>}
               <div style={{fontSize:10.5,color:T.muted,marginTop:3}}>{r.assigned_pm&&r.status==="entered"?<span style={{color:r.assigned_pm===user.name?T.yellow:T.sub}}>Approver: {r.assigned_pm} · </span>:""}{r.status==="pm_approved"?<span style={{color:canFinal?T.purple:T.sub}}>Final approver: {AP_FINAL_APPROVER} · </span>:""}Entered {new Date(r.created_at).toLocaleDateString()} by {r.entered_by}{r.approved_by?` · PM approved by ${r.approved_by}`:""}{r.final_approved_by?` · final approval by ${r.final_approved_by}`:""}{r.rejected_by?` · rejected by ${r.rejected_by}`:""}{r.processed_by?` · processed by ${r.processed_by}`:""}{r.paid_by?` · paid ${r.paid_at?new Date(r.paid_at).toLocaleDateString():""}`:""}</div>
             </div>
@@ -2361,10 +2369,11 @@ function ApInvoiceReport({user,rows,pms,jobOf,divOf,onBack}){
 function ApInvoiceForm({user,projects,mfgJobs,pms=[],existing,rows,onBack,onSaved}){
   const [f,setF]=useState({vendor:existing?.vendor||"",invoice_no:existing?.invoice_no||"",invoice_date:existing?.invoice_date||today(),due_date:existing?.due_date||"",amount:existing?.amount??"",
     project_id:existing?.project_id||"",mfg_job_id:existing?.mfg_job_id||"",po_number:existing?.po_number||"",description:existing?.description||"",notes:existing?.notes||"",
-    file_url:existing?.file_url||"",file_path:existing?.file_path||"",file_name:existing?.file_name||"",assigned_pm:existing?.assigned_pm||""});
+    file_url:existing?.file_url||"",file_path:existing?.file_path||"",file_name:existing?.file_name||"",assigned_pm:existing?.assigned_pm||"",
+    division:existing?.division||(existing?.project_id?(projects.find(p=>p.id===existing.project_id)||{}).division:existing?.mfg_job_id?"Manufacturing":"")||""});
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
-  // Suggest the approver from the job's division when none is picked yet.
-  const jobDiv=f.project_id?(projects.find(p=>p.id===f.project_id)||{}).division:(f.mfg_job_id?"Manufacturing":null);
+  // The division is picked on the form; it drives the division filter on the AP list and which PMs are suggested.
+  const jobDiv=f.division||null;
   const suggested=jobDiv?pms.filter(p=>p.role==="pm"&&p.division===jobDiv):[];
   useEffect(()=>{if(!f.assigned_pm&&suggested.length===1)set("assigned_pm",suggested[0].name);},[jobDiv]);
   const [err,setErr]=useState("");const [saving,setSaving]=useState(false);const [reading,setReading]=useState("");const fileRef=useRef(null);
@@ -2388,11 +2397,12 @@ function ApInvoiceForm({user,projects,mfgJobs,pms=[],existing,rows,onBack,onSave
   async function save(){
     if(!f.vendor.trim()||!f.invoice_no.trim()){setErr("Vendor and invoice number are required.");return;}
     if(f.amount===""||isNaN(parseFloat(f.amount))){setErr("Enter the invoice amount.");return;}
+    if(!f.division){setErr("Pick the division this invoice belongs to.");return;}
     if(dup){setErr(`Already in the system: ${dup.vendor} #${dup.invoice_no} entered ${new Date(dup.created_at).toLocaleDateString()} by ${dup.entered_by} (${AP_STATUS[dup.status]?.l||dup.status}).`);return;}
     setSaving(true);
     const proj=projects.find(p=>p.id===f.project_id);
     const body={vendor:f.vendor.trim(),vendor_key:apNorm(f.vendor),invoice_no:f.invoice_no.trim(),invoice_key:apNorm(f.invoice_no),invoice_date:f.invoice_date||null,due_date:f.due_date||null,amount:parseFloat(f.amount),
-      project_id:f.project_id||null,mfg_job_id:f.mfg_job_id||null,division:proj?.division||(f.mfg_job_id?"Manufacturing":null),po_number:f.po_number||null,description:f.description||null,notes:f.notes||null,
+      project_id:f.project_id||null,mfg_job_id:f.mfg_job_id||null,division:f.division||proj?.division||(f.mfg_job_id?"Manufacturing":null),po_number:f.po_number||null,description:f.description||null,notes:f.notes||null,
       file_url:f.file_url||null,file_path:f.file_path||null,file_name:f.file_name||null,assigned_pm:f.assigned_pm||null,updated_at:new Date().toISOString()};
     try{
       if(existing){
@@ -2435,6 +2445,11 @@ function ApInvoiceForm({user,projects,mfgJobs,pms=[],existing,rows,onBack,onSave
           <div><label style={lbl}>Invoice date</label><input type="date" value={f.invoice_date} onChange={e=>set("invoice_date",e.target.value)} style={inp}/></div>
           <div><label style={lbl}>Due date</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
         </div>
+        <div style={{marginBottom:10}}><label style={lbl}>Division *</label>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8}}>
+            {DIVISIONS.map(d=>{const m=DIV_META[d]||{};const on=f.division===d;return(<button key={d} type="button" onClick={()=>{set("division",d);const pick=pms.filter(p=>p.role==="pm"&&p.division===d);if(pick.length===1)set("assigned_pm",pick[0].name);}}
+              style={{...ghostBtn,padding:"10px 8px",fontSize:12.5,fontWeight:700,textAlign:"center",borderColor:on?(m.color||T.teal):T.border,color:on?(m.color||T.teal):T.sub,background:on?(m.color||T.teal)+"18":"transparent"}}>{m.icon} {d}</button>);})}
+          </div></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10,marginBottom:10}}>
           <div><label style={lbl}>PO #</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} style={inp}/></div>
           <div><label style={lbl}>Description</label><input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="What it's for" style={inp}/></div>
