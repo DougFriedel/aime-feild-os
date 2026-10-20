@@ -2167,15 +2167,16 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
   const jobOf=(r)=>r.project_id?(projects.find(p=>p.id===r.project_id)||{}).name||"":r.mfg_job_id?"🏭 "+((mfgJobs.find(j=>j.id===r.mfg_job_id)||{}).job_number||""):"";
   const divOf=(r)=>r.division||(r.project_id?(projects.find(p=>p.id===r.project_id)||{}).division||"":r.mfg_job_id?"Manufacturing":"");
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-  const [div,setDiv]=useState("none");   // the main page is the invoices with no division yet; each division has its own tab
+  const [div,setDiv]=useState("none");const [bill,setBill]=useState("");   // "" | unbilled | billed, inside a division   // the main page is the invoices with no division yet; each division has its own tab
   // PMs see their own divisions' invoices for approval; admin sees all
   const myDivs=user.role==="admin"?null:(user.division&&user.division!=="All"?[user.division]:null);
   const inDiv=(r)=>div==="none"?!divOf(r):divOf(r)===div;
   const divRows=q.trim()?rows:rows.filter(inDiv);   // status tab counts are for the division you're looking at
   const counts={all:divRows.length,entered:divRows.filter(r=>r.status==="entered").length,pm_approved:divRows.filter(r=>r.status==="pm_approved").length,approved:divRows.filter(r=>r.status==="approved").length,processed:divRows.filter(r=>r.status==="processed").length,paid:divRows.filter(r=>r.status==="paid").length,rejected:divRows.filter(r=>r.status==="rejected").length,unbilled:divRows.filter(r=>apBillState(r)==="unbilled").length,billed:divRows.filter(r=>apBillState(r)==="billed").length};
-  const inTab=(r)=>tab==="all"||(tab==="unbilled"||tab==="billed"?apBillState(r)===tab:r.status===tab);
+  const inTab=(r)=>tab==="all"||r.status===tab;
+  const billOn=div!=="none"&&!q.trim()&&bill;
   const searching=!!q.trim();   // a search looks across every division
-  const filtered=rows.filter(r=>inTab(r)&&(searching||(div==="none"?!divOf(r):divOf(r)===div))&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm,r.billed_invoice_no,r.payment_ref,r.approved_by].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
+  const filtered=rows.filter(r=>inTab(r)&&(searching||(div==="none"?!divOf(r):divOf(r)===div))&&(!billOn||apBillState(r)===bill)&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm,r.billed_invoice_no,r.payment_ref,r.approved_by].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
   const assignedToMe=rows.filter(r=>r.status==="entered"&&r.assigned_pm===user.name).length;
   const total=filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
   async function act(r,status,extra={},note){
@@ -2209,7 +2210,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
   }
   if(showNew||(open&&open._edit))return <ApInvoiceForm user={user} projects={projects} mfgJobs={mfgJobs} pms={pms} existing={open&&open._edit?open:null} rows={rows} onBack={()=>{setShowNew(false);setOpen(null);}} onSaved={async()=>{setShowNew(false);setOpen(null);await load();}}/>;
   if(showReport)return <ApInvoiceReport user={user} rows={rows} pms={pms} jobOf={jobOf} divOf={divOf} onBack={()=>setShowReport(false)}/>;
-  const tabs=[["all",`All (${counts.all})`],["entered",`Needs PM approval (${counts.entered})`],["pm_approved",`Needs final approval (${counts.pm_approved})`],["approved",`Add to Foundation (${counts.approved})`],["processed",`In Foundation (${counts.processed})`],["paid",`Paid (${counts.paid})`],["unbilled",`Not billed (${counts.unbilled})`],["billed",`Billed (${counts.billed})`],["rejected",`Rejected (${counts.rejected})`]];
+  const tabs=[["all",`All (${counts.all})`],["entered",`Needs PM approval (${counts.entered})`],["pm_approved",`Needs final approval (${counts.pm_approved})`],["approved",`Add to Foundation (${counts.approved})`],["processed",`In Foundation (${counts.processed})`],["paid",`Paid (${counts.paid})`],["rejected",`Rejected (${counts.rejected})`]];
   return(<div style={embedded?{}:{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
     {!embedded&&<TopBar title="💵 AP Invoices" sub={`${counts.entered} awaiting approval · ${counts.approved} to add to Foundation`} onBack={onBack}/>}
     <div style={{padding:embedded?"0 0 80px":"14px 16px 80px"}}>
@@ -2232,10 +2233,25 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
           {chips.map(([id,l,list])=>{const m=DIV_META[id]||{};const on=div===id&&!searching;const c=id==="none"?(list.length?T.yellow:T.muted):(m.color||T.muted);return(<button key={id} onClick={()=>{setDiv(id);setQ("");}} style={{...ghostBtn,padding:"7px 12px",fontSize:12,whiteSpace:"nowrap",textAlign:"left",borderColor:on?c:T.border,color:on?c:T.sub,background:on?c+"18":"transparent"}}>
             <div style={{fontWeight:700}}>{m.icon?m.icon+" ":""}{l} <span style={{opacity:.7}}>({list.length})</span></div><div style={{fontSize:10.5,opacity:.85}}>{money(sum(list))}{(()=>{const nb=list.filter(r=>apBillState(r)==="unbilled");return nb.length?<span style={{color:T.yellow,marginLeft:6}}>· {nb.length} not billed</span>:null;})()}</div></button>);})}
         </div>);})()}
+      {div!=="none"&&!searching?(()=>{
+        // Inside a division: the two cards are the billing split for the status tab you're on. Tap one to filter.
+        const base=rows.filter(r=>inTab(r)&&divOf(r)===div&&(!onlyMine||r.assigned_pm===user.name));
+        const sum=(l)=>l.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+        const cards=[["unbilled","Not billed",T.yellow],["billed","Billed",T.green]];
+        return(<div style={{marginBottom:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {cards.map(([id,l,c])=>{const list=base.filter(r=>apBillState(r)===id);const on=bill===id;return(
+              <button key={id} onClick={()=>setBill(on?"":id)} style={{...cardS,textAlign:"center",padding:10,cursor:"pointer",fontFamily:"inherit",borderColor:on?c:T.border,background:on?c+"14":T.card}}>
+                <div style={{fontSize:18,fontWeight:900,color:c}}>{money(sum(list))}</div>
+                <div style={{fontSize:9.5,color:on?c:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",fontWeight:on?800:400}}>{l} · {list.length} invoice{list.length===1?"":"s"}</div>
+              </button>);})}
+          </div>
+          <div style={{fontSize:11,color:T.muted,textAlign:"center",marginTop:6}}>{filtered.length} shown · {money(total)}{bill?<> · <span onClick={()=>setBill("")} style={{color:T.teal,cursor:"pointer"}}>show all</span></>:null}</div>
+        </div>);})():(
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
         <div style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:T.blue}}>{filtered.length}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Invoices shown</div></div>
         <div style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:T.green}}>{money(total)}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Total shown</div></div>
-      </div>
+      </div>)}
       {(canEnter||canApprove)&&div==="none"&&!searching&&!loading&&filtered.length>0&&<div style={{...cardS,marginBottom:10,padding:"10px 12px",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",borderLeft:`3px solid ${sel.length?T.yellow:T.border}`}}>
         <label style={{fontSize:12,color:T.sub,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}><input type="checkbox" checked={filtered.length>0&&filtered.every(r=>sel.includes(r.id))} onChange={e=>setSel(e.target.checked?[...new Set([...sel,...filtered.map(r=>r.id)])]:sel.filter(id=>!filtered.some(r=>r.id===id)))}/> Select all shown</label>
         <span style={{fontSize:12,color:sel.length?T.yellow:T.muted,fontWeight:700}}>{sel.length} selected</span>
