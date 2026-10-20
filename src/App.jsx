@@ -2167,12 +2167,13 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
   const jobOf=(r)=>r.project_id?(projects.find(p=>p.id===r.project_id)||{}).name||"":r.mfg_job_id?"🏭 "+((mfgJobs.find(j=>j.id===r.mfg_job_id)||{}).job_number||""):"";
   const divOf=(r)=>r.division||(r.project_id?(projects.find(p=>p.id===r.project_id)||{}).division||"":r.mfg_job_id?"Manufacturing":"");
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-  const [div,setDiv]=useState("");
+  const [div,setDiv]=useState("none");   // the main page is the invoices with no division yet; each division has its own tab
   // PMs see their own divisions' invoices for approval; admin sees all
   const myDivs=user.role==="admin"?null:(user.division&&user.division!=="All"?[user.division]:null);
   const counts={entered:rows.filter(r=>r.status==="entered").length,pm_approved:rows.filter(r=>r.status==="pm_approved").length,approved:rows.filter(r=>r.status==="approved").length,processed:rows.filter(r=>r.status==="processed").length,paid:rows.filter(r=>r.status==="paid").length,rejected:rows.filter(r=>r.status==="rejected").length,unbilled:rows.filter(r=>apBillState(r)==="unbilled").length};
   const inTab=(r)=>tab==="all"||(tab==="unbilled"?apBillState(r)==="unbilled":r.status===tab);
-  const filtered=rows.filter(r=>inTab(r)&&(!div||divOf(r)===div||(div==="none"&&!divOf(r)))&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
+  const searching=!!q.trim();   // a search looks across every division
+  const filtered=rows.filter(r=>inTab(r)&&(searching||(div==="none"?!divOf(r):divOf(r)===div))&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
   const assignedToMe=rows.filter(r=>r.status==="entered"&&r.assigned_pm===user.name).length;
   const total=filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
   async function act(r,status,extra={},note){
@@ -2215,7 +2216,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
         Vendor invoices come in here once. <b style={{color:T.text}}>Accounting enters</b> → <b style={{color:T.text}}>PM approves</b> (or rejects with a reason) → <b style={{color:T.text}}>{AP_FINAL_APPROVER} gives final approval</b> (automatic, no need to assign it) → <b style={{color:T.text}}>Accounting adds it to Foundation</b> and marks paid. A red button means it still needs to go into Foundation; green means it's in. The same vendor + invoice number can't be entered twice — you'll be shown the existing one instead.
       </div>
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search vendor, invoice #, PO, job…" style={{...inp,flex:2,minWidth:220}}/>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search all divisions: vendor, invoice #, PO, job…" style={{...inp,flex:2,minWidth:220}}/>
         {canEnter&&<button onClick={()=>setShowNew(true)} style={{...primBtn,borderRadius:12,padding:"10px 16px",background:T.teal,color:"#000",fontSize:13}}>+ Enter Invoice</button>}
         <button onClick={()=>setShowReport(true)} style={{...ghostBtn,padding:"10px 14px",fontSize:13}}>📊 Report</button>
       </div>
@@ -2224,9 +2225,9 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
         {canApprove&&<label style={{fontSize:11.5,color:onlyMine?T.yellow:T.muted,display:"flex",alignItems:"center",gap:5,cursor:"pointer",whiteSpace:"nowrap",marginLeft:"auto"}}><input type="checkbox" checked={onlyMine} onChange={e=>setOnlyMine(e.target.checked)}/> Assigned to me{assignedToMe?` (${assignedToMe})`:""}</label>}
       </div>
       {(()=>{const inT=rows.filter(inTab);const sum=(l)=>l.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
-        const chips=[["","All divisions",inT],...DIVISIONS.map(d=>[d,d,inT.filter(r=>divOf(r)===d)]),["none","No division",inT.filter(r=>!divOf(r))]].filter(([id,,l])=>id!=="none"||l.length);
+        const chips=[["none","Needs division",inT.filter(r=>!divOf(r))],...DIVISIONS.map(d=>[d,d,inT.filter(r=>divOf(r)===d)])];
         return(<div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto"}}>
-          {chips.map(([id,l,list])=>{const m=DIV_META[id]||{};const on=div===id;const c=id?(m.color||T.muted):T.teal;return(<button key={id} onClick={()=>setDiv(id)} style={{...ghostBtn,padding:"7px 12px",fontSize:12,whiteSpace:"nowrap",textAlign:"left",borderColor:on?c:T.border,color:on?c:T.sub,background:on?c+"18":"transparent"}}>
+          {chips.map(([id,l,list])=>{const m=DIV_META[id]||{};const on=div===id&&!searching;const c=id==="none"?(list.length?T.yellow:T.muted):(m.color||T.muted);return(<button key={id} onClick={()=>{setDiv(id);setQ("");}} style={{...ghostBtn,padding:"7px 12px",fontSize:12,whiteSpace:"nowrap",textAlign:"left",borderColor:on?c:T.border,color:on?c:T.sub,background:on?c+"18":"transparent"}}>
             <div style={{fontWeight:700}}>{m.icon?m.icon+" ":""}{l} <span style={{opacity:.7}}>({list.length})</span></div><div style={{fontSize:10.5,opacity:.85}}>{money(sum(list))}</div></button>);})}
         </div>);})()}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
@@ -2245,7 +2246,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
         </div>
       </div>}
       {loading&&<Spinner/>}
-      {!loading&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}><div style={{fontSize:44,marginBottom:10}}>💵</div>Nothing here.</div>}
+      {!loading&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}><div style={{fontSize:44,marginBottom:10}}>💵</div>{div==="none"&&!searching?"Every invoice has a division. Pick a division above to see its invoices.":"Nothing here."}</div>}
       {filtered.map(r=>{const st=AP_STATUS[r.status]||AP_STATUS.entered;const isOpen=open&&open.id===r.id;
         const mine=user.role==="admin"||(r.assigned_pm?r.assigned_pm===user.name:(!myDivs||myDivs.includes(divOf(r))||!divOf(r)));
         return(<div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${st.c}`}}>
