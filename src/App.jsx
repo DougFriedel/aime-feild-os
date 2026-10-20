@@ -2160,6 +2160,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
   const [tab,setTab]=useState(canFinal?"pm_approved":canApprove&&!canEnter?"entered":"all");const [q,setQ]=useState("");const [open,setOpen]=useState(null);const [showNew,setShowNew]=useState(false);
   const [onlyMine,setOnlyMine]=useState(canApprove&&!canEnter&&!canFinal);
   const [showReport,setShowReport]=useState(false);
+  const [sel,setSel]=useState([]);const [bulkDiv,setBulkDiv]=useState("");const [bulkBusy,setBulkBusy]=useState(false);
   async function load(){setLoading(true);try{const [r,m,u]=await Promise.all([sb("/ap_invoices?select=*&order=created_at.desc&limit=3000"),API.mfg.jobs.list().catch(()=>[]),API.userProfiles.list().catch(()=>[])]);
     setRows(r||[]);setMfgJobs(m||[]);setPms((u||[]).filter(x=>(x.role==="pm"||x.role==="admin")&&x.active!==false));}catch(e){setErr(e.message);}setLoading(false);}
   useEffect(()=>{load();},[]);
@@ -2232,13 +2233,25 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
         <div style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:T.blue}}>{filtered.length}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Invoices shown</div></div>
         <div style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:T.green}}>{money(total)}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Total shown</div></div>
       </div>
+      {(canEnter||canApprove)&&!loading&&filtered.length>0&&<div style={{...cardS,marginBottom:10,padding:"10px 12px",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",borderLeft:`3px solid ${sel.length?T.yellow:T.border}`}}>
+        <label style={{fontSize:12,color:T.sub,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}><input type="checkbox" checked={filtered.length>0&&filtered.every(r=>sel.includes(r.id))} onChange={e=>setSel(e.target.checked?[...new Set([...sel,...filtered.map(r=>r.id)])]:sel.filter(id=>!filtered.some(r=>r.id===id)))}/> Select all shown</label>
+        <span style={{fontSize:12,color:sel.length?T.yellow:T.muted,fontWeight:700}}>{sel.length} selected</span>
+        <div style={{display:"flex",gap:6,alignItems:"center",marginLeft:"auto"}}>
+          <select value={bulkDiv} onChange={e=>setBulkDiv(e.target.value)} style={{...inp,width:"auto",padding:"7px 8px",fontSize:12}}><option value="">Set division to…</option>{DIVISIONS.map(d=><option key={d} value={d}>{d}</option>)}</select>
+          <button disabled={!sel.length||!bulkDiv||bulkBusy} onClick={async()=>{if(!window.confirm(`Set ${sel.length} invoice${sel.length===1?"":"s"} to ${bulkDiv}?`))return;setBulkBusy(true);
+              try{await sb(`/ap_invoices?id=in.(${sel.map(encodeURIComponent).join(",")})`,{method:"PATCH",body:{division:bulkDiv}});setRows(rs=>rs.map(x=>sel.includes(x.id)?{...x,division:bulkDiv}:x));setSel([]);setBulkDiv("");}catch(err){setErr(err.message);}setBulkBusy(false);}}
+            style={{...primBtn,width:"auto",padding:"8px 14px",fontSize:12,borderRadius:10,background:T.teal,color:"#000",opacity:!sel.length||!bulkDiv||bulkBusy?0.5:1}}>{bulkBusy?"Saving…":"Apply"}</button>
+          {sel.length>0&&<button onClick={()=>setSel([])} style={{...ghostBtn,padding:"8px 10px",fontSize:12}}>Clear</button>}
+        </div>
+      </div>}
       {loading&&<Spinner/>}
       {!loading&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}><div style={{fontSize:44,marginBottom:10}}>💵</div>Nothing here.</div>}
       {filtered.map(r=>{const st=AP_STATUS[r.status]||AP_STATUS.entered;const isOpen=open&&open.id===r.id;
         const mine=user.role==="admin"||(r.assigned_pm?r.assigned_pm===user.name:(!myDivs||myDivs.includes(divOf(r))||!divOf(r)));
         return(<div key={r.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${st.c}`}}>
           <div onClick={()=>setOpen(isOpen?null:r)} style={{cursor:"pointer",display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
-            <div style={{minWidth:0}}>
+            {(canEnter||canApprove)&&<input type="checkbox" checked={sel.includes(r.id)} onClick={e=>e.stopPropagation()} onChange={e=>setSel(x=>e.target.checked?[...x,r.id]:x.filter(id=>id!==r.id))} style={{marginTop:3,flexShrink:0,width:18,height:18,accentColor:T.teal}}/>}
+            <div style={{minWidth:0,flex:1}}>
               <div style={{fontSize:14,fontWeight:800,color:T.text}}>{r.vendor} <span style={{color:T.muted,fontWeight:500}}>#{r.invoice_no}</span></div>
               <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{divOf(r)?<span style={{color:(DIV_META[divOf(r)]||{}).color||T.sub,fontWeight:700}}>{divOf(r)}</span>:"No division"}{jobOf(r)?` · ${jobOf(r)}`:""}{r.po_number?` · PO ${r.po_number}`:""}{r.invoice_date?` · dated ${r.invoice_date}`:""}{r.due_date?` · due ${r.due_date}`:""}</div>
               {r.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</div>}
