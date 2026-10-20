@@ -562,7 +562,9 @@ const API={
   },
   estimates:{
     get:(id)=>sb(`/estimates?id=eq.${id}&select=*&limit=1`),
-    list:()=>sb("/estimates?select=*&order=due_date.asc.nullslast,created_at.desc"),
+    // The Bid Board lists top-level bids. Extra estimates under a bid (parent_id set) live inside it.
+    list:()=>sb("/estimates?select=*&parent_id=is.null&order=due_date.asc.nullslast,created_at.desc"),
+    family:(id)=>sb(`/estimates?select=*&or=(id.eq.${id},parent_id.eq.${id})&order=created_at.asc`),
     create:(d)=>sb("/estimates",{method:"POST",body:d,prefer:"return=representation"}),
     update:(id,d)=>sb(`/estimates?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
     remove:(id)=>sb(`/estimates?id=eq.${id}`,{method:"DELETE"}),
@@ -11646,31 +11648,100 @@ function ConvertBidModal({bid,user,onClose,onDone,onErr}){
   );
 }
 
+/* ── Several estimates under one bid (Procore-style) ──
+   A bid can hold more than one estimate: the original plus any added under it
+   (parent_id). Each has its own takeoff, pricing, scope and proposal. "Copy" clones
+   everything so a second option or a revision starts from the first. */
+const BID_COPY_SKIP=new Set(["id","created_at","updated_at","parent_id","estimate_label","status","job_project_id","job_mfg_id","job_number","job_division","reviewer_name","reviewer_email","review_note","review_requested_at","requested_review_by","public_token"]);
+async function copyEstimate(src,parentId,label,user){
+  const body={};Object.keys(src).forEach(k=>{if(!BID_COPY_SKIP.has(k))body[k]=src[k];});
+  Object.assign(body,{parent_id:parentId,estimate_label:label,status:"estimating",estimator:user.name,created_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+  const res=await API.estimates.create(body);const row=Array.isArray(res)?res[0]:res;
+  const strip=(r,extra={})=>{const o={...r,...extra};delete o.id;delete o.created_at;delete o.updated_at;return o;};
+  // documents (same files, new rows) → takeoff items → marks → pricing lines, keeping links between them
+  const docMap={},itemMap={};
+  const docs=await API.estimateDocs.forEstimate(src.id).catch(()=>[]);
+  for(const d of docs||[]){const r2=await API.estimateDocs.create(strip(d,{estimate_id:row.id}));const n=Array.isArray(r2)?r2[0]:r2;docMap[d.id]=n?.id;}
+  const items=await API.takeoff.items(src.id).catch(()=>[]);
+  for(const it of items||[]){const r2=await API.takeoff.addItem(strip(it,{estimate_id:row.id}));const n=Array.isArray(r2)?r2[0]:r2;itemMap[it.id]=n?.id;}
+  const marks=await API.takeoff.marks(src.id).catch(()=>[]);
+  for(const m of marks||[]){if(!itemMap[m.item_id])continue;await API.takeoff.addMark(strip(m,{estimate_id:row.id,item_id:itemMap[m.item_id],document_id:docMap[m.document_id]||m.document_id})).catch(()=>{});}
+  const lines=await API.estimateLines.forEstimate(src.id).catch(()=>[]);
+  for(const l of lines||[]){await API.estimateLines.create(strip(l,{estimate_id:row.id,takeoff_item_id:l.takeoff_item_id?(itemMap[l.takeoff_item_id]||null):null})).catch(()=>{});}
+  return row;
+}
+function AddEstimateModal({bid,family,user,onClose,onDone,onErr}){
+  const [label,setLabel]=useState(`Estimate ${family.length+1}`);
+  const [mode,setMode]=useState("copy");const [busy,setBusy]=useState(false);
+  async function go(){
+    if(!label.trim())return;setBusy(true);
+    try{
+      const parentId=bid.parent_id||bid.id;
+      let row;
+      if(mode==="copy")row=await copyEstimate(bid,parentId,label.trim(),user);
+      else{const parent=family.find(f=>!f.parent_id)||bid;
+        const res=await API.estimates.create({name:parent.name,requester_company:parent.requester_company,requester_name:parent.requester_name,requester_email:parent.requester_email,requester_phone:parent.requester_phone,division:parent.division,location:parent.location,due_date:parent.due_date,quote_number:parent.quote_number,quote_date:today(),measurement_system:parent.measurement_system||"US",
+          parent_id:parentId,estimate_label:label.trim(),status:"estimating",estimator:user.name,total_sales:0});
+        row=Array.isArray(res)?res[0]:res;}
+      onDone(row);
+    }catch(e){onErr&&onErr(e.message);setBusy(false);}
+  }
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:220,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:24,width:"100%",maxWidth:440,border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:16,fontWeight:900,color:T.text,marginBottom:4}}>Add an estimate to this bid</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:14}}>For a revision or a second option the customer asked for. It gets its own takeoff, pricing and proposal.</div>
+        <label style={lbl}>Name</label>
+        <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Rev 2, Option B, With coating" style={{...inp,marginBottom:12}} autoFocus/>
+        {[["copy",`Copy "${bid.estimate_label||"Estimate 1"}"`,"Starts with everything in the estimate you're on: takeoff, pricing lines, documents, rates."],["empty","Create empty estimate","Keeps only the customer and job details. Start the takeoff and pricing from scratch."]].map(([id,t,d])=>(
+          <label key={id} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",marginBottom:8,borderRadius:10,cursor:"pointer",border:`1px solid ${mode===id?T.orange:T.border}`,background:mode===id?T.orangeLow:T.surface}}>
+            <input type="radio" checked={mode===id} onChange={()=>setMode(id)} style={{marginTop:3,accentColor:T.orange}}/>
+            <span><span style={{display:"block",fontSize:13.5,fontWeight:700,color:T.text}}>{t}</span><span style={{display:"block",fontSize:11.5,color:T.muted}}>{d}</span></span>
+          </label>))}
+        <div style={{display:"flex",gap:10,marginTop:14}}>
+          <button onClick={go} disabled={busy||!label.trim()} style={{...primBtn,borderRadius:10,opacity:busy||!label.trim()?0.6:1}}>{busy?"Creating…":"Add estimate"}</button>
+          <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BidDetail({bidId,user,onBack,onChanged}){
   // Two people in the same bid overwrite each other silently — last save wins.
   // This does not lock anything, it just makes the overlap visible.
   const othersHere=usePresence("estimate",bidId,user);
   const [bid,setBid]=useState(null);
+  const [family,setFamily]=useState([]);        // the bid plus any estimates added under it
+  const [activeId,setActiveId]=useState(bidId);  // which estimate the tabs show
+  const [addEst,setAddEst]=useState(false);
   const [tab,setTab]=useState("overview");
   const [loading,setLoading]=useState(true);
   const [askReview,setAskReview]=useState(false);
   const [convert,setConvert]=useState(false);
   const [err,setErr]=useState("");
 
-  async function load(){
+  async function load(id=activeId){
     setLoading(true);
     try{
-      const rows=await API.estimates.get(bidId);
-      setBid(Array.isArray(rows)?rows[0]:rows);
+      const rows=await API.estimates.family(bidId);
+      const fam=(rows||[]).sort((a,b)=>(a.parent_id?1:0)-(b.parent_id?1:0)||String(a.created_at).localeCompare(String(b.created_at)));
+      setFamily(fam);
+      const cur=fam.find(f=>f.id===id)||fam[0]||null;
+      setBid(cur);if(cur)setActiveId(cur.id);
     }catch(e){setErr(e.message);}
     setLoading(false);
   }
-  useEffect(()=>{load();},[bidId]);
+  useEffect(()=>{load(bidId);},[bidId]);
+  function switchTo(id){if(window.__bidDirty&&!window.confirm("You have unsaved changes on this tab. Leave without saving?"))return;window.__bidDirty=false;const f=family.find(x=>x.id===id);if(f){setBid(f);setActiveId(id);}}
+  async function renameEst(){const n=(window.prompt("Name for this estimate:",bid.estimate_label||"Estimate 1")||"").trim();if(!n)return;patch({estimate_label:n});}
+  async function removeEst(){if(!bid.parent_id)return;if(!window.confirm(`Delete "${bid.estimate_label}" and everything in it? This cannot be undone.`))return;
+    try{await API.estimates.remove(bid.id);await load(bid.parent_id);onChanged&&onChanged();}catch(e){setErr(e.message);}}
 
   async function patch(body){
     try{
-      await API.estimates.update(bidId,{...body,updated_at:new Date().toISOString()});
-      setBid(b=>({...b,...body}));
+      await API.estimates.update(bid.id,{...body,updated_at:new Date().toISOString()});
+      setBid(b=>({...b,...body}));setFamily(fs=>fs.map(f=>f.id===bid.id?{...f,...body}:f));
       onChanged&&onChanged();
     }catch(e){setErr(e.message);}
   }
@@ -11721,7 +11792,23 @@ function BidDetail({bidId,user,onBack,onChanged}){
           </select>
         </div>
         <div style={{marginTop:10}}><PresenceBar others={othersHere}/></div>
+        {/* Estimates under this bid */}
+        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginTop:10}}>
+          <span style={{fontSize:10.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",fontWeight:700,marginRight:4}}>Estimates</span>
+          {family.map((f,i)=>{const on=f.id===bid.id;const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});return(
+            <button key={f.id} onClick={()=>switchTo(f.id)} style={{...ghostBtn,padding:"6px 12px",fontSize:12,borderColor:on?T.orange:T.border,color:on?T.orange:T.sub,background:on?T.orangeLow:"transparent"}}>
+              <b>{f.estimate_label||(f.parent_id?`Estimate ${i+1}`:"Estimate 1")}</b> <span style={{opacity:.75}}>· {money(f.total_sales)}</span>{f.status&&f.status!=="estimating"?<span style={{opacity:.6}}> · {stageOf(f.status).label}</span>:null}
+            </button>);})}
+          <button onClick={()=>setAddEst(true)} style={{...ghostBtn,padding:"6px 12px",fontSize:12,color:T.orange,borderColor:T.orange+"60"}}>+ Add estimate</button>
+          <span style={{marginLeft:"auto",display:"flex",gap:6}}>
+            <button onClick={renameEst} title="Rename this estimate" style={{...ghostBtn,padding:"5px 9px",fontSize:11}}>✏️ Rename</button>
+            {bid.parent_id&&<button onClick={removeEst} title="Delete this estimate" style={{...ghostBtn,padding:"5px 9px",fontSize:11,color:T.red,borderColor:T.red+"50"}}>🗑</button>}
+          </span>
+        </div>
       </div>
+
+      {addEst&&<AddEstimateModal bid={bid} family={family} user={user} onClose={()=>setAddEst(false)} onErr={setErr}
+        onDone={async(row)=>{setAddEst(false);await load(row?.id||activeId);onChanged&&onChanged();}}/>}
 
       {/* Tabs */}
       <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,padding:"0 24px",marginTop:10}}>
@@ -11739,21 +11826,21 @@ function BidDetail({bidId,user,onBack,onChanged}){
 
       {askReview&&<ReviewRequestModal bid={bid} user={user}
         onClose={()=>setAskReview(false)}
-        onSent={()=>{setAskReview(false);load();onChanged&&onChanged();}}
+        onSent={()=>{setAskReview(false);load(bid.id);onChanged&&onChanged();}}
         onErr={setErr}/>}
 
       {convert&&<ConvertBidModal bid={bid} user={user}
         onClose={()=>setConvert(false)}
-        onDone={()=>{setConvert(false);load();onChanged&&onChanged();}}
+        onDone={()=>{setConvert(false);load(bid.id);onChanged&&onChanged();}}
         onErr={setErr}/>}
 
       <div style={{padding:"20px 24px 60px"}}>
-        {tab==="overview"  &&<BidOverviewTab bid={bid} onSave={patch}/>}
-        {tab==="documents" &&<BidDocumentsTab bid={bid} user={user} onErr={setErr}/>}
-        {tab==="takeoff"   &&<TakeoffTab bid={bid} user={user} onErr={setErr}/>}
-        {tab==="estimating"&&<EstimatingTab bid={bid} user={user} onErr={setErr} onTotal={(t)=>{setBid(b=>({...b,total_sales:t}));onChanged&&onChanged();}} onRates={(r)=>setBid(b=>({...b,...r}))}/>}
-        {tab==="scope"     &&<ScopeTab bid={bid} user={user} onErr={setErr} onSaved={(patch)=>{setBid(b=>({...b,...patch}));onChanged&&onChanged();}}/>}
-        {tab==="proposal"  &&<ProposalTab bid={bid} user={user} onErr={setErr} onSaved={load}/>}
+        {tab==="overview"  &&<BidOverviewTab key={bid.id} bid={bid} onSave={patch}/>}
+        {tab==="documents" &&<BidDocumentsTab key={bid.id} bid={bid} user={user} onErr={setErr}/>}
+        {tab==="takeoff"   &&<TakeoffTab key={bid.id} bid={bid} user={user} onErr={setErr}/>}
+        {tab==="estimating"&&<EstimatingTab key={bid.id} bid={bid} user={user} onErr={setErr} onTotal={(t)=>{setBid(b=>({...b,total_sales:t}));onChanged&&onChanged();}} onRates={(r)=>setBid(b=>({...b,...r}))}/>}
+        {tab==="scope"     &&<ScopeTab key={bid.id} bid={bid} user={user} onErr={setErr} onSaved={(patch)=>{setBid(b=>({...b,...patch}));onChanged&&onChanged();}}/>}
+        {tab==="proposal"  &&<ProposalTab key={bid.id} bid={bid} user={user} onErr={setErr} onSaved={()=>load(bid.id)}/>}
       </div>
     </div>
   );
