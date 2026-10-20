@@ -735,12 +735,14 @@ function getAllPositions(){
 }
 
 const WMO={0:["Clear Sky","☀️"],1:["Mainly Clear","🌤️"],2:["Partly Cloudy","⛅"],3:["Overcast","☁️"],45:["Foggy","🌫️"],48:["Icy Fog","🌫️"],51:["Light Drizzle","🌦️"],53:["Drizzle","🌦️"],55:["Heavy Drizzle","🌦️"],61:["Light Rain","🌧️"],63:["Rain","🌧️"],65:["Heavy Rain","🌧️"],71:["Light Snow","🌨️"],73:["Snow","🌨️"],75:["Heavy Snow","❄️"],80:["Light Showers","🌦️"],81:["Showers","🌦️"],82:["Violent Showers","⛈️"],95:["Thunderstorm","⛈️"],96:["Thunderstorm + Hail","⛈️"],99:["Severe Thunderstorm","⛈️"]};
-const DIVISIONS=["Mechanical","Pipeline","Structural","Manufacturing"];
+const DIVISIONS=["Mechanical","Pipeline","Pipeline South","Structural","Manufacturing"];
+// Pipeline South runs exactly like Pipeline (rate sheet, estimating, invoice tracker, report layout).
+const isPipeDiv=(d)=>d==="Pipeline"||d==="Pipeline South";
 /* Field time clock. When off, crew cannot clock in/out on field jobs — hours
    reach a time card only through Daily Reports and T&M tickets. The shop
    clock on manufacturing jobs is separate and unaffected. */
 const FIELD_CLOCK_ENABLED=false;
-const DIV_META={Mechanical:{icon:"⚙️",color:"#60A5FA",desc:"Mechanical projects and equipment"},Pipeline:{icon:"🔧",color:"#3B82F6",desc:"Pipeline construction and maintenance"},Structural:{icon:"🏗️",color:"#34D399",desc:"Structural steel and civil work"},Manufacturing:{icon:"🏭",color:"#8B5CF6",desc:"Shop fabrication & production"}};
+const DIV_META={Mechanical:{icon:"⚙️",color:"#60A5FA",desc:"Mechanical projects and equipment"},Pipeline:{icon:"🔧",color:"#3B82F6",desc:"Pipeline construction and maintenance"},"Pipeline South":{icon:"🔩",color:"#2DD4BF",desc:"Pipeline construction and maintenance, southern region"},Structural:{icon:"🏗️",color:"#34D399",desc:"Structural steel and civil work"},Manufacturing:{icon:"🏭",color:"#8B5CF6",desc:"Shop fabrication & production"}};
 const ROLES=["crew","foreman","estimator","accounting","pm","admin"];
 const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Reports, time cards, photos, safety, schedule, weather"},foreman:{label:"Foreman",color:T.yellow,desc:"Everything crew can do, plus create and manage jobs"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, PM dashboard, custom reports"},estimator:{label:"Estimator",color:T.purple,desc:"Foreman access plus the estimating platform"},accounting:{label:"Accounting",color:T.teal,desc:"Enter and process vendor invoices, view jobs and docs"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
 
@@ -4023,7 +4025,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
         </div>
         {/* Division nav bar — PM Dashboard is PM/admin only */}
         {isPM&&<div style={{display:"flex",background:T.bg,borderRadius:12,padding:4,marginBottom:12,gap:4}}>
-          {[["jobs","🏗️ Jobs"],...(division==="Pipeline"?[["estimating","📐 Estimating"]]:[]),["pm","📊 PM Dashboard"]].map(([id,label])=>(
+          {[["jobs","🏗️ Jobs"],...(isPipeDiv(division)?[["estimating","📐 Estimating"]]:[]),["pm","📊 PM Dashboard"]].map(([id,label])=>(
             <button key={id} onClick={()=>setNav(id)}
               style={{flex:1,padding:"9px",background:nav===id?meta.color:"none",color:nav===id?"#0D0D0F":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
               {label}
@@ -4041,7 +4043,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
       </div>
 
       {nav==="pm"&&isPM&&<PMDashboard embedded lockedDiv={division} user={user} projects={projects} onRefresh={onRefresh} onErr={()=>{}}/>}
-      {nav==="estimating"&&isPM&&division==="Pipeline"&&<div style={{padding:"12px 16px 80px"}}><ErrBanner msg={estErr} onDismiss={()=>setEstErr("")}/><PipelineEstimatingTab user={user} onErr={setEstErr}/></div>}
+      {nav==="estimating"&&isPM&&isPipeDiv(division)&&<div style={{padding:"12px 16px 80px"}}><ErrBanner msg={estErr} onDismiss={()=>setEstErr("")}/><PipelineEstimatingTab user={user} onErr={setEstErr}/></div>}
 
       {nav==="jobs"&&<PullToRefresh onRefresh={async()=>onRefresh&&await onRefresh()}>
       <div style={{padding:"12px 16px 80px"}}>
@@ -4553,7 +4555,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
           <DashedAdd label="+ Add Company Equipment" onClick={()=>add("equipment",{id:uid(),description:"",qty:"",usage:"",rate:"",unit:""})} color={T.yellow}/>
 
           {/* Rented Equipment — Pipeline logs rentals under Materials & Misc. instead */}
-          {project.division!=="Pipeline"&&<><div style={{marginTop:18,marginBottom:10,paddingTop:14,borderTop:`2px dashed ${T.border}`}}>
+          {!isPipeDiv(project.division)&&<><div style={{marginTop:18,marginBottom:10,paddingTop:14,borderTop:`2px dashed ${T.border}`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{fontSize:17,fontWeight:800}}>🔑 Rented Equipment</div>
               {(rpt.rental_equipment||[]).length>0&&can(user,"view_dashboard")&&
@@ -4563,16 +4565,16 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
             </div>
             <div style={{fontSize:12,color:T.muted,marginTop:2,marginBottom:10}}>Equipment you don't own — type any description</div>
           </div>
-          {(rpt.rental_equipment||[]).map((row,i)=><RentedEquipCard key={row.id} row={row} trackInvoices={project.division==="Pipeline"} onChange={r=>upd("rental_equipment",i,r)} onRemove={()=>del("rental_equipment",i)}/>)}
+          {(rpt.rental_equipment||[]).map((row,i)=><RentedEquipCard key={row.id} row={row} trackInvoices={isPipeDiv(project.division)} onChange={r=>upd("rental_equipment",i,r)} onRemove={()=>del("rental_equipment",i)}/>)}
           <DashedAdd label="+ Add Rented Equipment" onClick={()=>add("rental_equipment",{id:uid(),description:"",qty:"",usage:"",rate:""})} color={T.purple}/></>}
         </div>)}
-        {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.{project.division==="Pipeline"?" (incl. rentals & subs)":""}</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} trackInvoices={project.division==="Pipeline"} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/>
-          {project.division!=="Pipeline"&&<>
+        {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.{isPipeDiv(project.division)?" (incl. rentals & subs)":""}</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} trackInvoices={isPipeDiv(project.division)} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/>
+          {!isPipeDiv(project.division)&&<>
           <div style={{fontSize:17,fontWeight:800,margin:"24px 0 12px"}}>🏢 Subcontractors</div>
           {(rpt.subcontractors||[]).map((row,i)=><SubCard key={row.id} row={row} onChange={r=>upd("subcontractors",i,r)} onRemove={()=>del("subcontractors",i)}/>)}
           <DashedAdd label="+ Add Subcontractor" onClick={()=>add("subcontractors",{id:uid(),company:"",description:"",workers:"",hours:"",amount:"",markup_pct:"",tax_amount:""})} color={T.orange}/>
           </>}
-          {project.division==="Pipeline"&&<div style={{fontSize:11.5,color:T.muted,marginTop:12,lineHeight:1.5}}>Rented equipment and subcontractor charges go in here too — one line each, with the invoice attached.</div>}
+          {isPipeDiv(project.division)&&<div style={{fontSize:11.5,color:T.muted,marginTop:12,lineHeight:1.5}}>Rented equipment and subcontractor charges go in here too — one line each, with the invoice attached.</div>}
         </div>)}
         {step===5&&(<div>
           <div style={{fontSize:17,fontWeight:800,marginBottom:16}}>📋 Site Notes</div>
@@ -4925,7 +4927,7 @@ function printReportWithOptions(report, project, sections, photos, photoLayout, 
   const tot = reportTotals(report, division);
   // Pipeline reports: no Qty column on equipment, and the Inspector signs
   // alongside the Foreman and PM.
-  const isPipeline = division === "Pipeline";
+  const isPipeline = isPipeDiv(division);
   const showQty = !isPipeline;
   const subsTotal = (report.subcontractors||[]).reduce((s,x)=>s+subLineTotal(x),0);
   const [yr,mo,dy] = (report.date||'').split('-');
@@ -5606,7 +5608,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
       {key:"weather",label:"🌤️ Site Conditions / Weather"},
       {key:"labor",label:"👷 Labor"},
       {key:"equipment",label:"🚜 Equipment"},
-      ...(project.division==="Pipeline"?[]:[{key:"rental",label:"🔧 Rental Equipment"}]),
+      ...(isPipeDiv(project.division)?[]:[{key:"rental",label:"🔧 Rental Equipment"}]),
       {key:"materials",label:"📦 Materials"},
       {key:"visitors",label:"🏗️ Visitor Log"},
       {key:"delays",label:"⚠️ Delays & Issues"},
@@ -8166,7 +8168,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr,embedded
 
   const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},
     {id:"daily",l:"📝 Daily Reports"},{id:"timecards",l:"⏱️ Time Cards"},
-    ...(pmDiv==="Pipeline"?[{id:"invoices",l:"🧾 Invoices"}]:[]),
+    ...(isPipeDiv(pmDiv)?[{id:"invoices",l:"🧾 Invoices"}]:[]),
     {id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"contracts",l:`📐 Contracts${overBudgetCount>0?" ("+overBudgetCount+")":""}`},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
   const divOf=(r)=>(projects.find(p=>p.id===r.project_id)||r.projects||{}).division;
@@ -8392,7 +8394,7 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr,embedded
         {/* OVERVIEW */}
         {pmTab==="daily"&&<div style={{padding:"12px 16px 80px"}}><DivisionReportsTab user={user} division={pmDiv} projects={projects} onErr={setErr}/></div>}
         {pmTab==="timecards"&&<div style={{padding:"12px 16px 80px"}}><TimeCardsScreen user={user} projects={projects} embedded division={pmDiv}/></div>}
-        {pmTab==="invoices"&&pmDiv==="Pipeline"&&<div style={{padding:"12px 16px 80px"}}><InvoiceTrackerScreen user={user} projects={projects} embedded division="Pipeline"/></div>}
+        {pmTab==="invoices"&&isPipeDiv(pmDiv)&&<div style={{padding:"12px 16px 80px"}}><InvoiceTrackerScreen user={user} projects={projects} embedded division={pmDiv}/></div>}
         {pmTab==="overview"&&!loading&&<div>
 
           {/* Waiting on approval */}
@@ -9484,7 +9486,7 @@ tfoot td{background:#1F3864;color:#fff;font-weight:700}
           <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
             <select value={division} onChange={e=>setDivision(e.target.value)} style={{...inp,width:"auto",padding:"8px 10px",fontSize:12}}>
               <option value="">All divisions</option>
-              {["Mechanical","Pipeline","Structural","Manufacturing"].map(d=><option key={d} value={d}>{d}</option>)}
+              {DIVISIONS.map(d=><option key={d} value={d}>{d}</option>)}
             </select>
             <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search jobs…" style={{...inp,flex:1,minWidth:140,padding:"8px 10px",fontSize:12}}/>
           </div>
@@ -9743,7 +9745,7 @@ tfoot td{background:#1F3864;color:#fff;font-weight:700}
           <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
             <select value={division} onChange={e=>setDivision(e.target.value)} style={{...inp,width:"auto",padding:"8px 10px",fontSize:12}}>
               <option value="">All divisions</option>
-              {["Mechanical","Pipeline","Structural","Manufacturing"].map(d=><option key={d} value={d}>{d}</option>)}
+              {DIVISIONS.map(d=><option key={d} value={d}>{d}</option>)}
             </select>
             <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search jobs…" style={{...inp,flex:1,minWidth:140,padding:"8px 10px",fontSize:12}}/>
           </div>
@@ -11825,7 +11827,7 @@ function BidOverviewTab({bid,onSave}){
         <div style={third}>
           <div><label style={lbl}>Division</label>
             <select value={f.division} onChange={e=>set("division",e.target.value)} style={inp}>
-              {["Mechanical","Pipeline","Structural","Manufacturing"].map(d=><option key={d} value={d}>{d}</option>)}
+              {DIVISIONS.map(d=><option key={d} value={d}>{d}</option>)}
             </select></div>
           <div><label style={lbl}>Measurement System</label>
             <select value={f.measurement_system} onChange={e=>set("measurement_system",e.target.value)} style={inp}>
@@ -14233,7 +14235,7 @@ function BidEditor({bid,user,onClose,onSaved,onErr}){
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
           <div><label style={lbl}>Division</label>
             <select value={f.division} onChange={e=>set("division",e.target.value)} style={inp}>
-              {["Mechanical","Pipeline","Structural","Manufacturing"].map(d=><option key={d} value={d}>{d}</option>)}
+              {DIVISIONS.map(d=><option key={d} value={d}>{d}</option>)}
             </select></div>
           <div><label style={lbl}>Due Date</label>
             <input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
