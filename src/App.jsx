@@ -2170,8 +2170,10 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
   const [div,setDiv]=useState("none");   // the main page is the invoices with no division yet; each division has its own tab
   // PMs see their own divisions' invoices for approval; admin sees all
   const myDivs=user.role==="admin"?null:(user.division&&user.division!=="All"?[user.division]:null);
-  const counts={entered:rows.filter(r=>r.status==="entered").length,pm_approved:rows.filter(r=>r.status==="pm_approved").length,approved:rows.filter(r=>r.status==="approved").length,processed:rows.filter(r=>r.status==="processed").length,paid:rows.filter(r=>r.status==="paid").length,rejected:rows.filter(r=>r.status==="rejected").length,unbilled:rows.filter(r=>apBillState(r)==="unbilled").length};
-  const inTab=(r)=>tab==="all"||(tab==="unbilled"?apBillState(r)==="unbilled":r.status===tab);
+  const inDiv=(r)=>div==="none"?!divOf(r):divOf(r)===div;
+  const divRows=q.trim()?rows:rows.filter(inDiv);   // status tab counts are for the division you're looking at
+  const counts={all:divRows.length,entered:divRows.filter(r=>r.status==="entered").length,pm_approved:divRows.filter(r=>r.status==="pm_approved").length,approved:divRows.filter(r=>r.status==="approved").length,processed:divRows.filter(r=>r.status==="processed").length,paid:divRows.filter(r=>r.status==="paid").length,rejected:divRows.filter(r=>r.status==="rejected").length,unbilled:divRows.filter(r=>apBillState(r)==="unbilled").length,billed:divRows.filter(r=>apBillState(r)==="billed").length};
+  const inTab=(r)=>tab==="all"||(tab==="unbilled"||tab==="billed"?apBillState(r)===tab:r.status===tab);
   const searching=!!q.trim();   // a search looks across every division
   const filtered=rows.filter(r=>inTab(r)&&(searching||(div==="none"?!divOf(r):divOf(r)===div))&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm,r.billed_invoice_no,r.payment_ref,r.approved_by].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
   const assignedToMe=rows.filter(r=>r.status==="entered"&&r.assigned_pm===user.name).length;
@@ -2207,7 +2209,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
   }
   if(showNew||(open&&open._edit))return <ApInvoiceForm user={user} projects={projects} mfgJobs={mfgJobs} pms={pms} existing={open&&open._edit?open:null} rows={rows} onBack={()=>{setShowNew(false);setOpen(null);}} onSaved={async()=>{setShowNew(false);setOpen(null);await load();}}/>;
   if(showReport)return <ApInvoiceReport user={user} rows={rows} pms={pms} jobOf={jobOf} divOf={divOf} onBack={()=>setShowReport(false)}/>;
-  const tabs=[["all",`All (${rows.length})`],["entered",`Needs PM approval (${counts.entered})`],["pm_approved",`Needs final approval (${counts.pm_approved})`],["approved",`Add to Foundation (${counts.approved})`],["processed",`In Foundation (${counts.processed})`],["paid",`Paid (${counts.paid})`],["unbilled",`Not billed to customer (${counts.unbilled})`],["rejected",`Rejected (${counts.rejected})`]];
+  const tabs=[["all",`All (${counts.all})`],["entered",`Needs PM approval (${counts.entered})`],["pm_approved",`Needs final approval (${counts.pm_approved})`],["approved",`Add to Foundation (${counts.approved})`],["processed",`In Foundation (${counts.processed})`],["paid",`Paid (${counts.paid})`],["unbilled",`Not billed (${counts.unbilled})`],["billed",`Billed (${counts.billed})`],["rejected",`Rejected (${counts.rejected})`]];
   return(<div style={embedded?{}:{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
     {!embedded&&<TopBar title="💵 AP Invoices" sub={`${counts.entered} awaiting approval · ${counts.approved} to add to Foundation`} onBack={onBack}/>}
     <div style={{padding:embedded?"0 0 80px":"14px 16px 80px"}}>
