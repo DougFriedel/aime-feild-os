@@ -11708,6 +11708,42 @@ function AddEstimateModal({bid,family,user,onClose,onDone,onErr}){
   );
 }
 
+/* Attach a bid, at any stage, to a job that already exists (the reverse of "Make it a Job"). */
+function AttachJobModal({bid,user,onClose,onDone,onErr}){
+  const [jobs,setJobs]=useState(null);const [q,setQ]=useState("");const [busy,setBusy]=useState(false);
+  useEffect(()=>{(async()=>{try{
+    const [p,m]=await Promise.all([sb("/projects?select=id,name,client,division,status,location&order=created_at.desc&limit=600").catch(()=>[]),API.mfg.jobs.list().catch(()=>[])]);
+    setJobs([...(p||[]).map(x=>({kind:"project",id:x.id,label:x.name,sub:[x.client,x.division,x.location,x.status].filter(Boolean).join(" · "),division:x.division})),
+             ...(m||[]).map(x=>({kind:"mfg",id:x.id,label:x.job_number,sub:[x.customer,"Manufacturing",x.status].filter(Boolean).join(" · "),division:"Manufacturing"}))]);
+  }catch(e){setJobs([]);onErr&&onErr(e.message);}})();},[]);
+  async function pick(j){
+    setBusy(true);
+    try{
+      await API.estimates.update(bid.id,{job_project_id:j.kind==="project"?j.id:null,job_mfg_id:j.kind==="mfg"?j.id:null,job_number:j.label,job_division:j.division,
+        converted_by:user.name,converted_at:new Date().toISOString(),updated_at:new Date().toISOString()});
+      onDone&&onDone();
+    }catch(e){onErr&&onErr(e.message);setBusy(false);}
+  }
+  const s=q.trim().toLowerCase();
+  const list=(jobs||[]).filter(j=>!s||[j.label,j.sub].some(v=>String(v||"").toLowerCase().includes(s)));
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:220,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:20,width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:16,fontWeight:900,marginBottom:4}}>Attach this estimate to a job</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:10}}>The job's Estimate tab will show this estimate and compare it to the daily reports.</div>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search job number, customer, division…" style={{...inp,marginBottom:10}} autoFocus/>
+        {jobs===null&&<Spinner/>}
+        {list.slice(0,80).map(j=>(<div key={j.kind+j.id} style={{...cardS,marginBottom:6,padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+          <div style={{minWidth:0}}><div style={{fontSize:13.5,fontWeight:700}}>{j.kind==="mfg"?"🏭 ":""}{j.label}</div><div style={{fontSize:11,color:T.muted}}>{j.sub}</div></div>
+          <button disabled={busy} onClick={()=>pick(j)} style={{...ghostBtn,padding:"6px 12px",fontSize:11.5,color:T.orange,borderColor:T.orange+"60",flexShrink:0}}>Attach</button>
+        </div>))}
+        {jobs&&list.length===0&&<div style={{color:T.muted,fontSize:12,textAlign:"center",padding:20}}>No jobs match.</div>}
+        <button onClick={onClose} style={{...ghostBtn,width:"100%",marginTop:8}}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 function BidDetail({bidId,user,onBack,onChanged}){
   // Two people in the same bid overwrite each other silently — last save wins.
   // This does not lock anything, it just makes the overlap visible.
@@ -11716,6 +11752,7 @@ function BidDetail({bidId,user,onBack,onChanged}){
   const [family,setFamily]=useState([]);        // the bid plus any estimates added under it
   const [activeId,setActiveId]=useState(bidId);  // which estimate the tabs show
   const [addEst,setAddEst]=useState(false);
+  const [attachJob,setAttachJob]=useState(false);
   const [tab,setTab]=useState("overview");
   const [loading,setLoading]=useState(true);
   const [askReview,setAskReview]=useState(false);
@@ -11775,6 +11812,10 @@ function BidDetail({bidId,user,onBack,onChanged}){
           {converted&&<span style={{...pill(T.green),padding:"7px 12px",fontSize:11.5}}>
             ✓ Job {bid.job_number||""}{bid.job_division?` · ${bid.job_division}`:""}
           </span>}
+          {!converted&&<button onClick={()=>setAttachJob(true)} title="Link this estimate to a job that already exists"
+            style={{...ghostBtn,padding:"8px 12px",fontSize:11.5,flexShrink:0}}>🔗 Attach to job</button>}
+          {converted&&user.role==="admin"&&<button onClick={()=>{if(window.confirm("Detach this estimate from the job?"))patch({job_project_id:null,job_mfg_id:null,job_number:null,job_division:null});}} title="Unlink from the job"
+            style={{...ghostBtn,padding:"8px 10px",fontSize:11.5,flexShrink:0}}>Detach</button>}
           {canConvert&&!converted&&<button onClick={()=>setConvert(true)}
             style={{...primBtn,padding:"8px 14px",borderRadius:8,fontSize:11.5,background:T.green,color:"#000",flexShrink:0}}>
             🚀 Make it a Job
@@ -11811,6 +11852,8 @@ function BidDetail({bidId,user,onBack,onChanged}){
         </div>
       </div>
 
+      {attachJob&&<AttachJobModal bid={bid} user={user} onClose={()=>setAttachJob(false)} onErr={setErr}
+        onDone={()=>{setAttachJob(false);load(bid.id);onChanged&&onChanged();}}/>}
       {addEst&&<AddEstimateModal bid={bid} family={family} user={user} onClose={()=>setAddEst(false)} onErr={setErr}
         onDone={async(row)=>{setAddEst(false);await load(row?.id||activeId);onChanged&&onChanged();}}/>}
 
