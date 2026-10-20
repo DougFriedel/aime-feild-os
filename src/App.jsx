@@ -1899,7 +1899,7 @@ const apMoney=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigit
 const apDaysSince=(ts)=>ts?Math.max(0,Math.floor((Date.now()-new Date(ts).getTime())/86400000)):null;
 function apBillLine(r){
   const st=apBillState(r);
-  if(st==="billed")return `Billed on customer invoice ${r.billed_invoice_no||"(no #)"}${r.billed_date?` dated ${fmtDate(r.billed_date)}`:""}${r.billed_by?`, marked by ${r.billed_by}`:""}`;
+  if(st==="billed")return `Billed${r.billed_invoice_no?` on customer invoice ${r.billed_invoice_no}`:""}${r.billed_date?` ${fmtDate(r.billed_date)}`:""}${r.billed_by?`, marked by ${r.billed_by}`:""}`;
   if(st==="not_billable")return `Not billable${r.not_billable_reason?`: ${r.not_billable_reason}`:""}${r.billed_by?` (${r.billed_by})`:""}`;
   if(st==="unbilled"){const d=apDaysSince(r.final_approved_at||r.approved_at);return `Approved and not billed yet${d!=null?`, ${d} day${d===1?"":"s"} since approval`:""}`;}
   return "";
@@ -1950,10 +1950,9 @@ function ApBillDialog({r,user,onClose,onSaved}){
         billed_by:user.name,billed_at:new Date().toISOString(),not_billable_reason:null};
       action="billed";note=`customer invoice ${inv.invoice_no||"(no #)"}`;
     }else{
-      if(!no.trim()){setErr("Enter the customer invoice number.");return;}
-      fields={billing_status:"billed",billed_job_invoice_id:null,billed_invoice_no:no.trim(),billed_date:date||today(),
+      fields={billing_status:"billed",billed_job_invoice_id:null,billed_invoice_no:no.trim()||null,billed_date:date||today(),
         billed_by:user.name,billed_at:new Date().toISOString(),not_billable_reason:null};
-      action="billed";note=`customer invoice ${no.trim()}`;
+      action="billed";note=no.trim()?`customer invoice ${no.trim()}`:`billed ${date||today()}`;
     }
     setBusy(true);setErr("");
     try{const updated=await apSaveBilling(r,user,fields,action,note);onSaved(updated);}
@@ -1969,7 +1968,7 @@ function ApBillDialog({r,user,onClose,onSaved}){
         <div style={{fontSize:12,color:T.muted,marginBottom:14}}>{apMoney(r.amount)}{r.description?` · ${r.description}`:""}</div>
         <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,gap:4,marginBottom:14}}>
           {invoices&&invoices.length>0&&tabBtn("pick","Pick invoice")}
-          {tabBtn("type","Type invoice #")}
+          {tabBtn("type","Billed")}
           {tabBtn("not","Not billable")}
         </div>
         {invoices===null?<Spinner/>:<>
@@ -1987,11 +1986,8 @@ function ApBillDialog({r,user,onClose,onSaved}){
               </label>);})}
           </div>}
           {mode==="type"&&<div>
-            {invoices.length===0&&<div style={{fontSize:12,color:T.muted,marginBottom:10}}>{r.project_id||r.mfg_job_id?"This job has no customer invoices in the app yet, so type the invoice details.":"This vendor invoice isn't on a job, so type the customer invoice details."}</div>}
-            <label style={lbl}>Customer invoice #</label>
-            <input value={no} onChange={e=>setNo(e.target.value)} placeholder="e.g. 10452" style={{...inp,marginBottom:12}} autoFocus/>
             <label style={lbl}>Date billed</label>
-            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...inp,colorScheme:"dark"}}/>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...inp,colorScheme:"dark"}} autoFocus/>
           </div>}
           {mode==="not"&&<div>
             <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Use this for overhead and other costs that never get billed to a customer. It drops off the unbilled lists.</div>
