@@ -2173,7 +2173,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
   const counts={entered:rows.filter(r=>r.status==="entered").length,pm_approved:rows.filter(r=>r.status==="pm_approved").length,approved:rows.filter(r=>r.status==="approved").length,processed:rows.filter(r=>r.status==="processed").length,paid:rows.filter(r=>r.status==="paid").length,rejected:rows.filter(r=>r.status==="rejected").length,unbilled:rows.filter(r=>apBillState(r)==="unbilled").length};
   const inTab=(r)=>tab==="all"||(tab==="unbilled"?apBillState(r)==="unbilled":r.status===tab);
   const searching=!!q.trim();   // a search looks across every division
-  const filtered=rows.filter(r=>inTab(r)&&(searching||(div==="none"?!divOf(r):divOf(r)===div))&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
+  const filtered=rows.filter(r=>inTab(r)&&(searching||(div==="none"?!divOf(r):divOf(r)===div))&&(!onlyMine||r.assigned_pm===user.name)&&(!q.trim()||[r.vendor,r.invoice_no,r.po_number,r.description,jobOf(r),r.entered_by,r.assigned_pm,r.billed_invoice_no,r.payment_ref,r.approved_by].some(v=>String(v||"").toLowerCase().includes(q.toLowerCase()))));
   const assignedToMe=rows.filter(r=>r.status==="entered"&&r.assigned_pm===user.name).length;
   const total=filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
   async function act(r,status,extra={},note){
@@ -2216,7 +2216,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
         Vendor invoices come in here once. <b style={{color:T.text}}>Accounting enters</b> → <b style={{color:T.text}}>PM approves</b> (or rejects with a reason) → <b style={{color:T.text}}>{AP_FINAL_APPROVER} gives final approval</b> (automatic, no need to assign it) → <b style={{color:T.text}}>Accounting adds it to Foundation</b> and marks paid. A red button means it still needs to go into Foundation; green means it's in. The same vendor + invoice number can't be entered twice — you'll be shown the existing one instead.
       </div>
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search all divisions: vendor, invoice #, PO, job…" style={{...inp,flex:2,minWidth:220}}/>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search all divisions: vendor, invoice #, PO, job, customer invoice #…" style={{...inp,flex:2,minWidth:220}}/>
         {canEnter&&<button onClick={()=>setShowNew(true)} style={{...primBtn,borderRadius:12,padding:"10px 16px",background:T.teal,color:"#000",fontSize:13}}>+ Enter Invoice</button>}
         <button onClick={()=>setShowReport(true)} style={{...ghostBtn,padding:"10px 14px",fontSize:13}}>📊 Report</button>
       </div>
@@ -2228,7 +2228,7 @@ function ApInvoicesScreen({user,projects,onBack,embedded}){
         const chips=[["none","Needs division",inT.filter(r=>!divOf(r))],...DIVISIONS.map(d=>[d,d,inT.filter(r=>divOf(r)===d)])];
         return(<div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto"}}>
           {chips.map(([id,l,list])=>{const m=DIV_META[id]||{};const on=div===id&&!searching;const c=id==="none"?(list.length?T.yellow:T.muted):(m.color||T.muted);return(<button key={id} onClick={()=>{setDiv(id);setQ("");}} style={{...ghostBtn,padding:"7px 12px",fontSize:12,whiteSpace:"nowrap",textAlign:"left",borderColor:on?c:T.border,color:on?c:T.sub,background:on?c+"18":"transparent"}}>
-            <div style={{fontWeight:700}}>{m.icon?m.icon+" ":""}{l} <span style={{opacity:.7}}>({list.length})</span></div><div style={{fontSize:10.5,opacity:.85}}>{money(sum(list))}</div></button>);})}
+            <div style={{fontWeight:700}}>{m.icon?m.icon+" ":""}{l} <span style={{opacity:.7}}>({list.length})</span></div><div style={{fontSize:10.5,opacity:.85}}>{money(sum(list))}{(()=>{const nb=list.filter(r=>apBillState(r)==="unbilled");return nb.length?<span style={{color:T.yellow,marginLeft:6}}>· {nb.length} not billed</span>:null;})()}</div></button>);})}
         </div>);})()}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
         <div style={{...cardS,textAlign:"center",padding:10}}><div style={{fontSize:18,fontWeight:900,color:T.blue}}>{filtered.length}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Invoices shown</div></div>
