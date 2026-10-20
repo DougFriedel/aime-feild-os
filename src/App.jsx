@@ -7898,6 +7898,7 @@ const PTABS=[
   {id:"reports",icon:"📋",label:"Reports",perm:"submit_report",viewPerm:"view_reports"},
   {id:"tm",icon:"🧾",label:"T&M",perm:"submit_report",viewPerm:"view_reports"},
   {id:"billing",icon:"💰",label:"Billing",perm:"approve_report"},
+  {id:"estimate",icon:"📐",label:"Estimate",perm:"approve_report"},
   {id:"time",icon:"⏱️",label:"Time",perm:"time_card"},
   {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
   {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
@@ -11125,14 +11126,14 @@ async function notifyReviewOutcome(bid,newStatus,actor){
   }catch(e){ console.warn("review notification failed:",e.message); }
 }
 
-function BidBoard({user,onBack}){
+function BidBoard({user,onBack,initialOpenId}){
   const [bids,setBids]=useState([]);
   const [loading,setLoading]=useState(true);
   const [stage,setStage]=useState("estimating");
   const [q,setQ]=useState("");
   const [sortKey,setSortKey]=useState("due_date");
   const [sortDir,setSortDir]=useState("asc");
-  const [openId,setOpenId]=useState(null);    // bid being viewed
+  const [openId,setOpenId]=useState(initialOpenId||null);    // bid being viewed
   const [reviewBid,setReviewBid]=useState(null);
   const [creating,setCreating]=useState(false);
   const [showReport,setShowReport]=useState(false);
@@ -11724,7 +11725,10 @@ function BidDetail({bidId,user,onBack,onChanged}){
   async function load(id=activeId){
     setLoading(true);
     try{
-      const rows=await API.estimates.family(bidId);
+      let rows=await API.estimates.family(bidId);
+      // Opened on an added estimate? Load the whole bid it belongs to.
+      const first=(rows||[]).find(r=>r.id===bidId);
+      if(first&&first.parent_id)rows=await API.estimates.family(first.parent_id);
       const fam=(rows||[]).sort((a,b)=>(a.parent_id?1:0)-(b.parent_id?1:0)||String(a.created_at).localeCompare(String(b.created_at)));
       setFamily(fam);
       const cur=fam.find(f=>f.id===id)||fam[0]||null;
@@ -14494,6 +14498,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
         {!loading&&tab==="subs"     &&can(user,"subs")        &&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="safety"   &&can(user,"safety")      &&<SafetyTab projectId={project.id} safety={safety} user={user} onRefresh={()=>load(true)} onErr={setErr}/>}
         {!loading&&tab==="billing"&&<BillingTab project={project} user={user} onErr={setErr}/>}
+        {!loading&&tab==="estimate"&&<JobEstimateTab project={project} user={user} reports={reports} onErr={setErr}/>}
         {!loading&&tab==="co"&&<ChangeOrdersTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="rfi"&&<RFIsTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="docs"     &&can(user,"docs")        &&<DocsTab projectId={project.id} user={user} onErr={setErr}/>}
@@ -19266,7 +19271,9 @@ function AppInner(){
   const [user,setUser]           = useState(null);
   const [restoring,setRestoring] = useState(true);   // checking for a saved session
   const [projects,setProjects]   = useState([]);
-  const [screen,setScreen]       = useState("division");
+  // ?bid=<id> opens that bid straight away (links from the job's Estimate tab and review emails)
+  const [deepBidId]              = useState(()=>new URLSearchParams(window.location.search).get("bid"));
+  const [screen,setScreen]       = useState(deepBidId?"estimating":"division");
   const [selectedDiv,setSelectedDiv] = useState(null);
   const [selectedProject,setSelectedProject] = useState(null);
   const [selectedMfgJob,setSelectedMfgJob]   = useState(null);
@@ -19505,7 +19512,7 @@ function AppInner(){
         <MyTrainingScreen user={user} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="estimating"&&canEstimate(user)&&(
-        <BidBoard user={user} onBack={()=>setScreen("division")}/>
+        <BidBoard user={user} onBack={()=>setScreen("division")} initialOpenId={deepBidId}/>
       )}
       {user&&screen==="jobs"&&selectedDiv==="Manufacturing"&&!selectedMfgJob&&(
         <ManufacturingJobBoard user={user} onBack={()=>setScreen("division")} onSelectJob={j=>{setSelectedMfgJob(j);setSelectedMfgPart(null);}}/>
@@ -20572,6 +20579,120 @@ function ContractStrip({project,refreshKey,compact}){
       </div>
     </div>
   );
+}
+
+/* ── Job → the estimate it came from ──
+   A bid remembers the job it became (job_project_id). This tab is the way back:
+   it shows that estimate on the job, lets a PM attach one when the job was set up
+   by hand, and puts estimated hours and dollars next to what the daily reports say. */
+function JobEstimateTab({project,user,reports,onErr}){
+  const [est,setEst]=useState(null);const [lines,setLines]=useState([]);const [loading,setLoading]=useState(true);
+  const [picking,setPicking]=useState(false);const [bids,setBids]=useState([]);const [q,setQ]=useState("");
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const num=(n,d=1)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+  async function load(){
+    setLoading(true);
+    try{
+      const rows=await sb(`/estimates?job_project_id=eq.${project.id}&select=*&order=converted_at.desc.nullslast&limit=1`);
+      const e=(rows||[])[0]||null;setEst(e);
+      setLines(e?(await API.estimateLines.forEstimate(e.id).catch(()=>[]))||[]:[]);
+    }catch(e){onErr&&onErr(e.message);}
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[project.id]);
+  async function openPicker(){
+    setPicking(true);
+    try{const all=await sb("/estimates?select=id,name,quote_number,requester_company,division,status,total_sales,parent_id,estimate_label,job_project_id&order=created_at.desc&limit=500");setBids(all||[]);}
+    catch(e){onErr&&onErr(e.message);}
+  }
+  async function attach(b){
+    if(b.job_project_id&&b.job_project_id!==project.id&&!window.confirm("That estimate is already attached to another job. Move it to this one?"))return;
+    try{await API.estimates.update(b.id,{job_project_id:project.id,job_number:project.name,job_division:project.division,converted_by:b.converted_by||user.name,converted_at:b.converted_at||new Date().toISOString(),updated_at:new Date().toISOString()});setPicking(false);await load();}
+    catch(e){onErr&&onErr(e.message);}
+  }
+  async function detach(){
+    if(!window.confirm("Detach this estimate from the job? The estimate itself is not deleted."))return;
+    try{await API.estimates.update(est.id,{job_project_id:null,updated_at:new Date().toISOString()});await load();}catch(e){onErr&&onErr(e.message);}
+  }
+  // Same labor rule as the Estimating and Proposal tabs.
+  const rate=(l)=>l.labor_rate!=null&&l.labor_rate!==""?Number(l.labor_rate):Number(est?.labor_cost_rate)||102;
+  const qtyOf=(l)=>Number(l.quantity)||0;
+  const matOf=(l)=>qtyOf(l)*(l.pricing_basis==="weight"&&Number(l.weight_per_unit)>0?(Number(l.price_per_weight)||0)*Number(l.weight_per_unit):(Number(l.unit_cost)||0))*(1+(Number(l.waste_pct)||0)/100);
+  const hrsOf=(l)=>qtyOf(l)*(Number(l.labor_hours)||0);
+  const estHrs=lines.reduce((s,l)=>s+hrsOf(l),0);
+  const estLabor=lines.reduce((s,l)=>s+hrsOf(l)*rate(l),0);
+  const estMat=lines.reduce((s,l)=>s+matOf(l),0);
+  const actual=(reports||[]).reduce((a,r)=>{const t=reportTotals(r,project.division);a.hrs+=t.labor_hrs;a.labor+=t.labor;a.equip+=t.equip;a.mats+=t.mats+(t.rental||0);a.grand+=t.grand;return a;},{hrs:0,labor:0,equip:0,mats:0,grand:0});
+  const cats={};lines.forEach(l=>{const c=l.category||"Other";(cats[c]=cats[c]||[]).push(l);});
+  const pct=(a,b)=>b>0?Math.round(a/b*100):null;
+  const bar=(label,a,b,fmt)=>{const p=pct(a,b);const over=p!=null&&p>100;return(
+    <div style={{marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}}><span style={{color:T.sub,fontWeight:700}}>{label}</span><span style={{color:over?T.red:T.text}}>{fmt(a)} <span style={{color:T.muted}}>of {fmt(b)}</span>{p!=null&&<span style={{color:over?T.red:T.muted}}> · {p}%</span>}</span></div>
+      <div style={{height:6,background:T.surface,borderRadius:3,overflow:"hidden"}}><div style={{width:`${Math.min(100,p||0)}%`,height:"100%",background:over?T.red:p>85?T.yellow:T.green}}/></div>
+    </div>);};
+  if(loading)return <Spinner/>;
+  const picker=picking&&(()=>{const s=q.trim().toLowerCase();const list=bids.filter(b=>!s||[b.name,b.quote_number,b.requester_company,b.estimate_label].some(v=>String(v||"").toLowerCase().includes(s)));return(
+    <div onClick={()=>setPicking(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:220,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:20,width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:16,fontWeight:900,marginBottom:10}}>Attach an estimate to {project.name}</div>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search bid name, quote #, customer…" style={{...inp,marginBottom:10}} autoFocus/>
+        {list.slice(0,60).map(b=>(<div key={b.id} style={{...cardS,marginBottom:6,padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+          <div style={{minWidth:0}}><div style={{fontSize:13.5,fontWeight:700}}>{b.name||"Untitled"}{b.estimate_label?<span style={{color:T.orange}}> · {b.estimate_label}</span>:""}</div>
+            <div style={{fontSize:11,color:T.muted}}>{[b.quote_number?"Quote "+b.quote_number:null,b.requester_company,b.division,stageOf(b.status).label,b.job_project_id?(b.job_project_id===project.id?"attached here":"attached to another job"):null].filter(Boolean).join(" · ")}</div></div>
+          <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:13,fontWeight:800,color:T.green}}>{money(b.total_sales)}</div>
+            <button onClick={()=>attach(b)} style={{...ghostBtn,padding:"5px 10px",fontSize:11,marginTop:4,color:T.orange,borderColor:T.orange+"60"}}>Attach</button></div>
+        </div>))}
+        {list.length===0&&<div style={{color:T.muted,fontSize:12,textAlign:"center",padding:20}}>No estimates match.</div>}
+        <button onClick={()=>setPicking(false)} style={{...ghostBtn,width:"100%",marginTop:8}}>Cancel</button>
+      </div></div>);})();
+  if(!est)return(<div>
+    {picker}
+    <div style={{...cardS,textAlign:"center",padding:28,color:T.muted}}>
+      <div style={{fontSize:32,marginBottom:8}}>📐</div>
+      <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>No estimate attached</div>
+      <div style={{fontSize:12,marginBottom:14}}>A bid turned into a job with "Make it a Job" attaches itself. For a job set up by hand, pick the estimate it was bid from.</div>
+      <button onClick={openPicker} style={{...primBtn,width:"auto",display:"inline-flex",padding:"10px 18px",borderRadius:10,fontSize:13}}>Attach an estimate</button>
+    </div></div>);
+  return(<div>
+    {picker}
+    <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start",flexWrap:"wrap"}}>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:16,fontWeight:900}}>{est.name||"Untitled bid"}{est.estimate_label?<span style={{color:T.orange}}> · {est.estimate_label}</span>:""}</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:3}}>{[est.quote_number?"Quote "+est.quote_number:null,est.requester_company,est.estimator?"by "+est.estimator:null,est.quote_date?fmtDate(est.quote_date):null,stageOf(est.status).label].filter(Boolean).join(" · ")}</div>
+        </div>
+        <div style={{textAlign:"right"}}><div style={{fontSize:20,fontWeight:900,color:T.green}}>{money(est.total_sales)}</div><div style={{fontSize:10.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Estimate total</div></div>
+      </div>
+      <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
+        <a href={`${window.location.origin}${window.location.pathname}?bid=${est.id}`} target="_blank" rel="noreferrer" style={{...ghostBtn,padding:"7px 12px",fontSize:12,textDecoration:"none",color:T.purple,borderColor:T.purple+"60"}}>📐 Open in Bid Board</a>
+        {user.role==="admin"&&<><button onClick={openPicker} style={{...ghostBtn,padding:"7px 12px",fontSize:12}}>Change</button><button onClick={detach} style={{...ghostBtn,padding:"7px 12px",fontSize:12,color:T.red,borderColor:T.red+"50"}}>Detach</button></>}
+      </div>
+    </div>
+    <div style={{...cardS,marginBottom:12}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Estimate vs. daily reports so far</div>
+      {bar("Labor hours",actual.hrs,estHrs,(n)=>num(n,1)+" hrs")}
+      {bar("Labor cost",actual.labor,estLabor,money)}
+      {bar("Materials, rentals & equipment",actual.mats+actual.equip,estMat,money)}
+      {bar("Everything",actual.grand,Number(est.total_sales)||0,money)}
+      <div style={{fontSize:11,color:T.muted,marginTop:6}}>Actuals come from the job's daily reports at crew rates, so they're cost, not billing. "Everything" compares cost to the sale price, so it should stay well under 100%.</div>
+    </div>
+    <div style={{...cardS}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>What was estimated · {num(estHrs,1)} hrs · {money(estLabor+estMat)} direct cost</div>
+      {Object.entries(cats).map(([c,ls])=>(<div key={c} style={{marginBottom:12}}>
+        <div style={{fontSize:12.5,fontWeight:800,color:T.sub,marginBottom:4}}>{c} <span style={{color:T.muted,fontWeight:500}}>· {money(ls.reduce((s,l)=>s+matOf(l)+hrsOf(l)*rate(l),0))}</span></div>
+        {ls.map(l=>(<div key={l.id} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,padding:"5px 0",borderBottom:`1px solid ${T.border}`}}>
+          <span style={{minWidth:0}}><span style={{fontWeight:600}}>{l.name}</span>{l.description?<span style={{color:T.muted}}> · {l.description}</span>:""}</span>
+          <span style={{color:T.muted,whiteSpace:"nowrap"}}>{num(qtyOf(l),qtyOf(l)%1?1:0)} {l.unit||"EA"}{hrsOf(l)?` · ${num(hrsOf(l),1)} hrs`:""} · <span style={{color:T.text}}>{money(matOf(l)+hrsOf(l)*rate(l))}</span></span>
+        </div>))}
+      </div>))}
+      {lines.length===0&&<div style={{color:T.muted,fontSize:12}}>No cost items on this estimate.</div>}
+      {(est.scope_of_work||est.inclusions||est.exclusions)&&<div style={{marginTop:14,fontSize:12,lineHeight:1.6}}>
+        {est.scope_of_work&&<div style={{marginBottom:8}}><b style={{color:T.sub}}>Scope: </b>{est.scope_of_work}</div>}
+        {est.inclusions&&<div style={{marginBottom:8}}><b style={{color:T.green}}>Included: </b>{est.inclusions}</div>}
+        {est.exclusions&&<div><b style={{color:T.red}}>Excluded: </b>{est.exclusions}</div>}
+      </div>}
+    </div>
+  </div>);
 }
 
 function BillingTab({project,user,onErr}){
