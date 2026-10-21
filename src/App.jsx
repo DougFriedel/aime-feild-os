@@ -20754,6 +20754,10 @@ function BillingTab({project,user,onErr}){
     </div>
   );
 
+  if(openInvoice!==null&&(openInvoice.kind==="credit_memo"))return(
+    <CreditMemoForm project={project} user={user} memo={openInvoice.id?openInvoice:null}
+      onBack={()=>{setOpenInvoice(null);setRefreshKey(k=>k+1);}} onSaved={()=>{setOpenInvoice(null);setRefreshKey(k=>k+1);}} onErr={onErr}/>
+  );
   if(openInvoice!==null)return(
     <InvoiceForm project={project} user={user} invoice={openInvoice.id?openInvoice:null}
       onBack={()=>{setOpenInvoice(null);setRefreshKey(k=>k+1);}} onSaved={()=>{setOpenInvoice(null);setRefreshKey(k=>k+1);}} onErr={onErr}/>
@@ -20818,9 +20822,10 @@ function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
 
   return(
     <div>
-      <button onClick={onNew} style={{...primBtn,borderRadius:14,marginBottom:14,background:T.orange,color:"#000"}}>
-        + New Invoice
-      </button>
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        <button onClick={onNew} style={{...primBtn,flex:2,borderRadius:14,background:T.orange,color:"#000"}}>+ New Invoice</button>
+        <button onClick={()=>onOpen({kind:"credit_memo"})} title="Credit back part of an invoice" style={{...primBtn,flex:1,borderRadius:14,background:T.surface,color:T.purple,border:`1px solid ${T.purple}60`,fontSize:14}}>− Credit Memo</button>
+      </div>
 
       {rows.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
         {[["Billed",billed,T.text],["Paid",paid,T.green],["Outstanding",outstanding,outstanding>0?T.yellow:T.muted]].map(([l,v,c])=>(
@@ -20838,18 +20843,18 @@ function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
         <div style={{fontSize:12}}>Create one above. You can pull lines straight from {mfgJob?"shipped parts":"unbilled daily reports and T&M tickets"}.</div>
       </div>}
 
-      {rows.map(inv=>(
-        <div key={inv.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${statusColor[inv.status]||T.muted}`}}>
+      {rows.map(inv=>{const cm=inv.kind==="credit_memo";const against=cm&&inv.credits_invoice_id?rows.find(r=>r.id===inv.credits_invoice_id):null;return(
+        <div key={inv.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${cm?T.purple:(statusColor[inv.status]||T.muted)}`}}>
           <div onClick={()=>onOpen(inv)} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",cursor:"pointer"}}>
             <div>
-              <div style={{fontSize:14,fontWeight:800,color:T.orange}}>Invoice {inv.invoice_no||"(no #)"}</div>
+              <div style={{fontSize:14,fontWeight:800,color:cm?T.purple:T.orange}}>{cm?"Credit Memo":"Invoice"} {inv.invoice_no||"(no #)"}{against?<span style={{fontSize:11,color:T.muted,fontWeight:500}}> · against Invoice {against.invoice_no||"(no #)"}</span>:null}</div>
               <div style={{fontSize:11.5,color:T.muted}}>
                 {inv.invoice_date||"—"}{inv.due_date?` · due ${inv.due_date}`:""}{inv.bill_to?` · ${inv.bill_to}`:""}
               </div>
               {inv.description&&<div style={{fontSize:11,color:T.sub,marginTop:2}}>{inv.description.slice(0,70)}{inv.description.length>70?"…":""}</div>}
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
-              <div style={{fontSize:16,fontWeight:900,color:T.green}}>{money(inv.total)}</div>
+              <div style={{fontSize:16,fontWeight:900,color:cm?T.red:T.green}}>{cm?"−":""}{money(Math.abs(inv.total))}</div>
               <span style={pill(statusColor[inv.status]||T.muted)}>{inv.status}</span>
             </div>
           </div>
@@ -20858,7 +20863,148 @@ function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
             <button onClick={()=>del(inv)} style={{...ghostBtn,fontSize:12,color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>
           </div>
         </div>
-      ))}
+      );})}
+    </div>
+  );
+}
+
+/* ─────────────── CREDIT MEMO ───────────────
+   A credit memo is stored as a job_invoices row with kind "credit_memo" and a negative
+   total, so Billed / Outstanding and the contract position all net it off without any
+   extra bookkeeping. It points at the invoice it credits (credits_invoice_id). */
+function CreditMemoForm({project,mfgJob,user,memo,onBack,onSaved,onErr}){
+  const isNew=!memo;
+  const owner=mfgJob?{id:mfgJob.id,name:mfgJob.job_number,client:mfgJob.customer,location:"",po:mfgJob.po_number}
+                    :{id:project.id,name:project.name,client:project.client,location:project.location,po:project.work_order};
+  const [invoices,setInvoices]=useState([]);
+  const [f,setF]=useState({invoice_no:memo?.invoice_no||"",invoice_date:memo?.invoice_date||today(),status:memo?.status||"draft",
+    credits_invoice_id:memo?.credits_invoice_id||"",bill_to:memo?.bill_to||owner.client||"",bill_to_address:memo?.bill_to_address||"",po_number:memo?.po_number||owner.po||"",
+    description:memo?.description||"",notes:memo?.notes||"",tax_pct:memo?.tax_pct??0});
+  const [lines,setLines]=useState(memo?.lines?.length?memo.lines.map(l=>({...l,qty:String(Math.abs(parseFloat(l.qty)||0)),unit_price:String(Math.abs(parseFloat(l.unit_price)||0))})):[{id:uid(),description:"",qty:"1",unit:"EA",unit_price:""}]);
+  const [saving,setSaving]=useState(false);
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  const setLine=(id,k,v)=>setLines(ls=>ls.map(l=>l.id===id?{...l,[k]:v}:l));
+  const lineAmt=(l)=>(parseFloat(l.qty)||0)*(parseFloat(l.unit_price)||0);
+  const subtotal=lines.reduce((s,l)=>s+lineAmt(l),0);
+  const taxAmount=subtotal*((parseFloat(f.tax_pct)||0)/100);
+  const total=subtotal+taxAmount;
+  const against=invoices.find(i=>String(i.id)===String(f.credits_invoice_id));
+  useEffect(()=>{(async()=>{
+    try{
+      const all=(mfgJob?await API.invoices.forMfgJob(mfgJob.id):await API.invoices.forProject(project.id))||[];
+      setInvoices(all.filter(i=>i.kind!=="credit_memo"&&i.status!=="void"));
+      if(isNew&&!f.invoice_no){const n=all.filter(i=>i.kind==="credit_memo").length+1;set("invoice_no",`${owner.name||"JOB"}-CM-${String(n).padStart(3,"0")}`);}
+    }catch(e){onErr&&onErr(e.message);}
+  })();},[]);
+  function pickInvoice(id){
+    set("credits_invoice_id",id);
+    const inv=invoices.find(i=>String(i.id)===String(id));
+    if(inv)setF(x=>({...x,credits_invoice_id:id,bill_to:inv.bill_to||x.bill_to,bill_to_address:inv.bill_to_address||x.bill_to_address,po_number:inv.po_number||x.po_number,tax_pct:inv.tax_pct??x.tax_pct}));
+  }
+  function creditWholeInvoice(){
+    if(!against)return;
+    const src=(against.lines||[]).filter(l=>!l.hidden);
+    if(!src.length){setLines([{id:uid(),description:`Credit for Invoice ${against.invoice_no||""}`,qty:"1",unit:"LS",unit_price:String(Math.abs(parseFloat(against.subtotal)||parseFloat(against.total)||0))}]);return;}
+    setLines(src.map(l=>({id:uid(),description:l.description||"",qty:String(l.qty||1),unit:l.unit||"EA",unit_price:String(l.unit_price||l.rate||0)})));
+  }
+  async function save(){
+    if(!f.invoice_no.trim()){onErr&&onErr("Give the credit memo a number.");return;}
+    if(!f.description.trim()){onErr&&onErr("Say why the credit is being issued.");return;}
+    if(subtotal<=0){onErr&&onErr("Add at least one line with an amount.");return;}
+    setSaving(true);
+    const body={kind:"credit_memo",credits_invoice_id:f.credits_invoice_id||null,project_id:mfgJob?null:project.id,mfg_job_id:mfgJob?mfgJob.id:null,
+      invoice_no:f.invoice_no.trim(),invoice_date:f.invoice_date,due_date:null,bill_to:f.bill_to,bill_to_address:f.bill_to_address,po_number:f.po_number,
+      description:f.description,notes:f.notes,status:f.status,tax_pct:parseFloat(f.tax_pct)||0,tax_amount:-taxAmount,retainage_pct:0,retainage_amount:0,amount_paid:0,
+      subtotal:-subtotal,total:-total,lines:lines.filter(l=>l.description||lineAmt(l)),created_by:memo?.created_by||user.name,updated_at:new Date().toISOString()};
+    try{if(isNew)await API.invoices.create(body);else await API.invoices.update(memo.id,body);onSaved&&onSaved();}
+    catch(e){onErr&&onErr(e.message);}
+    setSaving(false);
+  }
+  function printMemo(){
+    const w=window.open("","_blank");
+    if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Credit Memo ${esc(f.invoice_no)}</title><style>
+@page{size:letter;margin:0.6in}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}body{font-size:10pt;color:#111}
+.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #6d28d9;padding-bottom:12px;margin-bottom:16px}
+.sub{font-size:8pt;color:#555;margin-top:3px;line-height:1.5}h1{font-size:20pt;color:#6d28d9;text-align:right}
+.meta{text-align:right;font-size:9pt;color:#444;margin-top:4px;line-height:1.6}
+.boxes{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}.box{background:#f5f3ff;border:1px solid #ddd6fe;border-radius:6px;padding:10px 14px}
+.bl{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;margin-bottom:3px}
+table{width:100%;border-collapse:collapse;margin-bottom:14px}th{background:#6d28d9;color:#fff;padding:6px 8px;text-align:left;font-size:8pt;text-transform:uppercase}
+td{padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:9.5pt}tr:nth-child(even) td{background:#faf9ff}
+.tot{width:56%;margin-left:auto;border-collapse:collapse}.tot td{padding:5px 8px;border-bottom:1px solid #e5e7eb}
+.grand td{background:#6d28d9;color:#fff;font-weight:900;font-size:12pt;border:none}
+.note{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:9pt;line-height:1.6;margin-top:14px}
+.foot{margin-top:22px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
+<div class="head"><div>${AIME_LOGO_IMG(56)}<div class="sub" style="margin-top:4px">5730 Pennington Ave, Baltimore, MD 21226<br/>(410) 355-1869</div></div>
+  <div><h1>CREDIT MEMO</h1><div class="meta"><strong>${esc(f.invoice_no)}</strong><br/>Date: ${esc(f.invoice_date)}${against?`<br/>Applies to Invoice ${esc(against.invoice_no||"")}${against.invoice_date?` dated ${esc(against.invoice_date)}`:""}`:""}</div>
+  ${f.po_number?`<div style="margin-top:8px;display:inline-block;border:2px solid #6d28d9;border-radius:6px;padding:5px 12px;text-align:left"><div style="font-size:7.5pt;font-weight:700;letter-spacing:1px;color:#6d28d9;text-transform:uppercase">Customer PO #</div><div style="font-size:14pt;font-weight:800;color:#000">${esc(f.po_number)}</div></div>`:""}</div></div>
+<div class="boxes"><div class="box"><div class="bl">Credit To</div><div style="font-weight:700">${esc(f.bill_to)}</div><div style="font-size:9pt;color:#444;line-height:1.5">${esc(f.bill_to_address).replace(/\n/g,"<br/>")}</div></div>
+  <div class="box"><div class="bl">Project</div><div style="font-weight:700">${esc(owner.name)}</div><div style="font-size:9pt;color:#444;line-height:1.5">${esc(owner.location||"")}</div></div></div>
+<div style="margin-bottom:12px;font-size:10pt"><strong>Reason for credit:</strong> ${esc(f.description)}</div>
+<table><thead><tr><th style="width:48%">Description</th><th style="text-align:center">Qty</th><th style="text-align:center">Unit</th><th style="text-align:right">Unit Price</th><th style="text-align:right">Credit</th></tr></thead><tbody>
+${lines.filter(l=>l.description||lineAmt(l)).map(l=>`<tr><td>${esc(l.description)}</td><td style="text-align:center">${esc(l.qty)}</td><td style="text-align:center">${esc(l.unit)}</td><td style="text-align:right">${money(l.unit_price)}</td><td style="text-align:right">(${money(lineAmt(l))})</td></tr>`).join("")}
+</tbody></table>
+<table class="tot"><tbody><tr><td>Subtotal</td><td style="text-align:right">(${money(subtotal)})</td></tr>${taxAmount?`<tr><td>Tax (${esc(f.tax_pct)}%)</td><td style="text-align:right">(${money(taxAmount)})</td></tr>`:""}
+<tr class="grand"><td>TOTAL CREDIT</td><td style="text-align:right">(${money(total)})</td></tr></tbody></table>
+<div class="note">This credit memo reduces the amount owed on the invoice named above. It is not a refund; if the invoice has already been paid in full, the credit will be applied to your next invoice unless otherwise agreed.${f.notes?`<br/><br/><strong>Notes:</strong> ${esc(f.notes).replace(/\n/g,"<br/>")}`:""}</div>
+<div class="foot"><span>AIME · ${esc(owner.name)} · Credit Memo ${esc(f.invoice_no)}</span><span>${new Date().toLocaleString()}</span></div></body></html>`);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},350);
+  }
+  const ri={...inp,fontSize:13,padding:"8px 10px"};
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:0}}>← Invoices</button>
+        <div style={{textAlign:"right"}}><div style={{fontSize:20,fontWeight:900,color:T.red}}>−{money(total)}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Credit</div></div>
+      </div>
+      <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.purple}`}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.purple,textTransform:"uppercase",letterSpacing:"1px",marginBottom:10}}>Credit memo</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Credit memo #</label><input value={f.invoice_no} onChange={e=>set("invoice_no",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Date</label><input type="date" value={f.invoice_date} onChange={e=>set("invoice_date",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Status</label><select value={f.status} onChange={e=>set("status",e.target.value)} style={{...ri,color:T.orange}}>{["draft","sent","void"].map(st=><option key={st} value={st}>{st==="sent"?"issued":st}</option>)}</select></div>
+        </div>
+        <div style={{marginBottom:10}}><label style={lbl}>Against invoice</label>
+          <select value={f.credits_invoice_id} onChange={e=>pickInvoice(e.target.value)} style={ri}>
+            <option value="">— not tied to one invoice —</option>
+            {invoices.map(i=><option key={i.id} value={i.id}>Invoice {i.invoice_no||"(no #)"} · {i.invoice_date||""} · {money(i.total)} · {i.status}</option>)}
+          </select>
+          {against&&<button onClick={creditWholeInvoice} style={{background:"none",border:"none",color:T.purple,fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit",padding:"6px 0 0"}}>Copy that invoice's lines in (credit the whole invoice)</button>}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Credit to</label><input value={f.bill_to} onChange={e=>set("bill_to",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Customer PO #</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} style={ri}/></div>
+        </div>
+        <div style={{marginBottom:10}}><label style={lbl}>Address</label><textarea value={f.bill_to_address} onChange={e=>set("bill_to_address",e.target.value)} rows={2} style={{...ri,resize:"vertical"}}/></div>
+        <div><label style={lbl}>Reason for credit *</label><input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="e.g. Billed 12 hrs that were not worked on 10/14" style={ri}/></div>
+      </div>
+      <div style={{...cardS,marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>What's being credited</div>
+          <button onClick={()=>setLines(ls=>[...ls,{id:uid(),description:"",qty:"1",unit:"EA",unit_price:""}])} style={{...ghostBtn,padding:"6px 10px",fontSize:12}}>+ Add line</button>
+        </div>
+        {lines.map(l=>(<div key={l.id} style={{...cardS,marginBottom:8,padding:"10px 12px",background:T.surface}}>
+          <div style={{marginBottom:8}}><label style={lbl}>Description</label><input value={l.description} onChange={e=>setLine(l.id,"description",e.target.value)} style={ri}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:8,alignItems:"end"}}>
+            <div><label style={lbl}>Qty</label><input type="number" value={l.qty} onChange={e=>setLine(l.id,"qty",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>Unit</label><input value={l.unit} onChange={e=>setLine(l.id,"unit",e.target.value)} style={ri}/></div>
+            <div><label style={lbl}>Unit price</label><input type="number" step="0.01" value={l.unit_price} onChange={e=>setLine(l.id,"unit_price",e.target.value)} style={ri}/></div>
+            <div style={{textAlign:"right"}}><div style={{fontSize:13,fontWeight:800,color:T.red,marginBottom:6}}>−{money(lineAmt(l))}</div><button onClick={()=>setLines(ls=>ls.filter(x=>x.id!==l.id))} style={{...ghostBtn,padding:"5px 9px",fontSize:11,color:T.red}}>🗑</button></div>
+          </div>
+        </div>))}
+        <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center",marginTop:6}}>
+          <div style={{fontSize:12,color:T.sub}}>Tax % <input type="number" step="0.01" value={f.tax_pct} onChange={e=>set("tax_pct",e.target.value)} style={{...ri,width:80,display:"inline-block",marginLeft:6}}/></div>
+          <div style={{textAlign:"right",fontSize:12,color:T.sub,lineHeight:1.8}}>Subtotal −{money(subtotal)}{taxAmount?<><br/>Tax −{money(taxAmount)}</>:null}<br/><b style={{color:T.red,fontSize:15}}>Total credit −{money(total)}</b></div>
+        </div>
+      </div>
+      <div style={{...cardS,marginBottom:12}}><label style={lbl}>Notes (printed on the memo)</label><textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={2} style={{...ri,resize:"vertical"}}/></div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={save} disabled={saving} style={{...primBtn,flex:2,borderRadius:12,background:T.purple,color:"#fff",opacity:saving?0.6:1}}>{saving?"Saving…":"💾 Save Credit Memo"}</button>
+        <button onClick={printMemo} style={{...ghostBtn,flex:1,textAlign:"center"}}>🖨️ Print</button>
+      </div>
     </div>
   );
 }
@@ -20933,7 +21079,7 @@ function InvoiceForm({project,mfgJob,user,invoice,onBack,onSaved,onErr}){
   useEffect(()=>{
     if(isNew&&!f.invoice_no){
       (mfgJob?API.invoices.forMfgJob(mfgJob.id):API.invoices.forProject(project.id)).then(prior=>{
-        const n=(Array.isArray(prior)?prior:[]).length+1;
+        const n=(Array.isArray(prior)?prior:[]).filter(i=>i.kind!=="credit_memo").length+1;
         set("invoice_no",`${owner.name||"JOB"}-INV-${String(n).padStart(3,"0")}`);
       }).catch(()=>{});
     }
@@ -22620,6 +22766,10 @@ function MfgBillingTab({job,user,onErr}){
     </div>
   );
 
+  if(openInvoice!==null&&openInvoice.kind==="credit_memo")return(
+    <CreditMemoForm mfgJob={job} user={user} memo={openInvoice.id?openInvoice:null}
+      onBack={()=>setOpenInvoice(null)} onSaved={()=>setOpenInvoice(null)} onErr={onErr}/>
+  );
   if(openInvoice!==null)return(
     <MfgInvoiceForm job={{...job,labor_rate:parseFloat(rate)||75}} user={user}
       invoice={openInvoice.id?openInvoice:null}
