@@ -20952,7 +20952,7 @@ function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
         <div key={inv.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${cm?T.purple:(statusColor[inv.status]||T.muted)}`}}>
           <div onClick={()=>onOpen(inv)} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",cursor:"pointer"}}>
             <div>
-              <div style={{fontSize:14,fontWeight:800,color:cm?T.purple:T.orange}}>{cm?"Credit Memo":"Invoice"} {inv.invoice_no||"(no #)"}{against?<span style={{fontSize:11,color:T.muted,fontWeight:500}}> · against Invoice {against.invoice_no||"(no #)"}</span>:null}</div>
+              <div style={{fontSize:14,fontWeight:800,color:cm?T.purple:T.orange}}>{cm?"Credit Memo":"Invoice"} {inv.invoice_no||"(no #)"}{inv.pay_app_id?<span style={{...pill(T.blue),marginLeft:6,fontSize:9}}>from pay app</span>:null}{against?<span style={{fontSize:11,color:T.muted,fontWeight:500}}> · against Invoice {against.invoice_no||"(no #)"}</span>:null}</div>
               <div style={{fontSize:11.5,color:T.muted}}>
                 {inv.invoice_date||"—"}{inv.due_date?` · due ${inv.due_date}`:""}{inv.bill_to?` · ${inv.bill_to}`:""}
               </div>
@@ -21723,8 +21723,12 @@ function PayAppList({project,user,onNew,onOpen,onErr}){
   useEffect(()=>{load();},[project.id]);
 
   async function del(a){
-    if(!window.confirm(`Delete Application No. ${a.app_no}?`))return;
-    try{ await API.payApps.remove(a.id); await load(); }catch(e){ onErr&&onErr(e.message); }
+    if(!window.confirm(`Delete Application No. ${a.app_no}?${a.id?" Any invoice created from it will be voided.":""}`))return;
+    try{
+      const inv=(await sb(`/job_invoices?pay_app_id=eq.${a.id}&limit=1`).catch(()=>[]))||[];
+      for(const i of inv)await API.invoices.update(i.id,{status:"void",updated_at:new Date().toISOString()}).catch(()=>{});
+      await API.payApps.remove(a.id); await load();
+    }catch(e){ onErr&&onErr(e.message); }
   }
 
   const statusColor={draft:T.muted,submitted:T.yellow,certified:T.blue,paid:T.green};
@@ -21799,6 +21803,32 @@ function PayAppList({project,user,onNew,onOpen,onErr}){
 }
 
 /* ─────────── PAY APPLICATION FORM (G702 + G703) ─────────── */
+/* The invoice that bills a pay application. Created from the pay app with a button; kept in
+   step with it on every later save (amount, dates, paid status); voided if the pay app is deleted. */
+function payAppInvoiceBody(project,app,user,existing){
+  const due=Math.max(0,parseFloat(app.current_due)||0);
+  const period=`${app.period_from?fmtDate(app.period_from):""}${app.period_from&&app.period_to?" – ":""}${app.period_to?fmtDate(app.period_to):""}`;
+  const desc=`Application for Payment No. ${app.app_no}${period?` · ${period}`:""}`;
+  const paid=app.status==="paid";
+  return {
+    project_id:project.id,mfg_job_id:null,kind:"invoice",pay_app_id:app.id,
+    invoice_date:app.app_date||today(),due_date:existing?.due_date||null,
+    bill_to:existing?.bill_to||project.client||"",bill_to_address:existing?.bill_to_address||"",
+    po_number:existing?.po_number||project.work_order||"",description:desc,notes:existing?.notes||"",terms:existing?.terms||"Net 30",
+    status:paid?"paid":(existing&&existing.status==="paid"?"paid":"sent"),
+    tax_pct:0,tax_amount:0,retainage_pct:0,retainage_amount:0,amount_paid:paid?due:(parseFloat(existing?.amount_paid)||0),
+    subtotal:due,total:due,
+    lines:[{id:existing?.lines?.[0]?.id||uid(),description:`${desc} — current payment due (net of retainage and previous payments)`,qty:"1",unit:"LS",unit_price:String(due.toFixed(2))}],
+    created_by:existing?.created_by||user.name,updated_at:new Date().toISOString(),
+  };
+}
+async function syncPayAppInvoice(project,app,user){
+  const hit=await sb(`/job_invoices?pay_app_id=eq.${app.id}&limit=1`).catch(()=>[]);
+  const inv=(hit||[])[0];if(!inv||inv.status==="void")return null;
+  const body=payAppInvoiceBody(project,app,user,inv);
+  await API.invoices.update(inv.id,body);return {...inv,...body};
+}
+
 function PayAppForm({project,user,payApp,onBack,onSaved,onErr}){
   const isNew=!payApp;
   const [loading,setLoading]=useState(true);
@@ -21910,6 +21940,22 @@ function PayAppForm({project,user,payApp,onBack,onSaved,onErr}){
   const currentDue=earnedLessRetain-lessPrevious;           // line 8
   const balanceToFinish=contractToDate-earnedLessRetain;    // line 9
 
+  const [linkedInv,setLinkedInv]=useState(null);const [invBusy,setInvBusy]=useState(false);
+  useEffect(()=>{if(!payApp?.id)return;sb(`/job_invoices?pay_app_id=eq.${payApp.id}&limit=1`).then(r=>setLinkedInv((r||[])[0]||null)).catch(()=>{});},[payApp?.id]);
+  async function createInvoice(){
+    if(!payApp?.id)return;setInvBusy(true);
+    try{
+      const prior=(await API.invoices.forProject(project.id))||[];
+      const dupe=prior.find(i=>i.pay_app_id===payApp.id&&i.status!=="void");
+      if(dupe){setLinkedInv(dupe);onErr&&onErr(`Invoice ${dupe.invoice_no} already bills this application.`);setInvBusy(false);return;}
+      const n=prior.filter(i=>i.kind!=="credit_memo").length+1;
+      const app={...payApp,...f,current_due:currentDue,app_no:parseInt(f.app_no)||1};
+      const body={...payAppInvoiceBody(project,app,user,null),invoice_no:`${project.name||"JOB"}-INV-${String(n).padStart(3,"0")}`};
+      const r=await API.invoices.create(body);const row=Array.isArray(r)?r[0]:r;
+      setLinkedInv(row||body);
+    }catch(e){onErr&&onErr(e.message);}
+    setInvBusy(false);
+  }
   async function save(){
     setSaving(true);
     const body={
@@ -21948,6 +21994,8 @@ function PayAppForm({project,user,payApp,onBack,onSaved,onErr}){
             stored_materials:c.F,total_completed:c.G,balance_finish:c.balance,
             retainage:0}).catch(()=>{});
         }
+        // Keep the invoice that bills this application in step with it.
+        if(!isNew)await syncPayAppInvoice(project,{...body,id:appId},user).catch(()=>{});
       }
       onSaved&&onSaved();
     }catch(e){ onErr&&onErr(e.message); }
@@ -22353,6 +22401,12 @@ table.g703 tfoot td{font-weight:800;background:#f0f0f0}
         </div>
       </div>}
 
+      {!isNew&&<div style={{...cardS,marginTop:14,borderLeft:`3px solid ${linkedInv?T.green:T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        {linkedInv?<div><div style={{fontSize:13,fontWeight:800}}>🧾 Invoice {linkedInv.invoice_no||"(no #)"} <span style={{...pill(linkedInv.status==="paid"?T.green:T.yellow),marginLeft:6,fontSize:9.5}}>{linkedInv.status}</span></div>
+            <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{money(linkedInv.total)} · bills this application. Saving the application updates the invoice; it's on the Invoices tab.</div></div>
+          :<div><div style={{fontSize:13,fontWeight:800}}>No invoice yet for this application</div><div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Creates an invoice for the current payment due ({money(currentDue)}) on the Invoices tab.</div></div>}
+        {!linkedInv&&<button onClick={createInvoice} disabled={invBusy||saving} style={{...primBtn,width:"auto",padding:"9px 14px",borderRadius:10,fontSize:12.5,background:T.green,color:"#000",opacity:invBusy?0.6:1}}>{invBusy?"Creating…":"🧾 Create Invoice"}</button>}
+      </div>}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:14}}>
         <button onClick={save} disabled={saving}
           style={{...primBtn,borderRadius:14,background:T.orange,color:"#000",opacity:saving?0.6:1}}>
