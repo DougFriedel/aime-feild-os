@@ -20768,22 +20768,23 @@ function BillingTab({project,user,onErr}){
   );
 
   const tabs=isContract
-    ?[["invoices","🧾 Invoices"],["sov","📋 Schedule of Values"],["payapps","📄 Pay Applications"]]
-    :[["invoices","🧾 Invoices"]];
+    ?[["invoices","🧾 Invoices"],["cost","📊 Job Cost"],["sov","📋 Schedule of Values"],["payapps","📄 Pay Applications"]]
+    :[["invoices","🧾 Invoices"],["cost","📊 Job Cost"]];
 
   return(
     <div>
       <ContractStrip project={project} refreshKey={refreshKey}/>
       <ApUnbilledPanel project={project} user={user}/>
-      {isContract&&<div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4,overflowX:"auto"}}>
+      <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4,overflowX:"auto"}}>
         {tabs.map(([id,label])=>(
           <button key={id} onClick={()=>setView(id)}
             style={{flex:1,minWidth:110,padding:"9px 8px",background:view===id?T.orange:"transparent",
               color:view===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:12,fontWeight:700,
               cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{label}</button>
         ))}
-      </div>}
+      </div>
 
+      {view==="cost"&&<JobCostView project={project} user={user} onErr={onErr}/>}
       {view==="invoices"&&<InvoiceList project={project} user={user}
         onNew={()=>setOpenInvoice({})} onOpen={inv=>setOpenInvoice(inv)} onErr={onErr}/>}
       {view==="sov"&&isContract&&<SOVEditor project={project} user={user} onErr={onErr}/>}
@@ -20793,7 +20794,111 @@ function BillingTab({project,user,onErr}){
   );
 }
 
+/* ─────────────── JOB COST ───────────────
+   Hours and dollars on a job for a date range, built from the daily reports, T&M
+   tickets, subs and vendor invoices. Labor / equipment / materials are valued at the
+   division rate sheet, the same way the reports price them. */
+function JobCostView({project,user,onErr}){
+  const [reports,setReports]=useState([]);const [tickets,setTickets]=useState([]);const [ap,setAp]=useState([]);const [loading,setLoading]=useState(true);
+  const monthStart=(d)=>{const x=new Date(d);return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-01`;};
+  const monthEnd=(d)=>{const x=new Date(d);const e=new Date(x.getFullYear(),x.getMonth()+1,0);return `${e.getFullYear()}-${String(e.getMonth()+1).padStart(2,"0")}-${String(e.getDate()).padStart(2,"0")}`;};
+  const [from,setFrom]=useState(monthStart(new Date()));const [to,setTo]=useState(monthEnd(new Date()));const [by,setBy]=useState("week");
+  useEffect(()=>{(async()=>{setLoading(true);try{
+    const [r,t,a]=await Promise.all([API.reports.forProject(project.id).catch(()=>[]),API.tmTickets.forProject(project.id).catch(()=>[]),
+      sb(`/ap_invoices?project_id=eq.${project.id}&status=in.(${AP_BILLABLE_STATUSES.join(",")})&select=*`).catch(()=>[])]);
+    setReports((r||[]).filter(x=>x.status!=="archived"));setTickets(t||[]);setAp(a||[]);
+  }catch(e){onErr&&onErr(e.message);}setLoading(false);})();},[project.id]);
+  const inRange=(d)=>!!d&&(!from||d>=from)&&(!to||d<=to);
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const num=(n,d=1)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+  const div=project.division;
+  const reps=reports.filter(r=>inRange(r.date));
+  const tms=tickets.filter(t=>inRange(t.ticket_date)&&t.status!=="void");
+  const aps=ap.filter(a=>inRange(a.invoice_date||String(a.created_at||"").slice(0,10)));
+  const subsOf=(r)=>(r.subcontractors||[]).reduce((s,x)=>s+subLineTotal(x),0);
+  const tot=reps.reduce((a,r)=>{const t=reportTotals(r,div);a.hrs+=t.labor_hrs;a.labor+=t.labor-t.perdiem;a.perdiem+=t.perdiem;a.equip+=t.equip;a.rental+=t.rental;a.mats+=t.mats;a.subs+=subsOf(r);return a;},{hrs:0,labor:0,perdiem:0,equip:0,rental:0,mats:0,subs:0});
+  const apTotal=aps.reduce((s,a)=>s+(parseFloat(a.amount)||0),0);
+  const tmTotal=tms.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
+  const grand=tot.labor+tot.perdiem+tot.equip+tot.rental+tot.mats+tot.subs+apTotal;
+  // groupings
+  const weekOf=(d)=>{const x=new Date(d+"T12:00:00");const day=x.getDay();x.setDate(x.getDate()-(day===0?6:day-1));return x.toISOString().slice(0,10);};
+  const groups={};
+  reps.forEach(r=>{const k=by==="week"?weekOf(r.date):by==="day"?r.date:r.date.slice(0,7);const g=groups[k]=groups[k]||{hrs:0,labor:0,equip:0,other:0,subs:0,ap:0,reports:0};const t=reportTotals(r,div);g.hrs+=t.labor_hrs;g.labor+=t.labor;g.equip+=t.equip;g.other+=t.rental+t.mats;g.subs+=subsOf(r);g.reports++;});
+  aps.forEach(a=>{const d=a.invoice_date||String(a.created_at||"").slice(0,10);const k=by==="week"?weekOf(d):by==="day"?d:d.slice(0,7);const g=groups[k]=groups[k]||{hrs:0,labor:0,equip:0,other:0,subs:0,ap:0,reports:0};g.ap+=parseFloat(a.amount)||0;});
+  const gkeys=Object.keys(groups).sort();
+  const workers={};
+  reps.forEach(r=>(r.labor||[]).forEach(x=>{if(isPerDiemRow(x))return;const k=x.name||"—";const w=workers[k]=workers[k]||{cls:x.classification||"",reg:0,ot:0,trv:0,amt:0,days:0};w.reg+=parseFloat(x.regHrs)||0;w.ot+=parseFloat(x.otHrs)||0;w.trv+=parseFloat(x.travelHrs)||0;w.amt+=laborAmt(x,div);w.days++;}));
+  const wkeys=Object.keys(workers).sort((a,b)=>workers[b].amt-workers[a].amt);
+  const quick=[["This month",monthStart(new Date()),monthEnd(new Date())],["Last month",monthStart(new Date(new Date().getFullYear(),new Date().getMonth()-1,1)),monthEnd(new Date(new Date().getFullYear(),new Date().getMonth()-1,1))],["All time","",""]];
+  function exportXlsx(){
+    const aoa=[[`${project.name} — Job Cost ${from||"start"} to ${to||"today"}`],[],["Summary"],["Labor hours",tot.hrs],["Labor",tot.labor],["Per diem",tot.perdiem],["Equipment",tot.equip],["Rentals",tot.rental],["Materials",tot.mats],["Subcontractors (on reports)",tot.subs],["Vendor invoices (AP)",apTotal],["Total",grand],[],["T&M tickets in period",tmTotal],[],
+      [`By ${by}`,"Reports","Hours","Labor","Equipment","Materials & rentals","Subs","Vendor invoices","Total"],
+      ...gkeys.map(k=>{const g=groups[k];return[k,g.reports,g.hrs,g.labor,g.equip,g.other,g.subs,g.ap,g.labor+g.equip+g.other+g.subs+g.ap];}),[],
+      ["Worker","Classification","Days","Reg hrs","OT hrs","Travel hrs","Labor $"],...wkeys.map(k=>{const w=workers[k];return[k,w.cls,w.days,w.reg,w.ot,w.trv,w.amt];})];
+    const ws=XLSX.utils.aoa_to_sheet(aoa);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Job Cost");XLSX.writeFile(wb,`${project.name}-job-cost-${from||"all"}-${to||"today"}.xlsx`);
+  }
+  function printIt(){
+    const w=window.open("","_blank");if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups to print.");return;}
+    const esc=(x)=>String(x==null?"":x).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const row=(l,v)=>`<tr><td>${esc(l)}</td><td style="text-align:right">${v}</td></tr>`;
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Job Cost ${esc(project.name)}</title><style>@page{size:letter;margin:0.6in}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}body{font-size:10pt;color:#111}h1{font-size:16pt;color:#1f3864;margin-bottom:2px}h2{font-size:11pt;color:#1f3864;margin:16px 0 6px}table{width:100%;border-collapse:collapse}th{background:#1f3864;color:#fff;padding:5px 8px;text-align:left;font-size:8pt;text-transform:uppercase}td{padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:9.5pt}.r{text-align:right}.grand td{font-weight:900;background:#eef2ff}</style></head><body>
+<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1f3864;padding-bottom:10px;margin-bottom:12px"><div>${AIME_LOGO_IMG(48)}</div><div style="text-align:right"><h1>Job Cost Summary</h1><div>${esc(project.name)} · ${esc(project.client||"")}</div><div style="color:#555;font-size:9pt">${esc(from||"start")} to ${esc(to||"today")} · at rate-sheet rates</div></div></div>
+<table><tbody>${row("Labor hours",num(tot.hrs)+" hrs")}${row("Labor",money(tot.labor))}${tot.perdiem?row("Per diem",money(tot.perdiem)):""}${row("Equipment",money(tot.equip))}${row("Rentals",money(tot.rental))}${row("Materials",money(tot.mats))}${row("Subcontractors (on reports)",money(tot.subs))}${row("Vendor invoices (AP)",money(apTotal))}<tr class="grand"><td>Total</td><td class="r">${money(grand)}</td></tr></tbody></table>
+<h2>By ${esc(by)}</h2><table><thead><tr><th>${esc(by)}</th><th class="r">Reports</th><th class="r">Hours</th><th class="r">Labor</th><th class="r">Equipment</th><th class="r">Materials & rentals</th><th class="r">Subs</th><th class="r">Vendor inv.</th><th class="r">Total</th></tr></thead><tbody>
+${gkeys.map(k=>{const g=groups[k];return`<tr><td>${esc(k)}</td><td class="r">${g.reports}</td><td class="r">${num(g.hrs)}</td><td class="r">${money(g.labor)}</td><td class="r">${money(g.equip)}</td><td class="r">${money(g.other)}</td><td class="r">${money(g.subs)}</td><td class="r">${money(g.ap)}</td><td class="r"><b>${money(g.labor+g.equip+g.other+g.subs+g.ap)}</b></td></tr>`;}).join("")}</tbody></table>
+<h2>By worker</h2><table><thead><tr><th>Worker</th><th>Classification</th><th class="r">Days</th><th class="r">Reg</th><th class="r">OT</th><th class="r">Travel</th><th class="r">Labor $</th></tr></thead><tbody>
+${wkeys.map(k=>{const x=workers[k];return`<tr><td>${esc(k)}</td><td>${esc(x.cls)}</td><td class="r">${x.days}</td><td class="r">${num(x.reg)}</td><td class="r">${num(x.ot)}</td><td class="r">${num(x.trv)}</td><td class="r">${money(x.amt)}</td></tr>`;}).join("")}</tbody></table>
+<div style="margin-top:16px;font-size:8pt;color:#777">Printed ${new Date().toLocaleString()} · AIME</div></body></html>`);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},350);
+  }
+  if(loading)return <Spinner/>;
+  const card=(l,v,c,sub)=>(<div key={l} style={{...cardS,padding:"10px 12px"}}><div style={{fontSize:16,fontWeight:900,color:c||T.text}}>{v}</div><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",marginTop:2}}>{l}</div>{sub&&<div style={{fontSize:10.5,color:T.muted,marginTop:2}}>{sub}</div>}</div>);
+  const th={fontSize:9.5,color:T.muted,textTransform:"uppercase",letterSpacing:"0.6px",padding:"6px 8px",textAlign:"right",whiteSpace:"nowrap"};
+  const td={fontSize:12,padding:"7px 8px",textAlign:"right",borderTop:`1px solid ${T.border}`,whiteSpace:"nowrap"};
+  return(<div>
+    <div style={{...cardS,marginBottom:12}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"end"}}>
+        <div><label style={lbl}>From</label><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={{...inp,padding:"8px 10px",fontSize:13}}/></div>
+        <div><label style={lbl}>To</label><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={{...inp,padding:"8px 10px",fontSize:13}}/></div>
+        {quick.map(([l,a,b])=><button key={l} onClick={()=>{setFrom(a);setTo(b);}} style={{...ghostBtn,padding:"9px 12px",fontSize:12,borderColor:from===a&&to===b?T.orange:T.border,color:from===a&&to===b?T.orange:T.sub}}>{l}</button>)}
+        <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+          <button onClick={printIt} style={{...ghostBtn,padding:"9px 12px",fontSize:12}}>🖨️ Print</button>
+          <button onClick={exportXlsx} style={{...ghostBtn,padding:"9px 12px",fontSize:12}}>📥 Excel</button>
+        </div>
+      </div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8,marginBottom:12}}>
+      {card("Labor hours",num(tot.hrs)+" hrs",T.blue,`${reps.length} report${reps.length===1?"":"s"}`)}
+      {card("Labor",money(tot.labor),T.green,tot.perdiem?`+ ${money(tot.perdiem)} per diem`:null)}
+      {card("Equipment",money(tot.equip),T.yellow)}
+      {card("Materials & rentals",money(tot.mats+tot.rental),T.orange)}
+      {card("Subs",money(tot.subs),T.purple,"on daily reports")}
+      {card("Vendor invoices",money(apTotal),T.teal,`${aps.length} approved AP invoice${aps.length===1?"":"s"}`)}
+    </div>
+    <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.green}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+      <div><div style={{fontSize:11,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>Total for the period</div><div style={{fontSize:24,fontWeight:900,color:T.green}}>{money(grand)}</div></div>
+      <div style={{textAlign:"right",fontSize:12,color:T.sub,lineHeight:1.6}}>T&M tickets in period: <b style={{color:T.text}}>{money(tmTotal)}</b> ({tms.length})<br/><span style={{fontSize:11,color:T.muted}}>Labor, equipment and materials are at the {div} rate sheet, the same as the reports.</span></div>
+    </div>
+    <div style={{...cardS,marginBottom:12,overflowX:"auto"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>Breakdown</div>
+        <div style={{display:"flex",gap:4}}>{[["day","By day"],["week","By week"],["month","By month"]].map(([id,l])=><button key={id} onClick={()=>setBy(id)} style={{...ghostBtn,padding:"5px 10px",fontSize:11,borderColor:by===id?T.orange:T.border,color:by===id?T.orange:T.sub}}>{l}</button>)}</div>
+      </div>
+      <table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr><th style={{...th,textAlign:"left"}}>{by==="week"?"Week of":by==="day"?"Date":"Month"}</th><th style={th}>Hrs</th><th style={th}>Labor</th><th style={th}>Equip</th><th style={th}>Mat & rent</th><th style={th}>Subs</th><th style={th}>Vendor inv.</th><th style={th}>Total</th></tr></thead>
+        <tbody>{gkeys.map(k=>{const g=groups[k];return(<tr key={k}><td style={{...td,textAlign:"left",fontWeight:700}}>{k}</td><td style={td}>{num(g.hrs)}</td><td style={td}>{money(g.labor)}</td><td style={td}>{money(g.equip)}</td><td style={td}>{money(g.other)}</td><td style={td}>{money(g.subs)}</td><td style={td}>{money(g.ap)}</td><td style={{...td,fontWeight:800,color:T.green}}>{money(g.labor+g.equip+g.other+g.subs+g.ap)}</td></tr>);})}
+        {gkeys.length===0&&<tr><td colSpan={8} style={{...td,textAlign:"center",color:T.muted}}>Nothing in this date range.</td></tr>}</tbody></table>
+    </div>
+    <div style={{...cardS,overflowX:"auto"}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Hours by worker</div>
+      <table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr><th style={{...th,textAlign:"left"}}>Worker</th><th style={{...th,textAlign:"left"}}>Class</th><th style={th}>Days</th><th style={th}>Reg</th><th style={th}>OT</th><th style={th}>Travel</th><th style={th}>Labor $</th></tr></thead>
+        <tbody>{wkeys.map(k=>{const x=workers[k];return(<tr key={k}><td style={{...td,textAlign:"left",fontWeight:700}}>{k}</td><td style={{...td,textAlign:"left",color:T.muted}}>{x.cls}</td><td style={td}>{x.days}</td><td style={td}>{num(x.reg)}</td><td style={td}>{num(x.ot)}</td><td style={td}>{num(x.trv)}</td><td style={{...td,fontWeight:800}}>{money(x.amt)}</td></tr>);})}
+        {wkeys.length===0&&<tr><td colSpan={7} style={{...td,textAlign:"center",color:T.muted}}>No labor in this date range.</td></tr>}</tbody></table>
+    </div>
+  </div>);
+}
+
 /* ─────────────── INVOICE LIST ─────────────── */
+
 function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
   const [rows,setRows]=useState([]);
   const [loading,setLoading]=useState(true);
