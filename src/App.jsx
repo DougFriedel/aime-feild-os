@@ -20768,17 +20768,17 @@ function BillingTab({project,user,onErr}){
   );
 
   const tabs=isContract
-    ?[["invoices","🧾 Invoices"],["cost","📊 Job Cost"],["sov","📋 Schedule of Values"],["payapps","📄 Pay Applications"]]
+    ?[["invoices","🧾 Invoices"],["cost","📊 Job Cost"],["sov","📋 SOV"],["payapps","📄 Pay Apps"]]
     :[["invoices","🧾 Invoices"],["cost","📊 Job Cost"]];
 
   return(
     <div>
       <ContractStrip project={project} refreshKey={refreshKey}/>
       <ApUnbilledPanel project={project} user={user}/>
-      <div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4,overflowX:"auto"}}>
+      <div style={{display:"grid",gridTemplateColumns:`repeat(${tabs.length>2?2:tabs.length},1fr)`,background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4}}>
         {tabs.map(([id,label])=>(
           <button key={id} onClick={()=>setView(id)}
-            style={{flex:1,minWidth:110,padding:"9px 8px",background:view===id?T.orange:"transparent",
+            style={{padding:"9px 6px",background:view===id?T.orange:"transparent",
               color:view===id?"#000":T.muted,border:"none",borderRadius:9,fontSize:12,fontWeight:700,
               cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{label}</button>
         ))}
