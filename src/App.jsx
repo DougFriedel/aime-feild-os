@@ -15561,7 +15561,53 @@ function MfgJobCard({job,onSelect,onArchive,onDelete,dimmed}){
   );
 }
 
-function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
+/* Edit a shop job's details after it's been created (PM / admin). */
+function MfgJobEditModal({job,onClose,onSaved}){
+  const [f,setF]=useState({job_number:job.job_number||"",customer:job.customer||"",description:job.description||"",po_number:job.po_number||"",due_date:job.due_date||"",notes:job.notes||"",status:job.status||"active"});
+  const [saving,setSaving]=useState(false);const [err,setErr]=useState("");
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  async function save(){
+    if(!f.job_number.trim()){setErr("Job number is required.");return;}
+    setSaving(true);setErr("");
+    try{
+      const body={job_number:f.job_number.trim(),customer:f.customer.trim(),description:f.description.trim(),po_number:f.po_number.trim()||null,due_date:f.due_date||null,notes:f.notes,status:f.status,updated_at:new Date().toISOString()};
+      await API.mfg.jobs.update(job.id,body);onSaved({...job,...body});
+    }catch(e){setErr(e.message);setSaving(false);}
+  }
+  const ri={...inp,fontSize:13,padding:"9px 10px"};
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:220,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:20,width:"100%",maxWidth:520,maxHeight:"90vh",overflowY:"auto",border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:16,fontWeight:900,marginBottom:12}}>✏️ Edit {job.job_number}</div>
+        {err&&<div style={{fontSize:12,color:T.red,marginBottom:10}}>{err}</div>}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Job / WO # *</label><input value={f.job_number} onChange={e=>set("job_number",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>Status</label><select value={f.status} onChange={e=>set("status",e.target.value)} style={{...ri,color:T.orange}}>{[["active","Active"],["on_hold","On hold"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Customer</label><input value={f.customer} onChange={e=>set("customer",e.target.value)} style={ri}/></div>
+          <div><label style={lbl}>PO Number</label><input value={f.po_number} onChange={e=>set("po_number",e.target.value)} style={ri}/></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Due date</label><input type="date" value={f.due_date} onChange={e=>set("due_date",e.target.value)} style={ri}/></div>
+        </div>
+        <div style={{marginBottom:10}}><label style={lbl}>Description</label><input value={f.description} onChange={e=>set("description",e.target.value)} placeholder="What are we making?" style={ri}/></div>
+        <div style={{marginBottom:14}}><label style={lbl}>Notes</label><textarea value={f.notes} onChange={e=>set("notes",e.target.value)} rows={3} style={{...ri,resize:"vertical"}}/></div>
+        <div style={{fontSize:11,color:T.muted,marginBottom:12,lineHeight:1.5}}>Changing the job number renames it everywhere it's shown, but receipts already logged keep the number they were logged under.</div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={save} disabled={saving} style={{...primBtn,flex:2,borderRadius:12,background:DIV_META.Manufacturing.color,color:"#000",opacity:saving?0.6:1}}>{saving?"Saving…":"Save Changes"}</button>
+          <button onClick={onClose} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChanged}){
+  // Job details can be edited here (PM/admin), so keep a local copy that the edit form updates.
+  const [job,setJob]=useState(jobProp);
+  useEffect(()=>{setJob(jobProp);},[jobProp?.id]);
+  const [editJob,setEditJob]=useState(false);
   const [parts,setParts]=useState([]);
   const [boms,setBoms]=useState({});      // keyed by part_id → array of bom items
   const [receipts,setReceipts]=useState([]); // flat list of all receipts for this job
@@ -15828,9 +15874,13 @@ function ManufacturingJobDetail({job,user,onBack,onSelectPart}){
           <div><div style={{fontSize:18,fontWeight:900,color:T.purple}}>{job.job_number}</div>
             <div style={{fontSize:12,color:T.muted}}>{job.customer}{job.po_number?" · PO: "+job.po_number:""}</div>
           </div>
-          {job.due_date&&<div style={{fontSize:11,fontWeight:700,color:T.muted}}>Due: {job.due_date}</div>}
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            {job.due_date&&<div style={{fontSize:11,fontWeight:700,color:T.muted}}>Due: {job.due_date}</div>}
+            {canMfg(user,"manage_jobs")&&<button onClick={()=>setEditJob(true)} style={{...ghostBtn,padding:"6px 10px",fontSize:11.5}}>✏️ Edit</button>}
+          </div>
         </div>
       </div>
+      {editJob&&<MfgJobEditModal job={job} onClose={()=>setEditJob(false)} onSaved={(j)=>{setJob(j);setEditJob(false);onJobChanged&&onJobChanged(j);}}/>}
 
       {/* Reorder alert */}
       {reorderNeeded.length>0&&<div style={{background:"#7c2d12",padding:"8px 16px",display:"flex",gap:8,alignItems:"center"}}>
@@ -19561,7 +19611,7 @@ function AppInner(){
         <ManufacturingJobBoard user={user} onBack={()=>setScreen("division")} onSelectJob={j=>{setSelectedMfgJob(j);setSelectedMfgPart(null);}}/>
       )}
       {user&&screen==="jobs"&&selectedDiv==="Manufacturing"&&selectedMfgJob&&!selectedMfgPart&&(
-        <ManufacturingJobDetail job={selectedMfgJob} user={user} onBack={()=>setSelectedMfgJob(null)} onSelectPart={p=>setSelectedMfgPart(p)}/>
+        <ManufacturingJobDetail job={selectedMfgJob} user={user} onBack={()=>setSelectedMfgJob(null)} onSelectPart={p=>setSelectedMfgPart(p)} onJobChanged={j=>setSelectedMfgJob(j)}/>
       )}
       {user&&screen==="jobs"&&selectedDiv==="Manufacturing"&&selectedMfgJob&&selectedMfgPart&&(
         <ManufacturingTraveler part={selectedMfgPart} job={selectedMfgJob} user={user} onBack={()=>setSelectedMfgPart(null)}/>
