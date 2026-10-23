@@ -467,7 +467,7 @@ const API={
     tickets:(name,limit=15)=>sb(`/tm_tickets?submitted_by=eq.${encodeURIComponent(name)}&select=id,ticket_date,ticket_no,status,grand_total,client_signature,projects(name)&order=ticket_date.desc&limit=${limit}`),
     crew:(name)=>sb(`/crew_members?name=eq.${encodeURIComponent(name)}&limit=1`),
   },
-  timeCards:{forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc&limit=5000`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),findMfg:(name,date,jid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&mfg_job_id=eq.${jid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
+  timeCards:{forSource:(sid)=>sb(`/time_cards?source_id=eq.${encodeURIComponent(sid)}`),forProject:(pid)=>sb(`/time_cards?project_id=eq.${pid}&order=date.desc,created_at.desc`),all:()=>sb("/time_cards?order=date.desc,created_at.desc&limit=500"),byDate:(date)=>sb(`/time_cards?date=eq.${date}&order=worker_name.asc`),byRange:(from,to)=>sb(`/time_cards?date=gte.${from}&date=lte.${to}&order=date.desc,worker_name.asc&limit=5000`),find:(name,date,pid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&project_id=eq.${pid}&limit=1`),findMfg:(name,date,jid)=>sb(`/time_cards?worker_name=eq.${encodeURIComponent(name)}&date=eq.${date}&mfg_job_id=eq.${jid}&limit=1`),create:(d)=>sb("/time_cards",{method:"POST",body:d,prefer:"return=representation"}),update:(id,d)=>sb(`/time_cards?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/time_cards?id=eq.${id}`,{method:"DELETE"})},
   weather:  {forProject:(pid)=>sb(`/weather_logs?project_id=eq.${pid}&order=date.desc&limit=14`),upsert:(d)=>sb("/weather_logs",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"}),remove:(id)=>sb(`/weather_logs?id=eq.${id}`,{method:"DELETE"})},
   equipment:{forProject:(pid)=>sb(`/equipment_on_site?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/equipment_on_site",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/equipment_on_site?id=eq.${id}`,{method:"DELETE"})},
   subs:     {forProject:(pid)=>sb(`/subcontractors?project_id=eq.${pid}&order=date.desc,created_at.desc`),create:(d)=>sb("/subcontractors",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/subcontractors?id=eq.${id}`,{method:"DELETE"})},
@@ -881,6 +881,33 @@ if(typeof document!=="undefined"){
 
 function TopBar({title,sub,onBack,right}){return(<div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"14px 16px",paddingTop:padTop(14),position:"sticky",top:0,zIndex:50}}>{onBack&&<button onClick={onBack} style={{background:"none",border:"none",color:T.sub,fontSize:13,cursor:"pointer",marginBottom:8,padding:0,fontFamily:"inherit"}}>← Back</button>}<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:20,fontWeight:900,color:T.text,letterSpacing:"-0.5px"}}>{title}</div>{sub&&<div style={{fontSize:12,color:T.muted,marginTop:2}}>{sub}</div>}</div>{right&&<div style={{flexShrink:0,marginLeft:12}}>{right}</div>}</div></div>);}
 
+/* ── Change-order cost tagging ──
+   A labor, equipment or material line on a daily report can be charged to a
+   change order (co_id) instead of the base contract; a T&M ticket carries
+   change_order_id. coCostBreakdown rolls those up per change order so the CO
+   tab and Job Cost can show quoted vs. actual. */
+function rfiTag(n){n=String(n||"").trim();return /^rfi/i.test(n)?n:"RFI "+n;}
+function coLabel(c){return `${c.co_number||"CO"}${c.status&&c.status!=="Approved"?" ("+String(c.status).toLowerCase()+")":""}${c.description?" — "+String(c.description).split("\n")[0].slice(0,42):""}`;}
+function CoPick({row,onChange,cos,compact}){
+  if(!cos||!cos.length)return null;
+  return(<div style={{marginBottom:compact?0:8}}><label style={lbl}>Charge to</label>
+    <select value={row.co_id||""} onChange={e=>onChange({...row,co_id:e.target.value||null})} style={inpSel}>
+      <option value="">Base contract</option>{cos.map(c=><option key={c.id} value={c.id}>{coLabel(c)}</option>)}
+    </select></div>);
+}
+function coCostBreakdown(reports,tickets,division){
+  const out={};const g=(k)=>out[k]=out[k]||{hrs:0,labor:0,equip:0,mats:0,tm:0,reports:new Set(),tickets:0};
+  (reports||[]).forEach(r=>{
+    (r.labor||[]).forEach(x=>{const o=g(x.co_id||"base");o.reports.add(r.id);if(!isPerDiemRow(x))o.hrs+=(parseFloat(x.regHrs)||0)+(parseFloat(x.otHrs)||0)+(parseFloat(x.travelHrs)||0);o.labor+=laborAmt(x,division);});
+    (r.equipment||[]).forEach(x=>{const o=g(x.co_id||"base");o.reports.add(r.id);o.equip+=equipAmt(x,division);});
+    (r.rental_equipment||[]).forEach(x=>{const o=g(x.co_id||"base");o.reports.add(r.id);o.mats+=rentalLineTotal(x);});
+    (r.materials||[]).forEach(x=>{const o=g(x.co_id||"base");o.reports.add(r.id);o.mats+=matLineTotal(x);});
+    (r.subcontractors||[]).forEach(x=>{const o=g(x.co_id||"base");o.reports.add(r.id);o.mats+=subLineTotal(x);});
+  });
+  (tickets||[]).forEach(t=>{if(t.status==="void")return;const o=g(t.change_order_id||"base");o.tm+=parseFloat(t.grand_total)||0;o.tickets++;});
+  Object.values(out).forEach(o=>{o.reports=o.reports.size;o.total=o.labor+o.equip+o.mats;});
+  return out;
+}
 function PerDiemCard({labor,onChangeLabor,division}){
   const row=(labor||[]).find(isPerDiemRow);
   const count=row?(row.perDiemCount??1):"";
@@ -911,15 +938,15 @@ function PerDiemCard({labor,onChangeLabor,division}){
     </div>
   );
 }
-function LaborCard({row,onChange,onRemove,division}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{ROSTER().map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().filter(p=>!p.flat).map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
-function EquipCard({row,onChange,onRemove,division}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr",gap:8,marginBottom:8}}><div>
+function LaborCard({row,onChange,onRemove,division,cos}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{ROSTER().map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().filter(p=>!p.flat).map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<CoPick row={row} onChange={onChange} cos={cos}/><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
+function EquipCard({row,onChange,onRemove,division,cos}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr",gap:8,marginBottom:8}}><div>
               <label style={lbl}>
                 {eq
                   ?<span>{eq.unit==="Hours"?"⏱️ Hours":eq.unit==="Days"?"📅 Days":eq.unit==="Ft"?"📏 Feet":eq.unit==="Week"?"📅 Weeks":eq.unit==="Month"?"📅 Months":"📊 "+eq.unit}</span>
                   :"Hrs / Days"}
               </label>
               <input type="number" min="0" step="0.5" placeholder="0" value={row.usage||""} onChange={e=>set("usage",e.target.value)} style={inp}/>
-            </div></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{eq?`$${eq.rate.toLocaleString()}/${eq.unit}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
+            </div></div><CoPick row={row} onChange={onChange} cos={cos}/><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{eq?`$${eq.rate.toLocaleString()}/${eq.unit}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
 function RentedEquipCard({row,onChange,onRemove,trackInvoices}){
   const set=(k,v)=>onChange({...row,[k]:v});
   const amt=(parseFloat(row.qty)||0)*(parseFloat(row.rate)||0)*(parseFloat(row.usage)||1);
@@ -1052,7 +1079,7 @@ function SubCard({row,onChange,onRemove}){
   );
 }
 
-function MatCard({row,onChange,onRemove,trackInvoices}){const fileRef=useRef(null);const camRef=useRef(null);const receipts=row.receipts||[];const [busy,setBusy]=useState("");
+function MatCard({row,onChange,onRemove,trackInvoices,cos}){const fileRef=useRef(null);const camRef=useRef(null);const receipts=row.receipts||[];const [busy,setBusy]=useState("");
   // Photos compress and stay inline (offline-safe, print inline). PDFs and
   // other documents upload to Storage and the receipt keeps the link.
   async function handleFiles(files){const n=[];for(const f of files){try{
@@ -1074,7 +1101,7 @@ function MatCard({row,onChange,onRemove,trackInvoices}){const fileRef=useRef(nul
   ?<a href={r.src} target="_blank" rel="noreferrer" title={r.name} style={{width:60,height:60,borderRadius:10,border:`2px solid ${T.blue}40`,background:T.blueLow,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textDecoration:"none",color:T.text,fontSize:20}}><span>{fileIcon(r)}</span><span style={{fontSize:8,maxWidth:54,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",padding:"0 3px"}}>{r.name}</span></a>
   :<img src={r.src} alt="" onClick={()=>window.open(r.src,"_blank")} style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.blue}40`,display:"block",cursor:"pointer"}}/>}
   <button onClick={()=>removeReceipt(r)} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>camRef.current?.click()} title="Take a photo" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>CAMERA</span></button><button onClick={()=>fileRef.current?.click()} title="Photos, PDFs, invoices" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.green}40`,background:T.greenLow,color:T.green,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📎</span><span style={{fontSize:9,fontWeight:700}}>UPLOAD</span></button><input ref={camRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /><input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div>{busy&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{busy}</div>}
-{trackInvoices&&receipts.map(r=><InvoiceFields key={"inv"+r.id} att={r} onChange={a=>onChange({...row,receipts:receipts.map(x=>x.id===a.id?a:x)})}/>)}</div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{matLineTotal(row)>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(matLineTotal(row))}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
+{trackInvoices&&receipts.map(r=><InvoiceFields key={"inv"+r.id} att={r} onChange={a=>onChange({...row,receipts:receipts.map(x=>x.id===a.id?a:x)})}/>)}</div><div style={{marginTop:8}}><CoPick row={row} onChange={onChange} cos={cos} compact/></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{matLineTotal(row)>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(matLineTotal(row))}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
 
 function LoginScreen({onLogin}){
   const [name,setName]=useState("");
@@ -4227,58 +4254,56 @@ const reportOwnerFields=(project)=>project._mfg?{project_id:null,mfg_job_id:proj
    a day gets the hours from each ADDED to the same time card, whatever the
    mix — each report lists only the hours worked on that report, so the sum
    is the worker's day. Clock punches are never merged into.             */
+/* ── Time cards follow the report ──
+   Every time card fed from a daily report or T&M ticket carries that document's id
+   (source_id). Submitting creates the cards; editing REPLACES them so the card always
+   shows the hours as entered; deleting the document removes them. One card per
+   worker per document, so two reports on the same day for the same person are two
+   cards that add up on My Hours and the PM's Time Cards tab. */
 async function autoPopulateTimeCards(report, project, source="daily"){
-  const labor=(report.labor||[]).filter(l=>l.name&&l.name.trim());
-  if(!labor.length) return {created:0,updated:0};
-  let created=0,updated=0;
+  const sourceId=report.id||report._source_id||null;
   const label=source==="tm"?`T&M ticket${report.report_no?" "+report.report_no:""}`:`daily report${report.report_no?" #"+report.report_no:""}`;
-  for(const entry of labor){
-    const reg=parseFloat(entry.regHrs)||0;
-    const ot=parseFloat(entry.otHrs)||0;
-    const travel=parseFloat(entry.travelHrs)||0;
-    if(reg+ot+travel===0) continue;
+  // Hours per worker as entered (a name listed twice on one report is summed).
+  const want={};
+  (report.labor||[]).forEach(l=>{const n=(l.name||"").trim();if(!n)return;const w=want[n]=want[n]||{reg:0,ot:0,travel:0,cls:l.classification||""};
+    w.reg+=parseFloat(l.regHrs)||0;w.ot+=parseFloat(l.otHrs)||0;w.travel+=parseFloat(l.travelHrs)||0;if(!w.cls)w.cls=l.classification||"";});
+  Object.keys(want).forEach(n=>{const w=want[n];if(w.reg+w.ot+w.travel===0)delete want[n];});
+  let created=0,updated=0,removed=0;
+  let existing=[];
+  if(sourceId){try{existing=(await API.timeCards.forSource(sourceId))||[];}catch{existing=[];}}
+  for(const name of Object.keys(want)){
+    const w=want[name];
     try{
-      const existing=project._mfg
-        ?await API.timeCards.findMfg(entry.name,report.date,project.id)
-        :await API.timeCards.find(entry.name,report.date,project.id);
-      const all=Array.isArray(existing)?existing:[];
-      // Only merge into another report-fed card. Merging into a clock punch
-      // would double the worker's day.
-      const card=all.find(c=>(c.source||"manual")!=="punch")||null;
+      let card=existing.find(c=>c.worker_name===name)||null;
+      if(!card&&!existing.length){
+        // Cards made before source tracking: adopt the report-fed card for this worker/day/job.
+        const old=project._mfg?await API.timeCards.findMfg(name,report.date,project.id):await API.timeCards.find(name,report.date,project.id);
+        card=(Array.isArray(old)?old:[]).find(c=>(c.source||"manual")!=="punch"&&!c.source_id)||null;
+      }
+      const hours={reg_hours:w.reg,ot_hours:w.ot,travel_hours:w.travel,total_hours:w.reg+w.ot+w.travel,classification:w.cls||card?.classification||""};
       if(card){
-        const newReg=(parseFloat(card.reg_hours)||0)+reg;
-        const newOT=(parseFloat(card.ot_hours)||0)+ot;
-        const newTravel=(parseFloat(card.travel_hours)||0)+travel;
-        await API.timeCards.update(card.id,{
-          reg_hours:newReg,
-          ot_hours:newOT,
-          travel_hours:newTravel,
-          total_hours:newReg+newOT+newTravel,
-          notes:`${card.notes||""}${card.notes?" · ":""}+${reg+ot+travel}h from ${label}`,
-        });
-        updated++;
+        const changed=["reg_hours","ot_hours","travel_hours"].some(k=>Math.abs((parseFloat(card[k])||0)-hours[k])>0.001);
+        const body={...hours,source_id:sourceId||card.source_id||null,notes:`From ${label} · ${project.name}`};
+        // An approved card whose hours change goes back to pending so the PM sees it again.
+        if(changed&&card.status==="approved")Object.assign(body,{status:"pending",approved_by:null,approved_at:null,notes:body.notes+" · hours changed after approval, re-approve"});
+        if(changed||card.source_id!==sourceId){await API.timeCards.update(card.id,body);updated++;}
       }else{
-        await API.timeCards.create({
-          worker_name:entry.name,
-          date:report.date,
-          project_id:project._mfg?null:project.id,
-          mfg_job_id:project._mfg?project.id:null,
-          division:project.division,
-          classification:entry.classification||"",
-          reg_hours:reg,
-          ot_hours:ot,
-          travel_hours:travel,
-          total_hours:reg+ot+travel,
-          notes:`Auto-filled from ${label} · ${project.name}`,
-          source,status:"pending",
-        });
+        await API.timeCards.create({worker_name:name,date:report.date,project_id:project._mfg?null:project.id,mfg_job_id:project._mfg?project.id:null,
+          division:project.division,...hours,notes:`From ${label} · ${project.name}`,source,source_id:sourceId,status:"pending"});
         created++;
       }
-    }catch(e){
-
-    }
+    }catch(e){}
   }
-  return{created,updated};
+  // Workers taken off the report lose that report's card.
+  for(const c of existing){
+    if(!want[c.worker_name]){try{await API.timeCards.remove(c.id);removed++;}catch{}}
+  }
+  return{created,updated,removed};
+}
+// A deleted report or ticket takes its hours with it.
+async function removeTimeCardsForSource(sourceId){
+  if(!sourceId)return 0;
+  try{const cards=(await API.timeCards.forSource(sourceId))||[];for(const c of cards)await API.timeCards.remove(c.id).catch(()=>{});return cards.length;}catch{return 0;}
 }
 
 function VisitorAddRow({onAdd}){
@@ -4382,6 +4407,9 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
   }
 
   const [weatherFilling,setWeatherFilling]=useState(false);
+  // Change orders on this job, so lines can be charged to one (hidden when there are none).
+  const [cos,setCos]=useState([]);
+  useEffect(()=>{API.changeOrders.forProject(project.id).then(r=>setCos((Array.isArray(r)?r:[]).filter(c=>c.status!=="Rejected"))).catch(()=>setCos([]));},[project.id]);
   async function autoFillWeather(){
     const WMO={0:"Clear Sky",1:"Mainly Clear",2:"Partly Cloudy",3:"Overcast",45:"Foggy",48:"Icy Fog",51:"Light Drizzle",53:"Drizzle",55:"Heavy Drizzle",61:"Light Rain",63:"Rain",65:"Heavy Rain",71:"Light Snow",73:"Snow",75:"Heavy Snow",80:"Rain Showers",81:"Heavy Showers",82:"Violent Showers",95:"Thunderstorm",99:"Thunderstorm w/Hail"};
     let location=project.location?.trim();
@@ -4445,9 +4473,8 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
       try{
         await API.reports.update(existing.id,{...reportData,updated_at:new Date().toISOString()});
         clearDraft(draftKey);
-        // Deliberately NOT re-running autoPopulateTimeCards: it adds hours to
-        // existing cards rather than replacing them, so editing would double
-        // the worker's day. Time cards from the original submission stand.
+        // Time cards follow the report: replace this report's hours on each worker's card.
+        try{await autoPopulateTimeCards({...reportData,id:existing.id},project);}catch(e){}
         onSave&&onSave(reportData,existing.id);
       }catch(e){
         alert("Couldn't save changes: "+e.message);
@@ -4481,10 +4508,10 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
       return;
     }
     try{
-      await onSave(reportData);
+      const savedRow=await onSave(reportData);
       clearDraft(draftKey);
       try{
-        const tcResult=await autoPopulateTimeCards(reportData,project);
+        const tcResult=await autoPopulateTimeCards({...reportData,id:savedRow?.id||null},project);
 
       }catch(e){}
       await notify("report_submitted","New Report Submitted",`${user.name} submitted a report for ${project.name}`,{...(project._mfg?{mfg_job_id:project.id}:{project_id:project.id}),to:await pmsForDivision(project._mfg?"Manufacturing":project.division),except:user.name});
@@ -4507,7 +4534,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
         {!isOnline&&<div style={{background:"#7c2d12",borderRadius:8,padding:"6px 10px",marginBottom:8,fontSize:12,color:"#fed7aa",display:"flex",alignItems:"center",gap:6}}><span>📡</span>Offline — report will save locally and sync when reconnected</div>}
         {/* Draft restore banner */}
         {isEdit&&<div style={{background:T.yellowLow||T.surface,border:`1px solid ${T.yellow}40`,borderRadius:8,padding:"8px 10px",marginBottom:8,fontSize:11.5,color:T.yellow,lineHeight:1.6}}>
-          Saving resets this report to <strong>Submitted</strong> for re-approval. Time cards from the original submission are left alone — adjust them in the Time tab if hours changed.
+          Saving resets this report to <strong>Submitted</strong> for re-approval. Time cards follow this report — the hours you save here replace what is on each worker's card.
           {existing?.inspector_signature&&<div style={{color:T.red,marginTop:4,fontWeight:700}}>
             ⚠️ This report is signed by {existing.inspector_name||"an inspector"}. Changing the content means the signature no longer matches what was signed.
           </div>}
@@ -4524,6 +4551,13 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
           <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${divMeta.color}`}}><div style={{fontSize:11,color:T.muted,marginBottom:2}}>Project · {project.division}</div><div style={{fontSize:15,fontWeight:700}}>{project.name}</div>{project.afe&&<div style={{fontSize:12,color:T.sub}}>AFE: {project.afe}{project.work_order?" · PO: "+project.work_order:""}</div>}<div style={{marginTop:6,display:"flex",gap:6}}><span style={pill(divMeta.color)}>{divMeta.icon} {project.division} Rates</span></div></div>
           <div style={{marginBottom:12}}><label style={lbl}>Date</label><input type="date" value={rpt.date} onChange={e=>setR("date",e.target.value)} style={inp}/></div>
           <div style={{marginBottom:12}}><label style={lbl}>Report No.</label><input type="text" placeholder="Report #" value={rpt.report_no||""} onChange={e=>setR("report_no",e.target.value)} style={inp}/></div>
+          {cos.length>0&&<div style={{...cardS,marginBottom:12,border:`1px solid ${T.purple}40`,padding:"12px 14px"}}>
+            <label style={lbl}>📋 Charge this report to</label>
+            <select value={rpt.change_order_id||""} onChange={e=>{const v=e.target.value||null;setRpt(r=>({...r,change_order_id:v,labor:(r.labor||[]).map(x=>({...x,co_id:v})),equipment:(r.equipment||[]).map(x=>({...x,co_id:v})),rental_equipment:(r.rental_equipment||[]).map(x=>({...x,co_id:v})),materials:(r.materials||[]).map(x=>({...x,co_id:v})),subcontractors:(r.subcontractors||[]).map(x=>({...x,co_id:v}))}));}} style={inpSel}>
+              <option value="">Base contract (default)</option>{cos.map(c=><option key={c.id} value={c.id}>{coLabel(c)}</option>)}
+            </select>
+            <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.5}}>Sets every line on this report. You can still change individual workers, equipment or materials to a different change order on their own cards.</div>
+          </div>}
           <div style={{...cardS,marginBottom:12,border:`1px solid ${T.blue}30`,padding:"12px 14px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <label style={lbl}>🌤️ Site Conditions / Weather</label>
@@ -4546,15 +4580,15 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
             <textarea placeholder="Describe the work performed today… or tap 🎤 to speak" value={rpt.description||""} onChange={e=>setR("description",e.target.value)} rows={4} style={{...inp,resize:"vertical",lineHeight:1.5}}/>
           </div>
         </div>)}
-        {step===2&&(<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontSize:17,fontWeight:800}}>👷 Labor</div>{tot.labor>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.labor)}</div>}</div>{rpt.labor.map((row,i)=>isPerDiemRow(row)?null:<LaborCard key={row.id} row={row} onChange={r=>upd("labor",i,r)} onRemove={()=>del("labor",i)} division={project.division}/>)}<DashedAdd label="+ Add Worker" onClick={()=>add("labor",{id:uid(),name:"",classification:"",regHrs:"",otHrs:"",travelHrs:""})} color={T.orange}/>{project.division!=="Manufacturing"&&<><div style={{height:14}}/><PerDiemCard labor={rpt.labor} onChangeLabor={l=>setRpt(r=>({...r,labor:l}))} division={project.division}/></>}</div>)}
+        {step===2&&(<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontSize:17,fontWeight:800}}>👷 Labor</div>{tot.labor>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.labor)}</div>}</div>{rpt.labor.map((row,i)=>isPerDiemRow(row)?null:<LaborCard key={row.id} row={row} cos={cos} onChange={r=>upd("labor",i,r)} onRemove={()=>del("labor",i)} division={project.division}/>)}<DashedAdd label="+ Add Worker" onClick={()=>add("labor",{id:uid(),name:"",classification:"",regHrs:"",otHrs:"",travelHrs:"",co_id:rpt.change_order_id||null})} color={T.orange}/>{project.division!=="Manufacturing"&&<><div style={{height:14}}/><PerDiemCard labor={rpt.labor} onChangeLabor={l=>setRpt(r=>({...r,labor:l}))} division={project.division}/></>}</div>)}
         {step===3&&(<div>
           {/* Company Equipment */}
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
             <div style={{fontSize:17,fontWeight:800}}>🚜 Equipment</div>
             {tot.equip>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.equip)}</div>}
           </div>
-          {rpt.equipment.map((row,i)=><EquipCard key={row.id} row={row} onChange={r=>upd("equipment",i,r)} onRemove={()=>del("equipment",i)} division={project.division}/>)}
-          <DashedAdd label="+ Add Company Equipment" onClick={()=>add("equipment",{id:uid(),description:"",qty:"",usage:"",rate:"",unit:""})} color={T.yellow}/>
+          {rpt.equipment.map((row,i)=><EquipCard key={row.id} row={row} cos={cos} onChange={r=>upd("equipment",i,r)} onRemove={()=>del("equipment",i)} division={project.division}/>)}
+          <DashedAdd label="+ Add Company Equipment" onClick={()=>add("equipment",{id:uid(),description:"",qty:"",usage:"",rate:"",unit:"",co_id:rpt.change_order_id||null})} color={T.yellow}/>
 
           {/* Rented Equipment — Pipeline logs rentals under Materials & Misc. instead */}
           {!isPipeDiv(project.division)&&<><div style={{marginTop:18,marginBottom:10,paddingTop:14,borderTop:`2px dashed ${T.border}`}}>
@@ -4568,13 +4602,13 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
             <div style={{fontSize:12,color:T.muted,marginTop:2,marginBottom:10}}>Equipment you don't own — type any description</div>
           </div>
           {(rpt.rental_equipment||[]).map((row,i)=><RentedEquipCard key={row.id} row={row} trackInvoices={isPipeDiv(project.division)} onChange={r=>upd("rental_equipment",i,r)} onRemove={()=>del("rental_equipment",i)}/>)}
-          <DashedAdd label="+ Add Rented Equipment" onClick={()=>add("rental_equipment",{id:uid(),description:"",qty:"",usage:"",rate:""})} color={T.purple}/></>}
+          <DashedAdd label="+ Add Rented Equipment" onClick={()=>add("rental_equipment",{id:uid(),description:"",qty:"",usage:"",rate:"",co_id:rpt.change_order_id||null})} color={T.purple}/></>}
         </div>)}
-        {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.{isPipeDiv(project.division)?" (incl. rentals & subs)":""}</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} trackInvoices={isPipeDiv(project.division)} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[]})} color={T.blue}/>
+        {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.{isPipeDiv(project.division)?" (incl. rentals & subs)":""}</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} cos={cos} trackInvoices={isPipeDiv(project.division)} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[],co_id:rpt.change_order_id||null})} color={T.blue}/>
           {!isPipeDiv(project.division)&&<>
           <div style={{fontSize:17,fontWeight:800,margin:"24px 0 12px"}}>🏢 Subcontractors</div>
           {(rpt.subcontractors||[]).map((row,i)=><SubCard key={row.id} row={row} onChange={r=>upd("subcontractors",i,r)} onRemove={()=>del("subcontractors",i)}/>)}
-          <DashedAdd label="+ Add Subcontractor" onClick={()=>add("subcontractors",{id:uid(),company:"",description:"",workers:"",hours:"",amount:"",markup_pct:"",tax_amount:""})} color={T.orange}/>
+          <DashedAdd label="+ Add Subcontractor" onClick={()=>add("subcontractors",{id:uid(),company:"",description:"",workers:"",hours:"",amount:"",markup_pct:"",tax_amount:"",co_id:rpt.change_order_id||null})} color={T.orange}/>
           </>}
           {isPipeDiv(project.division)&&<div style={{fontSize:11.5,color:T.muted,marginTop:12,lineHeight:1.5}}>Rented equipment and subcontractor charges go in here too — one line each, with the invoice attached.</div>}
         </div>)}
@@ -11312,7 +11346,7 @@ function BidBoard({user,onBack,initialOpenId}){
                       <td style={{padding:"12px",verticalAlign:"top",minWidth:260}}>
                         <div onClick={()=>setOpenId(b.id)}
                           style={{fontSize:13.5,fontWeight:700,color:"#60A5FA",cursor:"pointer",lineHeight:1.35}}>
-                          {b.name||"Untitled bid"}
+                          {b.name||"Untitled bid"}{b.rfi_id&&<span style={{...pill(T.purple),marginLeft:8,fontSize:10,padding:"2px 8px"}}>{rfiTag(b.rfi_ref)}</span>}
                         </div>
                         {b.quote_number&&<div style={{fontSize:11,color:T.sub,marginTop:2,fontWeight:600}}>
                           Quote {b.quote_number}
@@ -11744,7 +11778,7 @@ function AttachJobModal({bid,user,onClose,onDone,onErr}){
   );
 }
 
-function BidDetail({bidId,user,onBack,onChanged}){
+function BidDetail({bidId,user,onBack,onChanged,backLabel}){
   // Two people in the same bid overwrite each other silently — last save wins.
   // This does not lock anything, it just makes the overlap visible.
   const othersHere=usePresence("estimate",bidId,user);
@@ -11804,11 +11838,12 @@ function BidDetail({bidId,user,onBack,onChanged}){
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit"}}>
       {/* Breadcrumb + title + stage */}
       <div style={{padding:"14px 24px 0"}}>
-        <button onClick={onBack} style={{background:"none",border:"none",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit",padding:0}}>Bid Board ›</button>
+        <button onClick={onBack} style={{background:"none",border:"none",color:T.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit",padding:0}}>{backLabel||"Bid Board"} ›</button>
         <div style={{display:"flex",alignItems:"center",gap:14,marginTop:6}}>
           <div style={{fontSize:22,fontWeight:900,color:T.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
             {bid.name||"Untitled bid"}
           </div>
+          {bid.rfi_id&&<span style={{...pill(T.purple),padding:"7px 12px",fontSize:11.5}} title="Change-order quote for a client RFI">📝 {rfiTag(bid.rfi_ref)} quote</span>}
           {converted&&<span style={{...pill(T.green),padding:"7px 12px",fontSize:11.5}}>
             ✓ Job {bid.job_number||""}{bid.job_division?` · ${bid.job_division}`:""}
           </span>}
@@ -12057,7 +12092,7 @@ function buildProposalHtml(bid,f,total,breakdown,show){
   const lines=(s)=>esc(s).split("\n").map(l=>l.trim()).filter(Boolean);
     const inc=asList(bid.inclusions), exc=asList(bid.exclusions);
     const dateStr=f.quote_date?new Date(f.quote_date+"T00:00:00").toLocaleDateString("en-US"):"";
-    const running=`Quote: ${esc(f.quote_number||"—")} / Date: ${esc(dateStr)}`;
+    const running=`${bid.rfi_id?"Change Order Proposal · "+esc(rfiTag(bid.rfi_ref))+" · ":""}Quote: ${esc(f.quote_number||"—")} / Date: ${esc(dateStr)}`;
 
     const bulletBlock=(arr)=>arr.length
       ? `<ol class="numlist">${arr.map(x=>`<li>${esc(x)}</li>`).join("")}</ol>`
@@ -12125,6 +12160,7 @@ function buildProposalHtml(bid,f,total,breakdown,show){
 
   <hr class="rule"/>
   <div class="proj"><span>Project:</span> <strong>${esc(bid.name||"")}</strong></div>
+  ${bid.rfi_id?`<div class="proj"><span>In response to:</span> <strong>${esc(rfiTag(bid.rfi_ref))}</strong> — change order proposal${bid.job_number?` for job ${esc(bid.job_number)}`:""}</div>`:""}
 
   <h2>Scope of Work</h2>
   ${bid.scope_of_work?`<div>${lines(bid.scope_of_work).map(l=>l.startsWith("-")||l.startsWith("•")?`<ul class="scope"><li>${l.replace(/^[-•]\s*/,"")}</li></ul>`:`<div>${l}</div>`).join("")}</div>`:'<div class="muted">No scope entered.</div>'}
@@ -14421,8 +14457,8 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   async function load(silent=false){if(!silent)setLoading(true);try{const[reps,saf,phs,wx]=await Promise.all([API.reports.forProject(project.id),API.safety.forProject(project.id),API.photos.forProject(project.id),API.weather.forProject(project.id)]);setReports(reps||[]);setSafety(saf||[]);setPhotos(phs||[]);setWeather(wx||[]);}catch(e){setErr(e.message);}if(!silent)setLoading(false);}
   useEffect(()=>{load();const firstTab=visibleTabs[0]?.id||"info";setTab(firstTab);},[project.id]);
 
-  async function saveReport(d){try{const{rental_equipment,...dbData}=d;let saved=false;try{await API.reports.create({...dbData,rental_equipment,project_id:project.id});saved=true;}catch(colErr){if(colErr.message&&colErr.message.includes("rental_equipment")){await API.reports.create({...dbData,project_id:project.id});saved=true;}else{throw colErr;}}if(!saved)throw new Error("Save failed");await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
-  async function deleteReport(id){try{await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
+  async function saveReport(d){try{const{rental_equipment,...dbData}=d;let saved=null;try{saved=await API.reports.create({...dbData,rental_equipment,project_id:project.id});}catch(colErr){if(colErr.message&&colErr.message.includes("rental_equipment")){saved=await API.reports.create({...dbData,project_id:project.id});}else{throw colErr;}}if(!saved)throw new Error("Save failed");await load(true);setScreen("detail");return Array.isArray(saved)?saved[0]:saved;}catch(e){setErr(e.message);}}
+  async function deleteReport(id){try{await removeTimeCardsForSource(id);await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
   async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));{const rep=(reports||[]).find(r=>r.id===id)||activeReport||{};await notify("report_flagged",`Report Flagged — ${project.name}`,pm_notes,{project_id:project.id,report_id:id,to:rep.submitted_by,except:user.name});}await load(true);}catch(e){setErr(e.message);}}
   async function updateProject(data){
@@ -14565,6 +14601,8 @@ function ChangeOrdersTab({project,user,onErr}){
   const [saving,setSaving]=useState(false);
   const [shareCo,setShareCo]=useState(null);
   const [coCopied,setCoCopied]=useState(false);
+  const [reports,setReports]=useState([]);const [tickets,setTickets]=useState([]);const [rfiMap,setRfiMap]=useState({});
+  const [openBid,setOpenBid]=useState(null);const [showCost,setShowCost]=useState({});
   const appUrl=window.location.origin+window.location.pathname;
   const blank={co_number:"",description:"",date_submitted:today(),amount:"",status:"Pending",submitted_by:user.name,approved_by:"",approved_date:"",notes:"",client_signature:null,client_signed_by:""};
   const [f,setF]=useState(blank);
@@ -14572,7 +14610,13 @@ function ChangeOrdersTab({project,user,onErr}){
   const statusColor={Pending:T.yellow,Approved:T.green,Rejected:T.red};
 
   useEffect(()=>{load();},[project.id]);
-  async function load(){setLoading(true);try{const r=await API.changeOrders.forProject(project.id);setCos(Array.isArray(r)?r:[]);}catch(e){onErr(e.message);}setLoading(false);}
+  async function load(){setLoading(true);try{
+      const [r,reps,tms,rf]=await Promise.all([API.changeOrders.forProject(project.id),API.reports.forProject(project.id).catch(()=>[]),API.tmTickets.forProject(project.id).catch(()=>[]),API.rfis.forProject(project.id).catch(()=>[])]);
+      setCos(Array.isArray(r)?r:[]);setReports((reps||[]).filter(x=>x.status!=="archived"));setTickets(tms||[]);
+      const m={};(rf||[]).forEach(x=>m[x.id]=x);setRfiMap(m);
+    }catch(e){onErr(e.message);}setLoading(false);}
+  // Actual cost charged to each change order (daily report lines + T&M tickets tagged to it).
+  const costBy=coCostBreakdown(reports,tickets,project.division);
 
   async function save(){
     setSaving(true);
@@ -14646,6 +14690,12 @@ ${co.client_signature?`<div style="background:#fff;border:1px solid #86efac;bord
   const pendingCOs=cos.filter(c=>c.status==="Pending").reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
   const revisedContract=contractVal+approvedCOs;
   const fmt=n=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2});
+  const num1=(n)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:1,maximumFractionDigits:1});
+
+  if(openBid)return(
+    <div style={{position:"fixed",inset:0,zIndex:400,background:T.bg,overflowY:"auto"}}>
+      <BidDetail bidId={openBid} user={user} backLabel={`${project.name} · Change Orders`} onBack={()=>{setOpenBid(null);load();}} onChanged={()=>{}}/>
+    </div>);
 
   if(showForm||editing) return(
     <div style={{padding:"14px 16px 80px"}}>
@@ -14714,10 +14764,31 @@ ${co.client_signature?`<div style="background:#fff;border:1px solid #86efac;bord
             <div style={{fontSize:12,color:T.muted}}>{co.date_submitted} · {co.submitted_by}</div></div>
             <div style={{fontSize:18,fontWeight:900,color:co.status==="Rejected"?T.red:T.green}}>{co.status==="Rejected"?"—":"+"}{fmt(co.amount)}</div>
           </div>
-          {co.description&&<div style={{fontSize:13,color:T.text,marginBottom:8,lineHeight:1.5}}>{co.description}</div>}
+          {co.description&&<div style={{fontSize:13,color:T.text,marginBottom:8,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{co.description}</div>}
           {co.status==="Approved"&&co.approved_by&&<div style={{fontSize:11,color:T.green}}>✓ Approved by {co.approved_by}{co.approved_date?" on "+co.approved_date:""}</div>}
           {co.client_signature&&<div style={{background:"#fff",borderRadius:8,padding:4,marginTop:6}}><div style={{fontSize:9,color:"#999",paddingLeft:4,marginBottom:2}}>CLIENT SIGNATURE — {co.client_signed_by||""}</div><img src={co.client_signature} alt="sig" style={{width:"100%",maxHeight:60,objectFit:"contain",borderRadius:6}}/></div>}
           {co.notes&&<div style={{fontSize:11,color:T.muted,marginTop:4,fontStyle:"italic"}}>{co.notes}</div>}
+          {(co.rfi_id||co.estimate_id)&&<div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:8,fontSize:12,color:T.sub}}>
+            {co.rfi_id&&<span style={pill(T.purple)}>📝 {rfiTag(rfiMap[co.rfi_id]?.rfi_number||"")}</span>}
+            {co.estimate_id&&<button onClick={()=>setOpenBid(co.estimate_id)} style={{...ghostBtn,padding:"4px 10px",fontSize:11.5,color:T.orange,borderColor:T.orange+"60"}}>📐 View quote</button>}
+          </div>}
+          {co.status!=="Rejected"&&(()=>{const c=costBy[co.id]||{hrs:0,labor:0,equip:0,mats:0,tm:0,reports:0,tickets:0,total:0};const spent=c.total+c.tm;const amt=parseFloat(co.amount)||0;const p=amt>0?Math.round(spent/amt*100):null;const over=p!=null&&p>100;const on=!!showCost[co.id];return(
+            <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 12px",marginTop:10}}>
+              <div onClick={()=>setShowCost(x=>({...x,[co.id]:!on}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",gap:8}}>
+                <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px"}}>💵 Cost to date</div>
+                <div style={{fontSize:12.5,color:over?T.red:T.text,fontWeight:700}}>{fmt(spent)}{amt>0&&<span style={{color:T.muted,fontWeight:400}}> of {fmt(amt)}{p!=null?` · ${p}%`:""}</span>}<span style={{color:T.muted,marginLeft:8}}>{on?"▾":"▸"}</span></div>
+              </div>
+              {amt>0&&<div style={{height:6,background:T.card,borderRadius:3,overflow:"hidden",marginTop:8}}><div style={{width:`${Math.min(100,p||0)}%`,height:"100%",background:over?T.red:p>85?T.yellow:T.green}}/></div>}
+              {on&&<div style={{marginTop:10}}>
+                {spent===0&&<div style={{fontSize:12,color:T.muted,lineHeight:1.5}}>Nothing charged to this change order yet. On a daily report or T&M ticket, use <b>Charge to</b> to put labor, equipment or materials on {co.co_number}.</div>}
+                {spent>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:12}}>
+                  {[["Labor hours",num1(c.hrs)+" hrs"],["Labor",fmt(c.labor)],["Equipment",fmt(c.equip)],["Materials, rentals & subs",fmt(c.mats)],["T&M tickets",fmt(c.tm)+(c.tickets?` (${c.tickets})`:"")],["From",`${c.reports} report${c.reports===1?"":"s"}`]].map(([l,v])=>(
+                    <div key={l} style={{background:T.card,borderRadius:8,padding:"6px 8px"}}><div style={{fontSize:9.5,color:T.muted,textTransform:"uppercase"}}>{l}</div><div style={{fontWeight:700,color:T.text}}>{v}</div></div>))}
+                </div>}
+                {spent>0&&amt>0&&<div style={{fontSize:12,marginTop:8,color:spent>amt?T.red:T.green,fontWeight:700}}>{spent>amt?`Over the quoted amount by ${fmt(spent-amt)}`:`${fmt(amt-spent)} left of the quoted amount`}</div>}
+                <div style={{fontSize:10.5,color:T.muted,marginTop:8,lineHeight:1.5}}>Labor at daily-report rates. T&M tickets are the billed total of tickets charged to this CO.</div>
+              </div>}
+            </div>);})()}
           <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
             <button onClick={()=>{setShareCo(co);setCoCopied(false);}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.orange,border:`1px solid ${T.orange}40`,fontWeight:700,minWidth:90}}>📤 Send Link</button>
             <button onClick={()=>printCO(co)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:"#CBD5E1",border:"1px solid #27272A",minWidth:70}}>🖨️ PDF</button>
@@ -14732,42 +14803,178 @@ ${co.client_signature?`<div style="background:#fff;border:1px solid #86efac;bord
   );
 }
 
+/* ── RFI documents (client drawings / specs) ──
+   Stored as a list on the rfi row; files live in the documents bucket. */
+function RfiDocs({docs,onChange,canEdit,projectId,user,onErr}){
+  const ref=useRef(null);const [busy,setBusy]=useState("");
+  async function upload(files){
+    if(!files||!files.length)return;
+    const next=[...(docs||[])];
+    for(let i=0;i<files.length;i++){
+      const file=files[i];setBusy(`Uploading ${i+1} of ${files.length} — ${file.name}`);
+      try{
+        const clean=file.name.replace(/[^A-Za-z0-9._-]/g,"_");
+        const path=`rfis/${projectId}/${Date.now()}-${clean}`;
+        await storageUpload("documents",path,file,file.type||undefined);
+        next.push({id:uid(),title:file.name,storage_path:path,bucket:"documents",mime_type:file.type||null,file_size:file.size,uploaded_by:user.name,uploaded_at:new Date().toISOString()});
+      }catch(e){onErr&&onErr(`${file.name}: ${e.message}`);}
+    }
+    setBusy("");if(ref.current)ref.current.value="";
+    onChange(next);
+  }
+  async function del(d){
+    if(!window.confirm(`Remove ${d.title}?`))return;
+    try{await storageRemove(d.bucket||"documents",d.storage_path);}catch{}
+    onChange((docs||[]).filter(x=>x.id!==d.id));
+  }
+  const kb=(n)=>n>1048576?(n/1048576).toFixed(1)+" MB":Math.max(1,Math.round((n||0)/1024))+" KB";
+  return(<div>
+    {(docs||[]).map(d=>(<div key={d.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,marginBottom:6}}>
+      <span style={{fontSize:16}}>{/pdf/i.test(d.mime_type||d.title)?"📐":/image/i.test(d.mime_type||"")?"🖼️":"📄"}</span>
+      <div style={{flex:1,minWidth:0}}><div style={{fontSize:12.5,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.title}</div><div style={{fontSize:10.5,color:T.muted}}>{kb(d.file_size)}{d.uploaded_by?` · ${d.uploaded_by}`:""}</div></div>
+      <button onClick={()=>downloadDrawing({...d,sheet_number:"",revision:"",title:d.title.replace(/\.pdf$/i,"")},d.bucket||"documents")} title="Download" style={{...ghostBtn,padding:"5px 9px",fontSize:12}}>⬇️</button>
+      <button onClick={()=>window.open(storagePublicUrl(d.bucket||"documents",d.storage_path),"_blank")} title="Open" style={{...ghostBtn,padding:"5px 9px",fontSize:12}}>👁️</button>
+      {canEdit&&<button onClick={()=>del(d)} title="Remove" style={{...ghostBtn,padding:"5px 9px",fontSize:12,color:T.red,borderColor:T.red+"40"}}>×</button>}
+    </div>))}
+    {canEdit&&<>
+      <input ref={ref} type="file" multiple accept=".pdf,image/*,.doc,.docx,.xls,.xlsx,.dwg,.dxf,.zip" style={{display:"none"}} onChange={e=>upload(e.target.files)}/>
+      <button onClick={()=>ref.current&&ref.current.click()} disabled={!!busy} style={{...ghostBtn,width:"100%",textAlign:"center",fontSize:12.5,color:T.blue,borderColor:T.blue+"50",borderStyle:"dashed"}}>{busy||"📎 Add drawings / documents from the client"}</button>
+    </>}
+    {!canEdit&&!(docs||[]).length&&<div style={{fontSize:12,color:T.muted}}>No documents attached.</div>}
+  </div>);
+}
+
+/* ── RFIs on a job ──
+   Two kinds live here:
+   • question — AIME asks the client/engineer something (the original flow,
+     with the public response link).
+   • pricing  — the client sends an RFI asking for a price. We attach their
+     documents, build a quote with a real estimate (tagged to the job and the
+     RFI), send it, and when they approve it one tap turns it into a change
+     order on the CO tab, so the cost of that work can be tracked. */
+const RFI_PRICING_STATUSES=["Received","Quoting","Quote Sent","Approved","Rejected","Withdrawn"];
 function RFIsTab({project,user,onErr}){
   const canEdit=user.role==="admin"||user.role==="pm";
   const [rfis,setRfis]=useState([]);
+  const [ests,setEsts]=useState({});       // estimate_id → {total_sales,status,quote_number}
+  const [coMap,setCoMap]=useState({});     // change_order_id → change order
   const [loading,setLoading]=useState(true);
   const [showForm,setShowForm]=useState(false);
   const [editing,setEditing]=useState(null);
   const [saving,setSaving]=useState(false);
   const [shareRfi,setShareRfi]=useState(null);
   const [copied,setCopied]=useState(false);
+  const [filter,setFilter]=useState("all");  // all | pricing | question
+  const [openBid,setOpenBid]=useState(null);
+  const [busyId,setBusyId]=useState(null);
   const appUrl=window.location.origin+window.location.pathname;
-  const blank={rfi_number:"",date_submitted:today(),submitted_by:user.name,question:"",description:"",due_date:"",response:"",responded_by:"",response_date:"",status:"Open",notes:"",ball_in_court:"",ball_in_court_email:""};
+  const blank={kind:"question",rfi_number:"",date_submitted:today(),submitted_by:user.name,question:"",description:"",due_date:"",response:"",responded_by:"",response_date:"",status:"Open",notes:"",ball_in_court:"",ball_in_court_email:"",documents:[]};
   const [f,setF]=useState(blank);
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
-  const statusColor={Open:T.yellow,Answered:T.blue,Closed:T.green,Overdue:T.red};
+  const statusColor={Open:T.yellow,Answered:T.blue,Closed:T.green,Overdue:T.red,Received:T.yellow,Quoting:T.orange,"Quote Sent":T.blue,Approved:T.green,Rejected:T.red,Withdrawn:T.muted};
+  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const isPricing=(r)=>r.kind==="pricing";
 
   useEffect(()=>{load();},[project.id]);
-  async function load(){setLoading(true);try{const r=await API.rfis.forProject(project.id);setRfis(Array.isArray(r)?r:[]);}catch(e){onErr(e.message);}setLoading(false);}
+  async function load(){
+    setLoading(true);
+    try{
+      const r=await API.rfis.forProject(project.id);const list=Array.isArray(r)?r:[];setRfis(list);
+      const eids=[...new Set(list.map(x=>x.estimate_id).filter(Boolean))];
+      if(eids.length){const es=await sb(`/estimates?id=in.(${eids.join(",")})&select=id,total_sales,status,quote_number,name`).catch(()=>[]);const m={};(es||[]).forEach(e=>m[e.id]=e);setEsts(m);}else setEsts({});
+      const cos=await API.changeOrders.forProject(project.id).catch(()=>[]);const cm={};(cos||[]).forEach(c=>cm[c.id]=c);setCoMap(cm);
+    }catch(e){onErr(e.message);}
+    setLoading(false);
+  }
 
   async function save(){
     setSaving(true);
     try{
-      const toDate=v=>v&&v.trim()&&v!=="Invalid Date"?v:null;
-      const payload={...f,project_id:project.id,date_submitted:toDate(f.date_submitted),due_date:toDate(f.due_date),response_date:toDate(f.response_date)};
+      const toDate=v=>v&&String(v).trim()&&v!=="Invalid Date"?v:null;
+      const payload={...f,project_id:project.id,date_submitted:toDate(f.date_submitted),due_date:toDate(f.due_date),response_date:toDate(f.response_date),documents:f.documents||[]};
+      delete payload.id;delete payload.created_at;
       if(editing){await API.rfis.update(editing,payload);}else{await API.rfis.create(payload);}
       setShowForm(false);setEditing(null);setF(blank);await load();
     }catch(e){onErr(e.message);}
     setSaving(false);
   }
-
+  function startNew(kind){
+    setF({...blank,kind,status:kind==="pricing"?"Received":"Open",submitted_by:kind==="pricing"?(project.client||""):user.name});
+    setShowForm(true);
+  }
   async function remove(id){if(!window.confirm("Delete this RFI?"))return;try{await API.rfis.remove(id);await load();}catch(e){onErr(e.message);}}
+  async function patchDocs(rfi,docs){try{await API.rfis.update(rfi.id,{documents:docs});setRfis(rs=>rs.map(r=>r.id===rfi.id?{...r,documents:docs}:r));}catch(e){onErr(e.message);}}
+  async function setStatus(rfi,status,extra={}){try{await API.rfis.update(rfi.id,{status,...extra});await load();}catch(e){onErr(e.message);}}
+
+  // Pricing: build the quote as an estimate tagged to this job and RFI.
+  async function buildQuote(rfi){
+    setBusyId(rfi.id);
+    try{
+      let quoteNo="";
+      try{const all=await API.estimates.list();quoteNo=nextQuoteNumber((all||[]).map(b=>b.quote_number));}catch{}
+      const now=new Date().toISOString();
+      const res=await API.estimates.create({
+        name:`${project.name} — ${rfiTag(rfi.rfi_number)}${rfi.question?": "+rfi.question:""}`.slice(0,140),
+        status:"estimating",estimator:user.name,division:project.division,total_sales:0,
+        office:"Atlantic Industrial Mechanical & Environmental",measurement_system:"US",
+        quote_number:quoteNo||null,quote_date:today(),
+        requester_company:project.client||null,
+        scope_of_work:rfi.description||rfi.question||"",
+        job_project_id:project.id,job_number:project.name,job_division:project.division,converted_by:user.name,converted_at:now,
+        rfi_id:rfi.id,rfi_ref:rfi.rfi_number,estimate_label:rfiTag(rfi.rfi_number),
+      });
+      const row=Array.isArray(res)?res[0]:res;
+      if(!row?.id)throw new Error("The estimate was not created.");
+      // the client's drawings go straight into the takeoff
+      for(const d of rfi.documents||[]){
+        await API.estimateDocs.create({estimate_id:row.id,kind:/pdf/i.test(d.mime_type||d.title)?"drawing":"document",title:d.title,storage_path:d.storage_path,bucket:d.bucket||"documents",mime_type:d.mime_type||null,file_size:d.file_size||null,uploaded_by:user.name}).catch(()=>{});
+      }
+      await API.rfis.update(rfi.id,{estimate_id:row.id,status:"Quoting"});
+      await load();setOpenBid(row.id);
+    }catch(e){onErr(e.message);}
+    setBusyId(null);
+  }
+  async function markQuoteSent(rfi){
+    const est=ests[rfi.estimate_id]||{};
+    const amt=Number(est.total_sales)||0;
+    if(!amt&&!window.confirm("The quote total is $0.00. Mark it sent anyway?"))return;
+    await setStatus(rfi,"Quote Sent",{quote_amount:amt,quote_sent_at:new Date().toISOString()});
+    if(rfi.estimate_id)API.estimates.update(rfi.estimate_id,{status:"bid_submitted",updated_at:new Date().toISOString()}).catch(()=>{});
+  }
+  async function approveToCO(rfi){
+    setBusyId(rfi.id);
+    try{
+      const est=ests[rfi.estimate_id]||{};
+      const amount=Number(rfi.quote_amount)||Number(est.total_sales)||0;
+      const cos=(await API.changeOrders.forProject(project.id).catch(()=>[]))||[];
+      let n=cos.length+1,coNo=`CO-${String(n).padStart(3,"0")}`;
+      while(cos.some(c=>c.co_number===coNo)){n++;coNo=`CO-${String(n).padStart(3,"0")}`;}
+      const entered=window.prompt(`Change order number for ${rfiTag(rfi.rfi_number)}:`,coNo);
+      if(entered===null){setBusyId(null);return;}
+      const res=await API.changeOrders.create({
+        project_id:project.id,co_number:(entered.trim()||coNo),
+        description:`${rfiTag(rfi.rfi_number)}${rfi.question?" — "+rfi.question:""}${rfi.description?"\n"+rfi.description:""}`,
+        date_submitted:today(),amount,status:"Pending",submitted_by:user.name,
+        notes:`From ${rfiTag(rfi.rfi_number)}${est.quote_number?" · quote #"+est.quote_number:""}${rfi.quote_sent_at?" · quoted "+rfi.quote_sent_at.slice(0,10):""}`,
+        rfi_id:rfi.id,estimate_id:rfi.estimate_id||null,
+      });
+      const row=Array.isArray(res)?res[0]:res;
+      await API.rfis.update(rfi.id,{status:"Approved",change_order_id:row?.id||null,quote_amount:amount});
+      if(rfi.estimate_id)API.estimates.update(rfi.estimate_id,{status:"portfolio",updated_at:new Date().toISOString()}).catch(()=>{});
+      await load();
+    }catch(e){onErr(e.message);}
+    setBusyId(null);
+  }
+  async function rejectQuote(rfi){
+    if(!window.confirm(`Mark ${rfiTag(rfi.rfi_number)} as rejected by the client? The quote is kept for reference.`))return;
+    await setStatus(rfi,"Rejected");
+    if(rfi.estimate_id)API.estimates.update(rfi.estimate_id,{status:"lost",updated_at:new Date().toISOString()}).catch(()=>{});
+  }
 
   function copyLink(rfi){
     const link=`${appUrl}?rfi=${rfi.id}`;
     navigator.clipboard.writeText(link).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),3000);}).catch(()=>{const el=document.createElement("textarea");el.value=link;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);setCopied(true);setTimeout(()=>setCopied(false),3000);});
   }
-
   function openEmailDraft(rfi){
     const link=`${appUrl}?rfi=${rfi.id}`;
     const subj=`RFI #${rfi.rfi_number} — ${project.name} — Response Required`;
@@ -14832,39 +15039,56 @@ ${rfi.response?`<div class="resp-section"><h2>Response</h2><div style="backgroun
     const win=window.open("","_blank","width=850,height=800");win.document.write(html);win.document.close();win.focus();
   }
 
-  const open=rfis.filter(r=>r.status==="Open"||r.status==="Overdue").length;
-  const answered=rfis.filter(r=>r.status==="Answered").length;
+  const open=rfis.filter(r=>!isPricing(r)&&(r.status==="Open"||r.status==="Overdue")).length;
+  const answered=rfis.filter(r=>!isPricing(r)&&r.status==="Answered").length;
+  const pricing=rfis.filter(isPricing);
+  const quoting=pricing.filter(r=>["Received","Quoting","Quote Sent"].includes(r.status));
+  const approvedAmt=pricing.filter(r=>r.status==="Approved").reduce((s,r)=>s+(Number(r.quote_amount)||0),0);
+  const shown=rfis.filter(r=>filter==="all"||(filter==="pricing"?isPricing(r):!isPricing(r)));
+  const fp=f.kind==="pricing";
+
+  if(openBid)return(
+    <div style={{position:"fixed",inset:0,zIndex:400,background:T.bg,overflowY:"auto"}}>
+      <BidDetail bidId={openBid} user={user} backLabel={`${project.name} · RFIs`} onBack={()=>{setOpenBid(null);load();}} onChanged={()=>{}}/>
+    </div>);
 
   if(showForm||editing) return(
     <div style={{padding:"14px 16px 80px"}}>
       <button onClick={()=>{setShowForm(false);setEditing(null);setF(blank);}} style={{...ghostBtn,marginBottom:14}}>← Back</button>
-      <div style={{fontSize:17,fontWeight:800,marginBottom:16,color:T.text}}>{editing?"Edit":"New"} RFI</div>
+      <div style={{fontSize:17,fontWeight:800,marginBottom:4,color:T.text}}>{editing?"Edit":"New"} {fp?"Pricing Request":"RFI"}</div>
+      <div style={{fontSize:12,color:T.muted,marginBottom:16,lineHeight:1.5}}>{fp?"The client sent an RFI asking for a price. Log it here with their documents, then build the quote.":"A question from AIME to the client or engineer, with a link they can answer online."}</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-        <div><label style={lbl}>RFI Number *</label><input value={f.rfi_number} onChange={e=>set("rfi_number",e.target.value)} placeholder="RFI-001" style={inp}/></div>
-        <div><label style={lbl}>Date Submitted</label><input type="date" value={f.date_submitted||""} onChange={e=>set("date_submitted",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>{fp?"Client RFI / Reference # *":"RFI Number *"}</label><input value={f.rfi_number} onChange={e=>set("rfi_number",e.target.value)} placeholder={fp?"RFI-014":"RFI-001"} style={inp}/></div>
+        <div><label style={lbl}>{fp?"Date Received":"Date Submitted"}</label><input type="date" value={f.date_submitted||""} onChange={e=>set("date_submitted",e.target.value)} style={inp}/></div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-        <div><label style={lbl}>Submitted By</label><input value={f.submitted_by} onChange={e=>set("submitted_by",e.target.value)} style={inp}/></div>
-        <div><label style={lbl}>Response Due</label><input type="date" value={f.due_date||""} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>{fp?"From (client)":"Submitted By"}</label><input value={f.submitted_by||""} onChange={e=>set("submitted_by",e.target.value)} placeholder={fp?project.client||"Client":""} style={inp}/></div>
+        <div><label style={lbl}>{fp?"Quote Due":"Response Due"}</label><input type="date" value={f.due_date||""} onChange={e=>set("due_date",e.target.value)} style={inp}/></div>
       </div>
-      <div style={{marginBottom:10}}><label style={lbl}>Question / Issue *</label><input value={f.question} onChange={e=>set("question",e.target.value)} placeholder="Brief summary of the question..." style={inp}/></div>
-      <div style={{marginBottom:10}}><label style={lbl}>Full Description</label><textarea rows={3} value={f.description} onChange={e=>set("description",e.target.value)} placeholder="Detailed description..." style={{...inp,resize:"vertical"}}/></div>
-      <div style={{marginBottom:10}}><label style={lbl}>Status</label><select value={f.status} onChange={e=>set("status",e.target.value)} style={inpSel}>{["Open","Answered","Closed","Overdue"].map(s=><option key={s}>{s}</option>)}</select></div>
+      <div style={{marginBottom:10}}><label style={lbl}>{fp?"What they want priced *":"Question / Issue *"}</label><input value={f.question} onChange={e=>set("question",e.target.value)} placeholder={fp?"e.g. Add 40 LF of 6\" pipe and two supports at station 12":"Brief summary of the question..."} style={inp}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>{fp?"Details / scope from the RFI":"Full Description"}</label><textarea rows={3} value={f.description||""} onChange={e=>set("description",e.target.value)} placeholder={fp?"Paste the scope from their RFI. This becomes the scope of work on the quote.":"Detailed description..."} style={{...inp,resize:"vertical"}}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Status</label><select value={f.status} onChange={e=>set("status",e.target.value)} style={inpSel}>{(fp?RFI_PRICING_STATUSES:["Open","Answered","Closed","Overdue"]).map(s=><option key={s}>{s}</option>)}</select></div>
+      {fp&&<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}>
+        <div style={{fontSize:12,fontWeight:700,color:T.blue,marginBottom:8}}>📐 CLIENT DOCUMENTS & DRAWINGS</div>
+        <RfiDocs docs={f.documents||[]} onChange={d=>set("documents",d)} canEdit={true} projectId={project.id} user={user} onErr={onErr}/>
+        <div style={{fontSize:11,color:T.muted,marginTop:8,lineHeight:1.5}}>PDF drawings are copied into the quote's takeoff when you build it.</div>
+      </div>}
       <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`,background:T.orangeLow}}>
-        <div style={{fontSize:12,fontWeight:700,color:T.orange,marginBottom:8}}>🏀 BALL IN COURT</div>
+        <div style={{fontSize:12,fontWeight:700,color:T.orange,marginBottom:8}}>{fp?"👤 CLIENT CONTACT":"🏀 BALL IN COURT"}</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-          <div><label style={lbl}>Person Responsible</label><input value={f.ball_in_court} onChange={e=>set("ball_in_court",e.target.value)} placeholder="Name of person who needs to act" style={inp}/></div>
-          <div><label style={lbl}>Their Email</label><input type="email" value={f.ball_in_court_email} onChange={e=>set("ball_in_court_email",e.target.value)} placeholder="email@company.com" style={inp}/></div>
+          <div><label style={lbl}>{fp?"Contact Name":"Person Responsible"}</label><input value={f.ball_in_court||""} onChange={e=>set("ball_in_court",e.target.value)} placeholder={fp?"Who sent it / who gets the quote":"Name of person who needs to act"} style={inp}/></div>
+          <div><label style={lbl}>Their Email</label><input type="email" value={f.ball_in_court_email||""} onChange={e=>set("ball_in_court_email",e.target.value)} placeholder="email@company.com" style={inp}/></div>
         </div>
       </div>
-      {(f.status==="Answered"||f.status==="Closed")&&<>
-        <div style={{marginBottom:10}}><label style={lbl}>Response</label><textarea rows={3} value={f.response} onChange={e=>set("response",e.target.value)} style={{...inp,resize:"vertical"}}/></div>
+      {!fp&&(f.status==="Answered"||f.status==="Closed")&&<>
+        <div style={{marginBottom:10}}><label style={lbl}>Response</label><textarea rows={3} value={f.response||""} onChange={e=>set("response",e.target.value)} style={{...inp,resize:"vertical"}}/></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Responded By</label><input value={f.responded_by} onChange={e=>set("responded_by",e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Responded By</label><input value={f.responded_by||""} onChange={e=>set("responded_by",e.target.value)} style={inp}/></div>
           <div><label style={lbl}>Response Date</label><input type="date" value={f.response_date||""} onChange={e=>set("response_date",e.target.value)} style={inp}/></div>
         </div>
       </>}
-      <button onClick={save} disabled={!f.rfi_number.trim()||!f.question.trim()||saving} style={{...primBtn,opacity:f.rfi_number.trim()&&f.question.trim()&&!saving?1:0.5,borderRadius:14}}>{saving?"Saving…":"Save RFI"}</button>
+      <div style={{marginBottom:14}}><label style={lbl}>Notes (internal)</label><textarea rows={2} value={f.notes||""} onChange={e=>set("notes",e.target.value)} style={{...inp,resize:"vertical"}}/></div>
+      <button onClick={save} disabled={!f.rfi_number.trim()||!f.question.trim()||saving} style={{...primBtn,opacity:f.rfi_number.trim()&&f.question.trim()&&!saving?1:0.5,borderRadius:14}}>{saving?"Saving…":fp?"Save Pricing Request":"Save RFI"}</button>
     </div>
   );
 
@@ -14886,44 +15110,78 @@ ${rfi.response?`<div class="resp-section"><h2>Response</h2><div style="backgroun
       </div>}
 
       {rfis.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
-        {[[open,"Open / Overdue",T.yellow],[answered,"Answered",T.blue],[rfis.filter(r=>r.status==="Closed").length,"Closed",T.green]].map(([v,l,c])=>(
-          <div key={l} style={{background:T.card,borderRadius:10,padding:"10px",textAlign:"center",border:`1px solid ${c}30`}}><div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",marginTop:2}}>{l}</div></div>
+        {[[quoting.length,"Quotes in progress",T.orange],[money(approvedAmt),"Approved → COs",T.green],[open,"Open questions",T.yellow]].map(([v,l,c])=>(
+          <div key={l} style={{background:T.card,borderRadius:10,padding:"10px 6px",textAlign:"center",border:`1px solid ${c}30`}}><div style={{fontSize:typeof v==="number"?20:15,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:9,color:T.muted,textTransform:"uppercase",marginTop:2}}>{l}</div></div>
         ))}
       </div>}
-      {canEdit&&<button onClick={()=>setShowForm(true)} style={{...primBtn,borderRadius:14,marginBottom:14}}>+ New RFI</button>}
+      {canEdit&&<div style={{display:"flex",gap:8,marginBottom:12}}>
+        <button onClick={()=>startNew("pricing")} style={{...primBtn,flex:1.4,borderRadius:14,fontSize:14,padding:"14px 10px",background:T.purple,color:"#000"}}>💲 Pricing Request from Client</button>
+        <button onClick={()=>startNew("question")} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:13,padding:"14px 10px"}}>+ Ask an RFI</button>
+      </div>}
+      {rfis.length>0&&<div style={{display:"flex",gap:6,marginBottom:12}}>{[["all","All"],["pricing","Pricing"],["question","Questions"]].map(([id,l])=>(
+        <button key={id} onClick={()=>setFilter(id)} style={{...ghostBtn,padding:"6px 12px",fontSize:12,borderColor:filter===id?T.orange:T.border,color:filter===id?T.orange:T.sub,background:filter===id?T.orangeLow:"transparent"}}>{l}</button>))}</div>}
       {loading&&<Spinner/>}
       {!loading&&rfis.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
           <div style={{fontSize:44,marginBottom:12}}>📝</div>
           <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No RFIs</div>
-          <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{canEdit?`Tap "+ New RFI" above to submit a question to Colonial Pipeline or the engineer.`:"No requests for information have been submitted yet."}</div>
+          <div style={{fontSize:12,color:T.muted,lineHeight:1.6}}>{canEdit?"Log a pricing request when the client sends an RFI for a quote, or ask the client or engineer a question.":"No requests for information have been submitted yet."}</div>
         </div>}
-      {rfis.map(rfi=>{
-        const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&rfi.status==="Open";
-        const effStatus=isOverdue?"Overdue":rfi.status;
+      {!loading&&rfis.length>0&&shown.length===0&&<div style={{textAlign:"center",padding:"24px",color:T.muted,fontSize:12}}>Nothing in this filter.</div>}
+      {shown.map(rfi=>{
+        const pr=isPricing(rfi);
+        const isOverdue=rfi.due_date&&new Date(rfi.due_date)<new Date()&&(pr?["Received","Quoting"].includes(rfi.status):rfi.status==="Open");
+        const effStatus=!pr&&isOverdue?"Overdue":rfi.status;
         const sc=statusColor[effStatus]||T.muted;
+        const est=rfi.estimate_id?ests[rfi.estimate_id]:null;
+        const co=rfi.change_order_id?coMap[rfi.change_order_id]:null;
+        const busy=busyId===rfi.id;
+        const quoteAmt=Number(rfi.quote_amount)||Number(est?.total_sales)||0;
         return(
           <div key={rfi.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${sc}`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
               <div>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}><span style={{fontSize:15,fontWeight:800,color:T.orange}}>{rfi.rfi_number}</span><span style={pill(sc)}>{effStatus.toUpperCase()}</span></div>
-                <div style={{fontSize:12,color:T.muted}}>{rfi.date_submitted} · {rfi.submitted_by}</div>
-                {rfi.due_date&&<div style={{fontSize:11,color:isOverdue?T.red:T.muted,marginTop:2}}>{isOverdue?"⚠️ Overdue — ":"Due: "}{rfi.due_date}</div>}
-                {rfi.ball_in_court&&<div style={{fontSize:11,color:T.orange,marginTop:2,fontWeight:600}}>🏀 Ball in Court: {rfi.ball_in_court}</div>}
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}><span style={{fontSize:15,fontWeight:800,color:T.orange}}>{rfi.rfi_number}</span><span style={pill(sc)}>{String(effStatus).toUpperCase()}</span>{pr&&<span style={pill(T.purple)}>💲 PRICING</span>}</div>
+                <div style={{fontSize:12,color:T.muted}}>{rfi.date_submitted} · {pr?"from ":""}{rfi.submitted_by}</div>
+                {rfi.due_date&&<div style={{fontSize:11,color:isOverdue?T.red:T.muted,marginTop:2}}>{isOverdue?"⚠️ Overdue — ":pr?"Quote due: ":"Due: "}{rfi.due_date}</div>}
+                {rfi.ball_in_court&&<div style={{fontSize:11,color:T.orange,marginTop:2,fontWeight:600}}>{pr?"👤 Contact: ":"🏀 Ball in Court: "}{rfi.ball_in_court}</div>}
               </div>
+              {pr&&quoteAmt>0&&<div style={{textAlign:"right"}}><div style={{fontSize:10,color:T.muted,textTransform:"uppercase"}}>Quote</div><div style={{fontSize:18,fontWeight:900,color:T.green}}>{money(quoteAmt)}</div></div>}
             </div>
             <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:4}}>{rfi.question}</div>
-            {rfi.description&&<div style={{fontSize:12,color:T.sub,marginBottom:8,lineHeight:1.5}}>{rfi.description}</div>}
-            {rfi.response&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px",marginTop:8}}>
+            {rfi.description&&<div style={{fontSize:12,color:T.sub,marginBottom:8,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{rfi.description}</div>}
+            {pr&&<div style={{marginTop:8}}>
+              <div style={{fontSize:10.5,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:6}}>Client documents</div>
+              <RfiDocs docs={rfi.documents||[]} onChange={d=>patchDocs(rfi,d)} canEdit={canEdit&&!["Approved","Rejected","Withdrawn"].includes(rfi.status)} projectId={project.id} user={user} onErr={onErr}/>
+            </div>}
+            {pr&&<div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 12px",marginTop:10}}>
+              <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+                {["Received","Quoting","Quote Sent","Approved"].map((s,i)=>{const idx=["Received","Quoting","Quote Sent","Approved"].indexOf(rfi.status);const done=idx>=i;const dead=["Rejected","Withdrawn"].includes(rfi.status);return(
+                  <React.Fragment key={s}><span style={{fontSize:10.5,fontWeight:700,color:dead?T.muted:done?T.green:T.muted,opacity:done||dead?1:0.6}}>{done&&!dead?"✓ ":""}{s}</span>{i<3&&<span style={{color:T.border}}>›</span>}</React.Fragment>);})}
+                {["Rejected","Withdrawn"].includes(rfi.status)&&<span style={{...pill(T.red),marginLeft:"auto"}}>{rfi.status}</span>}
+              </div>
+              {est&&<div style={{fontSize:12,color:T.sub,marginBottom:8}}>📐 Quote: <b style={{color:T.text}}>{est.quote_number?"#"+est.quote_number:"estimate"}</b> · {money(est.total_sales)} · {stageOf(est.status).label}{rfi.quote_sent_at?` · sent ${rfi.quote_sent_at.slice(0,10)}`:""}</div>}
+              {co&&<div style={{fontSize:12,color:T.green,marginBottom:8,fontWeight:700}}>📋 Change order {co.co_number} · {money(co.amount)} · {co.status}{co.client_signed_by?" · signed by "+co.client_signed_by:""} — see the CO tab for costs</div>}
+              {canEdit&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {!rfi.estimate_id&&!["Rejected","Withdrawn"].includes(rfi.status)&&<button onClick={()=>buildQuote(rfi)} disabled={busy} style={{...primBtn,flex:1,minWidth:150,padding:"10px 12px",fontSize:13,borderRadius:10,background:T.orange,color:"#000",opacity:busy?0.6:1}}>{busy?"Creating…":"📐 Build Quote"}</button>}
+                {rfi.estimate_id&&<button onClick={()=>setOpenBid(rfi.estimate_id)} style={{...ghostBtn,flex:1,minWidth:120,textAlign:"center",fontSize:12.5,color:T.orange,borderColor:T.orange+"60"}}>📐 Open Quote</button>}
+                {rfi.estimate_id&&rfi.status==="Quoting"&&<button onClick={()=>markQuoteSent(rfi)} style={{...ghostBtn,flex:1,minWidth:120,textAlign:"center",fontSize:12.5,color:T.blue,borderColor:T.blue+"60"}}>📤 Mark Quote Sent</button>}
+                {rfi.estimate_id&&["Quoting","Quote Sent"].includes(rfi.status)&&<button onClick={()=>approveToCO(rfi)} disabled={busy} style={{...ghostBtn,flex:1.3,minWidth:170,textAlign:"center",fontSize:12.5,color:T.green,borderColor:T.green+"70",fontWeight:800,opacity:busy?0.6:1}}>{busy?"Creating…":"✓ Approved → Create Change Order"}</button>}
+                {["Quoting","Quote Sent"].includes(rfi.status)&&<button onClick={()=>rejectQuote(rfi)} style={{...ghostBtn,minWidth:90,textAlign:"center",fontSize:12.5,color:T.red,borderColor:T.red+"50"}}>✗ Rejected</button>}
+                {rfi.status==="Approved"&&!co&&<button onClick={()=>approveToCO(rfi)} disabled={busy} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12.5,color:T.green,borderColor:T.green+"70"}}>Create the change order</button>}
+              </div>}
+            </div>}
+            {!pr&&rfi.response&&<div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:10,padding:"10px",marginTop:8}}>
               <div style={{fontSize:11,fontWeight:700,color:T.green,marginBottom:4}}>✓ RESPONSE — {rfi.responded_by}{rfi.response_date?" · "+rfi.response_date:""}</div>
               <div style={{fontSize:12,color:T.text,lineHeight:1.5}}>{rfi.response}</div>
               {rfi.response_signature&&<div style={{marginTop:8,background:"#fff",borderRadius:8,padding:4}}><div style={{fontSize:9,color:"#999",marginBottom:2,paddingLeft:4}}>SIGNATURE</div><img src={rfi.response_signature} alt="Signature" style={{width:"100%",maxHeight:80,objectFit:"contain",display:"block",borderRadius:6}}/></div>}
             </div>}
+            {rfi.notes&&<div style={{fontSize:11.5,color:T.muted,marginTop:8,fontStyle:"italic"}}>{rfi.notes}</div>}
             <div style={{display:"flex",gap:6,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,flexWrap:"wrap"}}>
-              <button onClick={()=>{setShareRfi(rfi);setCopied(false);}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.orange,border:`1px solid ${T.orange}40`,fontWeight:700,minWidth:90}}>📤 Send Link</button>
-              <button onClick={()=>printRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:"#CBD5E1",border:"1px solid #27272A",minWidth:70}}>🖨️ PDF</button>
+              {!pr&&<button onClick={()=>{setShareRfi(rfi);setCopied(false);}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.orange,border:`1px solid ${T.orange}40`,fontWeight:700,minWidth:90}}>📤 Send Link</button>}
+              {!pr&&<button onClick={()=>printRFI(rfi)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:"#CBD5E1",border:"1px solid #27272A",minWidth:70}}>🖨️ PDF</button>}
               {canEdit&&<>
-                <button onClick={()=>{setEditing(rfi.id);setF({...rfi,notes:rfi.notes||"",ball_in_court:rfi.ball_in_court||"",ball_in_court_email:rfi.ball_in_court_email||""});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,minWidth:60}}>✏️</button>
-                <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`,minWidth:50}}>🗑</button>
+                <button onClick={()=>{setEditing(rfi.id);setF({...blank,...rfi,kind:rfi.kind||"question",notes:rfi.notes||"",ball_in_court:rfi.ball_in_court||"",ball_in_court_email:rfi.ball_in_court_email||"",documents:rfi.documents||[]});}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12,minWidth:60}}>✏️ Edit</button>
+                <button onClick={()=>remove(rfi.id)} style={{...ghostBtn,flex:pr?0:1,textAlign:"center",fontSize:12,color:T.red,border:`1px solid ${T.red}40`,minWidth:50}}>🗑</button>
               </>}
             </div>
           </div>
@@ -19484,24 +19742,28 @@ function AppInner(){
           try{data=(await offloadReportImages(data)).report;}catch{}
           const {rental_equipment,...raw}=data;
           const dbData=Object.fromEntries(Object.entries(raw).filter(([k])=>!k.startsWith("_")));
-          try{await API.reports.create({...dbData,rental_equipment});}
-          catch{await API.reports.create(dbData);}
+          let createdRow=null;
+          try{createdRow=await API.reports.create({...dbData,rental_equipment});}
+          catch{createdRow=await API.reports.create(dbData);}
           removeFromQueue(item.qid);
           const proj=item.data.mfg_job_id
             ?{id:item.data.mfg_job_id,_mfg:true,name:item.data._job_name||"Shop job",division:"Manufacturing"}
             :projects.find(p=>p.id===item.data.project_id);
-          if(proj) await autoPopulateTimeCards(item.data,proj).catch(()=>{});
+          const crow=Array.isArray(createdRow)?createdRow[0]:createdRow;
+          if(proj) await autoPopulateTimeCards({...item.data,id:crow?.id||null},proj).catch(()=>{});
           synced++;
         }
         else if(item.type==="tm"){
-          await API.tmTickets.create(item.data);
+          const tr=await API.tmTickets.create(item.data);const trow=Array.isArray(tr)?tr[0]:tr;
           removeFromQueue(item.qid); synced++;
           const proj=projects.find(p=>p.id===item.data.project_id);
-          if(proj) await feedTimeCardsFromTM(item.data,proj);
+          if(proj) await feedTimeCardsFromTM({...item.data,id:trow?.id||null},proj);
         }
         else if(item.type==="tm_update"){
           await API.tmTickets.update(item.id,item.data);
           removeFromQueue(item.qid); synced++;
+          const projU=projects.find(p=>p.id===item.data.project_id);
+          if(projU) await feedTimeCardsFromTM({...item.data,id:item.id},projU).catch(()=>{});
         }
         else if(item.type==="timecard"){
           // A card for the same worker/date/job may have been created online in
@@ -20686,7 +20948,7 @@ function JobEstimateTab({project,user,reports,onErr}){
   async function load(){
     setLoading(true);
     try{
-      const rows=await sb(`/estimates?job_project_id=eq.${project.id}&select=*&order=converted_at.desc.nullslast&limit=1`);
+      const rows=await sb(`/estimates?job_project_id=eq.${project.id}&rfi_id=is.null&select=*&order=converted_at.desc.nullslast&limit=1`);
       const e=(rows||[])[0]||null;setEst(e);
       setLines(e?(await API.estimateLines.forEstimate(e.id).catch(()=>[]))||[]:[]);
     }catch(e){onErr&&onErr(e.message);}
@@ -20849,14 +21111,14 @@ function BillingTab({project,user,onErr}){
    tickets, subs and vendor invoices. Labor / equipment / materials are valued at the
    division rate sheet, the same way the reports price them. */
 function JobCostView({project,user,onErr}){
-  const [reports,setReports]=useState([]);const [tickets,setTickets]=useState([]);const [ap,setAp]=useState([]);const [loading,setLoading]=useState(true);
+  const [reports,setReports]=useState([]);const [tickets,setTickets]=useState([]);const [ap,setAp]=useState([]);const [cos,setCos]=useState([]);const [loading,setLoading]=useState(true);
   const monthStart=(d)=>{const x=new Date(d);return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-01`;};
   const monthEnd=(d)=>{const x=new Date(d);const e=new Date(x.getFullYear(),x.getMonth()+1,0);return `${e.getFullYear()}-${String(e.getMonth()+1).padStart(2,"0")}-${String(e.getDate()).padStart(2,"0")}`;};
   const [from,setFrom]=useState(monthStart(new Date()));const [to,setTo]=useState(monthEnd(new Date()));const [by,setBy]=useState("week");
   useEffect(()=>{(async()=>{setLoading(true);try{
-    const [r,t,a]=await Promise.all([API.reports.forProject(project.id).catch(()=>[]),API.tmTickets.forProject(project.id).catch(()=>[]),
-      sb(`/ap_invoices?project_id=eq.${project.id}&status=in.(${AP_BILLABLE_STATUSES.join(",")})&select=*`).catch(()=>[])]);
-    setReports((r||[]).filter(x=>x.status!=="archived"));setTickets(t||[]);setAp(a||[]);
+    const [r,t,a,c]=await Promise.all([API.reports.forProject(project.id).catch(()=>[]),API.tmTickets.forProject(project.id).catch(()=>[]),
+      sb(`/ap_invoices?project_id=eq.${project.id}&status=in.(${AP_BILLABLE_STATUSES.join(",")})&select=*`).catch(()=>[]),API.changeOrders.forProject(project.id).catch(()=>[])]);
+    setReports((r||[]).filter(x=>x.status!=="archived"));setTickets(t||[]);setAp(a||[]);setCos(c||[]);
   }catch(e){onErr&&onErr(e.message);}setLoading(false);})();},[project.id]);
   const inRange=(d)=>!!d&&(!from||d>=from)&&(!to||d<=to);
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -20879,12 +21141,16 @@ function JobCostView({project,user,onErr}){
   const workers={};
   reps.forEach(r=>(r.labor||[]).forEach(x=>{if(isPerDiemRow(x))return;const k=x.name||"—";const w=workers[k]=workers[k]||{cls:x.classification||"",reg:0,ot:0,trv:0,amt:0,days:0};w.reg+=parseFloat(x.regHrs)||0;w.ot+=parseFloat(x.otHrs)||0;w.trv+=parseFloat(x.travelHrs)||0;w.amt+=laborAmt(x,div);w.days++;}));
   const wkeys=Object.keys(workers).sort((a,b)=>workers[b].amt-workers[a].amt);
+  // Base contract vs each change order, for the same date range.
+  const coCost=coCostBreakdown(reps,tms,div);
+  const coRows=[["base","Base contract",null],...cos.filter(c=>c.status!=="Rejected").map(c=>[c.id,c.co_number,c])].map(([k,label,c])=>({k,label,c,cost:coCost[k]||{hrs:0,labor:0,equip:0,mats:0,tm:0,reports:0,tickets:0,total:0}})).filter(x=>x.k==="base"||x.cost.total+x.cost.tm>0||x.c);
   const quick=[["This month",monthStart(new Date()),monthEnd(new Date())],["Last month",monthStart(new Date(new Date().getFullYear(),new Date().getMonth()-1,1)),monthEnd(new Date(new Date().getFullYear(),new Date().getMonth()-1,1))],["All time","",""]];
   function exportXlsx(){
     const aoa=[[`${project.name} — Job Cost ${from||"start"} to ${to||"today"}`],[],["Summary"],["Labor hours",tot.hrs],["Labor",tot.labor],["Per diem",tot.perdiem],["Equipment",tot.equip],["Rentals",tot.rental],["Materials",tot.mats],["Subcontractors (on reports)",tot.subs],["Vendor invoices (AP)",apTotal],["Total",grand],[],["T&M tickets in period",tmTotal],[],
       [`By ${by}`,"Reports","Hours","Labor","Equipment","Materials & rentals","Subs","Vendor invoices","Total"],
       ...gkeys.map(k=>{const g=groups[k];return[k,g.reports,g.hrs,g.labor,g.equip,g.other,g.subs,g.ap,g.labor+g.equip+g.other+g.subs+g.ap];}),[],
-      ["Worker","Classification","Days","Reg hrs","OT hrs","Travel hrs","Labor $"],...wkeys.map(k=>{const w=workers[k];return[k,w.cls,w.days,w.reg,w.ot,w.trv,w.amt];})];
+      ["Worker","Classification","Days","Reg hrs","OT hrs","Travel hrs","Labor $"],...wkeys.map(k=>{const w=workers[k];return[k,w.cls,w.days,w.reg,w.ot,w.trv,w.amt];}),[],
+      ["Change order","Quoted","Hours","Labor","Equipment","Materials & rentals","T&M tickets","Total cost"],...coRows.map(x=>[x.label,x.c?Number(x.c.amount)||0:"",x.cost.hrs,x.cost.labor,x.cost.equip,x.cost.mats,x.cost.tm,x.cost.total+x.cost.tm])];
     const ws=XLSX.utils.aoa_to_sheet(aoa);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Job Cost");XLSX.writeFile(wb,`${project.name}-job-cost-${from||"all"}-${to||"today"}.xlsx`);
   }
   function printIt(){
@@ -20938,6 +21204,12 @@ ${wkeys.map(k=>{const x=workers[k];return`<tr><td>${esc(k)}</td><td>${esc(x.cls)
         <tbody>{gkeys.map(k=>{const g=groups[k];return(<tr key={k}><td style={{...td,textAlign:"left",fontWeight:700}}>{k}</td><td style={td}>{num(g.hrs)}</td><td style={td}>{money(g.labor)}</td><td style={td}>{money(g.equip)}</td><td style={td}>{money(g.other)}</td><td style={td}>{money(g.subs)}</td><td style={td}>{money(g.ap)}</td><td style={{...td,fontWeight:800,color:T.green}}>{money(g.labor+g.equip+g.other+g.subs+g.ap)}</td></tr>);})}
         {gkeys.length===0&&<tr><td colSpan={8} style={{...td,textAlign:"center",color:T.muted}}>Nothing in this date range.</td></tr>}</tbody></table>
     </div>
+    {cos.length>0&&<div style={{...cardS,marginBottom:12,overflowX:"auto"}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>By change order</div>
+      <table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr><th style={{...th,textAlign:"left"}}>Charged to</th><th style={th}>Quoted</th><th style={th}>Hrs</th><th style={th}>Labor</th><th style={th}>Equip</th><th style={th}>Mats</th><th style={th}>T&M</th><th style={th}>Cost</th></tr></thead>
+        <tbody>{coRows.map(x=>{const spent=x.cost.total+x.cost.tm;const q=x.c?Number(x.c.amount)||0:0;return(<tr key={x.k}><td style={{...td,textAlign:"left",fontWeight:700}}>{x.label}{x.c&&x.c.status!=="Approved"?<span style={{color:T.muted,fontWeight:400}}> · {x.c.status}</span>:null}</td><td style={td}>{x.c?money(q):"—"}</td><td style={td}>{num(x.cost.hrs)}</td><td style={td}>{money(x.cost.labor)}</td><td style={td}>{money(x.cost.equip)}</td><td style={td}>{money(x.cost.mats)}</td><td style={td}>{money(x.cost.tm)}</td><td style={{...td,fontWeight:800,color:q>0&&spent>q?T.red:T.text}}>{money(spent)}</td></tr>);})}</tbody></table>
+      <div style={{fontSize:10.5,color:T.muted,marginTop:6}}>Lines on daily reports and T&M tickets with no change order picked count as base contract.</div>
+    </div>}
     <div style={{...cardS,overflowX:"auto"}}>
       <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Hours by worker</div>
       <table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr><th style={{...th,textAlign:"left"}}>Worker</th><th style={{...th,textAlign:"left"}}>Class</th><th style={th}>Days</th><th style={th}>Reg</th><th style={th}>OT</th><th style={th}>Travel</th><th style={th}>Labor $</th></tr></thead>
@@ -22716,12 +22988,14 @@ function MfgDailyReportsTab({job,user,onErr}){
   async function saveReport(d){
     const {rental_equipment,...raw}=d;
     const dbData=Object.fromEntries(Object.entries(raw).filter(([k])=>!k.startsWith("_")));
-    try{await API.reports.create({...dbData,rental_equipment});}
+    let saved=null;
+    try{saved=await API.reports.create({...dbData,rental_equipment});}
     catch(colErr){
-      if(colErr.message&&colErr.message.includes("rental_equipment"))await API.reports.create(dbData);
+      if(colErr.message&&colErr.message.includes("rental_equipment"))saved=await API.reports.create(dbData);
       else throw colErr;
     }
     await load();setMode("list");
+    return Array.isArray(saved)?saved[0]:saved;
   }
   const upd=async(id,body,patch)=>{try{await API.reports.update(id,body);setActive(r=>r?{...r,...patch}:r);await load();}catch(e){onErr&&onErr(e.message);}};
 
@@ -23844,7 +24118,7 @@ function TMTicketList({project,user,onOpen,onNew}){
   }
   async function removeTicket(id){
     if(!window.confirm("Delete this T&M ticket?"))return;
-    try{await API.tmTickets.remove(id);await load();}catch(e){}
+    try{await removeTimeCardsForSource(id);await API.tmTickets.remove(id);await load();}catch(e){}
   }
 
   const statusColor={draft:T.muted,submitted:T.yellow,approved:T.green};
@@ -23951,7 +24225,7 @@ function tmTicketToLabor(data){
   };
 }
 async function feedTimeCardsFromTM(data,project){
-  try{ return await autoPopulateTimeCards(tmTicketToLabor(data),project,"tm"); }
+  try{ return await autoPopulateTimeCards({...tmTicketToLabor(data),id:data.id||null},project,"tm"); }
   catch(e){ console.warn("T&M time cards:",e.message); return {created:0,updated:0}; }
 }
 
@@ -23978,6 +24252,9 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const [customer,setCustomer]=useState(ticket?.customer||project.client||"");
   const [customerContact,setCustomerContact]=useState(ticket?.customer_contact||"");
   const [customerHistory,setCustomerHistory]=useState([]);
+  const [changeOrderId,setChangeOrderId]=useState(ticket?.change_order_id||"");
+  const [cos,setCos]=useState([]);
+  useEffect(()=>{API.changeOrders.forProject(project.id).then(r=>setCos((Array.isArray(r)?r:[]).filter(c=>c.status!=="Rejected"))).catch(()=>setCos([]));},[project.id]);
   useEffect(()=>{
     API.tmTickets.forProject(project.id).then(rows=>{
       const names=[...new Set((rows||[]).map(t=>t.customer).filter(Boolean))].sort();
@@ -24245,6 +24522,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
       project_id:project.id,
       ticket_no:ticketNo,ticket_date:ticketDate,description,
       po_number:poNumber,afe_number:afeNumber,work_order:workOrder,
+      change_order_id:changeOrderId||null,
       location,notes,
       markup_pct:pct(markupPct),
       markup_equip_pct:pct(mkEquip),markup_mats_pct:pct(mkMats),markup_other_pct:pct(mkOther),
@@ -24283,11 +24561,11 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
     }
     try{
       if(isNew){
-        await API.tmTickets.create(data);
-        const tc=await feedTimeCardsFromTM(data,project);
+        const r=await API.tmTickets.create(data);const row=Array.isArray(r)?r[0]:r;
+        const tc=await feedTimeCardsFromTM({...data,id:row?.id||null},project);
         if(tc.created+tc.updated>0)alert(`Ticket saved. ${tc.created+tc.updated} time card${tc.created+tc.updated!==1?"s":""} updated with these hours (pending approval).`);
       }
-      else await API.tmTickets.update(ticket.id,data);
+      else{await API.tmTickets.update(ticket.id,data);await feedTimeCardsFromTM({...data,id:ticket.id},project);}
       onSaved&&onSaved();
     }catch(e){
       try{
@@ -24325,6 +24603,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   ${[["Project",project.name||"—"],["Customer",customer||project.client||"—"],
      ["Contact",customerContact||"—"],["PO #",poNumber||"—"],
      ["AFE/WO #",(afeNumber||workOrder||"—")],["Location",location||"—"],
+     ...(changeOrderId?[["Change Order",(cos.find(c=>c.id===changeOrderId)||{}).co_number||"Yes"]]:[]),
      ["Submitted By",user.name]].map(([l,v])=>`<div style="display:flex;border-bottom:1px solid #e5e7eb"><div style="background:#f3f4f6;padding:3px 8px;font-weight:700;font-size:7.5pt;width:100px;border-right:1px solid #e5e7eb;flex-shrink:0">${l}</div><div style="padding:3px 8px;font-size:8pt">${v}</div></div>`).join("")}
 </div>
 ${description?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:8px;font-size:8.5pt"><b>Description:</b> ${description}</div>`:""}
@@ -24501,6 +24780,11 @@ ${(()=>{
             <div><label style={lbl}>PO #</label><input value={poNumber} onChange={e=>setPoNumber(e.target.value)} style={ri}/></div>
             <div><label style={lbl}>AFE / WO #</label><input value={afeNumber} onChange={e=>setAfeNumber(e.target.value)} style={ri}/></div>
           </div>
+          {(cos.length>0||changeOrderId)&&<div style={{marginBottom:8}}><label style={lbl}>📋 Charge to</label>
+            <select value={changeOrderId||""} onChange={e=>setChangeOrderId(e.target.value)} style={inpSel}>
+              <option value="">Base contract</option>{cos.map(c=><option key={c.id} value={c.id}>{coLabel(c)}</option>)}
+              {changeOrderId&&!cos.some(c=>c.id===changeOrderId)&&<option value={changeOrderId}>Change order (no longer listed)</option>}
+            </select></div>}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
             <div><label style={lbl}>Customer</label>
               <input value={customer} onChange={e=>setCustomer(e.target.value)}
@@ -25054,7 +25338,7 @@ ${(()=>{
         {status==="draft"&&<div style={{fontSize:11.5,color:T.yellow,marginTop:8,lineHeight:1.6,textAlign:"center"}}>
           This is a draft — it won't reach a PM until you submit it.
         </div>}
-        {!isNew&&canEdit&&<button onClick={async()=>{if(window.confirm("Delete this ticket?"))try{await API.tmTickets.remove(ticket.id);onBack();}catch(e){}}}
+        {!isNew&&canEdit&&<button onClick={async()=>{if(window.confirm("Delete this ticket?"))try{await removeTimeCardsForSource(ticket.id);await API.tmTickets.remove(ticket.id);onBack();}catch(e){}}}
           style={{...primBtn,borderRadius:14,background:T.redLow,color:T.red,border:`1px solid ${T.red}30`,marginTop:8,width:"100%",fontSize:13}}>
           🗑 Delete Ticket
         </button>}
