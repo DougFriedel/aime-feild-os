@@ -1953,8 +1953,9 @@ function apLineFromInvoice(r){
   return {id:uid(),qty:"1",description:name,amount:String(Number(r.amount)||0),receipts:receipt,ap_invoice_id:r.id,ap_vendor:r.vendor||"",ap_invoice_no:r.invoice_no||""};
 }
 function apIdsOnReport(d){return [...new Set([...(d.materials||[]),...(d.other_charges||[])].map(m=>m.ap_invoice_id).filter(Boolean))];}
-async function syncApBilledFromSource(type,id,label,ids,user){
+async function syncApBilledFromSource(type,id,label,ids,user,project){
   if(!id)return;
+  const jobCols=project?(project._mfg?{mfg_job_id:project.id,division:"Manufacturing"}:{project_id:project.id,division:project.division||null}):{};
   const now=new Date().toISOString();
   let current=[];
   try{current=(await sb(`/ap_invoices?billed_source_id=eq.${encodeURIComponent(id)}&select=id,history,billed_source_id`))||[];}catch{current=[];}
@@ -1963,7 +1964,7 @@ async function syncApBilledFromSource(type,id,label,ids,user){
     try{
       const rows=await sb(`/ap_invoices?id=eq.${apId}&select=id,history,billing_status,billed_source_id`);const r=(rows||[])[0];if(!r)continue;
       if(r.billed_source_id===id&&r.billing_status==="billed")continue;
-      await sb(`/ap_invoices?id=eq.${apId}`,{method:"PATCH",body:{billing_status:"billed",billed_by:user?.name||null,billed_date:today(),billed_at:now,billed_source_type:type,billed_source_id:id,billed_source_label:label,
+      await sb(`/ap_invoices?id=eq.${apId}`,{method:"PATCH",body:{...jobCols,billing_status:"billed",billed_by:user?.name||null,billed_date:today(),billed_at:now,billed_source_type:type,billed_source_id:id,billed_source_label:label,
         history:[...(r.history||[]),{at:now,by:user?.name||null,action:"billed",note:`Added to ${label}`}],updated_at:now}});
     }catch{}
   }
@@ -1977,9 +1978,13 @@ async function releaseApBilledForSource(id,user){return syncApBilledFromSource(n
 function ApInvoicePicker({project,user,exclude,sourceId,onPick,onClose}){
   const [rows,setRows]=useState(null);const [q,setQ]=useState("");const [err,setErr]=useState("");
   useEffect(()=>{
+    // Invoices are entered against a division, not a job, so show the job's
+    // own invoices plus every unassigned invoice in its division.
     const col=project._mfg?"mfg_job_id":"project_id";
-    sb(`/ap_invoices?${col}=eq.${project.id}&status=neq.rejected&select=*&order=invoice_date.desc.nullslast,created_at.desc&limit=500`)
-      .then(d=>setRows(Array.isArray(d)?d:[])).catch(e=>{setErr(e.message);setRows([]);});
+    const div=project._mfg?"Manufacturing":(project.division||"");
+    sb(`/ap_invoices?or=(${col}.eq.${project.id},project_id.is.null)&status=neq.rejected&select=*&order=invoice_date.desc.nullslast,created_at.desc&limit=2000`)
+      .then(d=>setRows((Array.isArray(d)?d:[]).filter(r=>r[col]===project.id||(!r.project_id&&!r.mfg_job_id&&(!r.division||r.division===div)))))
+      .catch(e=>{setErr(e.message);setRows([]);});
   },[project.id]);
   const ex=new Set(exclude||[]);
   const list=(rows||[]).filter(r=>!ex.has(r.id)&&!(r.billing_status==="billed"&&r.billed_source_id!==sourceId)&&r.billing_status!=="not_billable")
@@ -1989,7 +1994,7 @@ function ApInvoicePicker({project,user,exclude,sourceId,onPick,onClose}){
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:320,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
       <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:"20px 20px 0 0",padding:"18px 16px 32px",width:"100%",maxWidth:560,maxHeight:"88vh",overflowY:"auto",border:`1px solid ${T.border}`}}>
         <div style={{fontSize:16,fontWeight:900,color:T.text,marginBottom:2}}>🧾 Vendor invoices in Accounting</div>
-        <div style={{fontSize:11.5,color:T.muted,marginBottom:12,lineHeight:1.5}}>Entered for {project.name}. Picking one adds it as a line and marks it <b>Billed</b> when you save.</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:12,lineHeight:1.5}}>Not-yet-billed invoices in the {project._mfg?"Manufacturing":project.division} division (and any with no division). Picking one adds it as a line, ties it to {project.name}, and marks it <b>Billed</b> when you save.</div>
         <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search vendor or invoice #…" style={{...inp,marginBottom:10}} autoFocus/>
         {rows===null&&<Spinner/>}
         {err&&<div style={{color:T.red,fontSize:12,marginBottom:8}}>{err}</div>}
@@ -1998,7 +2003,7 @@ function ApInvoicePicker({project,user,exclude,sourceId,onPick,onClose}){
           <div key={r.id} style={{...cardS,padding:"10px 12px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:13.5,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.vendor||"Vendor"} <span style={{color:T.sub,fontWeight:600}}>· Inv #{r.invoice_no||"—"}</span></div>
-              <div style={{fontSize:11,color:T.muted}}>{r.invoice_date?fmtDate(r.invoice_date):""}{r.description?` · ${String(r.description).slice(0,50)}`:""}</div>
+              <div style={{fontSize:11,color:T.muted}}>{r.invoice_date?fmtDate(r.invoice_date):""}{r.description?` · ${String(r.description).slice(0,50)}`:""}{!r.division?" · no division":""}</div>
               <div style={{fontSize:10.5,color:st.c,marginTop:2,fontWeight:700}}>{st.l}{r.billed_source_id===sourceId?" · already on this one":""}</div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
@@ -4546,7 +4551,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
         clearDraft(draftKey);
         // Time cards follow the report: replace this report's hours on each worker's card.
         try{await autoPopulateTimeCards({...reportData,id:existing.id},project);}catch(e){}
-        try{await syncApBilledFromSource("daily",existing.id,`daily report ${fmtDate(reportData.date)}${reportData.report_no?" #"+reportData.report_no:""}`,apIdsOnReport(reportData),user);}catch(e){}
+        try{await syncApBilledFromSource("daily",existing.id,`daily report ${fmtDate(reportData.date)}${reportData.report_no?" #"+reportData.report_no:""}`,apIdsOnReport(reportData),user,project);}catch(e){}
         onSave&&onSave(reportData,existing.id);
       }catch(e){
         alert("Couldn't save changes: "+e.message);
@@ -4582,7 +4587,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
     try{
       const savedRow=await onSave(reportData);
       clearDraft(draftKey);
-      try{if(savedRow?.id)await syncApBilledFromSource("daily",savedRow.id,`daily report ${fmtDate(reportData.date)}${reportData.report_no?" #"+reportData.report_no:""}`,apIdsOnReport(reportData),user);}catch(e){}
+      try{if(savedRow?.id)await syncApBilledFromSource("daily",savedRow.id,`daily report ${fmtDate(reportData.date)}${reportData.report_no?" #"+reportData.report_no:""}`,apIdsOnReport(reportData),user,project);}catch(e){}
       try{
         const tcResult=await autoPopulateTimeCards({...reportData,id:savedRow?.id||null},project);
 
@@ -24639,11 +24644,11 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
     try{
       if(isNew){
         const r=await API.tmTickets.create(data);const row=Array.isArray(r)?r[0]:r;
-        try{if(row?.id)await syncApBilledFromSource("tm",row.id,`T&M ticket ${data.ticket_no||""}`.trim(),apIdsOnReport(data),user);}catch{}
+        try{if(row?.id)await syncApBilledFromSource("tm",row.id,`T&M ticket ${data.ticket_no||""}`.trim(),apIdsOnReport(data),user,project);}catch{}
         const tc=await feedTimeCardsFromTM({...data,id:row?.id||null},project);
         if(tc.created+tc.updated>0)alert(`Ticket saved. ${tc.created+tc.updated} time card${tc.created+tc.updated!==1?"s":""} updated with these hours (pending approval).`);
       }
-      else{await API.tmTickets.update(ticket.id,data);try{await syncApBilledFromSource("tm",ticket.id,`T&M ticket ${data.ticket_no||""}`.trim(),apIdsOnReport(data),user);}catch{}await feedTimeCardsFromTM({...data,id:ticket.id},project);}
+      else{await API.tmTickets.update(ticket.id,data);try{await syncApBilledFromSource("tm",ticket.id,`T&M ticket ${data.ticket_no||""}`.trim(),apIdsOnReport(data),user,project);}catch{}await feedTimeCardsFromTM({...data,id:ticket.id},project);}
       onSaved&&onSaved();
     }catch(e){
       try{
