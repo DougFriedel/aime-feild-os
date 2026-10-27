@@ -251,95 +251,6 @@ async function offloadReportImages(report){
   }
   return {report:{...report,materials,rental_equipment:rental},moved};
 }
-/* ── Invoice tracker ──────────────────────────────────────────────
-   A receipt or invoice attached to a Materials or Rented Equipment row is
-   read by a vision model (Netlify function receipt-extract) and the
-   supplier / invoice # / amount / date land on the attachment as `inv`.
-   When the report is saved, every attachment with inv.track=true becomes
-   a row in invoice_tracker (keyed by att_id, so re-saves update in place). */
-async function extractInvoice(att){
-  let res;
-  try{
-    res=await fetch("/.netlify/functions/receipt-extract",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({src:att.src,name:att.name||"",type:att.type||""})});
-  }catch(e){throw new Error("No connection to the receipt reader.");}
-  if(res.status===404)throw new Error("Receipt reader isn't deployed (receipt-extract function missing on Netlify).");
-  if(!res.ok){
-    const t=(await res.text())||"";
-    if(/ANTHROPIC_API_KEY/.test(t))throw new Error("Receipt reader has no API key (set ANTHROPIC_API_KEY in Netlify).");
-    throw new Error(`Receipt reader error ${res.status}: ${t.slice(0,140)}`);
-  }
-  return await res.json();
-}
-function attachmentsWithInvoices(report){
-  const out=[];
-  (report.materials||[]).forEach((m,mi)=>(m.receipts||[]).forEach(a=>{if(a?.inv?.track)out.push({a,item:m.description||"Material",kind:"material"});}));
-  (report.rental_equipment||[]).forEach((e,ei)=>(e.attachments||[]).forEach(a=>{if(a?.inv?.track)out.push({a,item:`Rental: ${e.description||"equipment"}`,kind:"rental"});}));
-  return out;
-}
-async function syncInvoiceTracker(report){
-  if(!report?.id||!navigator.onLine)return;
-  const wanted=attachmentsWithInvoices(report);
-  const existing=await API.invoiceTracker.forReport(report.id).catch(()=>[])||[];
-  const byAtt=Object.fromEntries((existing||[]).map(r=>[r.att_id,r.id]));
-  for(const {a,item,kind} of wanted){
-    const inv=a.inv||{};
-    const body={
-      report_id:report.id,att_id:a.id,project_id:report.project_id||null,mfg_job_id:report.mfg_job_id||null,
-      supplier:inv.supplier||null,invoice_no:inv.invoice_no?String(inv.invoice_no):null,
-      amount:inv.amount!==""&&inv.amount!=null?parseFloat(inv.amount):null,
-      billed_date:inv.date||report.date||null,
-      item,kind,file_url:/^https?:/.test(a.src||"")?a.src:null,file_name:a.name||null,
-      report_date:report.date||null,report_no:report.report_no||null,submitted_by:report.submitted_by||null,
-      updated_at:new Date().toISOString(),
-    };
-    if(byAtt[a.id])await API.invoiceTracker.update(byAtt[a.id],body,true).catch(()=>{});
-    else await API.invoiceTracker.create({...body,status:"auto"},true).catch(()=>{});
-  }
-  // attachments that were removed or un-ticked drop out of the tracker
-  const keep=new Set(wanted.map(w=>w.a.id));
-  for(const r of (existing||[]))if(!keep.has(r.att_id))await API.invoiceTracker.remove(r.id,true).catch(()=>{});
-}
-
-/* Small editor shown under a receipt: what the AI read, editable, plus the
-   "add to invoice tracker" switch. */
-function InvoiceFields({att,onChange,color}){
-  const inv=att.inv||{};
-  const set=(k,v)=>onChange({...att,inv:{...inv,[k]:v}});
-  if(att.extracting)return <div style={{fontSize:11,color:T.muted,marginTop:6}}>🧾 Reading {att.name||"receipt"}…</div>;
-  if(!att.inv)return null;
-  return(
-    <div style={{marginTop:8,padding:"8px 10px",borderRadius:10,background:T.surface,border:`1px solid ${(color||T.blue)}30`}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-        <span style={{fontSize:10.5,fontWeight:800,color:color||T.blue,textTransform:"uppercase",letterSpacing:"0.5px"}}>🧾 Invoice · {att.name||"receipt"}</span>
-        <label style={{fontSize:11,color:T.sub,display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}>
-          <input type="checkbox" checked={!!inv.track} onChange={e=>set("track",e.target.checked)}/> Add to tracker
-        </label>
-      </div>
-      {inv.error&&<div style={{fontSize:10.5,color:T.yellow,marginBottom:6}}>⚠ {inv.error===true?"Couldn't read it automatically.":inv.error} Fill in below or <button onClick={()=>onChange({...att,inv:undefined,_retry:(att._retry||0)+1})} style={{background:"none",border:"none",color:T.blue,cursor:"pointer",fontSize:10.5,padding:0,fontFamily:"inherit",textDecoration:"underline"}}>read again</button>.</div>}
-      {!inv.error&&inv.confidence==="low"&&<div style={{fontSize:10.5,color:T.yellow,marginBottom:6}}>⚠ Low confidence — double-check these.</div>}
-      <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr",gap:6,marginBottom:6}}>
-        <input value={inv.supplier||""} onChange={e=>set("supplier",e.target.value)} placeholder="Supplier" style={{...inp,padding:"6px 8px",fontSize:12}}/>
-        <input value={inv.invoice_no||""} onChange={e=>set("invoice_no",e.target.value)} placeholder="Invoice #" style={{...inp,padding:"6px 8px",fontSize:12}}/>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-        <input type="number" step="0.01" value={inv.amount??""} onChange={e=>set("amount",e.target.value)} placeholder="Amount" style={{...inp,padding:"6px 8px",fontSize:12,textAlign:"right"}}/>
-        <input type="date" value={inv.date||""} onChange={e=>set("date",e.target.value)} style={{...inp,padding:"6px 8px",fontSize:12}}/>
-      </div>
-    </div>
-  );
-}
-// Run extraction for one attachment and write the result back into the list.
-async function readReceiptInto(att,getList,commit){
-  commit(getList().map(x=>x.id===att.id?{...x,extracting:true}:x));
-  let inv;
-  try{
-    const r=await extractInvoice(att);
-    inv={supplier:r.supplier||"",invoice_no:r.invoice_no||"",amount:r.amount??"",date:r.date||"",confidence:r.confidence||"",track:!!(r.amount||r.supplier)};
-  }catch(e){inv={supplier:"",invoice_no:"",amount:"",date:"",track:false,error:e.message||"Could not read receipt."};}
-  commit(getList().map(x=>x.id===att.id?{...x,extracting:false,inv}:x));
-}
-
 async function storageRemove(bucket,path){
   const res=await fetch(`${SUPA_URL}/storage/v1/object/${bucket}/${path}`,{
     method:"DELETE",
@@ -358,7 +269,7 @@ async function storageRemove(bucket,path){
 const ESTIMATING_OWNER="";
 const canEstimate=(u)=>!!u&&can(u,"estimating")&&(!ESTIMATING_OWNER||u.name===ESTIMATING_OWNER);
 
-const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs","invoices","apInvoices","training"]);
+const WIDE_SCREENS=new Set(["pmDashboard","timeCards","crewDirectory","userManagement","estimating","jobs","apInvoices","training"]);
 const SCREEN_MAX={estimating:1700};
 const shellMax=(screen)=>SCREEN_MAX[screen]||(WIDE_SCREENS.has(screen)?1180:480);
 
@@ -436,8 +347,8 @@ const API={
     pending:()=>sb("/daily_reports?status=eq.submitted&select=*,projects(id,name,division)&order=created_at.desc"),
     // Keys starting with "_" are app-side helpers (offline queue, mfg job
     // name) and never columns — drop them before the row goes to Postgres.
-    create:async(d)=>{const r=await sb("/daily_reports",{method:"POST",body:stripPrivate(d),prefer:"return=representation"});const row=Array.isArray(r)?r[0]:r;if(row?.id)syncInvoiceTracker({...d,...row}).catch(()=>{});return r;},
-    update:async(id,d)=>{const r=await sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:stripPrivate(d),prefer:"return=representation"});if(d.materials||d.rental_equipment)syncInvoiceTracker({...d,id}).catch(()=>{});return r;},count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
+    create:async(d)=>{const r=await sb("/daily_reports",{method:"POST",body:stripPrivate(d),prefer:"return=representation"});const row=Array.isArray(r)?r[0]:r;if(row?.id)return r;},
+    update:async(id,d)=>{const r=await sb(`/daily_reports?id=eq.${id}`,{method:"PATCH",body:stripPrivate(d),prefer:"return=representation"});if(d.materials||d.rental_equipment)return r;},count:(id)=>sb(`/daily_reports?id=eq.${id}&select=id`),
     remove:(id)=>sb(`/daily_reports?id=eq.${id}`,{method:"DELETE"}),
   },
   tmTickets:{
@@ -511,13 +422,6 @@ const API={
     list:(name)=>sb(`/notifications?to=eq.${encodeURIComponent(name||"")}&order=created_at.desc&limit=50`),
     unread:(name)=>sb(`/notifications?read=eq.false&to=eq.${encodeURIComponent(name||"")}&order=created_at.desc`),markRead:(id)=>sb(`/notifications?id=eq.${id}`,{method:"PATCH",body:{read:true}}),markAllRead:(name)=>sb(`/notifications?read=eq.false&to=eq.${encodeURIComponent(name||"")}`,{method:"PATCH",body:{read:true}}),removeMany:(ids)=>sb(`/notifications?id=in.(${ids.map(encodeURIComponent).join(",")})`,{method:"DELETE"}),create:(d)=>sb("/notifications",{method:"POST",body:d,prefer:"return=representation"})},
   notifSettings:{get:(name)=>sb(`/notification_settings?pm_name=eq.${encodeURIComponent(name)}&limit=1`),upsert:(d)=>sb("/notification_settings",{method:"POST",body:d,prefer:"return=representation,resolution=merge-duplicates"})},
-  invoiceTracker:{
-    list:()=>sb("/invoice_tracker?select=*&order=billed_date.desc.nullslast,created_at.desc&limit=5000"),
-    forReport:(rid)=>sb(`/invoice_tracker?report_id=eq.${rid}&select=id,att_id`),
-    create:(d,silent)=>sb("/invoice_tracker",{method:"POST",body:d,prefer:"return=representation",silent}),
-    update:(id,d,silent)=>sb(`/invoice_tracker?id=eq.${id}`,{method:"PATCH",body:d,silent}),
-    remove:(id,silent)=>sb(`/invoice_tracker?id=eq.${id}`,{method:"DELETE",silent}),
-  },
   userProfiles:{
     list:()=>sb("/user_profiles?order=name.asc"),
     getByName:(name)=>sb(`/user_profiles?name=eq.${encodeURIComponent(name)}&limit=1`),
@@ -738,7 +642,7 @@ function getAllPositions(){
 
 const WMO={0:["Clear Sky","☀️"],1:["Mainly Clear","🌤️"],2:["Partly Cloudy","⛅"],3:["Overcast","☁️"],45:["Foggy","🌫️"],48:["Icy Fog","🌫️"],51:["Light Drizzle","🌦️"],53:["Drizzle","🌦️"],55:["Heavy Drizzle","🌦️"],61:["Light Rain","🌧️"],63:["Rain","🌧️"],65:["Heavy Rain","🌧️"],71:["Light Snow","🌨️"],73:["Snow","🌨️"],75:["Heavy Snow","❄️"],80:["Light Showers","🌦️"],81:["Showers","🌦️"],82:["Violent Showers","⛈️"],95:["Thunderstorm","⛈️"],96:["Thunderstorm + Hail","⛈️"],99:["Severe Thunderstorm","⛈️"]};
 const DIVISIONS=["Mechanical","Pipeline","Pipeline South","Structural","Manufacturing"];
-// Pipeline South runs exactly like Pipeline (rate sheet, estimating, invoice tracker, report layout).
+// Pipeline South runs exactly like Pipeline (rate sheet, estimating, report layout).
 const isPipeDiv=(d)=>d==="Pipeline"||d==="Pipeline South";
 /* Field time clock. When off, crew cannot clock in/out on field jobs — hours
    reach a time card only through Daily Reports and T&M tickets. The shop
@@ -749,11 +653,12 @@ const ROLES=["crew","foreman","estimator","accounting","pm","admin"];
 const ROLE_META={crew:{label:"Field Crew",color:T.green,desc:"Reports, time cards, photos, safety, schedule, weather"},foreman:{label:"Foreman",color:T.yellow,desc:"Everything crew can do, plus create and manage jobs"},pm:{label:"Project Manager",color:T.orange,desc:"Approve reports, PM dashboard, custom reports"},estimator:{label:"Estimator",color:T.purple,desc:"Foreman access plus the estimating platform"},accounting:{label:"Accounting",color:T.teal,desc:"Enter and process vendor invoices, view jobs and docs"},admin:{label:"Admin",color:T.red,desc:"Full access, user management"}};
 
 const PERMS={
-  admin:     ["ap_enter","ap_approve","ap_process","manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
-  pm:        ["ap_approve","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
+  admin:     ["billing","ap_enter","ap_approve","ap_process","manage_users","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
+  pm:        ["billing","ap_approve","create_job","edit_job","archive_job","approve_report","flag_report","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory","custom_reports","notifications","estimating"],
   // Accounting enters vendor invoices and processes them after PM approval.
   // view_reports = can open Daily Reports and T&M tickets read-only.
-  accounting:["ap_enter","ap_process","docs","crew_directory","photos","view_dashboard","view_reports"],
+  // billing = the Billing tab on every job (invoices, credit memos, job cost, SOV, pay apps).
+  accounting:["ap_enter","ap_process","billing","docs","crew_directory","photos","view_dashboard","view_reports"],
   // Estimator = everything a Foreman can do, plus the estimating platform and the dashboard
   estimator: ["estimating","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
   // Foreman can now run jobs end to end, but still can't approve or flag reports —
@@ -976,12 +881,9 @@ function RentedEquipCard({row,onChange,onRemove,trackInvoices}){
     setBusy("");
     if(added.length){
       const next=[...att,...added];onChange({...row,attachments:next});
-      if(trackInvoices&&navigator.onLine){let cur=next;const commit=(l)=>{cur=l;onChange({...row,attachments:l});};for(const a of added)readReceiptInto(a,()=>cur,commit);}
     }
   }
   const removeAtt=(a)=>{onChange({...row,attachments:att.filter(x=>x.id!==a.id)});if(a.storage_path)storageRemove("documents",a.storage_path).catch(()=>{});};
-  useEffect(()=>{if(!trackInvoices)return;const todo=att.filter(a=>a._retry&&!a.inv&&!a.extracting);if(!todo.length)return;
-    let cur=att;const commit=(l)=>{cur=l;onChange({...row,attachments:l});};todo.forEach(a=>readReceiptInto(a,()=>cur,commit));},[att.map(a=>a._retry||0).join(",")]);
   const fileIcon=(a)=>a.type==="application/pdf"||/\.pdf$/i.test(a.name)?"📄":/sheet|excel|csv/.test(a.type)||/\.(xlsx?|csv)$/i.test(a.name)?"📊":/word|\.docx?$/i.test(a.type+a.name)?"📝":"📎";
   return(
     <div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.purple}`}}>
@@ -1024,7 +926,6 @@ function RentedEquipCard({row,onChange,onRemove,trackInvoices}){
           <input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}}/>
         </div>
         {busy&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{busy}</div>}
-        {trackInvoices&&att.map(a=><InvoiceFields key={"inv"+a.id} att={a} color={T.purple} onChange={x=>onChange({...row,attachments:att.map(y=>y.id===x.id?x:y)})}/>)}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}>
         <span style={{fontSize:11,color:T.muted}}>Qty × Rate × Days/Hrs{(parseFloat(row.markup_pct)||0)>0?` + ${row.markup_pct}%`:""}{(parseFloat(row.tax_amount)||0)>0?" + tax":""}</span>
@@ -1092,17 +993,14 @@ function MatCard({row,onChange,onRemove,trackInvoices,cos}){const fileRef=useRef
   }catch(e){alert(`${f.name}: ${e.message}`);}}
   setBusy("");if(n.length){
     const next=[...receipts,...n];onChange({...row,receipts:next});
-    if(trackInvoices&&navigator.onLine){let cur=next;const commit=(l)=>{cur=l;onChange({...row,receipts:l});};for(const a of n)readReceiptInto(a,()=>cur,commit);}
   }}
   const removeReceipt=(r)=>{onChange({...row,receipts:receipts.filter(x=>x.id!==r.id)});if(r.storage_path)storageRemove("documents",r.storage_path).catch(()=>{});};   // images and files alike
-  useEffect(()=>{if(!trackInvoices)return;const todo=receipts.filter(a=>a._retry&&!a.inv&&!a.extracting);if(!todo.length)return;
-    let cur=receipts;const commit=(l)=>{cur=l;onChange({...row,receipts:l});};todo.forEach(a=>readReceiptInto(a,()=>cur,commit));},[receipts.map(a=>a._retry||0).join(",")]);
   const fileIcon=(a)=>a.type==="application/pdf"||/\.pdf$/i.test(a.name||"")?"📄":/sheet|excel|csv/.test(a.type||"")||/\.(xlsx?|csv)$/i.test(a.name||"")?"📊":/word/.test(a.type||"")||/\.docx?$/i.test(a.name||"")?"📝":"📎";
   return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${row.ap_invoice_id?T.teal:T.blue}`}}>{apBadge}<div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}><div><label style={lbl}>Markup %</label><input type="number" min="0" step="0.1" placeholder="12" value={row.markup_pct||""} onChange={e=>onChange({...row,markup_pct:e.target.value})} style={inp}/></div><div><label style={lbl}>Tax ($)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>onChange({...row,tax_amount:e.target.value})} style={inp}/></div><div><label style={lbl}>Line Total</label><div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(matLineTotal(row))}</div></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}>{r.kind==="file"
   ?<a href={r.src} target="_blank" rel="noreferrer" title={r.name} style={{width:60,height:60,borderRadius:10,border:`2px solid ${T.blue}40`,background:T.blueLow,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textDecoration:"none",color:T.text,fontSize:20}}><span>{fileIcon(r)}</span><span style={{fontSize:8,maxWidth:54,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",padding:"0 3px"}}>{r.name}</span></a>
   :<img src={r.src} alt="" onClick={()=>window.open(r.src,"_blank")} style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.blue}40`,display:"block",cursor:"pointer"}}/>}
   <button onClick={()=>removeReceipt(r)} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>camRef.current?.click()} title="Take a photo" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>CAMERA</span></button><button onClick={()=>fileRef.current?.click()} title="Photos, PDFs, invoices" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.green}40`,background:T.greenLow,color:T.green,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📎</span><span style={{fontSize:9,fontWeight:700}}>UPLOAD</span></button><input ref={camRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /><input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div>{busy&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{busy}</div>}
-{trackInvoices&&receipts.map(r=><InvoiceFields key={"inv"+r.id} att={r} onChange={a=>onChange({...row,receipts:receipts.map(x=>x.id===a.id?a:x)})}/>)}</div><div style={{marginTop:8}}><CoPick row={row} onChange={onChange} cos={cos} compact/></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{matLineTotal(row)>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(matLineTotal(row))}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
+</div><div style={{marginTop:8}}><CoPick row={row} onChange={onChange} cos={cos} compact/></div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>{matLineTotal(row)>0&&<span style={{fontSize:14,fontWeight:700,color:T.green}}>${fmt(matLineTotal(row))}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",marginLeft:"auto"}}>Remove</button></div></div>);}
 
 function LoginScreen({onLogin}){
   const [name,setName]=useState("");
@@ -2607,205 +2505,6 @@ function ApInvoiceForm({user,projects,mfgJobs,pms=[],existing,rows,onBack,onSave
   </div>);
 }
 
-/* ── Invoice Tracker: receipts read off daily reports, one row each,
-   exportable as the office's Invoice_Tracker workbook. ── */
-const PO_STATUSES=["Open","Closed","Day Rate","APEX","On Hold"];
-function InvoiceTrackerScreen({user,projects,onBack,embedded,division}){
-  const [rows,setRows]=useState([]);
-  const [mfgJobs,setMfgJobs]=useState([]);
-  const [loading,setLoading]=useState(true);
-  const [err,setErr]=useState("");
-  const [q,setQ]=useState("");
-  const [po,setPo]=useState("");
-  const [edit,setEdit]=useState(null);
-  const [draft,setDraft]=useState({});
-  const [showAdd,setShowAdd]=useState(false);
-  const [add,setAdd]=useState({po_number:"",supplier:"",invoice_no:"",amount:"",billed_date:today(),notes:""});
-  const [poStatus,setPoStatus]=useState(()=>{try{return JSON.parse(localStorage.getItem("aime_po_status")||"{}");}catch{return{};}});
-
-  async function load(){
-    setLoading(true);setErr("");
-    try{
-      const [r,m]=await Promise.all([API.invoiceTracker.list(),API.mfg.jobs.list().catch(()=>[])]);
-      setRows(r||[]);setMfgJobs(m||[]);
-    }catch(e){setErr(e.message);}
-    setLoading(false);
-  }
-  useEffect(()=>{load();},[]);
-
-  // PO # for a row: manual override, else the job's PO / work order, else job name
-  const poOf=(r)=>{
-    if(r.po_number)return r.po_number;
-    if(r.project_id){const p=projects.find(x=>x.id===r.project_id);return p?(p.work_order||p.name):"";}
-    if(r.mfg_job_id){const j=mfgJobs.find(x=>x.id===r.mfg_job_id);return j?(j.po_number||j.job_number):"";}
-    return "";
-  };
-  const jobOf=(r)=>{
-    if(r.project_id)return (projects.find(x=>x.id===r.project_id)||{}).name||"";
-    if(r.mfg_job_id)return (mfgJobs.find(x=>x.id===r.mfg_job_id)||{}).job_number||"";
-    return "";
-  };
-  const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-  const missing=(r)=>[!r.amount&&r.amount!==0?"Missing amount":"",!r.billed_date?"Missing billed date":"",!r.invoice_no?"Missing invoice #":""].filter(Boolean).join("; ");
-
-  // Division scope (Pipeline tab): rows whose job is in that division, plus hand-added rows
-  const divIds=division?new Set(projects.filter(p=>p.division===division).map(p=>p.id)):null;
-  const scoped=divIds?rows.filter(r=>!r.project_id&&!r.mfg_job_id?true:divIds.has(r.project_id)):rows;
-  const pos=[...new Set(scoped.map(poOf).filter(Boolean))].sort();
-  const filtered=scoped.filter(r=>{
-    if(po&&poOf(r)!==po)return false;
-    if(q.trim()){const t=q.toLowerCase();return [poOf(r),r.supplier,r.invoice_no,jobOf(r),r.item,r.notes].some(v=>String(v||"").toLowerCase().includes(t));}
-    return true;
-  });
-  const total=filtered.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
-  const needs=filtered.filter(r=>missing(r)).length;
-
-  function startEdit(r){setEdit(r.id);setDraft({po_number:poOf(r),supplier:r.supplier||"",invoice_no:r.invoice_no||"",amount:r.amount??"",billed_date:r.billed_date||"",notes:r.notes||""});}
-  async function saveEdit(r){
-    const body={...draft,amount:draft.amount===""?null:parseFloat(draft.amount),billed_date:draft.billed_date||null,
-      po_number:draft.po_number&&draft.po_number!==poOf({...r,po_number:null})?draft.po_number:(draft.po_number||null),
-      status:"confirmed",confirmed_by:user.name,updated_at:new Date().toISOString()};
-    try{await API.invoiceTracker.update(r.id,body);setRows(rs=>rs.map(x=>x.id===r.id?{...x,...body}:x));setEdit(null);}catch(e){setErr(e.message);}
-  }
-  async function del(r){if(!window.confirm("Remove this invoice from the tracker? The receipt stays on the report."))return;
-    try{await API.invoiceTracker.remove(r.id);setRows(rs=>rs.filter(x=>x.id!==r.id));}catch(e){setErr(e.message);}}
-  async function saveAdd(){
-    if(!add.supplier.trim()&&!add.invoice_no.trim()){setErr("Supplier or invoice # is required.");return;}
-    const body={po_number:add.po_number||null,supplier:add.supplier||null,invoice_no:add.invoice_no||null,amount:add.amount===""?null:parseFloat(add.amount),
-      billed_date:add.billed_date||null,notes:add.notes||null,kind:"manual",status:"confirmed",confirmed_by:user.name,submitted_by:user.name};
-    try{const res=await API.invoiceTracker.create(body);const row=Array.isArray(res)?res[0]:res;setRows(rs=>[row||body,...rs]);setShowAdd(false);
-      setAdd({po_number:"",supplier:"",invoice_no:"",amount:"",billed_date:today(),notes:""});}catch(e){setErr(e.message);}
-  }
-  const setStatus=(p,st)=>{const n={...poStatus,[p]:st};setPoStatus(n);try{localStorage.setItem("aime_po_status",JSON.stringify(n));}catch{}};
-
-  /* ── Export: same three tabs, formulas and column widths as Invoice_Tracker_Clean.xlsx ── */
-  function exportXlsx(){
-    const list=(po?filtered:scoped).slice().sort((a,b)=>(poOf(a)||"").localeCompare(poOf(b)||"")||String(a.billed_date||"").localeCompare(String(b.billed_date||"")));
-    const poList=[...new Set(list.map(poOf).filter(Boolean))].sort();
-    const dt=(s)=>{if(!s)return "";const [y,m,d]=String(s).split("-").map(Number);return new Date(y,m-1,d);};
-    // Invoices
-    const inv=[["PO #","Status","Supplier","Invoice #","Amount","Billed Date","Notes / Follow-up"]];
-    list.forEach((r,i)=>{const n=i+2;inv.push([poOf(r),{f:`IFERROR(INDEX('PO Summary'!$B:$B,MATCH(A${n},'PO Summary'!$A:$A,0)),"")`},r.supplier||"",r.invoice_no||"",
-      r.amount==null?"":Number(r.amount),dt(r.billed_date),{f:`_xlfn.TEXTJOIN("; ",TRUE(),IF(E${n}="","Missing amount",""),IF(F${n}="","Missing billed date",""),"${(r.notes||"").replace(/"/g,"'")}")`}]);});
-    const wsInv=XLSX.utils.aoa_to_sheet(inv,{cellDates:true});
-    wsInv["!cols"]=[10,11.5,31.5,14.8,14.4,16,59.7].map(w=>({wch:w}));
-    for(let i=2;i<=inv.length;i++){const e=wsInv[`E${i}`];if(e&&e.v!=="")e.z='$#,##0.00;($#,##0.00);-';const f=wsInv[`F${i}`];if(f&&f.v)f.z="mm-dd-yy";}
-    // PO Summary
-    const sum=[["PO #","Status","# Invoices","Total Amount","Needs Follow-up"]];
-    poList.forEach((p,i)=>{const n=i+2;sum.push([p,poStatus[p]||"Open",{f:`COUNTIF(Invoices!A:A,A${n})`},{f:`SUMIF(Invoices!A:A,A${n},Invoices!E:E)`},{f:`IF(COUNTIFS(Invoices!A:A,A${n},Invoices!G:G,"<>")>0,"Yes","")`}]);});
-    const wsSum=XLSX.utils.aoa_to_sheet(sum);wsSum["!cols"]=[10,14,12,16,13].map(w=>({wch:w}));
-    for(let i=2;i<=sum.length;i++){const d=wsSum[`D${i}`];if(d)d.z='$#,##0.00;($#,##0.00);-';}
-    // How to Use
-    const how=[["Invoice Tracker — How to Use"],[],["This workbook was exported from the AIME Field App."],
-      ["Every receipt or invoice a crew attaches to a daily report (Materials or Rented Equipment) is read automatically and becomes a row on the Invoices tab."],
-      ["PO # comes from the job's PO / work order. Fix it in the app (Invoices screen) if a receipt landed on the wrong PO."],[],
-      ["Adding a new invoice"],["1. Preferably: attach it to the daily report in the app and tick \"Add to tracker\"."],
-      ["2. Or add it by hand on the Invoices tab here — Status fills in from the PO Summary tab."],[],
-      ["Starting a new PO"],["Add a row on the PO Summary tab: PO #, then a Status (Open, Closed, Day Rate, APEX, On Hold). Counts and totals fill in automatically."],[],
-      ["Colors / flags"],["Notes / Follow-up on the Invoices tab flags a missing amount or billed date — worth chasing down."],[],
-      [`Exported ${new Date().toLocaleString()} by ${user.name}.`]];
-    const wsHow=XLSX.utils.aoa_to_sheet(how);wsHow["!cols"]=[{wch:120}];
-    const wb=XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb,wsSum,"PO Summary");XLSX.utils.book_append_sheet(wb,wsInv,"Invoices");XLSX.utils.book_append_sheet(wb,wsHow,"How to Use");
-    XLSX.writeFile(wb,`Invoice_Tracker_${today()}.xlsx`);
-  }
-
-  return(
-    <div style={embedded?{}:{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
-      {!embedded&&<TopBar title="🧾 Invoice Tracker" sub={`${scoped.length} invoices`} onBack={onBack}/>}
-      <div style={{padding:embedded?"0 0 60px":"14px 16px 60px"}}>
-        <ErrBanner msg={err} onDismiss={()=>setErr("")}/>
-        <div style={{...cardS,marginBottom:12,fontSize:12,color:T.sub,lineHeight:1.6,borderLeft:`3px solid ${T.teal}`}}>
-          Receipts and invoices attached to <b style={{color:T.text}}>Pipeline</b> daily reports land here automatically. Check the ones the AI read (marked <span style={pill(T.yellow)}>auto</span>), fix anything it got wrong, and export to Excel whenever the office needs it.
-        </div>
-
-        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search supplier, invoice #, job…" style={{...inp,flex:2,minWidth:200}}/>
-          <select value={po} onChange={e=>setPo(e.target.value)} style={{...inp,flex:1,minWidth:140}}>
-            <option value="">All POs</option>{pos.map(p=><option key={p} value={p}>{p}</option>)}
-          </select>
-          <button onClick={exportXlsx} disabled={!rows.length} style={{...primBtn,borderRadius:12,padding:"10px 16px",background:T.green,color:"#000",fontSize:13,opacity:rows.length?1:0.5}}>📊 Export Excel</button>
-          <button onClick={()=>setShowAdd(x=>!x)} style={{...ghostBtn,padding:"10px 14px",fontSize:13}}>+ Add by hand</button>
-        </div>
-
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
-          {[["Invoices",filtered.length,T.blue],["Total",money(total),T.green],["Need follow-up",needs,needs?T.yellow:T.muted]].map(([l,v,c])=>(
-            <div key={l} style={{...cardS,textAlign:"center",padding:12}}><div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>{l}</div></div>))}
-        </div>
-
-        {showAdd&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${T.green}`}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>
-            <div><label style={lbl}>PO #</label><input value={add.po_number} onChange={e=>setAdd(a=>({...a,po_number:e.target.value}))} style={inp}/></div>
-            <div><label style={lbl}>Supplier</label><input value={add.supplier} onChange={e=>setAdd(a=>({...a,supplier:e.target.value}))} style={inp}/></div>
-            <div><label style={lbl}>Invoice #</label><input value={add.invoice_no} onChange={e=>setAdd(a=>({...a,invoice_no:e.target.value}))} style={inp}/></div>
-            <div><label style={lbl}>Amount</label><input type="number" step="0.01" value={add.amount} onChange={e=>setAdd(a=>({...a,amount:e.target.value}))} style={inp}/></div>
-            <div><label style={lbl}>Billed Date</label><input type="date" value={add.billed_date} onChange={e=>setAdd(a=>({...a,billed_date:e.target.value}))} style={inp}/></div>
-          </div>
-          <div style={{display:"flex",gap:8}}>
-            <input value={add.notes} onChange={e=>setAdd(a=>({...a,notes:e.target.value}))} placeholder="Notes" style={{...inp,flex:1}}/>
-            <button onClick={saveAdd} style={{...primBtn,borderRadius:10,padding:"10px 16px",background:T.green,color:"#000",fontSize:12}}>Save</button>
-            <button onClick={()=>setShowAdd(false)} style={{...ghostBtn,padding:"10px 14px",fontSize:12}}>Cancel</button>
-          </div>
-        </div>}
-
-        {po&&<div style={{...cardS,marginBottom:12,display:"flex",alignItems:"center",gap:10,fontSize:12}}>
-          <span style={{color:T.muted}}>PO <b style={{color:T.text}}>{po}</b> status:</span>
-          {PO_STATUSES.map(st=><button key={st} onClick={()=>setStatus(po,st)} style={{...ghostBtn,padding:"5px 10px",fontSize:11,borderColor:(poStatus[po]||"Open")===st?T.teal:T.border,color:(poStatus[po]||"Open")===st?T.teal:T.sub}}>{st}</button>)}
-          <span style={{color:T.muted,fontSize:11}}>· used on the PO Summary tab of the export</span>
-        </div>}
-
-        {loading&&<Spinner/>}
-        {!loading&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
-          <div style={{fontSize:44,marginBottom:12}}>🧾</div>
-          <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:6}}>No invoices yet</div>
-          <div style={{fontSize:12}}>Attach a receipt to a daily report and tick "Add to tracker" — it shows up here.</div>
-        </div>}
-
-        {filtered.length>0&&<div style={{...cardS,padding:0,overflowX:"auto"}}>
-          <div style={{display:"grid",gridTemplateColumns:"90px 1.4fr 1fr 110px 100px 1.2fr 1.2fr 80px",gap:8,padding:"10px 14px",fontSize:10,fontWeight:800,color:T.muted,textTransform:"uppercase",letterSpacing:"0.5px",borderBottom:`1px solid ${T.border}`,minWidth:900}}>
-            <div>PO #</div><div>Supplier</div><div>Invoice #</div><div style={{textAlign:"right"}}>Amount</div><div>Billed</div><div>Job / Item</div><div>Notes / Follow-up</div><div></div>
-          </div>
-          {filtered.map(r=>{
-            const editing=edit===r.id;const flag=missing(r);
-            return(
-              <div key={r.id} style={{borderBottom:`1px solid ${T.border}`,background:flag?T.yellowLow:"transparent"}}>
-                {!editing&&<div style={{display:"grid",gridTemplateColumns:"90px 1.4fr 1fr 110px 100px 1.2fr 1.2fr 80px",gap:8,padding:"10px 14px",fontSize:12.5,alignItems:"center",minWidth:900}}>
-                  <div style={{fontWeight:800,color:T.text}}>{poOf(r)||"—"}</div>
-                  <div style={{color:T.text}}>{r.supplier||<span style={{color:T.muted}}>—</span>}{r.status==="auto"&&<span style={{...pill(T.yellow),marginLeft:6,fontSize:9}}>auto</span>}</div>
-                  <div>{r.invoice_no||<span style={{color:T.muted}}>—</span>}</div>
-                  <div style={{textAlign:"right",fontWeight:800,color:T.green}}>{r.amount!=null?money(r.amount):<span style={{color:T.muted}}>—</span>}</div>
-                  <div style={{color:T.sub}}>{r.billed_date||"—"}</div>
-                  <div style={{fontSize:11,color:T.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{jobOf(r)}{r.item?` · ${r.item}`:""}{r.report_no?` · #${r.report_no}`:""}</div>
-                  <div style={{fontSize:11,color:flag?T.yellow:T.muted}}>{flag||r.notes||""}</div>
-                  <div style={{display:"flex",gap:4,justifyContent:"flex-end"}}>
-                    {r.file_url&&<a href={r.file_url} target="_blank" rel="noreferrer" title="Open receipt" style={{textDecoration:"none",fontSize:14}}>📎</a>}
-                    <button onClick={()=>startEdit(r)} style={{background:"none",border:"none",color:T.blue,cursor:"pointer",fontSize:14}}>✏️</button>
-                    <button onClick={()=>del(r)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:14}}>🗑</button>
-                  </div>
-                </div>}
-                {editing&&<div style={{padding:"10px 14px"}}>
-                  <div style={{display:"grid",gridTemplateColumns:"90px 1.4fr 1fr 110px 130px 1.4fr",gap:8,marginBottom:8}}>
-                    <input value={draft.po_number} onChange={e=>setDraft(d=>({...d,po_number:e.target.value}))} placeholder="PO #" style={{...inp,padding:"7px 8px",fontSize:12}}/>
-                    <input value={draft.supplier} onChange={e=>setDraft(d=>({...d,supplier:e.target.value}))} placeholder="Supplier" style={{...inp,padding:"7px 8px",fontSize:12}}/>
-                    <input value={draft.invoice_no} onChange={e=>setDraft(d=>({...d,invoice_no:e.target.value}))} placeholder="Invoice #" style={{...inp,padding:"7px 8px",fontSize:12}}/>
-                    <input type="number" step="0.01" value={draft.amount} onChange={e=>setDraft(d=>({...d,amount:e.target.value}))} placeholder="Amount" style={{...inp,padding:"7px 8px",fontSize:12,textAlign:"right"}}/>
-                    <input type="date" value={draft.billed_date} onChange={e=>setDraft(d=>({...d,billed_date:e.target.value}))} style={{...inp,padding:"7px 8px",fontSize:12}}/>
-                    <input value={draft.notes} onChange={e=>setDraft(d=>({...d,notes:e.target.value}))} placeholder="Notes" style={{...inp,padding:"7px 8px",fontSize:12}}/>
-                  </div>
-                  <div style={{display:"flex",gap:8}}>
-                    <button onClick={()=>saveEdit(r)} style={{...primBtn,borderRadius:10,padding:"8px 16px",fontSize:12,background:T.blue}}>✓ Save & confirm</button>
-                    <button onClick={()=>setEdit(null)} style={{...ghostBtn,padding:"8px 14px",fontSize:12}}>Cancel</button>
-                  </div>
-                </div>}
-              </div>
-            );
-          })}
-        </div>}
-      </div>
-    </div>
-  );
-}
-
 function ActivityScreen({user,onBack}){
   const [rows,setRows]=useState([]);
   const [loading,setLoading]=useState(true);
@@ -2964,7 +2663,7 @@ function ActivityScreen({user,onBack}){
   );
 }
 
-function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onInvoices,onApInvoices,onMyHours,onActivity,onTraining,onMyTraining,onNotifications,notifCount,isOnline,pendingCount,onSync}){
+function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onApInvoices,onMyHours,onActivity,onTraining,onMyTraining,onNotifications,notifCount,isOnline,pendingCount,onSync}){
   // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
   // by division always returned zero for that card.
   const [mfgStats,setMfgStats]=useState(null);
@@ -8012,7 +7711,7 @@ function InfoTab({project,user,onEdit,onArchive,onDelete}){
 const PTABS=[
   {id:"reports",icon:"📋",label:"Reports",perm:"submit_report",viewPerm:"view_reports"},
   {id:"tm",icon:"🧾",label:"T&M",perm:"submit_report",viewPerm:"view_reports"},
-  {id:"billing",icon:"💰",label:"Billing",perm:"approve_report"},
+  {id:"billing",icon:"💰",label:"Billing",perm:"billing"},
   {id:"estimate",icon:"📐",label:"Estimate",perm:"approve_report"},
   {id:"time",icon:"⏱️",label:"Time",perm:"time_card"},
   {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
@@ -8286,7 +7985,6 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr,embedded
 
   const DMTABS=[{id:"overview",l:"📊 Overview"},{id:"approvals",l:`✅ Approvals${scopedPending.length+scopedTmPending.length>0?" ("+(scopedPending.length+scopedTmPending.length)+")":""}`},
     {id:"daily",l:"📝 Daily Reports"},{id:"timecards",l:"⏱️ Time Cards"},
-    ...(isPipeDiv(pmDiv)?[{id:"invoices",l:"🧾 Invoices"}]:[]),
     {id:"workers",l:"👷 Workers"},{id:"billing",l:"💰 Billing"},{id:"contracts",l:`📐 Contracts${overBudgetCount>0?" ("+overBudgetCount+")":""}`},{id:"reports",l:"📄 Reports"},{id:"users",l:"👤 Users"}];
 
   const divOf=(r)=>(projects.find(p=>p.id===r.project_id)||r.projects||{}).division;
@@ -8512,7 +8210,6 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr,embedded
         {/* OVERVIEW */}
         {pmTab==="daily"&&<div style={{padding:"12px 16px 80px"}}><DivisionReportsTab user={user} division={pmDiv} projects={projects} onErr={setErr}/></div>}
         {pmTab==="timecards"&&<div style={{padding:"12px 16px 80px"}}><TimeCardsScreen user={user} projects={projects} embedded division={pmDiv}/></div>}
-        {pmTab==="invoices"&&isPipeDiv(pmDiv)&&<div style={{padding:"12px 16px 80px"}}><InvoiceTrackerScreen user={user} projects={projects} embedded division={pmDiv}/></div>}
         {pmTab==="overview"&&!loading&&<div>
 
           {/* Waiting on approval */}
@@ -15739,7 +15436,7 @@ const MFG_PERMS={
   // who ran the work is not the person signing it off.
   manager_qc:   ["admin","pm"],
   approve_time: ["admin","pm"],
-  billing:      ["admin","pm"],
+  billing:      ["admin","pm","accounting"],
   // Anyone can clock in and inspect their own work.
   clock:        ["admin","pm","foreman","estimator","crew"],
   employee_qc:  ["admin","pm","foreman","estimator","crew"],
@@ -16229,7 +15926,7 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-        {[["overview","📊 Overview"],["time","⏱️ Time"],["daily","📝 Daily Reports"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canAdmin?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["daily","📝 Daily Reports"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canMfg(user,"billing")?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:"1 0 auto",padding:"12px 8px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -16246,7 +15943,7 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
         {!loading&&tab==="report"&&<MfgProductionReport job={job} parts={parts} user={user}
           onBack={()=>setTab("overview")} onErr={m=>setFormErr(m)}/>}
 
-        {!loading&&tab==="billing"&&canAdmin&&<MfgBillingTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
+        {!loading&&tab==="billing"&&canMfg(user,"billing")&&<MfgBillingTab job={job} user={user} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="docs"&&<MfgDocsTab job={job} user={user} canAdmin={canAdmin} onErr={m=>setFormErr(m)}/>}
 
@@ -19915,7 +19612,7 @@ function AppInner(){
       {user&&screen==="division"&&(
         <DivisionScreen user={user} projects={projects} onSelect={handleDivisionSelect} onLogout={handleLogout}
           onCrew={()=>setScreen("crewDirectory")} onDash={()=>setScreen("pmDashboard")}
-          onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")} onInvoices={()=>setScreen("invoices")} onApInvoices={()=>setScreen("apInvoices")}
+          onTimeCards={()=>setScreen("timeCards")} onEstimating={()=>setScreen("estimating")} onApInvoices={()=>setScreen("apInvoices")}
           onMyHours={()=>setScreen("myHours")} onActivity={()=>setScreen("activity")}
           onTraining={()=>setScreen("training")} onMyTraining={()=>setScreen("myTraining")}
           onNotifications={()=>setScreen("notifications")} notifCount={notifCount}
@@ -19931,9 +19628,6 @@ function AppInner(){
       )}
       {user&&screen==="activity"&&can(user,"view_dashboard")&&(
         <ActivityScreen user={user} onBack={()=>setScreen("division")}/>
-      )}
-      {user&&screen==="invoices"&&(user.role==="admin"||user.role==="pm")&&(
-        <InvoiceTrackerScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
       )}
       {user&&screen==="apInvoices"&&(can(user,"ap_enter")||can(user,"ap_approve")||can(user,"ap_process")||isApFinalApprover(user))&&(
         <AccountingScreen user={user} projects={projects} onBack={()=>setScreen("division")}/>
@@ -21137,12 +20831,12 @@ function BillingTab({project,user,onErr}){
   const [view,setView]=useState("invoices");     // invoices | sov | payapps
   const [openInvoice,setOpenInvoice]=useState(null);
   const [openPayApp,setOpenPayApp]=useState(null);
-  const canBill=can(user,"approve_report")||user.role==="admin"||user.role==="pm";
+  const canBill=can(user,"billing")||user.role==="admin"||user.role==="pm";
 
   if(!canBill)return(
     <div style={{...cardS,textAlign:"center",padding:"34px 18px",color:T.muted}}>
       <div style={{fontSize:32,marginBottom:8}}>🔒</div>
-      <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>Billing is PM-only</div>
+      <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>Billing is for PMs, admins and accounting</div>
       <div style={{fontSize:12}}>Ask a project manager or admin if you need an invoice raised.</div>
     </div>
   );
@@ -23325,7 +23019,7 @@ function MfgBillingTab({job,user,onErr}){
   if(!canBill)return(
     <div style={{...cardS,textAlign:"center",padding:"34px 18px",color:T.muted}}>
       <div style={{fontSize:32,marginBottom:8}}>🔒</div>
-      <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>Billing is PM-only</div>
+      <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>Billing is for PMs, admins and accounting</div>
       <div style={{fontSize:12}}>Ask a project manager or admin if you need an invoice raised.</div>
     </div>
   );
