@@ -1080,6 +1080,7 @@ function SubCard({row,onChange,onRemove}){
 }
 
 function MatCard({row,onChange,onRemove,trackInvoices,cos}){const fileRef=useRef(null);const camRef=useRef(null);const receipts=row.receipts||[];const [busy,setBusy]=useState("");
+  const apBadge=row.ap_invoice_id?<div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,fontSize:11,fontWeight:700,color:T.teal}}><span style={pill(T.teal)}>🧾 From Accounting</span><span style={{color:T.sub,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.ap_vendor} · Inv #{row.ap_invoice_no}</span></div>:null;
   // Photos compress and stay inline (offline-safe, print inline). PDFs and
   // other documents upload to Storage and the receipt keeps the link.
   async function handleFiles(files){const n=[];for(const f of files){try{
@@ -1097,7 +1098,7 @@ function MatCard({row,onChange,onRemove,trackInvoices,cos}){const fileRef=useRef
   useEffect(()=>{if(!trackInvoices)return;const todo=receipts.filter(a=>a._retry&&!a.inv&&!a.extracting);if(!todo.length)return;
     let cur=receipts;const commit=(l)=>{cur=l;onChange({...row,receipts:l});};todo.forEach(a=>readReceiptInto(a,()=>cur,commit));},[receipts.map(a=>a._retry||0).join(",")]);
   const fileIcon=(a)=>a.type==="application/pdf"||/\.pdf$/i.test(a.name||"")?"📄":/sheet|excel|csv/.test(a.type||"")||/\.(xlsx?|csv)$/i.test(a.name||"")?"📊":/word/.test(a.type||"")||/\.docx?$/i.test(a.name||"")?"📝":"📎";
-  return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.blue}`}}><div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}><div><label style={lbl}>Markup %</label><input type="number" min="0" step="0.1" placeholder="12" value={row.markup_pct||""} onChange={e=>onChange({...row,markup_pct:e.target.value})} style={inp}/></div><div><label style={lbl}>Tax ($)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>onChange({...row,tax_amount:e.target.value})} style={inp}/></div><div><label style={lbl}>Line Total</label><div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(matLineTotal(row))}</div></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}>{r.kind==="file"
+  return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${row.ap_invoice_id?T.teal:T.blue}`}}>{apBadge}<div style={{display:"grid",gridTemplateColumns:"56px 1fr 88px",gap:8,marginBottom:10}}><div><label style={lbl}>Qty</label><input type="number" min="0" placeholder="0" value={row.qty||""} onChange={e=>onChange({...row,qty:e.target.value})} style={inp}/></div><div><label style={lbl}>Description</label><input type="text" placeholder="Item / material" value={row.description||""} onChange={e=>onChange({...row,description:e.target.value})} style={inp}/></div><div><label style={lbl}>Amount</label><input type="number" min="0" placeholder="0.00" value={row.amount||""} onChange={e=>onChange({...row,amount:e.target.value})} style={inp}/></div></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}><div><label style={lbl}>Markup %</label><input type="number" min="0" step="0.1" placeholder="12" value={row.markup_pct||""} onChange={e=>onChange({...row,markup_pct:e.target.value})} style={inp}/></div><div><label style={lbl}>Tax ($)</label><input type="number" min="0" step="0.01" placeholder="0.00" value={row.tax_amount||""} onChange={e=>onChange({...row,tax_amount:e.target.value})} style={inp}/></div><div><label style={lbl}>Line Total</label><div style={{...inp,display:"flex",alignItems:"center",color:T.green,fontWeight:800}}>${fmt(matLineTotal(row))}</div></div></div><div style={{borderTop:`1px solid ${T.border}`,paddingTop:10}}><label style={{...lbl,marginBottom:8}}>📎 Receipts</label><div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>{receipts.map(r=>(<div key={r.id} style={{position:"relative"}}>{r.kind==="file"
   ?<a href={r.src} target="_blank" rel="noreferrer" title={r.name} style={{width:60,height:60,borderRadius:10,border:`2px solid ${T.blue}40`,background:T.blueLow,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textDecoration:"none",color:T.text,fontSize:20}}><span>{fileIcon(r)}</span><span style={{fontSize:8,maxWidth:54,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",padding:"0 3px"}}>{r.name}</span></a>
   :<img src={r.src} alt="" onClick={()=>window.open(r.src,"_blank")} style={{width:60,height:60,objectFit:"cover",borderRadius:10,border:`2px solid ${T.blue}40`,display:"block",cursor:"pointer"}}/>}
   <button onClick={()=>removeReceipt(r)} style={{position:"absolute",top:-5,right:-5,width:18,height:18,borderRadius:"50%",background:T.red,border:"none",color:"#fff",fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>))}<button onClick={()=>camRef.current?.click()} title="Take a photo" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.blue}40`,background:T.blueLow,color:T.blue,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📷</span><span style={{fontSize:9,fontWeight:700}}>CAMERA</span></button><button onClick={()=>fileRef.current?.click()} title="Photos, PDFs, invoices" style={{width:60,height:60,borderRadius:10,border:`2px dashed ${T.green}40`,background:T.greenLow,color:T.green,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontSize:18,gap:2}}><span>📎</span><span style={{fontSize:9,fontWeight:700}}>UPLOAD</span></button><input ref={camRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /><input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple style={{display:"none"}} onChange={e=>{handleFiles(Array.from(e.target.files));e.target.value="";}} /></div>{busy&&<div style={{fontSize:11,color:T.muted,marginTop:6}}>{busy}</div>}
@@ -1930,7 +1931,7 @@ const apMoney=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigit
 const apDaysSince=(ts)=>ts?Math.max(0,Math.floor((Date.now()-new Date(ts).getTime())/86400000)):null;
 function apBillLine(r){
   const st=apBillState(r);
-  if(st==="billed")return `Billed${r.billed_invoice_no?` on customer invoice ${r.billed_invoice_no}`:""}${r.billed_date?` ${fmtDate(r.billed_date)}`:""}${r.billed_by?`, marked by ${r.billed_by}`:""}`;
+  if(st==="billed")return `Billed${r.billed_source_label?` — on ${r.billed_source_label}`:""}${r.billed_invoice_no?` on customer invoice ${r.billed_invoice_no}`:""}${r.billed_date?` ${fmtDate(r.billed_date)}`:""}${r.billed_by?`, marked by ${r.billed_by}`:""}`;
   if(st==="not_billable")return `Not billable${r.not_billable_reason?`: ${r.not_billable_reason}`:""}${r.billed_by?` (${r.billed_by})`:""}`;
   if(st==="unbilled"){const d=apDaysSince(r.final_approved_at||r.approved_at);return `Approved and not billed yet${d!=null?`, ${d} day${d===1?"":"s"} since approval`:""}`;}
   return "";
@@ -1940,6 +1941,74 @@ async function apSaveBilling(r,user,fields,action,note){
   const body={...fields,history:[...(r.history||[]),entry],updated_at:entry.at};
   await sb(`/ap_invoices?id=eq.${r.id}`,{method:"PATCH",body});
   return {...r,...body};
+}
+/* ── Vendor invoices from Accounting on a daily report / T&M ticket ──
+   A PM can drop an AP invoice entered for the job onto a report or ticket as
+   a material line (ap_invoice_id on the line). Saving the report marks the
+   invoice billed and records where it went; taking the line off, or deleting
+   the report, puts it back to not billed. */
+function apLineFromInvoice(r){
+  const name=`${r.vendor||"Vendor"} — Inv #${r.invoice_no||""}`.trim();
+  const receipt=r.file_url?[{id:uid(),kind:"file",name:r.file_name||`Invoice ${r.invoice_no||""}.pdf`,type:/\.pdf($|\?)/i.test(r.file_url)?"application/pdf":"",src:r.file_url,storage_path:null,_ap:true}]:[];
+  return {id:uid(),qty:"1",description:name,amount:String(Number(r.amount)||0),receipts:receipt,ap_invoice_id:r.id,ap_vendor:r.vendor||"",ap_invoice_no:r.invoice_no||""};
+}
+function apIdsOnReport(d){return [...new Set([...(d.materials||[]),...(d.other_charges||[])].map(m=>m.ap_invoice_id).filter(Boolean))];}
+async function syncApBilledFromSource(type,id,label,ids,user){
+  if(!id)return;
+  const now=new Date().toISOString();
+  let current=[];
+  try{current=(await sb(`/ap_invoices?billed_source_id=eq.${encodeURIComponent(id)}&select=id,history,billed_source_id`))||[];}catch{current=[];}
+  const have=new Set(current.map(r=>r.id));
+  for(const apId of ids){
+    try{
+      const rows=await sb(`/ap_invoices?id=eq.${apId}&select=id,history,billing_status,billed_source_id`);const r=(rows||[])[0];if(!r)continue;
+      if(r.billed_source_id===id&&r.billing_status==="billed")continue;
+      await sb(`/ap_invoices?id=eq.${apId}`,{method:"PATCH",body:{billing_status:"billed",billed_by:user?.name||null,billed_date:today(),billed_at:now,billed_source_type:type,billed_source_id:id,billed_source_label:label,
+        history:[...(r.history||[]),{at:now,by:user?.name||null,action:"billed",note:`Added to ${label}`}],updated_at:now}});
+    }catch{}
+  }
+  for(const r of current){
+    if(ids.includes(r.id))continue;
+    try{await sb(`/ap_invoices?id=eq.${r.id}`,{method:"PATCH",body:{billing_status:"unbilled",billed_by:null,billed_date:null,billed_at:null,billed_source_type:null,billed_source_id:null,billed_source_label:null,
+      history:[...(r.history||[]),{at:now,by:user?.name||null,action:"unbilled",note:`Removed from ${label}`}],updated_at:now}});}catch{}
+  }
+}
+async function releaseApBilledForSource(id,user){return syncApBilledFromSource(null,id,"deleted report",[],user);}
+function ApInvoicePicker({project,user,exclude,sourceId,onPick,onClose}){
+  const [rows,setRows]=useState(null);const [q,setQ]=useState("");const [err,setErr]=useState("");
+  useEffect(()=>{
+    const col=project._mfg?"mfg_job_id":"project_id";
+    sb(`/ap_invoices?${col}=eq.${project.id}&status=neq.rejected&select=*&order=invoice_date.desc.nullslast,created_at.desc&limit=500`)
+      .then(d=>setRows(Array.isArray(d)?d:[])).catch(e=>{setErr(e.message);setRows([]);});
+  },[project.id]);
+  const ex=new Set(exclude||[]);
+  const list=(rows||[]).filter(r=>!ex.has(r.id)&&!(r.billing_status==="billed"&&r.billed_source_id!==sourceId)&&r.billing_status!=="not_billable")
+    .filter(r=>{const s=q.trim().toLowerCase();return !s||[r.vendor,r.invoice_no,r.description,r.notes].some(v=>String(v||"").toLowerCase().includes(s));});
+  const billedElsewhere=(rows||[]).filter(r=>r.billing_status==="billed"&&r.billed_source_id!==sourceId&&!ex.has(r.id)).length;
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:320,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:"20px 20px 0 0",padding:"18px 16px 32px",width:"100%",maxWidth:560,maxHeight:"88vh",overflowY:"auto",border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:16,fontWeight:900,color:T.text,marginBottom:2}}>🧾 Vendor invoices in Accounting</div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:12,lineHeight:1.5}}>Entered for {project.name}. Picking one adds it as a line and marks it <b>Billed</b> when you save.</div>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search vendor or invoice #…" style={{...inp,marginBottom:10}} autoFocus/>
+        {rows===null&&<Spinner/>}
+        {err&&<div style={{color:T.red,fontSize:12,marginBottom:8}}>{err}</div>}
+        {rows!==null&&list.length===0&&<div style={{textAlign:"center",color:T.muted,fontSize:12,padding:"20px 0"}}>{q?"No invoices match.":"No invoices waiting to be billed on this job."}{billedElsewhere?<div style={{marginTop:4}}>{billedElsewhere} already on another report or ticket.</div>:null}</div>}
+        {list.map(r=>{const st=AP_STATUS[r.status]||{l:r.status,c:T.muted};return(
+          <div key={r.id} style={{...cardS,padding:"10px 12px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:13.5,fontWeight:700,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.vendor||"Vendor"} <span style={{color:T.sub,fontWeight:600}}>· Inv #{r.invoice_no||"—"}</span></div>
+              <div style={{fontSize:11,color:T.muted}}>{r.invoice_date?fmtDate(r.invoice_date):""}{r.description?` · ${String(r.description).slice(0,50)}`:""}</div>
+              <div style={{fontSize:10.5,color:st.c,marginTop:2,fontWeight:700}}>{st.l}{r.billed_source_id===sourceId?" · already on this one":""}</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div style={{fontSize:14,fontWeight:900,color:T.green}}>{apMoney(r.amount)}</div>
+              <button onClick={()=>onPick(r)} style={{...ghostBtn,padding:"5px 12px",fontSize:12,marginTop:4,color:T.orange,borderColor:T.orange+"60",fontWeight:700}}>Add</button>
+            </div>
+          </div>);})}
+        <button onClick={onClose} style={{...ghostBtn,width:"100%",textAlign:"center",marginTop:8}}>Close</button>
+      </div>
+    </div>);
 }
 function ApBillingPill({r,style}){
   const st=apBillState(r);if(!st)return null;
@@ -3587,7 +3656,7 @@ function PlBidItems({data,calc,upd}){
           <PlQtyList title="External equipment / rentals" color={T.yellow} rows={it.equipment||[]} onChange={r=>setItem(it.id,"equipment",r)}/>
           <PlQtyList title="Materials" color={T.purple} rows={it.materials||[]} onChange={r=>setItem(it.id,"materials",r)}/>
           <PlQtyList title="Subcontracts" color={T.orange} rows={it.subs||[]} onChange={r=>setItem(it.id,"subs",r)}/>
-          <div><label style={lbl}>Notes / assumptions</label><input value={it.notes||""} onChange={e=>setItem(it.id,"notes",e.target.value)} placeholder="e.g. Colonial to supply materials for hydrotest header, studs, nuts, gaskets" style={plCell}/></div>
+          <div><label style={lbl}>Notes / assumptions</label><input value={it.notes||""} onChange={e=>setItem(it.id,"notes",e.target.value)} placeholder="e.g. Client to supply materials for hydrotest header, studs, nuts, gaskets" style={plCell}/></div>
         </div>}
       </div>);})}
     <button onClick={add} style={{...ghostBtn,width:"100%",fontSize:12,borderColor:T.blue,color:T.blue}}>+ Add Bid Item</button>
@@ -4161,7 +4230,7 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
       <div style={{padding:"16px 16px 100px"}}>
         <ErrBanner msg={externalErr} onDismiss={onClearErr}/>
         {intro&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.green}`,fontSize:12.5,color:T.sub,lineHeight:1.6}}>{intro}</div>}
-        {[{k:"name",l:"Job Number *",ph:"e.g. HDD-2026-001"},{k:"client",l:"Client",ph:"Colonial Pipeline"},{k:"location",l:"Location",ph:"City, State or Milepost"},{k:"afe",l:"AFE No.",ph:"AFE #"},{k:"work_order",l:"PO #",ph:"PO #"}].map(({k,l,ph})=>(<div key={k} style={{marginBottom:12}}><label style={lbl}>{l}</label><input type="text" placeholder={ph} value={f[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}
+        {[{k:"name",l:"Job Number *",ph:"e.g. HDD-2026-001"},{k:"client",l:"Client",ph:"Client / company name"},{k:"location",l:"Location",ph:"City, State or Milepost"},{k:"afe",l:"AFE No.",ph:"AFE #"},{k:"work_order",l:"PO #",ph:"PO #"}].map(({k,l,ph})=>(<div key={k} style={{marginBottom:12}}><label style={lbl}>{l}</label><input type="text" placeholder={ph} value={f[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}
 
         {/* Job Type */}
         <div style={{marginBottom:12}}>
@@ -4410,6 +4479,8 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
   // Change orders on this job, so lines can be charged to one (hidden when there are none).
   const [cos,setCos]=useState([]);
   useEffect(()=>{API.changeOrders.forProject(project.id).then(r=>setCos((Array.isArray(r)?r:[]).filter(c=>c.status!=="Rejected"))).catch(()=>setCos([]));},[project.id]);
+  const [apPick,setApPick]=useState(false);
+  const canPickAp=apCanBill(user)&&isOnline;
   async function autoFillWeather(){
     const WMO={0:"Clear Sky",1:"Mainly Clear",2:"Partly Cloudy",3:"Overcast",45:"Foggy",48:"Icy Fog",51:"Light Drizzle",53:"Drizzle",55:"Heavy Drizzle",61:"Light Rain",63:"Rain",65:"Heavy Rain",71:"Light Snow",73:"Snow",75:"Heavy Snow",80:"Rain Showers",81:"Heavy Showers",82:"Violent Showers",95:"Thunderstorm",99:"Thunderstorm w/Hail"};
     let location=project.location?.trim();
@@ -4475,6 +4546,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
         clearDraft(draftKey);
         // Time cards follow the report: replace this report's hours on each worker's card.
         try{await autoPopulateTimeCards({...reportData,id:existing.id},project);}catch(e){}
+        try{await syncApBilledFromSource("daily",existing.id,`daily report ${fmtDate(reportData.date)}${reportData.report_no?" #"+reportData.report_no:""}`,apIdsOnReport(reportData),user);}catch(e){}
         onSave&&onSave(reportData,existing.id);
       }catch(e){
         alert("Couldn't save changes: "+e.message);
@@ -4510,6 +4582,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
     try{
       const savedRow=await onSave(reportData);
       clearDraft(draftKey);
+      try{if(savedRow?.id)await syncApBilledFromSource("daily",savedRow.id,`daily report ${fmtDate(reportData.date)}${reportData.report_no?" #"+reportData.report_no:""}`,apIdsOnReport(reportData),user);}catch(e){}
       try{
         const tcResult=await autoPopulateTimeCards({...reportData,id:savedRow?.id||null},project);
 
@@ -4605,6 +4678,9 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
           <DashedAdd label="+ Add Rented Equipment" onClick={()=>add("rental_equipment",{id:uid(),description:"",qty:"",usage:"",rate:"",co_id:rpt.change_order_id||null})} color={T.purple}/></>}
         </div>)}
         {step===4&&(<div><div style={{fontSize:17,fontWeight:800,marginBottom:12}}>📦 Materials & Misc.{isPipeDiv(project.division)?" (incl. rentals & subs)":""}</div>{rpt.materials.map((row,i)=><MatCard key={row.id} row={row} cos={cos} trackInvoices={isPipeDiv(project.division)} onChange={r=>upd("materials",i,r)} onRemove={()=>del("materials",i)}/>)}<DashedAdd label="+ Add Material / Item" onClick={()=>add("materials",{id:uid(),qty:"",description:"",amount:"",receipts:[],co_id:rpt.change_order_id||null})} color={T.blue}/>
+          {canPickAp&&<div style={{marginTop:8}}><DashedAdd label="🧾 Add vendor invoice from Accounting" onClick={()=>setApPick(true)} color={T.teal}/></div>}
+          {apPick&&<ApInvoicePicker project={project} user={user} sourceId={existing?.id||null} exclude={(rpt.materials||[]).map(m=>m.ap_invoice_id).filter(Boolean)} onClose={()=>setApPick(false)}
+            onPick={r=>{add("materials",{...apLineFromInvoice(r),co_id:rpt.change_order_id||null});setApPick(false);}}/>}
           {!isPipeDiv(project.division)&&<>
           <div style={{fontSize:17,fontWeight:800,margin:"24px 0 12px"}}>🏢 Subcontractors</div>
           {(rpt.subcontractors||[]).map((row,i)=><SubCard key={row.id} row={row} onChange={r=>upd("subcontractors",i,r)} onRemove={()=>del("subcontractors",i)}/>)}
@@ -5619,7 +5695,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
 
       const dropped=(labor.length>14?labor.length-14:0)+(equip.length>15?equip.length-15:0)
         +(rental.length>3?rental.length-3:0)+(mats.length>3?mats.length-3:0);
-      if(dropped) alert(`${dropped} row${dropped>1?'s':''} did not fit the Colonial form and were left out of the spreadsheet. The PDF shows everything.`);
+      if(dropped) alert(`${dropped} row${dropped>1?'s':''} did not fit the daily report form and were left out of the spreadsheet. The PDF shows everything.`);
     }catch(e){
       alert('Excel export failed: '+e.message);
     }
@@ -14458,7 +14534,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   useEffect(()=>{load();const firstTab=visibleTabs[0]?.id||"info";setTab(firstTab);},[project.id]);
 
   async function saveReport(d){try{const{rental_equipment,...dbData}=d;let saved=null;try{saved=await API.reports.create({...dbData,rental_equipment,project_id:project.id});}catch(colErr){if(colErr.message&&colErr.message.includes("rental_equipment")){saved=await API.reports.create({...dbData,project_id:project.id});}else{throw colErr;}}if(!saved)throw new Error("Save failed");await load(true);setScreen("detail");return Array.isArray(saved)?saved[0]:saved;}catch(e){setErr(e.message);}}
-  async function deleteReport(id){try{await removeTimeCardsForSource(id);await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
+  async function deleteReport(id){try{await removeTimeCardsForSource(id);await releaseApBilledForSource(id,user).catch(()=>{});await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
   async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));{const rep=(reports||[]).find(r=>r.id===id)||activeReport||{};await notify("report_flagged",`Report Flagged — ${project.name}`,pm_notes,{project_id:project.id,report_id:id,to:rep.submitted_by,except:user.name});}await load(true);}catch(e){setErr(e.message);}}
   async function updateProject(data){
@@ -15241,7 +15317,7 @@ function PublicRFIForm({rfiId}){
             <div><label style={s.lbl}>Your Name *</label><input value={respBy} onChange={e=>setRespBy(e.target.value)} placeholder="Full name" style={s.inp}/></div>
             <div><label style={s.lbl}>Date</label><input type="date" value={respDate} onChange={e=>setRespDate(e.target.value)} style={s.inp}/></div>
           </div>
-          <div style={{marginBottom:14}}><label style={s.lbl}>Company / Title</label><input value={respTitle} onChange={e=>setRespTitle(e.target.value)} placeholder="e.g. Colonial Pipeline · Engineer" style={s.inp}/></div>
+          <div style={{marginBottom:14}}><label style={s.lbl}>Company / Title</label><input value={respTitle} onChange={e=>setRespTitle(e.target.value)} placeholder="e.g. Your company · Engineer" style={s.inp}/></div>
           <div style={{marginBottom:16}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><label style={s.lbl}>Signature *</label>{sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#FC8181",fontSize:12,cursor:"pointer"}}>Clear</button>}</div>
             <div style={{background:"#fff",borderRadius:10,overflow:"hidden",border:"2px solid #22C55E"}}>
@@ -15438,7 +15514,7 @@ function PublicInspectorForm({reportId}){
           <div style={{marginBottom:10}}><label style={s.lbl}>Inspector Name *</label><input value={inspName} onChange={e=>setInspName(e.target.value)} placeholder="Full name" style={s.inp}/></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
             <div><label style={s.lbl}>Title / Role</label><input value={inspTitle} onChange={e=>setInspTitle(e.target.value)} placeholder="e.g. Safety Inspector" style={s.inp}/></div>
-            <div><label style={s.lbl}>Company</label><input value={inspCo} onChange={e=>setInspCo(e.target.value)} placeholder="e.g. Colonial Pipeline" style={s.inp}/></div>
+            <div><label style={s.lbl}>Company</label><input value={inspCo} onChange={e=>setInspCo(e.target.value)} placeholder="e.g. Your company" style={s.inp}/></div>
           </div>
 
           <div style={{marginBottom:16}}>
@@ -15609,7 +15685,7 @@ function PublicTMSignForm({ticketId}){
           <div style={{marginBottom:10}}><label style={s.lbl}>Your Name *</label><input value={cName} onChange={e=>setCName(e.target.value)} placeholder="Full name" style={s.inp}/></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
             <div><label style={s.lbl}>Title / Role</label><input value={cTitle} onChange={e=>setCTitle(e.target.value)} placeholder="e.g. Project Manager" style={s.inp}/></div>
-            <div><label style={s.lbl}>Company</label><input value={cCo} onChange={e=>setCCo(e.target.value)} placeholder="e.g. Colonial Pipeline" style={s.inp}/></div>
+            <div><label style={s.lbl}>Company</label><input value={cCo} onChange={e=>setCCo(e.target.value)} placeholder="e.g. Your company" style={s.inp}/></div>
           </div>
           <div style={{marginBottom:16}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><label style={s.lbl}>Signature *</label>{sigData&&<button onClick={clearSig} style={{background:"none",border:"none",color:"#FC8181",fontSize:12,cursor:"pointer"}}>Clear</button>}</div>
@@ -24118,7 +24194,7 @@ function TMTicketList({project,user,onOpen,onNew}){
   }
   async function removeTicket(id){
     if(!window.confirm("Delete this T&M ticket?"))return;
-    try{await removeTimeCardsForSource(id);await API.tmTickets.remove(id);await load();}catch(e){}
+    try{await removeTimeCardsForSource(id);await releaseApBilledForSource(id,user).catch(()=>{});await API.tmTickets.remove(id);await load();}catch(e){}
   }
 
   const statusColor={draft:T.muted,submitted:T.yellow,approved:T.green};
@@ -24253,6 +24329,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const [customerContact,setCustomerContact]=useState(ticket?.customer_contact||"");
   const [customerHistory,setCustomerHistory]=useState([]);
   const [changeOrderId,setChangeOrderId]=useState(ticket?.change_order_id||"");
+  const [apPick,setApPick]=useState(false);
   const [cos,setCos]=useState([]);
   useEffect(()=>{API.changeOrders.forProject(project.id).then(r=>setCos((Array.isArray(r)?r:[]).filter(c=>c.status!=="Rejected"))).catch(()=>setCos([]));},[project.id]);
   useEffect(()=>{
@@ -24562,10 +24639,11 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
     try{
       if(isNew){
         const r=await API.tmTickets.create(data);const row=Array.isArray(r)?r[0]:r;
+        try{if(row?.id)await syncApBilledFromSource("tm",row.id,`T&M ticket ${data.ticket_no||""}`.trim(),apIdsOnReport(data),user);}catch{}
         const tc=await feedTimeCardsFromTM({...data,id:row?.id||null},project);
         if(tc.created+tc.updated>0)alert(`Ticket saved. ${tc.created+tc.updated} time card${tc.created+tc.updated!==1?"s":""} updated with these hours (pending approval).`);
       }
-      else{await API.tmTickets.update(ticket.id,data);await feedTimeCardsFromTM({...data,id:ticket.id},project);}
+      else{await API.tmTickets.update(ticket.id,data);try{await syncApBilledFromSource("tm",ticket.id,`T&M ticket ${data.ticket_no||""}`.trim(),apIdsOnReport(data),user);}catch{}await feedTimeCardsFromTM({...data,id:ticket.id},project);}
       onSaved&&onSaved();
     }catch(e){
       try{
@@ -24996,10 +25074,13 @@ ${(()=>{
         {tab==="materials"&&<div>
           <button onClick={()=>addRow(setMaterials,{description:"",qty:"",unit:"EA",unit_price:"",attachment_url:null,attachment_name:null})}
             style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Material</button>
+          {apCanBill(user)&&<button onClick={()=>setApPick(true)} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10,fontSize:13,color:T.teal,borderColor:T.teal+"60",borderStyle:"dashed"}}>🧾 Add vendor invoice from Accounting</button>}
+          {apPick&&<ApInvoicePicker project={project} user={user} sourceId={ticket?.id||null} exclude={materials.map(m=>m.ap_invoice_id).filter(Boolean)} onClose={()=>setApPick(false)}
+            onPick={r=>{const l=apLineFromInvoice(r);addRow(setMaterials,{description:l.description,qty:"1",unit:"EA",unit_price:l.amount,attachment_url:r.file_url||null,attachment_name:r.file_name||(r.file_url?`Invoice ${r.invoice_no||""}`:null),ap_invoice_id:r.id,ap_vendor:l.ap_vendor,ap_invoice_no:l.ap_invoice_no});setApPick(false);}}/>}
           {materials.map(r=>(
             <div key={r.id} style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.green}`}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:12,fontWeight:700,color:T.green}}>{r.description||"New Material"}</div>
+                <div style={{fontSize:12,fontWeight:700,color:T.green,minWidth:0}}>{r.ap_invoice_id&&<span style={{...pill(T.teal),marginRight:6,fontSize:10}}>🧾 Accounting</span>}{r.description||"New Material"}</div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:15,fontWeight:900,color:T.green}}>{fmt((r.qty||0)*(r.unit_price||0))}</span>
                   <button onClick={()=>removeRow(setMaterials,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
@@ -25338,7 +25419,7 @@ ${(()=>{
         {status==="draft"&&<div style={{fontSize:11.5,color:T.yellow,marginTop:8,lineHeight:1.6,textAlign:"center"}}>
           This is a draft — it won't reach a PM until you submit it.
         </div>}
-        {!isNew&&canEdit&&<button onClick={async()=>{if(window.confirm("Delete this ticket?"))try{await removeTimeCardsForSource(ticket.id);await API.tmTickets.remove(ticket.id);onBack();}catch(e){}}}
+        {!isNew&&canEdit&&<button onClick={async()=>{if(window.confirm("Delete this ticket?"))try{await removeTimeCardsForSource(ticket.id);await releaseApBilledForSource(ticket.id,user).catch(()=>{});await API.tmTickets.remove(ticket.id);onBack();}catch(e){}}}
           style={{...primBtn,borderRadius:14,background:T.redLow,color:T.red,border:`1px solid ${T.red}30`,marginTop:8,width:"100%",fontSize:13}}>
           🗑 Delete Ticket
         </button>}
