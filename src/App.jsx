@@ -520,6 +520,7 @@ const API={
    worker dropdowns until the app was rebuilt. ROSTER merges the two and is
    refreshed at login, so a new hire is usable straight away. */
 let EXTRA_NAMES=[];
+let ROSTER_CLASS={};   // name → classification from the crew directory, so picking a worker fills it in
 function ROSTER(){
   return [...new Set([...NAMES,...EXTRA_NAMES])]
     .filter(Boolean)
@@ -527,8 +528,9 @@ function ROSTER(){
 }
 async function refreshRoster(){
   try{
-    const rows=await sb("/crew_members?select=name,active&order=name.asc");
+    const rows=await sb("/crew_members?select=name,active,classification&order=name.asc");
     EXTRA_NAMES=(rows||[]).filter(r=>r.active!==false).map(r=>r.name).filter(Boolean);
+    ROSTER_CLASS={};(rows||[]).forEach(r=>{if(r.name&&r.classification)ROSTER_CLASS[r.name]=r.classification;});
   }catch{ /* offline or not deployed — the built-in list still works */ }
 }
 // One person, two records: a crew_members row (worker dropdowns, certs) and a user_profiles
@@ -634,6 +636,14 @@ function getPositions(division){ return division==="Mechanical"?POSITIONS_MECHAN
 function getEquipList(division){ return division==="Mechanical"?EQUIP_LIST_MECHANICAL:EQUIP_LIST_PIPELINE; }
 const POSITIONS=POSITIONS_PIPELINE;
 const EQUIP_LIST=EQUIP_LIST_PIPELINE;
+/* A classification picked from the full list (every division) must still
+   resolve on a job whose own rate sheet does not carry it — otherwise the
+   hour fields never appear and the line prices at $0. Division sheet first,
+   then any sheet. */
+function findPosition(division,name){
+  if(!name)return undefined;
+  return getPositions(division).find(p=>p.name===name)||getAllPositions().find(p=>p.name===name);
+}
 function getAllPositions(){
   const all=[...POSITIONS_PIPELINE,...POSITIONS_MECHANICAL];
   const seen=new Set();
@@ -683,7 +693,7 @@ const PER_DIEM_CLASS="Per Diem";
 const isPerDiemRow=(r)=>r&&r.classification===PER_DIEM_CLASS;
 function perDiemRate(division){const p=getPositions(division).find(x=>x.name===PER_DIEM_CLASS);return p?p.rate:190;}
 function perDiemCount(r){const n=parseFloat(r&&r.perDiemCount);return n>0?n:1;}
-function laborAmt(r,division){const positions=getPositions(division);const p=positions.find(x=>x.name===r.classification);if(!p)return 0;if(p.flat){const rate=parseFloat(r.rate)>0?parseFloat(r.rate):p.rate;return rate*perDiemCount(r);}return p.rate*((parseFloat(r.regHrs)||0)+(parseFloat(r.otHrs)||0)*1.5+(parseFloat(r.travelHrs)||0));}
+function laborAmt(r,division){const p=findPosition(division,r.classification);if(!p)return 0;if(p.flat){const rate=parseFloat(r.rate)>0?parseFloat(r.rate):p.rate;return rate*perDiemCount(r);}return p.rate*((parseFloat(r.regHrs)||0)+(parseFloat(r.otHrs)||0)*1.5+(parseFloat(r.travelHrs)||0));}
 function equipAmt(r,division){
   let rate=parseFloat(r.rate)||0;
   if(!rate&&r.description){
@@ -843,7 +853,9 @@ function PerDiemCard({labor,onChangeLabor,division}){
     </div>
   );
 }
-function LaborCard({row,onChange,onRemove,division,cos}){const positions=getPositions(division);const pos=positions.find(p=>p.name===row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=getPositions(division).find(x=>x.name===v);u.rate=p?p.rate:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{ROSTER().map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().filter(p=>!p.flat).map(p=><option key={p.name}>{p.name}</option>)}</select></div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<CoPick row={row} onChange={onChange} cos={cos}/><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
+function LaborCard({row,onChange,onRemove,division,cos}){const pos=findPosition(division,row.classification);const amt=laborAmt(row,division);const set=(k,v)=>{const u={...row,[k]:v};if(k==="classification"){const p=findPosition(division,v);u.rate=p?p.rate:"";}
+    if(k==="name"&&!row.classification){const c=ROSTER_CLASS[v];const p=c?findPosition(division,c):null;if(p&&!p.flat){u.classification=p.name;u.rate=p.rate;}}
+    onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.orange}`}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}><div style={{gridColumn:"1/-1"}}><label style={lbl}>Name</label><select value={row.name||""} onChange={e=>set("name",e.target.value)} style={inpSel}><option value="">— Select —</option>{ROSTER().map(n=><option key={n}>{n}</option>)}</select></div><div style={{gridColumn:"1/-1"}}><label style={lbl}>Classification</label><select value={row.classification||""} onChange={e=>set("classification",e.target.value)} style={inpSel}><option value="">— Select —</option>{getAllPositions().filter(p=>!p.flat).map(p=><option key={p.name}>{p.name}</option>)}</select>{!pos&&<div style={{fontSize:11,color:T.yellow,marginTop:4}}>Pick a classification to enter hours.</div>}</div></div>{pos&&!pos.flat&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["regHrs","Reg Hrs"],["otHrs","OT Hrs"],["travelHrs","Travel"]].map(([k,l])=>(<div key={k}><label style={lbl}>{l}</label><input type="number" min="0" step="0.5" placeholder="0" value={row[k]||""} onChange={e=>set(k,e.target.value)} style={inp}/></div>))}</div>)}<CoPick row={row} onChange={onChange} cos={cos}/><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:`1px solid ${T.border}`}}><span style={{fontSize:11,color:T.muted}}>{pos?`$${pos.rate.toFixed(2)}${pos.flat?" flat":"/hr"}`:""}</span><div style={{display:"flex",alignItems:"center",gap:10}}>{amt>0&&<span style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(amt)}</span>}<button onClick={onRemove} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:20,padding:0}}>×</button></div></div></div>);}
 function EquipCard({row,onChange,onRemove,division,cos}){const eqList=getEquipList(division);const eq=eqList.find(e=>!e.section&&e.name===row.description);const amt=equipAmt(row);const set=(k,v)=>{const u={...row,[k]:v};if(k==="description"){const e=eqList.find(x=>!x.section&&x.name===v);u.rate=e?e.rate:"";u.unit=e?e.unit:"";}onChange(u);};return(<div style={{...cardS,marginBottom:10,borderLeft:`3px solid ${T.yellow}`}}><div style={{marginBottom:8}}><label style={lbl}>Equipment</label><select value={row.description||""} onChange={e=>set("description",e.target.value)} style={inpSel}><option value="">— Select —</option>{eqList.map((e,i)=>e.section?<option key={i} disabled>── {e.section} ──</option>:<option key={i} value={e.name}>{e.name}</option>)}</select></div><div style={{display:"grid",gridTemplateColumns:"1fr",gap:8,marginBottom:8}}><div>
               <label style={lbl}>
                 {eq
@@ -4481,7 +4493,7 @@ function printReport(report, project){
 
   function laborRow(lr,i){
     if(!lr) return `<tr><td></td><td colspan="2"></td><td></td><td></td><td></td><td></td><td></td></tr>`;
-    const pos = positions.find(p=>p.name===lr.classification);
+    const pos = findPosition(project.division,lr.classification);
     return `<tr>
       <td>${lr.name||''}</td>
       <td colspan="2">${lr.classification||''}</td>
@@ -24631,7 +24643,7 @@ ${(()=>{
                 <label style={lbl}>Classification</label>
                 <select value={r.classification} onChange={e=>{
                   const v=e.target.value;
-                  const p=positions.find(x=>x.name===v);
+                  const p=findPosition(division,v);
                   // Same behaviour as the Daily Report: picking a classification
                   // pulls the contract rate from the division rate sheet. Rates
                   // stay editable for one-off pricing.
@@ -24642,7 +24654,7 @@ ${(()=>{
                   <option value="">— Select —</option>
                   {positions.filter(p=>!p.flat).map(p=><option key={p.name} value={p.name}>{p.name}</option>)}
                 </select>
-                {(()=>{const p=positions.find(x=>x.name===r.classification);return p?<div style={{fontSize:10.5,color:T.muted,marginTop:4}}>Rate sheet: ${p.rate.toFixed(2)}{p.flat?" flat / day":"/hr · OT "+(p.rate*1.5).toFixed(2)+"/hr"}</div>:null;})()}
+                {(()=>{const p=findPosition(division,r.classification);return p?<div style={{fontSize:10.5,color:T.muted,marginTop:4}}>Rate sheet: ${p.rate.toFixed(2)}{p.flat?" flat / day":"/hr · OT "+(p.rate*1.5).toFixed(2)+"/hr"}</div>:null;})()}
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:8}}>
                 <div><label style={lbl}>Reg Hours</label>
