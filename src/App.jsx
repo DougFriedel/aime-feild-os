@@ -4788,7 +4788,7 @@ async function prepareDocsForPrint(docs,onProgress){
   return out;
 }
 
-function printReportWithOptions(report, project, sections, photos, photoLayout, docItems, preWin){
+function reportPrintHtml(report, project, sections, photos, photoLayout, docItems){
   const division = project.division;
   const positions = getPositions(division);
   const tot = reportTotals(report, division);
@@ -4998,7 +4998,11 @@ ${photoHTML}
 ${docHTML}
 
 </body></html>`;
-
+  return html;
+}
+const REPORT_PRINT_ALL={weather:true,description:true,labor:true,equipment:true,rental:true,materials:true,visitors:true,delays:true,signature:true};
+function printReportWithOptions(report, project, sections, photos, photoLayout, docItems, preWin){
+  const html=reportPrintHtml(report, project, sections, photos, photoLayout, docItems);
   // preWin = a window the caller already opened synchronously inside the tap
   // (so mobile popup blockers allow it) while attachments were being prepared.
   const win = preWin || window.open('','_blank','width=950,height=800');
@@ -21363,9 +21367,10 @@ function InvoiceForm({project,mfgJob,user,invoice,onBack,onSaved,onErr}){
       // Flag any source documents that were pulled onto this invoice
       const stamp={invoiced:true,invoice_no:f.invoice_no,invoiced_at:new Date().toISOString()};
       const srcOf=(t)=>lines.filter(l=>l.source?.type===t);
+      const srcIds=invoiceSourceIds(lines);
       await Promise.all([
-        ...srcOf("report").map(l=>API.reports.update(l.source.id,stamp).catch(()=>{})),
-        ...srcOf("tm").map(l=>API.tmTickets.update(l.source.id,stamp).catch(()=>{})),
+        ...srcIds.reports.map(id=>API.reports.update(id,stamp).catch(()=>{})),
+        ...srcIds.tickets.map(id=>API.tmTickets.update(id,stamp).catch(()=>{})),
         // Shop labor records the rate it was billed at, so changing the shop
         // rate later cannot restate an invoice that already went out.
         ...srcOf("mfglabor").flatMap(l=>(l.source.ids||[l.source.id]).map(id=>
@@ -21376,11 +21381,28 @@ function InvoiceForm({project,mfgJob,user,invoice,onBack,onSaved,onErr}){
     setSaving(false);
   }
 
-  function printInvoice(){
+  async function printInvoice(){
     const w=window.open("","_blank");
     if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups to print.");return;}
     const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+    // The daily reports and T&M tickets this invoice bills print behind it,
+    // exactly as they print on their own.
+    const backup=[];
+    const src=invoiceSourceIds(lines);
+    if(!mfgJob&&(src.reports.length||src.tickets.length)){
+      w.document.write('<html><body style="font-family:Arial,sans-serif;padding:40px;color:#1f3864"><h2>Preparing invoice…</h2><p style="color:#555">Attaching daily reports and T&M tickets</p></body></html>');
+      try{
+        const [reps,tms,cos]=await Promise.all([
+          src.reports.length?sb(`/daily_reports?id=in.(${src.reports.join(",")})&select=*`).catch(()=>[]):[],
+          src.tickets.length?sb(`/tm_tickets?id=in.(${src.tickets.join(",")})&select=*`).catch(()=>[]):[],
+          API.changeOrders.forProject(project.id).catch(()=>[])]);
+        const byDate=(a,b)=>String(a._d||"").localeCompare(String(b._d||""));
+        const docs=[...(reps||[]).map(r=>({_d:r.date,html:()=>reportPrintHtml(r,project,REPORT_PRINT_ALL,[],"grid",[])})),
+                    ...(tms||[]).map(t=>({_d:t.ticket_date,html:()=>tmTicketPrintHtml(tmTicketViewFromRow(t,project,cos||[]),project)}))].sort(byDate);
+        docs.forEach(d=>{try{backup.push(d.html());}catch(e){}});
+      }catch(e){}
+    }
+    const invoiceHtml=`<!DOCTYPE html><html><head><meta charset="utf-8"/>
 <title>Invoice ${esc(f.invoice_no)}</title><style>
 @page{size:letter;margin:0.6in}
 *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}
@@ -21399,7 +21421,7 @@ td{padding:6px 8px;border-bottom:1px solid #e5e7eb;font-size:9.5pt}
 tr:nth-child(even) td{background:#fafbff}
 .tot{width:56%;margin-left:auto;border-collapse:collapse}
 .tot td{padding:5px 8px;border-bottom:1px solid #e5e7eb}
-.grand td{background:#1f3864;color:#fff;font-weight:900;font-size:12pt;border:none}
+.grand td{background:#1f3864 !important;color:#fff;font-weight:900;font-size:12pt;border:none}
 .note{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:9pt;line-height:1.6;margin-top:14px}
 .foot{margin-top:22px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:7.5pt;color:#9ca3af;display:flex;justify-content:space-between}
 @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
@@ -21426,7 +21448,7 @@ tr:nth-child(even) td{background:#fafbff}
 ${f.description?`<div style="margin-bottom:12px;font-size:10pt"><strong>Description:</strong> ${esc(f.description)}</div>`:""}
 <table><thead><tr><th style="width:48%">Description</th><th style="text-align:center">Qty</th><th style="text-align:center">Unit</th>
 <th style="text-align:right">Unit Price</th><th style="text-align:right">Amount</th></tr></thead><tbody>
-${lines.filter(l=>!l.hidden).map(l=>`<tr><td>${esc(l.description)}</td><td style="text-align:center">${esc(l.qty)}</td>
+${lines.filter(l=>!l.hidden).map(l=>l.heading?`<tr><td colspan="5" style="font-weight:700;background:#f0f4ff;color:#1f3864">${esc(l.description)}</td></tr>`:`<tr><td>${esc(l.description)}</td><td style="text-align:center">${esc(l.qty)}</td>
 <td style="text-align:center">${esc(l.unit)}</td><td style="text-align:right">${money(l.unit_price)}</td>
 <td style="text-align:right">${money(lineAmt(l))}</td></tr>`).join("")}
 </tbody></table>
@@ -21438,8 +21460,10 @@ ${retainAmount?`<tr><td>Less Retainage (${f.retainage_pct}%)</td><td style="text
 </tbody></table>
 ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/g,"<br/>")}</div>`:""}
 <div class="foot"><span>AIME · ${esc(owner.name)} · Invoice ${esc(f.invoice_no)}</span><span>${new Date().toLocaleString()}</span></div>
-</body></html>`);
-    w.document.close();setTimeout(()=>{w.focus();w.print();},350);
+</body></html>`;
+    w.document.open();
+    w.document.write(backup.length?stitchHtmlDocs(`Invoice ${f.invoice_no}`,[invoiceHtml,...backup]):invoiceHtml);
+    w.document.close();setTimeout(()=>{w.focus();w.print();},backup.length?1200:350);
   }
 
   const ri={...inp,fontSize:13,padding:"8px 10px"};
@@ -21486,7 +21510,15 @@ ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/
         No lines yet. Add them by hand, or pull {mfgJob?"unbilled shop labor":"from approved dailies and signed T&M tickets"}.
       </div>}
 
-      {lines.filter(l=>!l.hidden).map(l=>(
+      {(()=>{const src=invoiceSourceIds(lines);return !mfgJob&&(src.reports.length||src.tickets.length)?
+        <div style={{...cardS,marginBottom:8,borderLeft:`3px solid ${T.green}`,padding:"10px 14px",fontSize:12,color:T.sub}}>
+          📎 <b style={{color:T.text}}>{src.reports.length} daily report{src.reports.length===1?"":"s"}{src.tickets.length?`, ${src.tickets.length} T&M ticket${src.tickets.length===1?"":"s"}`:""}</b> attached — they print behind the invoice, as they would on their own, and are stamped as billed on save.
+        </div>:null;})()}
+      {lines.filter(l=>!l.hidden).map(l=>l.heading?(
+        <div key={l.id} style={{...cardS,marginBottom:8,padding:"10px 14px",borderLeft:`3px solid ${T.purple}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+          <input value={l.description} onChange={e=>setLine(l.id,"description",e.target.value)} style={{...ri,fontWeight:700,flex:1}}/>
+          <button onClick={()=>delLine(l.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"3px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+        </div>):(
         <div key={l.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${l.source?T.green:T.blue}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <div style={{fontSize:11,color:T.muted}}>
@@ -21559,141 +21591,173 @@ ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/
   );
 }
 
-/* ── Pull approved dailies / signed T&M onto an invoice ── */
+/* ── Pull approved dailies / signed T&M onto an invoice ──
+   Works like Pull Shipped Parts on a shop invoice: pick a date range, the
+   approved daily reports and signed T&M tickets in it are ticked, and the
+   invoice gets either itemized lines (labor by classification at the
+   division rate, equipment, materials…) rolled up across all of them, or one
+   line per document. Either way each document rides along as a hidden
+   zero-value line so it is stamped invoiced on save and prints behind the
+   invoice as backup. */
+function invoiceSourceIds(lines){
+  const reports=new Set(),tickets=new Set();
+  (lines||[]).forEach(l=>{const s=l.source;if(!s)return;
+    if(s.type==="report"){if(s.id)reports.add(s.id);(s.ids||[]).forEach(i=>reports.add(i));}
+    if(s.type==="tm"){if(s.id)tickets.add(s.id);(s.ids||[]).forEach(i=>tickets.add(i));}});
+  return {reports:[...reports],tickets:[...tickets]};
+}
 function PullUnbilledModal({project,onClose,onPull,onErr}){
   const [reports,setReports]=useState([]);
   const [tickets,setTickets]=useState([]);
   const [sel,setSel]=useState({});
   const [loading,setLoading]=useState(true);
-  const [detail,setDetail]=useState(true);   // one line per document vs one combined line
+  const [mode,setMode]=useState("itemized");   // itemized | perdoc | combined
+  const [showBilled,setShowBilled]=useState(false);
+  const iso=(d)=>d.toISOString().slice(0,10);
+  const d0=new Date();const monthStart=new Date(d0.getFullYear(),d0.getMonth(),1);
+  const [from,setFrom]=useState(iso(monthStart));
+  const [to,setTo]=useState(iso(d0));
+  const uid=()=>Math.random().toString(36).slice(2,10);
+  const div=project.division;
 
   useEffect(()=>{(async()=>{
     try{
-      const [r,t]=await Promise.all([
-        API.reports.forProject(project.id).catch(()=>[]),
-        API.tmTickets.forProject(project.id).catch(()=>[]),
-      ]);
-      setReports((r||[]).filter(x=>!x.invoiced&&(x.status==="approved"||x.status==="signed")));
-      setTickets((t||[]).filter(x=>!x.invoiced&&(x.status==="approved"||x.client_signature)));
+      const [r,t]=await Promise.all([API.reports.forProject(project.id).catch(()=>[]),API.tmTickets.forProject(project.id).catch(()=>[])]);
+      setReports((r||[]).filter(x=>x.status!=="archived"&&(x.status==="approved"||x.status==="signed")));
+      setTickets((t||[]).filter(x=>x.status!=="void"&&(x.status==="approved"||x.client_signature)));
     }catch(e){ onErr&&onErr(e.message); }
     setLoading(false);
   })();},[project.id]);
 
+  const inRange=(d)=>!!d&&(!from||d>=from)&&(!to||d<=to);
+  const visReports=reports.filter(r=>inRange(r.date)&&(showBilled||!r.invoiced));
+  const visTickets=tickets.filter(t=>inRange(t.ticket_date)&&(showBilled||!t.invoiced));
+  // New range → everything unbilled in it starts ticked.
+  useEffect(()=>{const n={};visReports.forEach(r=>{if(!r.invoiced)n["r"+r.id]=true;});visTickets.forEach(t=>{if(!t.invoiced)n["t"+t.id]=true;});setSel(n);},[from,to,loading,showBilled]);
   const toggle=(k)=>setSel(s=>{const n={...s};if(n[k])delete n[k];else n[k]=true;return n;});
-  const uid=()=>Math.random().toString(36).slice(2,10);
+  const quick=(days)=>{const d=new Date();d.setDate(d.getDate()-days);setFrom(iso(d));setTo(iso(new Date()));};
+  const lastMonth=()=>{const a=new Date(d0.getFullYear(),d0.getMonth()-1,1),b=new Date(d0.getFullYear(),d0.getMonth(),0);setFrom(iso(a));setTo(iso(b));};
 
-  const repAmt=(r)=>{
-    const t=reportTotals(r,project.division);
-    const subs=(r.subcontractors||[]).reduce((a,x)=>a+subLineTotal(x),0);
-    return t.grand+subs;
-  };
+  const repAmt=(r)=>{const t=reportTotals(r,div);const subs=(r.subcontractors||[]).reduce((a,x)=>a+subLineTotal(x),0);return t.grand+subs;};
+  const chosenReports=visReports.filter(r=>sel["r"+r.id]);
+  const chosenTickets=visTickets.filter(t=>sel["t"+t.id]);
+  const total=chosenReports.reduce((s,r)=>s+repAmt(r),0)+chosenTickets.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
+  const docLabel=(r)=>r.report_no?"#"+r.report_no:r.date;
+  const dates=[...chosenReports.map(r=>r.date),...chosenTickets.map(t=>t.ticket_date)].filter(Boolean).sort();
+  const span=dates.length?`${fmtDate(dates[0])}${dates.length>1&&dates[0]!==dates[dates.length-1]?" – "+fmtDate(dates[dates.length-1]):""}`:"";
 
-  const chosenReports=reports.filter(r=>sel["r"+r.id]);
-  const chosenTickets=tickets.filter(t=>sel["t"+t.id]);
-  const total=chosenReports.reduce((s,r)=>s+repAmt(r),0)
-             +chosenTickets.reduce((s,t)=>s+(parseFloat(t.grand_total)||0),0);
+  // Hidden zero-value line per document: stamps it invoiced on save and
+  // makes it print behind the invoice.
+  const docLines=()=>[
+    ...chosenReports.map(r=>({id:uid(),description:`  · Daily Report ${docLabel(r)} — ${r.date}`,qty:0,unit:"",unit_price:0,source:{type:"report",id:r.id,label:r.report_no||r.date},hidden:true})),
+    ...chosenTickets.map(t=>({id:uid(),description:`  · T&M Ticket #${t.ticket_no||""} — ${t.ticket_date}`,qty:0,unit:"",unit_price:0,source:{type:"tm",id:t.id,label:t.ticket_no||t.ticket_date},hidden:true})),
+  ];
 
-  function pull(){
-    if(detail){
-      const out=[
-        ...chosenReports.map(r=>({id:uid(),
-          description:`Daily Report ${r.report_no?"#"+r.report_no+" ":""}— ${r.date}${r.description?": "+r.description.slice(0,60):""}`,
-          qty:1,unit:"LS",unit_price:repAmt(r).toFixed(2),
-          source:{type:"report",id:r.id,label:r.report_no||r.date}})),
-        ...chosenTickets.map(t=>({id:uid(),
-          description:`T&M Ticket ${t.ticket_no?"#"+t.ticket_no+" ":""}— ${t.ticket_date}${t.description?": "+t.description.slice(0,60):""}`,
-          qty:1,unit:"LS",unit_price:(parseFloat(t.grand_total)||0).toFixed(2),
-          source:{type:"tm",id:t.id,label:t.ticket_no||t.ticket_date}})),
-      ];
-      onPull(out);
-      return;
-    }
-    // Combined: one visible line, but each source still gets its own hidden
-    // zero-value line so the documents are flagged as invoiced on save.
-    const dates=[...chosenReports.map(r=>r.date),...chosenTickets.map(t=>t.ticket_date)].filter(Boolean).sort();
-    const span=dates.length?`${dates[0]} to ${dates[dates.length-1]}`:"";
-    onPull([
-      {id:uid(),
-        description:`Work performed ${span} — ${chosenReports.length} daily report(s), ${chosenTickets.length} T&M ticket(s)`,
-        qty:1,unit:"LS",unit_price:total.toFixed(2),source:null},
-      ...chosenReports.map(r=>({id:uid(),description:`  · Daily ${r.report_no||r.date}`,
-        qty:0,unit:"",unit_price:0,source:{type:"report",id:r.id,label:r.report_no||r.date},hidden:true})),
-      ...chosenTickets.map(t=>({id:uid(),description:`  · T&M ${t.ticket_no||t.ticket_date}`,
-        qty:0,unit:"",unit_price:0,source:{type:"tm",id:t.id,label:t.ticket_no||t.ticket_date},hidden:true})),
-    ]);
+  // Roll every selected daily report up into billable lines at the division rates.
+  function itemizedLines(){
+    const out=[];const coIds=new Set();
+    const labor={};   // classification → {reg,ot,trv,rate}
+    let perDiemDays=0,perDiemAmt=0;
+    const equip={};   // "desc|unit" → {usage,rate,amt}
+    const rentals=[],mats=[],subs=[];
+    chosenReports.forEach(r=>{
+      (r.labor||[]).forEach(x=>{
+        if(x.co_id)coIds.add(x.co_id);
+        if(isPerDiemRow(x)){perDiemDays+=perDiemCount(x);perDiemAmt+=laborAmt(x,div);return;}
+        const p=findPosition(div,x.classification);if(!p)return;
+        const k=p.name;const l=labor[k]=labor[k]||{reg:0,ot:0,trv:0,rate:p.rate};
+        l.reg+=parseFloat(x.regHrs)||0;l.ot+=parseFloat(x.otHrs)||0;l.trv+=parseFloat(x.travelHrs)||0;
+      });
+      (r.equipment||[]).forEach(x=>{
+        if(x.co_id)coIds.add(x.co_id);
+        const amt=equipAmt(x,div);if(!amt)return;
+        const k=`${x.description||"Equipment"}|${x.unit||""}`;const e=equip[k]=equip[k]||{desc:x.description||"Equipment",unit:x.unit||"",usage:0,rate:parseFloat(x.rate)||0,amt:0};
+        e.usage+=(parseFloat(x.usage)||1)*(parseFloat(x.qty)||1);e.amt+=amt;
+      });
+      (r.rental_equipment||[]).forEach(x=>{if(x.co_id)coIds.add(x.co_id);const a=rentalLineTotal(x);if(a)rentals.push({desc:x.description||"Rented equipment",amt:a,d:r.date});});
+      (r.materials||[]).forEach(x=>{if(x.co_id)coIds.add(x.co_id);const a=matLineTotal(x);if(a)mats.push({desc:x.description||"Material",amt:a,d:r.date,ap:x.ap_invoice_no});});
+      (r.subcontractors||[]).forEach(x=>{if(x.co_id)coIds.add(x.co_id);const a=subLineTotal(x);if(a)subs.push({desc:`${x.company||"Subcontractor"}${x.description?" — "+x.description:""}`,amt:a,d:r.date});});
+    });
+    const n2=(n)=>Number(n||0).toFixed(2);
+    Object.keys(labor).sort().forEach(k=>{const l=labor[k];
+      if(l.reg>0)out.push({id:uid(),description:`${k} — regular time`,qty:n2(l.reg),unit:"HR",unit_price:n2(l.rate),source:null});
+      if(l.ot>0)out.push({id:uid(),description:`${k} — overtime`,qty:n2(l.ot),unit:"HR",unit_price:n2(l.rate*1.5),source:null});
+      if(l.trv>0)out.push({id:uid(),description:`${k} — travel`,qty:n2(l.trv),unit:"HR",unit_price:n2(l.rate),source:null});
+    });
+    if(perDiemDays>0)out.push({id:uid(),description:"Per diem",qty:n2(perDiemDays),unit:"DAY",unit_price:n2(perDiemAmt/perDiemDays),source:null});
+    Object.values(equip).sort((a,b)=>a.desc.localeCompare(b.desc)).forEach(e=>{
+      const unit=(e.unit||"").toUpperCase().slice(0,4)||"EA";const price=e.usage>0?e.amt/e.usage:e.amt;
+      out.push({id:uid(),description:e.desc,qty:n2(e.usage||1),unit,unit_price:n2(price),source:null});});
+    rentals.forEach(x=>out.push({id:uid(),description:`Rental — ${x.desc} (${fmtDate(x.d)})`,qty:"1",unit:"LS",unit_price:n2(x.amt),source:null}));
+    mats.forEach(x=>out.push({id:uid(),description:`Material — ${x.desc}${x.ap?" (Inv #"+x.ap+")":""} (${fmtDate(x.d)})`,qty:"1",unit:"LS",unit_price:n2(x.amt),source:null}));
+    subs.forEach(x=>out.push({id:uid(),description:`Subcontractor — ${x.desc} (${fmtDate(x.d)})`,qty:"1",unit:"LS",unit_price:n2(x.amt),source:null}));
+    chosenTickets.forEach(t=>out.push({id:uid(),description:`T&M Ticket #${t.ticket_no||""} — ${fmtDate(t.ticket_date)}${t.description?": "+t.description.slice(0,60):""}`,qty:"1",unit:"LS",unit_price:n2(t.grand_total),source:{type:"tm",id:t.id,label:t.ticket_no||t.ticket_date}}));
+    if(out.length&&span)out.unshift({id:uid(),description:`Work performed ${span} — ${chosenReports.length} daily report${chosenReports.length===1?"":"s"}${chosenTickets.length?`, ${chosenTickets.length} T&M ticket${chosenTickets.length===1?"":"s"}`:""} (attached)`,qty:0,unit:"",unit_price:0,source:null,heading:true});
+    // the T&M tickets already carry their own source; add the reports
+    return [...out,...docLines().filter(l=>l.source.type==="report")];
   }
+  function perDocLines(){
+    return [
+      ...chosenReports.map(r=>({id:uid(),description:`Daily Report ${docLabel(r)} — ${fmtDate(r.date)}${r.description?": "+r.description.slice(0,60):""}`,qty:1,unit:"LS",unit_price:repAmt(r).toFixed(2),source:{type:"report",id:r.id,label:r.report_no||r.date}})),
+      ...chosenTickets.map(t=>({id:uid(),description:`T&M Ticket #${t.ticket_no||""} — ${fmtDate(t.ticket_date)}${t.description?": "+t.description.slice(0,60):""}`,qty:1,unit:"LS",unit_price:(parseFloat(t.grand_total)||0).toFixed(2),source:{type:"tm",id:t.id,label:t.ticket_no||t.ticket_date}})),
+    ];
+  }
+  function combinedLines(){
+    return [{id:uid(),description:`Work performed ${span} — ${chosenReports.length} daily report(s), ${chosenTickets.length} T&M ticket(s)`,qty:1,unit:"LS",unit_price:total.toFixed(2),source:null},...docLines()];
+  }
+  function pull(){onPull(mode==="itemized"?itemizedLines():mode==="perdoc"?perDocLines():combinedLines());}
 
-  const Row=({k,title,sub,amt})=>(
-    <div onClick={()=>toggle(k)} style={{...cardS,marginBottom:6,padding:"10px 12px",cursor:"pointer",
-      display:"flex",alignItems:"center",gap:10,
-      border:sel[k]?`1px solid ${T.green}`:`1px solid ${T.border}`,
-      background:sel[k]?T.greenLow:T.card}}>
-      <div style={{width:19,height:19,borderRadius:5,flexShrink:0,display:"flex",alignItems:"center",
-        justifyContent:"center",fontSize:12,fontWeight:900,
-        background:sel[k]?T.green:"transparent",color:"#000",
-        border:sel[k]?"none":`1.5px solid ${T.border}`}}>{sel[k]?"✓":""}</div>
+  const Row=({k,title,sub,amt,billed})=>(
+    <div onClick={()=>toggle(k)} style={{...cardS,marginBottom:6,padding:"10px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,
+      border:sel[k]?`1px solid ${T.green}`:`1px solid ${T.border}`,background:sel[k]?T.greenLow:T.card,opacity:billed&&!sel[k]?0.6:1}}>
+      <div style={{width:19,height:19,borderRadius:5,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:900,background:sel[k]?T.green:"transparent",color:"#000",border:sel[k]?"none":`1.5px solid ${T.border}`}}>{sel[k]?"✓":""}</div>
       <div style={{flex:1,minWidth:0}}>
-        <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{title}</div>
+        <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{title}{billed&&<span style={{...pill(T.muted),marginLeft:8,fontSize:10}}>billed{billed!==true?" · "+billed:""}</span>}</div>
         <div style={{fontSize:11,color:T.muted}}>{sub}</div>
       </div>
       <div style={{fontSize:13,fontWeight:800,color:T.green,flexShrink:0}}>{money(amt)}</div>
-    </div>
-  );
+    </div>);
+  const qBtn=(l,on,fn)=><button key={l} onClick={fn} style={{...ghostBtn,padding:"6px 10px",fontSize:11.5,borderColor:on?T.orange:T.border,color:on?T.orange:T.sub}}>{l}</button>;
 
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:220,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-      <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:"18px 18px 0 0",width:"100%",maxWidth:640,maxHeight:"88vh",display:"flex",flexDirection:"column"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:"18px 18px 0 0",width:"100%",maxWidth:640,maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
         <div style={{padding:"16px 18px 10px",borderBottom:`1px solid ${T.border}`}}>
-          <div style={{fontSize:16,fontWeight:900,color:T.text}}>↓ Pull Unbilled Work</div>
-          <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>
-            Approved daily reports and signed or approved T&M tickets not yet on an invoice.
+          <div style={{fontSize:16,fontWeight:900,color:T.text}}>↓ Pull from Reports</div>
+          <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Approved daily reports and signed T&M tickets in the date range. They print behind the invoice as backup.</div>
+        </div>
+        <div style={{padding:"10px 18px",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",gap:8,alignItems:"end",flexWrap:"wrap"}}>
+            <div><label style={lbl}>From</label><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={{...inp,padding:"7px 9px",fontSize:12.5}}/></div>
+            <div><label style={lbl}>To</label><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={{...inp,padding:"7px 9px",fontSize:12.5}}/></div>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{qBtn("This week",false,()=>quick(6))}{qBtn("2 weeks",false,()=>quick(13))}{qBtn("This month",false,()=>{setFrom(iso(monthStart));setTo(iso(d0));})}{qBtn("Last month",false,lastMonth)}{qBtn("All",false,()=>{setFrom("");setTo("");})}</div>
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:10,alignItems:"center",flexWrap:"wrap"}}>
+            {[["itemized","Itemized (labor, equipment, materials)"],["perdoc","One line per report"],["combined","One combined line"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setMode(v)} style={{flex:"1 1 auto",padding:"7px 8px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:mode===v?800:600,background:mode===v?T.orange:T.surface,color:mode===v?"#000":T.sub,border:`1px solid ${mode===v?T.orange:T.border}`}}>{l}</button>))}
+            <label style={{fontSize:11.5,color:T.muted,display:"flex",alignItems:"center",gap:5,cursor:"pointer",marginLeft:"auto"}}><input type="checkbox" checked={showBilled} onChange={e=>setShowBilled(e.target.checked)}/> show already billed</label>
           </div>
         </div>
-
-        <div style={{padding:"10px 18px",borderBottom:`1px solid ${T.border}`,display:"flex",gap:8}}>
-          {[[true,"One line each"],[false,"Single combined line"]].map(([v,l])=>(
-            <button key={String(v)} onClick={()=>setDetail(v)}
-              style={{flex:1,padding:"7px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",fontSize:12,
-                fontWeight:detail===v?800:600,
-                background:detail===v?T.orange:T.surface,color:detail===v?"#000":T.sub,
-                border:`1px solid ${detail===v?T.orange:T.border}`}}>{l}</button>
-          ))}
-        </div>
-
         <div style={{flex:1,overflowY:"auto",padding:"12px 18px"}}>
           {loading&&<div style={{textAlign:"center",padding:20,color:T.muted,fontSize:13}}>Loading…</div>}
-          {!loading&&reports.length===0&&tickets.length===0&&<div style={{textAlign:"center",padding:"30px 10px",color:T.muted}}>
+          {!loading&&visReports.length===0&&visTickets.length===0&&<div style={{textAlign:"center",padding:"30px 10px",color:T.muted}}>
             <div style={{fontSize:30,marginBottom:8}}>✅</div>
-            <div style={{fontSize:13,fontWeight:700,color:T.sub}}>Nothing unbilled</div>
-            <div style={{fontSize:11.5,marginTop:3}}>Everything approved has already been invoiced.</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.sub}}>Nothing unbilled in this range</div>
+            <div style={{fontSize:11.5,marginTop:3}}>Widen the dates, or tick "show already billed" to re-bill something.</div>
           </div>}
-
-          {reports.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>
-            📋 Daily Reports ({reports.length})</div>}
-          {reports.map(r=><Row key={r.id} k={"r"+r.id}
-            title={`${r.date}${r.report_no?"  ·  #"+r.report_no:""}`}
-            sub={r.submitted_by||""} amt={repAmt(r)}/>)}
-
-          {tickets.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 6px"}}>
-            🧾 T&M Tickets ({tickets.length})</div>}
-          {tickets.map(t=><Row key={t.id} k={"t"+t.id}
-            title={`${t.ticket_date}  ·  #${t.ticket_no||""}`}
-            sub={`${t.submitted_by||""}${t.client_signature?"  ·  ✍️ signed":""}`}
-            amt={t.grand_total}/>)}
+          {visReports.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>📋 Daily Reports ({visReports.length})</div>}
+          {visReports.map(r=><Row key={r.id} k={"r"+r.id} title={`${fmtDate(r.date)}${r.report_no?"  ·  #"+r.report_no:""}`} sub={`${r.submitted_by||""}${r.description?" · "+r.description.slice(0,50):""}`} amt={repAmt(r)} billed={r.invoiced?(r.invoice_no||true):false}/>)}
+          {visTickets.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"14px 0 6px"}}>🧾 T&M Tickets ({visTickets.length})</div>}
+          {visTickets.map(t=><Row key={t.id} k={"t"+t.id} title={`${fmtDate(t.ticket_date)}  ·  #${t.ticket_no||""}`} sub={`${t.submitted_by||""}${t.client_signature?"  ·  ✍️ signed":""}`} amt={t.grand_total} billed={t.invoiced?(t.invoice_no||true):false}/>)}
         </div>
-
         <div style={{padding:"12px 18px 20px",borderTop:`1px solid ${T.border}`}}>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
-            <span style={{fontSize:12,color:T.sub}}>{chosenReports.length+chosenTickets.length} selected</span>
+            <span style={{fontSize:12,color:T.sub}}>{chosenReports.length} report{chosenReports.length===1?"":"s"}, {chosenTickets.length} ticket{chosenTickets.length===1?"":"s"}</span>
             <span style={{fontSize:15,fontWeight:900,color:T.green}}>{money(total)}</span>
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button onClick={pull} disabled={!chosenReports.length&&!chosenTickets.length}
-              style={{...primBtn,borderRadius:12,background:T.green,color:"#000",
-                opacity:(chosenReports.length||chosenTickets.length)?1:0.4}}>
-              Add to Invoice
-            </button>
-            <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
+            <button onClick={pull} disabled={!chosenReports.length&&!chosenTickets.length} style={{...primBtn,borderRadius:12,background:T.green,color:"#000",opacity:(chosenReports.length||chosenTickets.length)?1:0.4}}>↓ Add to Invoice</button>
+            <button onClick={onClose} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
           </div>
         </div>
       </div>
@@ -23924,6 +23988,196 @@ function PullMfgWeeksModal({job,rate,onClose,onPull,onErr}){
   );
 }
 
+/* ── T&M ticket print, usable from the form (live state) or a saved row ── */
+function tmTicketPrintHtml(v,project){
+  const {ticketNo,ticketDate,status,customer,customerContact,poNumber,afeNumber,workOrder,location,changeOrderId,cos,user,description,notes,
+    labor,workers,laborName,equipName,laborRowAmt,perDiemRow,perDiemHeads,perDiemAmt,totalRegHrs,totalOtHrs,totalTrvHrs,laborTotal,
+    equipment,equipTotal,materials,matsTotal,other,otherTotal,subtotal,showMarkup,markupPct,mkEquip,mkMats,mkOther,mkLaborAmt,mkEquipAmt,mkMatsAmt,mkOtherAmt,
+    taxPct,taxAmt,grandTotal,sigData,signerName,clientSig,clientName,bsName,clientSigAt,photos}=v;
+    const fmt=n=>"$"+(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const thStyle=`padding:5px 8px;font-size:8pt;background:#1f3864;color:#fff;text-align:`;
+    const tdStyle=`padding:5px 8px;font-size:8.5pt;border-bottom:1px solid #e5e7eb;text-align:`;
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>T&M #${ticketNo}</title>
+<style>@page{size:letter portrait;margin:0.4in;}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
+</head><body style="color:#111;font-size:9pt;">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1f3864;padding-bottom:10px;margin-bottom:10px">
+  <div style="display:flex;align-items:center;gap:12px">
+    <div>
+      ${AIME_LOGO_IMG(54)}
+      <div style="font-size:7pt;color:#888;margin-top:4px">5730 Pennington Ave, Baltimore, MD 21226</div>
+    </div>
+  </div>
+  <div style="text-align:right">
+    <div style="font-size:16pt;font-weight:700;color:#1f3864">Time &amp; Materials Ticket</div>
+    <div style="font-size:9pt;font-weight:700;color:#333">T&amp;M # ${ticketNo}</div>
+    <div style="font-size:8.5pt;color:#555">Date: ${ticketDate}</div>
+    <div style="background:#1f3864;color:#fff;font-size:7pt;font-weight:700;padding:3px 10px;border-radius:4px;display:inline-block;margin-top:4px;text-transform:uppercase;letter-spacing:1px">${status}</div>
+  </div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb;margin-bottom:8px;">
+  ${[["Project",project.name||"—"],["Customer",customer||project.client||"—"],
+     ["Contact",customerContact||"—"],["PO #",poNumber||"—"],
+     ["AFE/WO #",(afeNumber||workOrder||"—")],["Location",location||"—"],
+     ...(changeOrderId?[["Change Order",(cos.find(c=>c.id===changeOrderId)||{}).co_number||"Yes"]]:[]),
+     ["Submitted By",user.name]].map(([l,v])=>`<div style="display:flex;border-bottom:1px solid #e5e7eb"><div style="background:#f3f4f6;padding:3px 8px;font-weight:700;font-size:7.5pt;width:100px;border-right:1px solid #e5e7eb;flex-shrink:0">${l}</div><div style="padding:3px 8px;font-size:8pt">${v}</div></div>`).join("")}
+</div>
+${description?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:8px;font-size:8.5pt"><b>Description:</b> ${description}</div>`:""}
+${labor.length?`<div style="margin-bottom:8px"><div style="background:#1f3864;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Labor</div>
+<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
+  <th style="${thStyle}left">Name</th><th style="${thStyle}left">Classification</th>
+  <th style="${thStyle}center">Reg Hrs</th><th style="${thStyle}right">Reg Rate</th>
+  <th style="${thStyle}center">OT Hrs</th><th style="${thStyle}right">OT Rate</th>
+  ${totalTrvHrs>0?`<th style="${thStyle}center">Travel Hrs</th><th style="${thStyle}right">Travel Rate</th>`:""}<th style="${thStyle}right">Amount</th>
+</tr></thead><tbody>
+${workers.map(r=>`<tr><td style="${tdStyle}left">${laborName(r)}</td><td style="${tdStyle}left">${r.classification||""}</td>
+  <td style="${tdStyle}center">${r.hours||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td>
+  <td style="${tdStyle}center">${r.ot_hours||""}</td><td style="${tdStyle}right">${(parseFloat(r.ot_hours)||0)>0?fmt(r.ot_rate):""}</td>
+  ${totalTrvHrs>0?`<td style="${tdStyle}center">${r.travel_hours||""}</td><td style="${tdStyle}right">${(parseFloat(r.travel_hours)||0)>0?fmt(r.travel_rate!==""&&r.travel_rate!=null?r.travel_rate:r.rate):""}</td>`:""}
+  <td style="${tdStyle}right">${fmt(laborRowAmt(r))}</td></tr>`).join("")}
+${perDiemRow?`<tr><td style="${tdStyle}left"><em>Per Diem</em></td><td style="${tdStyle}left">${perDiemHeads} employee${perDiemHeads!==1?"s":""}</td>
+  <td style="${tdStyle}center">${perDiemHeads}</td><td style="${tdStyle}right">${fmt(perDiemRow.rate)}</td><td></td><td></td>${totalTrvHrs>0?"<td></td><td></td>":""}
+  <td style="${tdStyle}right">${fmt(perDiemAmt)}</td></tr>`:""}
+<tr style="font-weight:700;background:#f9fafb">
+  <td colspan="2" style="${tdStyle}right">Labor Total</td>
+  <td style="${tdStyle}center">${totalRegHrs||0}</td><td></td>
+  <td style="${tdStyle}center">${totalOtHrs||""}</td><td></td>
+  ${totalTrvHrs>0?`<td style="${tdStyle}center">${totalTrvHrs}</td><td></td>`:""}
+  <td style="${tdStyle}right">${fmt(laborTotal)}</td></tr>
+</tbody></table></div>`:""}
+${equipment.length?`<div style="margin-bottom:8px"><div style="background:#374151;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Equipment</div>
+<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
+  <th style="${thStyle}left">Equipment</th><th style="${thStyle}center">Unit</th><th style="${thStyle}center">Qty</th><th style="${thStyle}right">Rate</th><th style="${thStyle}right">Amount</th>
+</tr></thead><tbody>
+${equipment.map(r=>`<tr><td style="${tdStyle}left">${equipName(r)}</td><td style="${tdStyle}center">${r.unit||""}</td><td style="${tdStyle}center">${r.qty||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td><td style="${tdStyle}right">${fmt((r.qty||0)*(r.rate||0))}</td></tr>`).join("")}
+<tr style="font-weight:700;background:#f9fafb"><td colspan="4" style="${tdStyle}right">Equipment Total</td><td style="${tdStyle}right">${fmt(equipTotal)}</td></tr>
+</tbody></table></div>`:""}
+${materials.length?`<div style="margin-bottom:8px"><div style="background:#4B5563;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Materials</div>
+<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
+  <th style="${thStyle}left">Description</th><th style="${thStyle}center">Qty</th><th style="${thStyle}center">Unit</th><th style="${thStyle}right">Unit Price</th><th style="${thStyle}right">Amount</th>
+</tr></thead><tbody>
+${materials.map(r=>`<tr><td style="${tdStyle}left">${r.description||""}</td><td style="${tdStyle}center">${r.qty||0}</td><td style="${tdStyle}center">${r.unit||""}</td><td style="${tdStyle}right">${fmt(r.unit_price)}</td><td style="${tdStyle}right">${fmt((r.qty||0)*(r.unit_price||0))}</td></tr>`).join("")}
+<tr style="font-weight:700;background:#f9fafb"><td colspan="4" style="${tdStyle}right">Materials Total</td><td style="${tdStyle}right">${fmt(matsTotal)}</td></tr>
+</tbody></table></div>`:""}
+${other.length?`<div style="margin-bottom:8px"><div style="background:#6B7280;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Other</div>
+<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
+  <th style="${thStyle}left">Description</th><th style="${thStyle}right">Amount</th>
+</tr></thead><tbody>
+${other.map(r=>`<tr><td style="${tdStyle}left">${r.description||""}</td><td style="${tdStyle}right">${fmt(r.amount)}</td></tr>`).join("")}
+</tbody></table></div>`:""}
+<table style="width:260px;margin-left:auto;border-collapse:collapse;border:1px solid #e5e7eb;margin-bottom:10px">
+  ${[["Labor",fmt(laborTotal)],["Equipment",fmt(equipTotal)],["Materials",fmt(matsTotal)],["Other",fmt(otherTotal)],["Subtotal",fmt(subtotal)],...(showMarkup?[
+      ...(mkLaborAmt>0?[[`Markup — Labor (${markupPct}%)`,fmt(mkLaborAmt)]]:[]),
+      ...(mkEquipAmt>0?[[`Markup — Equipment (${mkEquip}%)`,fmt(mkEquipAmt)]]:[]),
+      ...(mkMatsAmt>0?[[`Markup — Materials (${mkMats}%)`,fmt(mkMatsAmt)]]:[]),
+      ...(mkOtherAmt>0?[[`Markup — Other (${mkOther}%)`,fmt(mkOtherAmt)]]:[]),
+    ]:[]),
+    ...(parseFloat(taxPct)>0?[[`Tax (${taxPct}%)`,fmt(taxAmt)]]:[])].map(([l,v])=>`<tr><td style="padding:4px 8px;font-size:8.5pt;border-bottom:1px solid #e5e7eb">${l}</td><td style="padding:4px 8px;font-size:8.5pt;text-align:right;border-bottom:1px solid #e5e7eb">${v}</td></tr>`).join("")}
+  <tr style="background:#1f3864;color:#fff"><td style="padding:6px 8px;font-size:10pt;font-weight:900">GRAND TOTAL</td><td style="padding:6px 8px;font-size:10pt;font-weight:900;text-align:right">${fmt(grandTotal)}</td></tr>
+</table>
+${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px;font-size:8.5pt"><b>Notes:</b> ${notes}</div>`:""}
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px;border-top:2px solid #e5e7eb;padding-top:10px">
+  <div><div style="font-size:7.5pt;font-weight:700;color:#555;margin-bottom:4px">PREPARED BY / PM</div>
+    ${sigData?`<img src="${sigData}" style="max-height:50px;max-width:180px;display:block;background:#fff;border:1px solid #ccc;border-radius:4px;padding:4px"/>`:
+    `<div style="border-bottom:1px solid #000;height:36px;width:200px;margin-bottom:4px"></div>`}
+    <div style="font-size:8.5pt;font-weight:700;margin-top:4px">${signerName||user.name}</div>
+    <div style="font-size:7.5pt;color:#555">Date: ${ticketDate}</div>
+  </div>
+  <div><div style="font-size:7.5pt;font-weight:700;color:#555;margin-bottom:4px">CUSTOMER APPROVAL</div>
+    ${clientSig?`<img src="${clientSig}" style="max-height:50px;max-width:180px;display:block;background:#fff;border:1px solid #ccc;border-radius:4px;padding:4px"/>
+    <div style="font-size:8.5pt;font-weight:700;margin-top:4px">${clientName||bsName||""}</div>
+    <div style="font-size:7.5pt;color:#555">Date: ${clientSigAt?new Date(clientSigAt).toLocaleDateString():ticketDate}</div>`:
+    `<div style="border-bottom:1px solid #000;height:36px;width:200px;margin-bottom:4px"></div>
+    <div style="font-size:7.5pt;color:#555">Name / Signature</div>
+    <div style="border-bottom:1px solid #000;width:200px;margin:8px 0 4px"></div>
+    <div style="font-size:7.5pt;color:#555">Date / Title</div>`}
+  </div>
+</div>
+${(()=>{
+  const pics=(photos||[]).filter(p=>p.print!==false&&p.url);
+  if(!pics.length)return "";
+  return `<div style="page-break-before:always;padding-top:6px">
+    <div style="font-size:11pt;font-weight:800;color:#1F3864;border-bottom:2px solid #1F3864;padding-bottom:4px;margin-bottom:10px">
+      SITE PHOTOS — T&amp;M #${ticketNo}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${pics.map((p,i)=>`<div style="page-break-inside:avoid">
+        <img src="${p.url}" style="width:100%;height:210px;object-fit:cover;border:1px solid #ccc;border-radius:4px;display:block"/>
+        <div style="font-size:8pt;margin-top:3px;line-height:1.35">
+          <strong>${i+1}.</strong> ${String(p.caption||"").replace(/&/g,"&amp;").replace(/</g,"&lt;")||"&nbsp;"}
+        </div>
+        <div style="font-size:6.5pt;color:#888">${p.taken_by||""}${p.taken_at?" · "+new Date(p.taken_at).toLocaleDateString():""}</div>
+      </div>`).join("")}
+    </div>
+  </div>`;
+})()}
+<div style="text-align:center;margin-top:8px;font-size:6.5pt;color:#999;border-top:1px solid #eee;padding-top:5px">AIME Field Pro · ${project.name} · T&M #${ticketNo} · Generated ${new Date().toLocaleString()}</div>
+</body></html>`;
+    return html;
+}
+function tmTicketViewFromRow(t,project,cos){
+  const labor=t.labor||[],equipment=t.equipment||[],materials=t.materials||[],other=t.other_charges||[];
+  const labelOf=(r,key,custom)=>r[key]==="__other"?(r[custom]||"").trim()||"Other":(r[key]||"");
+  const laborName=(r)=>labelOf(r,"name","customName");
+  const equipName=(r)=>labelOf(r,"description","customDesc");
+  const laborRowAmt=(r)=>isPerDiemRow(r)?perDiemCount(r)*(parseFloat(r.rate)||0)
+    :(parseFloat(r.hours)||0)*(parseFloat(r.rate)||0)+(parseFloat(r.ot_hours)||0)*(parseFloat(r.ot_rate)||0)
+     +(parseFloat(r.travel_hours)||0)*(parseFloat(r.travel_rate!==""&&r.travel_rate!=null?r.travel_rate:r.rate)||0);
+  const workers=labor.filter(r=>!isPerDiemRow(r));
+  const perDiemRow=labor.find(isPerDiemRow);
+  const perDiemAmt=perDiemRow?laborRowAmt(perDiemRow):0;
+  const perDiemHeads=perDiemRow?perDiemCount(perDiemRow):0;
+  const laborTotal=labor.reduce((s,r)=>s+laborRowAmt(r),0);
+  const totalRegHrs=workers.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
+  const totalOtHrs=workers.reduce((s,r)=>s+(parseFloat(r.ot_hours)||0),0);
+  const totalTrvHrs=workers.reduce((s,r)=>s+(parseFloat(r.travel_hours)||0),0);
+  const equipTotal=equipment.reduce((s,r)=>s+((parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)),0);
+  const matsTotal=materials.reduce((s,r)=>s+((parseFloat(r.qty)||0)*(parseFloat(r.unit_price)||0)),0);
+  const otherTotal=other.reduce((s,r)=>s+(parseFloat(r.amount)||0),0);
+  const subtotal=laborTotal+equipTotal+matsTotal+otherTotal;
+  const pct=(x)=>parseFloat(x)||0;
+  const markupPct=pct(t.markup_pct),mkEquip=pct(t.markup_equip_pct),mkMats=pct(t.markup_mats_pct),mkOther=pct(t.markup_other_pct);
+  const mkLaborAmt=laborTotal*markupPct/100,mkEquipAmt=equipTotal*mkEquip/100,mkMatsAmt=matsTotal*mkMats/100,mkOtherAmt=otherTotal*mkOther/100;
+  const markupAmt=mkLaborAmt+mkEquipAmt+mkMatsAmt+mkOtherAmt;
+  const taxPct=pct(t.tax_pct);
+  const basis=t.tax_basis==="all"||!t.tax_basis?["labor","equipment","materials","other"]:t.tax_basis==="none"?[]:String(t.tax_basis).split(",");
+  const taxParts={labor:laborTotal+mkLaborAmt,equipment:equipTotal+mkEquipAmt,materials:matsTotal+mkMatsAmt,other:otherTotal+mkOtherAmt};
+  const taxAmt=t.tax_amount!=null&&t.tax_amount!==""?pct(t.tax_amount):basis.reduce((s,k)=>s+(taxParts[k]||0),0)*taxPct/100;
+  const grandTotal=t.grand_total!=null&&t.grand_total!==""?pct(t.grand_total):subtotal+markupAmt+taxAmt;
+  return {ticketNo:t.ticket_no||"",ticketDate:t.ticket_date||"",status:t.status||"",customer:t.customer||"",customerContact:t.customer_contact||"",
+    poNumber:t.po_number||"",afeNumber:t.afe_number||"",workOrder:t.work_order||"",location:t.location||"",changeOrderId:t.change_order_id||"",cos:cos||[],
+    user:{name:t.submitted_by||""},description:t.description||"",notes:t.notes||"",
+    labor,workers,laborName,equipName,laborRowAmt,perDiemRow,perDiemHeads,perDiemAmt,totalRegHrs,totalOtHrs,totalTrvHrs,laborTotal,
+    equipment,equipTotal,materials,matsTotal,other,otherTotal,subtotal,showMarkup:t.show_markup!==false,markupPct,mkEquip,mkMats,mkOther,mkLaborAmt,mkEquipAmt,mkMatsAmt,mkOtherAmt,
+    taxPct,taxAmt,grandTotal,sigData:t.inspector_signature||null,signerName:t.inspector_name||"",clientSig:t.client_signature||null,clientName:t.client_contact||"",bsName:"",clientSigAt:t.client_signed_at||null,photos:t.photos||[]};
+}
+
+/* ── Stitch printed documents behind another document ──
+   Each builder returns a whole HTML page; to print them together, every
+   page's CSS is scoped to its own wrapper so the invoice table styles do not
+   bleed into a daily report and vice versa. */
+function scopeCss(css,scope){
+  css=String(css||"").replace(/@page[^{]*\{[^}]*\}/g,"").replace(/@media[^{]*\{(?:[^{}]*\{[^}]*\})*[^}]*\}/g,"").replace(/@font-face[^{]*\{[^}]*\}/g,"");
+  return css.replace(/([^{}]+)\{/g,(m,sel)=>sel.split(",").map(x=>{x=x.trim();if(!x)return "";if(/^(html|body)$/i.test(x))return scope;if(x==="*")return scope+" *";return scope+" "+x;}).filter(Boolean).join(",")+"{");
+}
+function htmlDocPart(html,cls,breakBefore){
+  const head=(html.match(/<head[^>]*>([\s\S]*?)<\/head>/i)||[])[1]||"";
+  const bodyM=html.match(/<body([^>]*)>([\s\S]*?)<\/body>/i);
+  const body=bodyM?bodyM[2]:html;
+  const bodyStyle=((bodyM?bodyM[1]:"").match(/style="([^"]*)"/)||[])[1]||"";
+  let css="";const re=/<style[^>]*>([\s\S]*?)<\/style>/gi;let m;while((m=re.exec(head)))css+=m[1]+"\n";
+  return {css:scopeCss(css,"."+cls),html:`<div class="${cls}" style="${breakBefore?"page-break-before:always;":""}${bodyStyle}">${body}</div>`};
+}
+function stitchHtmlDocs(title,docs){
+  const parts=docs.map((h,i)=>htmlDocPart(h,"pdoc"+i,i>0));
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${String(title||"").replace(/</g,"&lt;")}</title><style>
+@page{size:letter;margin:0.5in}
+body{margin:0;padding:0}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+${parts.map(p=>p.css).join("\n")}
+</style></head><body>${parts.map(p=>p.html).join("\n")}</body></html>`;
+}
+
 /* ── T&M TICKET LIST (inside ProjectDetail tab) ─────────────── */
 function TMTicketList({project,user,onOpen,onNew}){
   const [tickets,setTickets]=useState([]);
@@ -24406,125 +24660,11 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   }
 
   function printTicket(){
-    const fmt=n=>"$"+(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-    const thStyle=`padding:5px 8px;font-size:8pt;background:#1f3864;color:#fff;text-align:`;
-    const tdStyle=`padding:5px 8px;font-size:8.5pt;border-bottom:1px solid #e5e7eb;text-align:`;
-    const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>T&M #${ticketNo}</title>
-<style>@page{size:letter portrait;margin:0.4in;}*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
-</head><body style="color:#111;font-size:9pt;">
-<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1f3864;padding-bottom:10px;margin-bottom:10px">
-  <div style="display:flex;align-items:center;gap:12px">
-    <div>
-      ${AIME_LOGO_IMG(54)}
-      <div style="font-size:7pt;color:#888;margin-top:4px">5730 Pennington Ave, Baltimore, MD 21226</div>
-    </div>
-  </div>
-  <div style="text-align:right">
-    <div style="font-size:16pt;font-weight:700;color:#1f3864">Time &amp; Materials Ticket</div>
-    <div style="font-size:9pt;font-weight:700;color:#333">T&amp;M # ${ticketNo}</div>
-    <div style="font-size:8.5pt;color:#555">Date: ${ticketDate}</div>
-    <div style="background:#1f3864;color:#fff;font-size:7pt;font-weight:700;padding:3px 10px;border-radius:4px;display:inline-block;margin-top:4px;text-transform:uppercase;letter-spacing:1px">${status}</div>
-  </div>
-</div>
-<div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #e5e7eb;margin-bottom:8px;">
-  ${[["Project",project.name||"—"],["Customer",customer||project.client||"—"],
-     ["Contact",customerContact||"—"],["PO #",poNumber||"—"],
-     ["AFE/WO #",(afeNumber||workOrder||"—")],["Location",location||"—"],
-     ...(changeOrderId?[["Change Order",(cos.find(c=>c.id===changeOrderId)||{}).co_number||"Yes"]]:[]),
-     ["Submitted By",user.name]].map(([l,v])=>`<div style="display:flex;border-bottom:1px solid #e5e7eb"><div style="background:#f3f4f6;padding:3px 8px;font-weight:700;font-size:7.5pt;width:100px;border-right:1px solid #e5e7eb;flex-shrink:0">${l}</div><div style="padding:3px 8px;font-size:8pt">${v}</div></div>`).join("")}
-</div>
-${description?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:8px;font-size:8.5pt"><b>Description:</b> ${description}</div>`:""}
-${labor.length?`<div style="margin-bottom:8px"><div style="background:#1f3864;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Labor</div>
-<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
-  <th style="${thStyle}left">Name</th><th style="${thStyle}left">Classification</th>
-  <th style="${thStyle}center">Reg Hrs</th><th style="${thStyle}right">Reg Rate</th>
-  <th style="${thStyle}center">OT Hrs</th><th style="${thStyle}right">OT Rate</th>
-  ${totalTrvHrs>0?`<th style="${thStyle}center">Travel Hrs</th><th style="${thStyle}right">Travel Rate</th>`:""}<th style="${thStyle}right">Amount</th>
-</tr></thead><tbody>
-${workers.map(r=>`<tr><td style="${tdStyle}left">${laborName(r)}</td><td style="${tdStyle}left">${r.classification||""}</td>
-  <td style="${tdStyle}center">${r.hours||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td>
-  <td style="${tdStyle}center">${r.ot_hours||""}</td><td style="${tdStyle}right">${(parseFloat(r.ot_hours)||0)>0?fmt(r.ot_rate):""}</td>
-  ${totalTrvHrs>0?`<td style="${tdStyle}center">${r.travel_hours||""}</td><td style="${tdStyle}right">${(parseFloat(r.travel_hours)||0)>0?fmt(r.travel_rate!==""&&r.travel_rate!=null?r.travel_rate:r.rate):""}</td>`:""}
-  <td style="${tdStyle}right">${fmt(laborRowAmt(r))}</td></tr>`).join("")}
-${perDiemRow?`<tr><td style="${tdStyle}left"><em>Per Diem</em></td><td style="${tdStyle}left">${perDiemHeads} employee${perDiemHeads!==1?"s":""}</td>
-  <td style="${tdStyle}center">${perDiemHeads}</td><td style="${tdStyle}right">${fmt(perDiemRow.rate)}</td><td></td><td></td>${totalTrvHrs>0?"<td></td><td></td>":""}
-  <td style="${tdStyle}right">${fmt(perDiemAmt)}</td></tr>`:""}
-<tr style="font-weight:700;background:#f9fafb">
-  <td colspan="2" style="${tdStyle}right">Labor Total</td>
-  <td style="${tdStyle}center">${totalRegHrs||0}</td><td></td>
-  <td style="${tdStyle}center">${totalOtHrs||""}</td><td></td>
-  ${totalTrvHrs>0?`<td style="${tdStyle}center">${totalTrvHrs}</td><td></td>`:""}
-  <td style="${tdStyle}right">${fmt(laborTotal)}</td></tr>
-</tbody></table></div>`:""}
-${equipment.length?`<div style="margin-bottom:8px"><div style="background:#374151;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Equipment</div>
-<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
-  <th style="${thStyle}left">Equipment</th><th style="${thStyle}center">Unit</th><th style="${thStyle}center">Qty</th><th style="${thStyle}right">Rate</th><th style="${thStyle}right">Amount</th>
-</tr></thead><tbody>
-${equipment.map(r=>`<tr><td style="${tdStyle}left">${equipName(r)}</td><td style="${tdStyle}center">${r.unit||""}</td><td style="${tdStyle}center">${r.qty||0}</td><td style="${tdStyle}right">${fmt(r.rate)}</td><td style="${tdStyle}right">${fmt((r.qty||0)*(r.rate||0))}</td></tr>`).join("")}
-<tr style="font-weight:700;background:#f9fafb"><td colspan="4" style="${tdStyle}right">Equipment Total</td><td style="${tdStyle}right">${fmt(equipTotal)}</td></tr>
-</tbody></table></div>`:""}
-${materials.length?`<div style="margin-bottom:8px"><div style="background:#4B5563;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Materials</div>
-<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
-  <th style="${thStyle}left">Description</th><th style="${thStyle}center">Qty</th><th style="${thStyle}center">Unit</th><th style="${thStyle}right">Unit Price</th><th style="${thStyle}right">Amount</th>
-</tr></thead><tbody>
-${materials.map(r=>`<tr><td style="${tdStyle}left">${r.description||""}</td><td style="${tdStyle}center">${r.qty||0}</td><td style="${tdStyle}center">${r.unit||""}</td><td style="${tdStyle}right">${fmt(r.unit_price)}</td><td style="${tdStyle}right">${fmt((r.qty||0)*(r.unit_price||0))}</td></tr>`).join("")}
-<tr style="font-weight:700;background:#f9fafb"><td colspan="4" style="${tdStyle}right">Materials Total</td><td style="${tdStyle}right">${fmt(matsTotal)}</td></tr>
-</tbody></table></div>`:""}
-${other.length?`<div style="margin-bottom:8px"><div style="background:#6B7280;color:#fff;font-size:7.5pt;font-weight:700;padding:3px 8px;text-transform:uppercase">Other</div>
-<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb"><thead><tr>
-  <th style="${thStyle}left">Description</th><th style="${thStyle}right">Amount</th>
-</tr></thead><tbody>
-${other.map(r=>`<tr><td style="${tdStyle}left">${r.description||""}</td><td style="${tdStyle}right">${fmt(r.amount)}</td></tr>`).join("")}
-</tbody></table></div>`:""}
-<table style="width:260px;margin-left:auto;border-collapse:collapse;border:1px solid #e5e7eb;margin-bottom:10px">
-  ${[["Labor",fmt(laborTotal)],["Equipment",fmt(equipTotal)],["Materials",fmt(matsTotal)],["Other",fmt(otherTotal)],["Subtotal",fmt(subtotal)],...(showMarkup?[
-      ...(mkLaborAmt>0?[[`Markup — Labor (${markupPct}%)`,fmt(mkLaborAmt)]]:[]),
-      ...(mkEquipAmt>0?[[`Markup — Equipment (${mkEquip}%)`,fmt(mkEquipAmt)]]:[]),
-      ...(mkMatsAmt>0?[[`Markup — Materials (${mkMats}%)`,fmt(mkMatsAmt)]]:[]),
-      ...(mkOtherAmt>0?[[`Markup — Other (${mkOther}%)`,fmt(mkOtherAmt)]]:[]),
-    ]:[]),
-    ...(parseFloat(taxPct)>0?[[`Tax (${taxPct}%)`,fmt(taxAmt)]]:[])].map(([l,v])=>`<tr><td style="padding:4px 8px;font-size:8.5pt;border-bottom:1px solid #e5e7eb">${l}</td><td style="padding:4px 8px;font-size:8.5pt;text-align:right;border-bottom:1px solid #e5e7eb">${v}</td></tr>`).join("")}
-  <tr style="background:#1f3864;color:#fff"><td style="padding:6px 8px;font-size:10pt;font-weight:900">GRAND TOTAL</td><td style="padding:6px 8px;font-size:10pt;font-weight:900;text-align:right">${fmt(grandTotal)}</td></tr>
-</table>
-${notes?`<div style="border:1px solid #e5e7eb;padding:5px 8px;margin-bottom:10px;font-size:8.5pt"><b>Notes:</b> ${notes}</div>`:""}
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px;border-top:2px solid #e5e7eb;padding-top:10px">
-  <div><div style="font-size:7.5pt;font-weight:700;color:#555;margin-bottom:4px">PREPARED BY / PM</div>
-    ${sigData?`<img src="${sigData}" style="max-height:50px;max-width:180px;display:block;background:#fff;border:1px solid #ccc;border-radius:4px;padding:4px"/>`:
-    `<div style="border-bottom:1px solid #000;height:36px;width:200px;margin-bottom:4px"></div>`}
-    <div style="font-size:8.5pt;font-weight:700;margin-top:4px">${signerName||user.name}</div>
-    <div style="font-size:7.5pt;color:#555">Date: ${ticketDate}</div>
-  </div>
-  <div><div style="font-size:7.5pt;font-weight:700;color:#555;margin-bottom:4px">CUSTOMER APPROVAL</div>
-    ${clientSig?`<img src="${clientSig}" style="max-height:50px;max-width:180px;display:block;background:#fff;border:1px solid #ccc;border-radius:4px;padding:4px"/>
-    <div style="font-size:8.5pt;font-weight:700;margin-top:4px">${clientName||bsName||""}</div>
-    <div style="font-size:7.5pt;color:#555">Date: ${clientSigAt?new Date(clientSigAt).toLocaleDateString():ticketDate}</div>`:
-    `<div style="border-bottom:1px solid #000;height:36px;width:200px;margin-bottom:4px"></div>
-    <div style="font-size:7.5pt;color:#555">Name / Signature</div>
-    <div style="border-bottom:1px solid #000;width:200px;margin:8px 0 4px"></div>
-    <div style="font-size:7.5pt;color:#555">Date / Title</div>`}
-  </div>
-</div>
-${(()=>{
-  const pics=(photos||[]).filter(p=>p.print!==false&&p.url);
-  if(!pics.length)return "";
-  return `<div style="page-break-before:always;padding-top:6px">
-    <div style="font-size:11pt;font-weight:800;color:#1F3864;border-bottom:2px solid #1F3864;padding-bottom:4px;margin-bottom:10px">
-      SITE PHOTOS — T&amp;M #${ticketNo}
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      ${pics.map((p,i)=>`<div style="page-break-inside:avoid">
-        <img src="${p.url}" style="width:100%;height:210px;object-fit:cover;border:1px solid #ccc;border-radius:4px;display:block"/>
-        <div style="font-size:8pt;margin-top:3px;line-height:1.35">
-          <strong>${i+1}.</strong> ${String(p.caption||"").replace(/&/g,"&amp;").replace(/</g,"&lt;")||"&nbsp;"}
-        </div>
-        <div style="font-size:6.5pt;color:#888">${p.taken_by||""}${p.taken_at?" · "+new Date(p.taken_at).toLocaleDateString():""}</div>
-      </div>`).join("")}
-    </div>
-  </div>`;
-})()}
-<div style="text-align:center;margin-top:8px;font-size:6.5pt;color:#999;border-top:1px solid #eee;padding-top:5px">AIME Field Pro · ${project.name} · T&M #${ticketNo} · Generated ${new Date().toLocaleString()}</div>
-</body></html>`;
+    const v={ticketNo,ticketDate,status,customer,customerContact,poNumber,afeNumber,workOrder,location,changeOrderId,cos,user,description,notes,
+      labor,workers,laborName,equipName,laborRowAmt,perDiemRow,perDiemHeads,perDiemAmt,totalRegHrs,totalOtHrs,totalTrvHrs,laborTotal,
+      equipment,equipTotal,materials,matsTotal,other,otherTotal,subtotal,showMarkup,markupPct,mkEquip,mkMats,mkOther,mkLaborAmt,mkEquipAmt,mkMatsAmt,mkOtherAmt,
+      taxPct,taxAmt,grandTotal,sigData,signerName,clientSig,clientName,bsName,clientSigAt,photos};
+    const html=tmTicketPrintHtml(v,project);
     const win=window.open("","_blank","width=950,height=800");
     if(!win){alert("Allow popups to print.");return;}
     win.document.write(html);win.document.close();
