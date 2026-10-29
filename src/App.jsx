@@ -21068,8 +21068,8 @@ function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
   useEffect(()=>{load();},[ownerId]);
 
   async function del(inv){
-    if(!window.confirm(`Delete invoice ${inv.invoice_no||""}?`))return;
-    try{ await API.invoices.remove(inv.id); await load(); }catch(e){ onErr&&onErr(e.message); }
+    if(!window.confirm(`Delete invoice ${inv.invoice_no||""}? The daily reports, T&M tickets and vendor invoices on it go back to "not billed" so they can be put on another invoice.`))return;
+    try{ await releaseInvoiceSources(inv,user).catch(()=>{}); await API.invoices.remove(inv.id); await load(); }catch(e){ onErr&&onErr(e.message); }
   }
 
   const statusColor={draft:T.muted,sent:T.yellow,paid:T.green,void:T.red};
@@ -21381,25 +21381,43 @@ function InvoiceForm({project,mfgJob,user,invoice,onBack,onSaved,onErr}){
     setSaving(false);
   }
 
-  async function printInvoice(){
+  const [showPrint,setShowPrint]=useState(false);
+  // choice = what the print modal ticked (field invoices). Shop invoices print alone.
+  async function printInvoice(choice,setBusy){
     const w=window.open("","_blank");
     if(!w){onErr&&onErr("Pop-up blocked — allow pop-ups to print.");return;}
     const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
-    // The daily reports and T&M tickets this invoice bills print behind it,
-    // exactly as they print on their own.
     const backup=[];
-    const src=invoiceSourceIds(lines);
-    if(!mfgJob&&(src.reports.length||src.tickets.length)){
-      w.document.write('<html><body style="font-family:Arial,sans-serif;padding:40px;color:#1f3864"><h2>Preparing invoice…</h2><p style="color:#555">Attaching daily reports and T&M tickets</p></body></html>');
+    if(choice&&(choice.reports.length||choice.tickets.length||choice.receipts.length||choice.vendor.length||choice.photos.length)){
+      w.document.write('<html><body style="font-family:Arial,sans-serif;padding:40px;color:#1f3864"><h2>Preparing invoice…</h2><p id="aime-status" style="color:#555">Attaching backup documents</p></body></html>');
+      const say=(m)=>{setBusy&&setBusy(m);try{const el=w.document.getElementById("aime-status");if(el)el.textContent=m;}catch{}};
       try{
-        const [reps,tms,cos]=await Promise.all([
-          src.reports.length?sb(`/daily_reports?id=in.(${src.reports.join(",")})&select=*`).catch(()=>[]):[],
-          src.tickets.length?sb(`/tm_tickets?id=in.(${src.tickets.join(",")})&select=*`).catch(()=>[]):[],
-          API.changeOrders.forProject(project.id).catch(()=>[])]);
-        const byDate=(a,b)=>String(a._d||"").localeCompare(String(b._d||""));
-        const docs=[...(reps||[]).map(r=>({_d:r.date,html:()=>reportPrintHtml(r,project,REPORT_PRINT_ALL,[],"grid",[])})),
-                    ...(tms||[]).map(t=>({_d:t.ticket_date,html:()=>tmTicketPrintHtml(tmTicketViewFromRow(t,project,cos||[]),project)}))].sort(byDate);
+        const cos=await API.changeOrders.forProject(project.id).catch(()=>[]);
+        // receipts / files / vendor invoices are rasterized once, then handed to whichever page shows them
+        const fileItems=[...choice.receipts.filter(x=>x.kind==="file").map(x=>({id:x.id,name:x.name,file:x.src,file_name:x.file_name,file_type:x.file_type,from:x.from,reportId:x.reportId,ticketId:x.ticketId})),
+                         ...choice.vendor.map(x=>({id:x.id,name:x.name,file:x.src,file_name:x.file_name,file_type:x.file_type,from:x.from}))];
+        const prepared=fileItems.length?await prepareDocsForPrint(fileItems,say):[];
+        const docs=[];
+        choice.reports.forEach(r=>{
+          const rcImgs=choice.receipts.filter(x=>x.reportId===r.id&&x.kind==="image").map(x=>({id:x.id,src:x.src,category:"Receipt",caption:x.name,date:r.date}));
+          const dayPhotos=choice.photos.filter(x=>x.date===r.date&&!x.ticketId).map(x=>({id:x.id,src:x.src,category:x.category,caption:x.caption,date:x.date}));
+          const rDocs=prepared.filter(it=>it.doc.reportId===r.id);
+          docs.push({_d:r.date,html:()=>reportPrintHtml(r,project,REPORT_PRINT_ALL,[...rcImgs,...dayPhotos],choice.photoLayout||"grid",rDocs)});
+        });
+        choice.tickets.forEach(t=>{
+          const v=tmTicketViewFromRow(t,project,cos||[]);
+          v.photos=choice.photos.filter(x=>x.ticketId===t.id).map(x=>({url:x.src,caption:x.caption,print:true}));
+          const tDocs=prepared.filter(it=>it.doc.ticketId===t.id);
+          docs.push({_d:t.ticket_date,html:()=>tmTicketPrintHtml(v,project)});
+          if(tDocs.length)docs.push({_d:t.ticket_date+"~",html:()=>attachmentPagesHtml(`Attachments — T&M #${t.ticket_no||""}`,tDocs)});
+        });
+        docs.sort((a,b)=>String(a._d).localeCompare(String(b._d)));
         docs.forEach(d=>{try{backup.push(d.html());}catch(e){}});
+        const vendorDocs=prepared.filter(it=>it.doc.from==="Accounting");
+        if(vendorDocs.length)backup.push(attachmentPagesHtml("Vendor invoices",vendorDocs));
+        // photos on days with no report page still get printed
+        const orphan=choice.photos.filter(x=>!x.ticketId&&!choice.reports.some(r=>r.date===x.date));
+        if(orphan.length)backup.push(attachmentPagesHtml("Site photos",orphan.map(x=>({doc:{name:`${x.category}${x.caption?" · "+x.caption:""}`,from:fmtDate(x.date)},pages:[x.src],error:""}))));
       }catch(e){}
     }
     const invoiceHtml=`<!DOCTYPE html><html><head><meta charset="utf-8"/>
@@ -21575,7 +21593,8 @@ ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/
           style={{...primBtn,borderRadius:14,background:T.orange,color:"#000",opacity:saving?0.6:1}}>
           {saving?"Saving…":"💾 Save Invoice"}
         </button>
-        <button onClick={printInvoice} style={{...primBtn,borderRadius:14,background:"#1f3864"}}>🖨️ Print</button>
+        <button onClick={()=>mfgJob?printInvoice(null):setShowPrint(true)} style={{...primBtn,borderRadius:14,background:"#1f3864"}}>🖨️ Print</button>
+      {showPrint&&<InvoicePrintModal project={project} lines={lines} invoiceNo={f.invoice_no} onClose={()=>setShowPrint(false)} onPrint={async(choice,setBusy)=>{await printInvoice(choice,setBusy);setShowPrint(false);}}/>}
       </div>
 
       {showPull&&(mfgJob
@@ -21589,6 +21608,138 @@ ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/
            onErr={onErr}/>)}
     </div>
   );
+}
+
+/* ── What prints with a field invoice ──
+   The invoice always prints. Everything else it bills can ride behind it:
+   the daily reports and T&M tickets as they print on their own, the
+   receipts and files attached to them, vendor invoices pulled from
+   Accounting, and site photos from those days. */
+async function releaseInvoiceSources(inv,user){
+  if(!inv)return;
+  const no=inv.invoice_no||"";
+  const un={invoiced:false,invoice_no:null,invoiced_at:null};
+  const ids=invoiceSourceIds(inv.lines||[]);
+  const q=(t,col)=>sb(`/${t}?or=(${ids[col].length?`id.in.(${ids[col].join(",")}),`:""}${no?`invoice_no.eq.${encodeURIComponent(no)}`:"id.eq.00000000-0000-0000-0000-000000000000"})&select=id`).catch(()=>[]);
+  const [reps,tms]=await Promise.all([q("daily_reports","reports"),q("tm_tickets","tickets")]);
+  await Promise.all([
+    ...(reps||[]).map(r=>API.reports.update(r.id,un).catch(()=>{})),
+    ...(tms||[]).map(t=>API.tmTickets.update(t.id,un).catch(()=>{})),
+  ]);
+  if(inv.mfg_job_id&&no){
+    const ships=await sb(`/mfg_shipping_log?billed_invoice_no=eq.${encodeURIComponent(no)}&select=id`).catch(()=>[]);
+    await Promise.all((ships||[]).map(s=>API.mfg.shippingLog.update(s.id,{billed_invoice_no:null,billed_at:null}).catch(()=>{})));
+    const lab=await sb(`/mfg_labor?invoice_no=eq.${encodeURIComponent(no)}&select=id`).catch(()=>[]);
+    await Promise.all((lab||[]).map(l=>API.mfg.labor.update(l.id,{...un,billed_rate:null}).catch(()=>{})));
+  }
+  // Vendor invoices marked billed against this customer invoice go back to not billed.
+  const aps=await sb(`/ap_invoices?billed_job_invoice_id=eq.${inv.id}&select=id,history`).catch(()=>[]);
+  const now=new Date().toISOString();
+  await Promise.all((aps||[]).map(a=>sb(`/ap_invoices?id=eq.${a.id}`,{method:"PATCH",body:{billing_status:"unbilled",billed_by:null,billed_at:null,billed_date:null,billed_job_invoice_id:null,billed_invoice_no:null,
+    history:[...(a.history||[]),{at:now,by:user?.name||null,action:"unbilled",note:`Customer invoice ${no} deleted`}]}}).catch(()=>{})));
+}
+function attachmentPagesHtml(title,items){
+  const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+  const printable=items.filter(it=>it.pages.length>0);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}body{font-size:9pt;color:#111}
+table{width:100%;border-collapse:collapse}th{background:#1f3864;color:#fff;padding:5px 8px;text-align:left;font-size:8pt}td{padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:8.5pt;vertical-align:top}</style></head><body>
+<div style="padding:4px 0 12px"><div style="font-size:10pt;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#1f3864;border-bottom:1.5px solid #1f3864;padding-bottom:5px;margin-bottom:10px">📎 ${esc(title)} — ${items.length}</div>
+<table><thead><tr><th style="width:24px">#</th><th>Document</th><th>From</th><th>In this PDF</th></tr></thead><tbody>
+${items.map((it,i)=>`<tr><td>${i+1}</td><td><strong>${esc(it.doc.name||it.doc.file_name||"—")}</strong></td><td>${esc(it.doc.from||"")}</td><td>${it.pages.length?`✓ ${it.pages.length} page${it.pages.length!==1?"s":""}`:it.error?`⚠ ${esc(it.error)}`:"Listed only"}</td></tr>`).join("")}
+</tbody></table></div>
+${printable.map(it=>it.pages.map((src,pi)=>`<div style="page-break-before:always;padding:6px 0"><div style="font-size:9pt;color:#555;margin-bottom:8px;font-weight:700">📎 ${esc(it.doc.name||it.doc.file_name||"Document")}${it.doc.from?" · "+esc(it.doc.from):""} · Page ${pi+1} of ${it.pages.length}</div><img src="${src}" style="width:100%;max-height:9.2in;object-fit:contain;display:block;border:1px solid #e5e7eb"/></div>`).join("")).join("")}
+</body></html>`;
+}
+function InvoicePrintModal({project,lines,invoiceNo,onClose,onPrint}){
+  const [loading,setLoading]=useState(true);
+  const [reports,setReports]=useState([]);const [tickets,setTickets]=useState([]);
+  const [receipts,setReceipts]=useState([]);const [vendor,setVendor]=useState([]);const [photos,setPhotos]=useState([]);
+  const [sel,setSel]=useState({});const [busy,setBusy]=useState("");
+  const [photoLayout,setPhotoLayout]=useState("grid");
+  useEffect(()=>{(async()=>{
+    const src=invoiceSourceIds(lines);
+    try{
+      const [reps,tms,allPhotos]=await Promise.all([
+        src.reports.length?sb(`/daily_reports?id=in.(${src.reports.join(",")})&select=*`).catch(()=>[]):[],
+        src.tickets.length?sb(`/tm_tickets?id=in.(${src.tickets.join(",")})&select=*`).catch(()=>[]):[],
+        API.photos.forProject(project.id).catch(()=>[])]);
+      const R=(reps||[]).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+      const Tk=(tms||[]).sort((a,b)=>String(a.ticket_date).localeCompare(String(b.ticket_date)));
+      setReports(R);setTickets(Tk);
+      // receipts & files attached to the reports / tickets
+      const rc=[];
+      R.forEach(r=>{const lab=`Daily ${r.report_no?"#"+r.report_no:fmtDate(r.date)}`;
+        (r.materials||[]).forEach(m=>(m.receipts||[]).forEach(a=>{if(!a||!a.src)return;rc.push({id:`r_${r.id}_${a.id}`,reportId:r.id,kind:a.kind==="file"?"file":"image",name:`${m.description||"Material"}${a.name?" — "+a.name:""}`,src:a.src,file_name:a.name||"",file_type:a.type||"",from:lab,date:r.date});}));
+        (r.rental_equipment||[]).forEach(e=>(e.attachments||[]).forEach(a=>{if(!a||!a.src)return;rc.push({id:`r_${r.id}_${a.id}`,reportId:r.id,kind:a.kind==="file"?"file":"image",name:`Rental: ${e.description||"equipment"}${a.name?" — "+a.name:""}`,src:a.src,file_name:a.name||"",file_type:a.type||"",from:lab,date:r.date});}));});
+      Tk.forEach(t=>{(t.materials||[]).forEach(m=>{if(!m.attachment_url)return;rc.push({id:`t_${t.id}_${m.id}`,ticketId:t.id,kind:/\.(png|jpe?g|gif|webp)(\?|$)/i.test(m.attachment_url)?"image":"file",name:`${m.description||"Material"}${m.attachment_name?" — "+m.attachment_name:""}`,src:m.attachment_url,file_name:m.attachment_name||"",file_type:"",from:`T&M #${t.ticket_no||""}`,date:t.ticket_date});});});
+      setReceipts(rc);
+      // vendor invoices from Accounting on the invoice lines or the reports
+      const apIds=new Set();lines.forEach(l=>{if(l.ap_invoice_id)apIds.add(l.ap_invoice_id);});R.forEach(r=>(r.materials||[]).forEach(m=>{if(m.ap_invoice_id)apIds.add(m.ap_invoice_id);}));Tk.forEach(t=>(t.materials||[]).forEach(m=>{if(m.ap_invoice_id)apIds.add(m.ap_invoice_id);}));
+      const aps=apIds.size?await sb(`/ap_invoices?id=in.(${[...apIds].join(",")})&select=id,vendor,invoice_no,amount,file_url,file_name`).catch(()=>[]):[];
+      setVendor((aps||[]).map(a=>({id:"ap_"+a.id,name:`${a.vendor||"Vendor"} — Inv #${a.invoice_no||""} (${apMoney(a.amount)})`,src:a.file_url||null,file_name:a.file_name||"",file_type:/\.pdf(\?|$)/i.test(a.file_url||"")?"application/pdf":"",from:"Accounting"})));
+      // site photos on those days, plus photos on the tickets
+      const days=new Set([...R.map(r=>r.date),...Tk.map(t=>t.ticket_date)]);
+      const ph=(allPhotos||[]).filter(p=>days.has(p.date)&&p.src).map(p=>({id:"ph_"+p.id,src:p.src,caption:p.caption||"",category:p.category||"Photo",date:p.date}));
+      Tk.forEach(t=>(t.photos||[]).forEach(p=>{if(p.url)ph.push({id:`tph_${t.id}_${p.id}`,src:p.url,caption:p.caption||"",category:"T&M photo",date:t.ticket_date,ticketId:t.id});}));
+      setPhotos(ph);
+      const s={};R.forEach(r=>s["rep_"+r.id]=true);Tk.forEach(t=>s["tm_"+t.id]=true);rc.forEach(x=>s[x.id]=true);(aps||[]).forEach(a=>s["ap_"+a.id]=true);
+      setSel(s);
+    }catch(e){}
+    setLoading(false);
+  })();},[project.id]);
+  const on=(k)=>!!sel[k];const toggle=(k)=>setSel(s=>({...s,[k]:!s[k]}));
+  const setAll=(keys,v)=>setSel(s=>{const n={...s};keys.forEach(k=>n[k]=v);return n;});
+  const Group=({title,items,note})=>items.length?(
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>{title} ({items.filter(i=>on(i.key)).length}/{items.length})</div>
+        <div style={{display:"flex",gap:4}}><button onClick={()=>setAll(items.map(i=>i.key),true)} style={{...ghostBtn,padding:"3px 8px",fontSize:10.5}}>All</button><button onClick={()=>setAll(items.map(i=>i.key),false)} style={{...ghostBtn,padding:"3px 8px",fontSize:10.5}}>None</button></div>
+      </div>
+      {note&&<div style={{fontSize:11,color:T.muted,marginBottom:6}}>{note}</div>}
+      {items.map(i=>(<label key={i.key} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",borderRadius:10,marginBottom:4,cursor:"pointer",background:on(i.key)?T.greenLow:T.surface,border:`1px solid ${on(i.key)?T.green+"60":T.border}`}}>
+        <input type="checkbox" checked={on(i.key)} onChange={()=>toggle(i.key)} style={{accentColor:T.green}}/>
+        {i.thumb&&<img src={i.thumb} alt="" style={{width:34,height:34,objectFit:"cover",borderRadius:6}}/>}
+        <span style={{flex:1,minWidth:0,fontSize:12.5,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{i.label}</span>
+        {i.sub&&<span style={{fontSize:11,color:T.muted,flexShrink:0}}>{i.sub}</span>}
+      </label>))}
+    </div>):null;
+  const repItems=reports.map(r=>({key:"rep_"+r.id,label:`Daily Report ${r.report_no?"#"+r.report_no:""} — ${fmtDate(r.date)}`,sub:r.submitted_by}));
+  const tmItems=tickets.map(t=>({key:"tm_"+t.id,label:`T&M Ticket #${t.ticket_no||""} — ${fmtDate(t.ticket_date)}`,sub:t.client_signature?"✍️ signed":""}));
+  const rcItems=receipts.map(x=>({key:x.id,label:x.name,sub:x.from,thumb:x.kind==="image"?x.src:null}));
+  const apItems=vendor.map(x=>({key:x.id,label:x.name,sub:x.src?"PDF":"no file"}));
+  const phItems=photos.map(x=>({key:x.id,label:`${x.category}${x.caption?" · "+x.caption:""}`,sub:fmtDate(x.date),thumb:x.src}));
+  const count=[...repItems,...tmItems,...rcItems,...apItems,...phItems].filter(i=>on(i.key)).length;
+  async function go(){
+    setBusy("Preparing…");
+    const choice={reports:reports.filter(r=>on("rep_"+r.id)),tickets:tickets.filter(t=>on("tm_"+t.id)),receipts:receipts.filter(x=>on(x.id)),vendor:vendor.filter(x=>on(x.id)&&x.src),photos:photos.filter(x=>on(x.id)),photoLayout};
+    try{await onPrint(choice,setBusy);}catch(e){}
+    setBusy("");
+  }
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:230,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:"18px 18px 0 0",width:"100%",maxWidth:640,maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
+        <div style={{padding:"16px 18px 10px",borderBottom:`1px solid ${T.border}`}}>
+          <div style={{fontSize:16,fontWeight:900,color:T.text}}>🖨️ Print invoice {invoiceNo||""}</div>
+          <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>The invoice always prints. Tick what goes behind it as backup.</div>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:"12px 18px"}}>
+          {loading&&<Spinner/>}
+          {!loading&&!repItems.length&&!tmItems.length&&<div style={{fontSize:12,color:T.muted,marginBottom:12}}>No daily reports or T&M tickets are on this invoice. Use Pull from Reports to add some, or print the invoice on its own.</div>}
+          <Group title="📋 Daily reports" items={repItems}/>
+          <Group title="🧾 T&M tickets" items={tmItems}/>
+          <Group title="🧾 Receipts & attachments" items={rcItems} note="Receipt photos and files attached to material and rental lines."/>
+          <Group title="💵 Vendor invoices from Accounting" items={apItems}/>
+          <Group title="📷 Site photos" items={phItems} note="Photos taken on the days being billed."/>
+          {phItems.length>0&&<div style={{display:"flex",gap:6,marginBottom:10}}>{[["grid","4 per page"],["full","1 per page"]].map(([v,l])=><button key={v} onClick={()=>setPhotoLayout(v)} style={{...ghostBtn,padding:"5px 10px",fontSize:11,borderColor:photoLayout===v?T.orange:T.border,color:photoLayout===v?T.orange:T.sub}}>{l}</button>)}</div>}
+        </div>
+        <div style={{padding:"12px 18px 20px",borderTop:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={go} disabled={!!busy||loading} style={{...primBtn,borderRadius:12,background:"#1f3864",opacity:busy||loading?0.6:1}}>{busy||`🖨️ Print invoice${count?` + ${count} attachment${count===1?"":"s"}`:""}`}</button>
+            <button onClick={onClose} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>);
 }
 
 /* ── Pull approved dailies / signed T&M onto an invoice ──
