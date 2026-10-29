@@ -21470,6 +21470,19 @@ ${lines.filter(l=>!l.hidden).map(l=>l.heading?`<tr><td colspan="5" style="font-w
 <td style="text-align:center">${esc(l.unit)}</td><td style="text-align:right">${money(l.unit_price)}</td>
 <td style="text-align:right">${money(lineAmt(l))}</td></tr>`).join("")}
 </tbody></table>
+${(()=>{const b=choice&&choice.breakdown;if(!b)return "";
+  const rows=[];const tot={labor:0,equip:0,mats:0,other:0,total:0};
+  const add=(label,date,labor,equip,mats,other)=>{const t=labor+equip+mats+other;rows.push({label,date,labor,equip,mats,other,t});tot.labor+=labor;tot.equip+=equip;tot.mats+=mats;tot.other+=other;tot.total+=t;};
+  (b.reports||[]).forEach(r=>{const t=reportTotals(r,project.division);const subs=(r.subcontractors||[]).reduce((s,x)=>s+subLineTotal(x),0);add(`Daily Report ${r.report_no?"#"+r.report_no:""}`,r.date,t.labor,t.equip,t.mats+t.rental,subs);});
+  (b.tickets||[]).forEach(t=>{const v=tmTicketViewFromRow(t,project,[]);add(`T&M Ticket #${t.ticket_no||""}`,t.ticket_date,v.laborTotal,v.equipTotal,v.matsTotal,Math.max(0,v.grandTotal-v.laborTotal-v.equipTotal-v.matsTotal));});
+  rows.sort((a,c)=>String(a.date).localeCompare(String(c.date)));
+  const td='style="text-align:right"';
+  return `<div style="margin:4px 0 14px"><div style="font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#1f3864;margin-bottom:4px">Breakdown by report</div>
+<table><thead><tr><th>Document</th><th>Date</th><th style="text-align:right">Labor</th><th style="text-align:right">Equipment</th><th style="text-align:right">Materials &amp; rentals</th><th style="text-align:right">Subs / other</th><th style="text-align:right">Total</th></tr></thead><tbody>
+${rows.map(r=>`<tr><td>${esc(r.label)}</td><td>${esc(fmtDate(r.date))}</td><td ${td}>${money(r.labor)}</td><td ${td}>${money(r.equip)}</td><td ${td}>${money(r.mats)}</td><td ${td}>${money(r.other)}</td><td ${td}><strong>${money(r.t)}</strong></td></tr>`).join("")}
+<tr style="font-weight:700;background:#f0f4ff"><td colspan="2">Total</td><td ${td}>${money(tot.labor)}</td><td ${td}>${money(tot.equip)}</td><td ${td}>${money(tot.mats)}</td><td ${td}>${money(tot.other)}</td><td ${td}>${money(tot.total)}</td></tr>
+</tbody></table>
+<div style="font-size:7.5pt;color:#6b7280">T&amp;M "Subs / other" includes other charges, markup and tax on the ticket. Daily report figures are at the ${esc(project.division)} rate sheet.</div></div>`;})()}
 <table class="tot"><tbody>
 <tr><td>Subtotal</td><td style="text-align:right">${money(subtotal)}</td></tr>
 ${taxAmount?`<tr><td>Tax (${f.tax_pct}%)</td><td style="text-align:right">${money(taxAmount)}</td></tr>`:""}
@@ -21656,6 +21669,7 @@ function InvoicePrintModal({project,lines,invoiceNo,onClose,onPrint}){
   const [receipts,setReceipts]=useState([]);const [vendor,setVendor]=useState([]);const [photos,setPhotos]=useState([]);
   const [sel,setSel]=useState({});const [busy,setBusy]=useState("");
   const [photoLayout,setPhotoLayout]=useState("grid");
+  const [breakdown,setBreakdown]=useState(true);
   useEffect(()=>{(async()=>{
     const src=invoiceSourceIds(lines);
     try{
@@ -21711,7 +21725,8 @@ function InvoicePrintModal({project,lines,invoiceNo,onClose,onPrint}){
   const count=[...repItems,...tmItems,...rcItems,...apItems,...phItems].filter(i=>on(i.key)).length;
   async function go(){
     setBusy("Preparing…");
-    const choice={reports:reports.filter(r=>on("rep_"+r.id)),tickets:tickets.filter(t=>on("tm_"+t.id)),receipts:receipts.filter(x=>on(x.id)),vendor:vendor.filter(x=>on(x.id)&&x.src),photos:photos.filter(x=>on(x.id)),photoLayout};
+    const choice={reports:reports.filter(r=>on("rep_"+r.id)),tickets:tickets.filter(t=>on("tm_"+t.id)),receipts:receipts.filter(x=>on(x.id)),vendor:vendor.filter(x=>on(x.id)&&x.src),photos:photos.filter(x=>on(x.id)),photoLayout,
+      breakdown:breakdown&&(reports.length||tickets.length)?{reports,tickets}:null};
     try{await onPrint(choice,setBusy);}catch(e){}
     setBusy("");
   }
@@ -21725,6 +21740,10 @@ function InvoicePrintModal({project,lines,invoiceNo,onClose,onPrint}){
         <div style={{flex:1,overflowY:"auto",padding:"12px 18px"}}>
           {loading&&<Spinner/>}
           {!loading&&!repItems.length&&!tmItems.length&&<div style={{fontSize:12,color:T.muted,marginBottom:12}}>No daily reports or T&M tickets are on this invoice. Use Pull from Reports to add some, or print the invoice on its own.</div>}
+          {(repItems.length||tmItems.length)?<label style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:10,marginBottom:14,cursor:"pointer",background:breakdown?T.blueLow:T.surface,border:`1px solid ${breakdown?T.blue+"60":T.border}`}}>
+            <input type="checkbox" checked={breakdown} onChange={e=>setBreakdown(e.target.checked)} style={{accentColor:T.blue}}/>
+            <span style={{flex:1}}><span style={{display:"block",fontSize:12.5,fontWeight:700,color:T.text}}>📊 Breakdown on the invoice</span><span style={{display:"block",fontSize:11,color:T.muted}}>A table under the lines: labor, equipment, materials and other for each daily report and T&M ticket, with totals.</span></span>
+          </label>:null}
           <Group title="📋 Daily reports" items={repItems}/>
           <Group title="🧾 T&M tickets" items={tmItems}/>
           <Group title="🧾 Receipts & attachments" items={rcItems} note="Receipt photos and files attached to material and rental lines."/>
@@ -21856,7 +21875,30 @@ function PullUnbilledModal({project,onClose,onPull,onErr}){
   function combinedLines(){
     return [{id:uid(),description:`Work performed ${span} — ${chosenReports.length} daily report(s), ${chosenTickets.length} T&M ticket(s)`,qty:1,unit:"LS",unit_price:total.toFixed(2),source:null},...docLines()];
   }
-  function pull(){onPull(mode==="itemized"?itemizedLines():mode==="perdoc"?perDocLines():combinedLines());}
+  // One line per cost category, totaled across every selected report and ticket.
+  function categoryLines(){
+    const n2=(n)=>Number(n||0).toFixed(2);const out=[];
+    const c={labor:0,hrs:0,perdiem:0,equip:0,rental:0,mats:0,subs:0,tmLabor:0,tmHrs:0,tmEquip:0,tmMats:0,tmOther:0,tmMarkup:0,tmTax:0};
+    chosenReports.forEach(r=>{const t=reportTotals(r,div);c.labor+=t.labor-t.perdiem;c.perdiem+=t.perdiem;c.hrs+=t.labor_hrs;c.equip+=t.equip;c.rental+=t.rental;c.mats+=t.mats;c.subs+=(r.subcontractors||[]).reduce((s,x)=>s+subLineTotal(x),0);});
+    chosenTickets.forEach(t=>{const v=tmTicketViewFromRow(t,project,[]);c.tmLabor+=v.laborTotal;c.tmHrs+=v.totalRegHrs+v.totalOtHrs+v.totalTrvHrs;c.tmEquip+=v.equipTotal;c.tmMats+=v.matsTotal;c.tmOther+=v.otherTotal;c.tmMarkup+=v.mkLaborAmt+v.mkEquipAmt+v.mkMatsAmt+v.mkOtherAmt;c.tmTax+=Math.max(0,v.grandTotal-v.subtotal-(v.mkLaborAmt+v.mkEquipAmt+v.mkMatsAmt+v.mkOtherAmt));});
+    const line=(d,amt)=>{if(amt>0.004)out.push({id:uid(),description:d,qty:"1",unit:"LS",unit_price:n2(amt),source:null});};
+    const nR=chosenReports.length,nT=chosenTickets.length;
+    line(`Labor — ${nR} daily report${nR===1?"":"s"} (${c.hrs.toFixed(1)} hrs)`,c.labor);
+    line("Per diem",c.perdiem);
+    line("Equipment",c.equip);
+    line("Rented equipment",c.rental);
+    line("Materials",c.mats);
+    line("Subcontractors",c.subs);
+    line(`T&M labor — ${nT} ticket${nT===1?"":"s"} (${c.tmHrs.toFixed(1)} hrs)`,c.tmLabor);
+    line("T&M equipment",c.tmEquip);
+    line("T&M materials",c.tmMats);
+    line("T&M other charges",c.tmOther);
+    line("T&M markup",c.tmMarkup);
+    line("T&M sales tax",c.tmTax);
+    if(out.length&&span)out.unshift({id:uid(),description:`Work performed ${span} — ${nR} daily report${nR===1?"":"s"}${nT?`, ${nT} T&M ticket${nT===1?"":"s"}`:""} (attached)`,qty:0,unit:"",unit_price:0,source:null,heading:true});
+    return [...out,...docLines()];
+  }
+  function pull(){onPull(mode==="itemized"?itemizedLines():mode==="category"?categoryLines():mode==="perdoc"?perDocLines():combinedLines());}
 
   const Row=({k,title,sub,amt,billed})=>(
     <div onClick={()=>toggle(k)} style={{...cardS,marginBottom:6,padding:"10px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,
@@ -21884,7 +21926,7 @@ function PullUnbilledModal({project,onClose,onPull,onErr}){
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{qBtn("This week",false,()=>quick(6))}{qBtn("2 weeks",false,()=>quick(13))}{qBtn("This month",false,()=>{setFrom(iso(monthStart));setTo(iso(d0));})}{qBtn("Last month",false,lastMonth)}{qBtn("All",false,()=>{setFrom("");setTo("");})}</div>
           </div>
           <div style={{display:"flex",gap:8,marginTop:10,alignItems:"center",flexWrap:"wrap"}}>
-            {[["itemized","Itemized (labor, equipment, materials)"],["perdoc","One line per report"],["combined","One combined line"]].map(([v,l])=>(
+            {[["itemized","Itemized (by classification & item)"],["category","By category (labor / equipment / materials)"],["perdoc","One line per report"],["combined","One combined line"]].map(([v,l])=>(
               <button key={v} onClick={()=>setMode(v)} style={{flex:"1 1 auto",padding:"7px 8px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:mode===v?800:600,background:mode===v?T.orange:T.surface,color:mode===v?"#000":T.sub,border:`1px solid ${mode===v?T.orange:T.border}`}}>{l}</button>))}
             <label style={{fontSize:11.5,color:T.muted,display:"flex",alignItems:"center",gap:5,cursor:"pointer",marginLeft:"auto"}}><input type="checkbox" checked={showBilled} onChange={e=>setShowBilled(e.target.checked)}/> show already billed</label>
           </div>
