@@ -188,14 +188,53 @@ async function rpc(fn,args){
 
 /* Supabase Storage over plain REST — the app has no supabase-js client. */
 const stripPrivate=(d)=>(d&&typeof d==="object"&&!Array.isArray(d))?Object.fromEntries(Object.entries(d).filter(([k])=>!k.startsWith("_"))):d;
-async function storageUpload(bucket,path,file,contentType){
+const STORAGE_CHUNK=6*1024*1024;      // Supabase resumable uploads want 6 MB pieces
+const STORAGE_RESUMABLE_FROM=5*1024*1024;
+const fmtMB=(b)=>(b/1048576).toFixed(1)+" MB";
+function storageErrorMessage(status,text,size){
+  if(status===413||/EntityTooLarge|too large|exceeded the maximum/i.test(text||""))
+    return `This file is ${fmtMB(size||0)}, which is over the size limit set in Supabase Storage. Raise it under Storage → Settings (and the bucket's own limit), or split the PDF.`;
+  return text||`Upload failed (${status})`;
+}
+/* Big files go up in pieces (TUS resumable protocol), so a 100 MB drawing
+   set is not one giant request that a proxy or the bucket rejects. */
+async function storageUploadResumable(bucket,path,file,contentType,onProgress){
+  const b64=(s)=>btoa(unescape(encodeURIComponent(s)));
+  const meta=[`bucketName ${b64(bucket)}`,`objectName ${b64(path)}`,`contentType ${b64(contentType||file.type||"application/octet-stream")}`,`cacheControl ${b64("3600")}`].join(",");
+  const base={apikey:SUPA_KEY,Authorization:`Bearer ${SUPA_KEY}`,"Tus-Resumable":"1.0.0","x-upsert":"true"};
+  const create=await fetch(`${SUPA_URL}/storage/v1/upload/resumable`,{method:"POST",headers:{...base,"Upload-Length":String(file.size),"Upload-Metadata":meta}});
+  if(!create.ok)throw new Error(storageErrorMessage(create.status,await create.text().catch(()=>""),file.size));
+  let loc=create.headers.get("Location");if(!loc)throw new Error("Upload could not start (no upload location).");
+  if(loc.startsWith("/"))loc=SUPA_URL+loc;
+  let offset=0;
+  while(offset<file.size){
+    const chunk=file.slice(offset,Math.min(file.size,offset+STORAGE_CHUNK));
+    let res;
+    for(let attempt=0;attempt<3;attempt++){
+      res=await fetch(loc,{method:"PATCH",headers:{...base,"Upload-Offset":String(offset),"Content-Type":"application/offset+octet-stream"},body:chunk}).catch(()=>null);
+      if(res&&res.ok)break;
+      if(res&&(res.status===413||res.status===400))break;
+      await new Promise(r=>setTimeout(r,1000*(attempt+1)));
+    }
+    if(!res||!res.ok)throw new Error(storageErrorMessage(res?res.status:0,res?await res.text().catch(()=>""):"Lost the connection during upload.",file.size));
+    offset=parseInt(res.headers.get("Upload-Offset")||String(offset+chunk.size),10);
+    onProgress&&onProgress(offset/file.size);
+  }
+  return {Key:`${bucket}/${path}`};
+}
+async function storageUpload(bucket,path,file,contentType,onProgress){
+  const size=file&&typeof file.size==="number"?file.size:0;
+  if(size>STORAGE_RESUMABLE_FROM&&typeof file.slice==="function"){
+    try{return await storageUploadResumable(bucket,path,file,contentType,onProgress);}
+    catch(e){if(!/over the size limit/.test(e.message)){/* fall back to a plain upload */}else throw e;}
+  }
   const res=await fetch(`${SUPA_URL}/storage/v1/object/${bucket}/${path}`,{
     method:"POST",
     headers:{apikey:SUPA_KEY,Authorization:`Bearer ${SUPA_KEY}`,"x-upsert":"true",
       ...(contentType?{"Content-Type":contentType}:{})},
     body:file,
   });
-  if(!res.ok)throw new Error((await res.text())||`Upload failed (${res.status})`);
+  if(!res.ok)throw new Error(storageErrorMessage(res.status,await res.text().catch(()=>""),size));
   return res.json().catch(()=>({}));
 }
 function storagePublicUrl(bucket,path){
@@ -14028,7 +14067,7 @@ function BidDocumentsTab({bid,user,onErr}){
       try{
         const clean=file.name.replace(/[^A-Za-z0-9._-]/g,"_");
         const path=`estimates/${bid.id}/${kind}/${Date.now()}-${clean}`;
-        await storageUpload(bucket,path,file,file.type||undefined);
+        await storageUpload(bucket,path,file,file.type||undefined,(p)=>setBusy(`Uploading ${i+1} of ${files.length} — ${file.name} · ${Math.round(p*100)}%`));
         await API.estimateDocs.create({
           estimate_id:bid.id,kind,title:file.name,storage_path:path,bucket,
           mime_type:file.type||null,file_size:file.size,uploaded_by:user.name,
