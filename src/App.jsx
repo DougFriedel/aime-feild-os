@@ -4758,10 +4758,12 @@ async function prepareDocsForPrint(docs,onProgress){
     else if(isPdf&&data){
       try{
         onProgress&&onProgress(`Opening ${d.name||d.file_name}…`);
-        const pdfjsLib=await loadPdfJs();
+        const pdfjsLib=await withTimeout(loadPdfJs(),20000,"PDF viewer download");
         let bytes;
         if(/^https?:/.test(data)){
-          const r=await fetch(data);
+          const ctl=typeof AbortController!=="undefined"?new AbortController():null;
+          const kill=ctl?setTimeout(()=>ctl.abort(),45000):null;
+          let r;try{r=await fetch(data,ctl?{signal:ctl.signal}:undefined);}finally{if(kill)clearTimeout(kill);}
           if(!r.ok)throw new Error(`Could not fetch file (${r.status})`);
           bytes=new Uint8Array(await r.arrayBuffer());
         }else{
@@ -4769,15 +4771,15 @@ async function prepareDocsForPrint(docs,onProgress){
           const bin=atob(b64);bytes=new Uint8Array(bin.length);
           for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
         }
-        const pdf=await pdfjsLib.getDocument({data:bytes}).promise;
+        const pdf=await withTimeout(pdfjsLib.getDocument({data:bytes}).promise,60000,"Opening the PDF");
         const MAX_PAGES=30;
         const max=Math.min(pdf.numPages,MAX_PAGES);
         for(let p=1;p<=max;p++){
           onProgress&&onProgress(`${d.name||d.file_name} · page ${p} of ${max}`);
-          const page=await pdf.getPage(p);
+          const page=await withTimeout(pdf.getPage(p),30000,"Reading a PDF page");
           const vp=page.getViewport({scale:1.5});
           const c=document.createElement("canvas");c.width=vp.width;c.height=vp.height;
-          await page.render({canvasContext:c.getContext("2d"),viewport:vp}).promise;
+          await withTimeout(page.render({canvasContext:c.getContext("2d"),viewport:vp}).promise,30000,"Drawing a PDF page");
           item.pages.push(c.toDataURL("image/jpeg",0.85));
         }
         if(pdf.numPages>max)item.note=`showing first ${max} of ${pdf.numPages} pages`;
@@ -7712,12 +7714,20 @@ const PDFJS_SOURCES=[
   "https://cdn.jsdelivr.net/npm/pdfjs-dist@"+PDFJS_V+"/build/",
   "https://unpkg.com/pdfjs-dist@"+PDFJS_V+"/build/",
 ];
+/* A promise that gives up instead of hanging — some office networks and
+   content filters swallow a request without ever answering, which left the
+   "Preparing…" page stuck forever. */
+function withTimeout(promise,ms,label){
+  let t;const timer=new Promise((_,rej)=>{t=setTimeout(()=>rej(new Error(`${label||"Request"} timed out after ${Math.round(ms/1000)}s`)),ms);});
+  return Promise.race([promise,timer]).finally(()=>clearTimeout(t));
+}
 function _loadScript(src){
   return new Promise((resolve,reject)=>{
     const s=document.createElement("script");
     s.src=src;s.async=true;
-    s.onload=()=>resolve();
-    s.onerror=()=>{s.remove();reject(new Error("failed: "+src));};
+    const timer=setTimeout(()=>{s.remove();reject(new Error("timed out: "+src));},15000);
+    s.onload=()=>{clearTimeout(timer);resolve();};
+    s.onerror=()=>{clearTimeout(timer);s.remove();reject(new Error("failed: "+src));};
     document.head.appendChild(s);
   });
 }
@@ -21396,7 +21406,11 @@ function InvoiceForm({project,mfgJob,user,invoice,onBack,onSaved,onErr}){
         // receipts / files / vendor invoices are rasterized once, then handed to whichever page shows them
         const fileItems=[...choice.receipts.filter(x=>x.kind==="file").map(x=>({id:x.id,name:x.name,file:x.src,file_name:x.file_name,file_type:x.file_type,from:x.from,reportId:x.reportId,ticketId:x.ticketId})),
                          ...choice.vendor.map(x=>({id:x.id,name:x.name,file:x.src,file_name:x.file_name,file_type:x.file_type,from:x.from}))];
-        const prepared=fileItems.length?await prepareDocsForPrint(fileItems,say):[];
+        let prepared=[];
+        if(fileItems.length){
+          try{prepared=await withTimeout(prepareDocsForPrint(fileItems,say),180000,"Preparing attachments");}
+          catch(e){say(`Some attachments could not be prepared (${e.message}) — printing without them.`);prepared=[];}
+        }
         const docs=[];
         choice.reports.forEach(r=>{
           const rcImgs=choice.receipts.filter(x=>x.reportId===r.id&&x.kind==="image").map(x=>({id:x.id,src:x.src,category:"Receipt",caption:x.name,date:r.date}));
@@ -21418,7 +21432,7 @@ function InvoiceForm({project,mfgJob,user,invoice,onBack,onSaved,onErr}){
         // photos on days with no report page still get printed
         const orphan=choice.photos.filter(x=>!x.ticketId&&!choice.reports.some(r=>r.date===x.date));
         if(orphan.length)backup.push(attachmentPagesHtml("Site photos",orphan.map(x=>({doc:{name:`${x.category}${x.caption?" · "+x.caption:""}`,from:fmtDate(x.date)},pages:[x.src],error:""}))));
-      }catch(e){}
+      }catch(e){onErr&&onErr("Some backup pages could not be prepared: "+e.message);}
     }
     const invoiceHtml=`<!DOCTYPE html><html><head><meta charset="utf-8"/>
 <title>Invoice ${esc(f.invoice_no)}</title><style>
