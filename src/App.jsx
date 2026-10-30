@@ -11649,7 +11649,8 @@ function BidOverviewTab({bid,onSave}){
           <div><label style={lbl}>Due Time</label>
             <input type="time" value={f.due_time} onChange={e=>set("due_time",e.target.value)} style={inp}/></div>
           <div><label style={lbl}>Total Sales ($)</label>
-            <input type="number" step="0.01" value={f.total_sales} onChange={e=>set("total_sales",e.target.value)} style={inp}/></div>
+            <input type="number" step="0.01" value={f.total_sales} onChange={e=>set("total_sales",e.target.value)} style={inp}/>
+            <div style={{fontSize:10.5,color:T.muted,marginTop:4,lineHeight:1.4}}>Set automatically from the Estimating / Proposal tabs once the estimate has line items. Type a number only for a bid with no estimate behind it.</div></div>
         </div>
 
         <div style={{marginBottom:4}}>
@@ -12025,6 +12026,11 @@ function ProposalTab({bid,user,onErr,onSaved}){
       const t=preTax+estTax+estBond+estPermits;
       if(t>0)setTotal(t);
       setPostTax({preTax,tax:estTax,bond:estBond,permits:estPermits});
+      // The header and Overview show total_sales. A figure typed by hand
+      // before the estimate was priced used to stick; the estimate wins now.
+      if(t>0&&Math.abs(t-(Number(bid.total_sales)||0))>0.005){
+        try{await API.estimates.update(bid.id,{total_sales:t,updated_at:new Date().toISOString()});onSaved&&onSaved();}catch{}
+      }
 
       // Keep the category split so the proposal can show a breakdown. Costs
       // are grouped the way the estimate categorises them.
