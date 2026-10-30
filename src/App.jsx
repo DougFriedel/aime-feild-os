@@ -290,6 +290,22 @@ async function offloadReportImages(report){
   }
   return {report:{...report,materials,rental_equipment:rental},moved};
 }
+/* Reads supplier / invoice # / amount / date off an uploaded vendor invoice
+   (Netlify function receipt-extract). Used by AP invoice entry. */
+async function extractInvoice(att){
+  let res;
+  try{
+    res=await fetch("/.netlify/functions/receipt-extract",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({src:att.src,name:att.name||"",type:att.type||""})});
+  }catch(e){throw new Error("No connection to the invoice reader.");}
+  if(res.status===404)throw new Error("Invoice reader isn't deployed (receipt-extract function missing on Netlify).");
+  if(!res.ok){
+    const t=(await res.text())||"";
+    if(/ANTHROPIC_API_KEY/.test(t))throw new Error("Invoice reader has no API key (set ANTHROPIC_API_KEY in Netlify).");
+    throw new Error(`Invoice reader error ${res.status}: ${t.slice(0,140)}`);
+  }
+  return await res.json();
+}
 async function storageRemove(bucket,path){
   const res=await fetch(`${SUPA_URL}/storage/v1/object/${bucket}/${path}`,{
     method:"DELETE",
@@ -2026,6 +2042,9 @@ function ApBillDialog({r,user,onClose,onSaved}){
           {tabBtn("not","Not billable")}
         </div>
         {invoices===null?<Spinner/>:<>
+          <div style={{fontSize:11,color:T.muted,marginBottom:10,lineHeight:1.5,padding:"8px 10px",background:T.surface,borderRadius:8,border:`1px solid ${T.border}`}}>
+            Use this when the cost was billed outside the app. If it belongs on a daily report or T&M ticket, add it there instead (🧾 Add vendor invoice from Accounting) — that marks it billed by itself and keeps the paper trail on the report.
+          </div>
           {mode==="pick"&&<div>
             <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Customer invoices on this job:</div>
             {invoices.map(i=>{const on=sel===String(i.id);return(
@@ -3165,9 +3184,17 @@ function DivisionReportsTab({user,division,projects,onErr}){
    All numbers live in `data` (jsonb). Rates ship with CPL 2025 defaults and
    are editable on every estimate. Exports: Excel (live formulas) and PDF.
    ═══════════════════════════════════════════════════════════════════ */
-const PL_LABOR_RATES=[{"cls": "Project Manager", "rate": 64.5}, {"cls": "Foreman", "rate": 63.25}, {"cls": "Technician", "rate": 60.75}, {"cls": "Inspector", "rate": 53.75}, {"cls": "Certified Welder", "rate": 60.75}, {"cls": "Fitter", "rate": 58.5}, {"cls": "Mechanic", "rate": 58.5}, {"cls": "Operator", "rate": 58.5}, {"cls": "Truck Driver", "rate": 58.5}, {"cls": "Helper (Welder)", "rate": 57.25}, {"cls": "Laborer", "rate": 51.0}, {"cls": "Foreman (Elect)", "rate": 82.25}, {"cls": "Electrician", "rate": 82.25}, {"cls": "Helper (Elect)", "rate": 45.5}, {"cls": "Per Diem", "rate": 190.0}];
-const PL_EQUIP_RATES=[{"section": "Trucks and Trailers"}, {"name": "Truck - 1 Ton", "rate": 21.5, "unit": "Hours"}, {"name": "Truck - 3/4 Ton w/ Snow Plow", "rate": 350.0, "unit": "Days"}, {"name": "Truck - 1/2 Ton", "rate": 18.5, "unit": "Hours"}, {"name": "Truck - Boom (20-29 Ton)", "rate": 65.0, "unit": "Hours"}, {"name": "Truck - Bucket", "rate": 45.0, "unit": "Hours"}, {"name": "Truck - Dump Truck (3 Axle)", "rate": 35.0, "unit": "Hours"}, {"name": "Truck - Haul Truck - No trailer", "rate": 70.0, "unit": "Hours"}, {"name": "Truck - Tru-Vac", "rate": 13500.0, "unit": "Month"}, {"name": "Truck - Welding Rig", "rate": 35.0, "unit": "Hours"}, {"name": "Trailer - Electrical - Colonial", "rate": 147.0, "unit": "Month"}, {"name": "Trailer - Lowboy - 2 axle", "rate": 28.0, "unit": "Hours"}, {"name": "Trailer - Tag along", "rate": 50.0, "unit": "Days"}, {"name": "Trailer - Tool Trailer - 18-25'", "rate": 175.0, "unit": "Days"}, {"name": "Trailer - Tool Trailer - 26-40'", "rate": 200.0, "unit": "Days"}, {"section": "Earthmoving and ROW Equipment"}, {"name": "ATV - 4 Wheel", "rate": 125.0, "unit": "Days"}, {"name": "Backhoe Loader - 80-105 HP", "rate": 62.45, "unit": "Hours"}, {"name": "Excavator - Mini - 2-8K LB", "rate": 299.0, "unit": "Days"}, {"name": "Excavator - Mini - 9K LB", "rate": 335.0, "unit": "Days"}, {"name": "Excavator -Mini - 10-11K LB", "rate": 335.0, "unit": "Days"}, {"name": "Excavator - Mini - 12-16K LB", "rate": 475.0, "unit": "Days"}, {"name": "Excavator - Mini - 17-20K LB", "rate": 540.0, "unit": "Days"}, {"name": "Excavator - Small - 21-29K LB", "rate": 565.0, "unit": "Days"}, {"name": "Excavator - Small - 30-33K LB", "rate": 632.0, "unit": "Days"}, {"name": "Excavator - Small - 34-37K LB", "rate": 687.0, "unit": "Days"}, {"name": "Excavator - Small - 38-42K LB", "rate": 742.0, "unit": "Days"}, {"name": "Excavator - Small - 43-47K LB", "rate": 797.0, "unit": "Days"}, {"name": "Excavator - Medium - 48-55K LB", "rate": 852.0, "unit": "Days"}, {"name": "Excavator - Medium - 56-64K LB", "rate": 935.0, "unit": "Days"}, {"name": "Excavator - Medium - 65-79K LB", "rate": 975.0, "unit": "Days"}, {"name": "Excavator - Large - 80-89K LB", "rate": 1050.0, "unit": "Days"}, {"name": "Excavator - Large - 90-119K LB", "rate": 1350.0, "unit": "Days"}, {"name": "Excavator - Large - 120-175K LB", "rate": 1750.0, "unit": "Days"}, {"name": "Excavator - Large - 176-225K LB", "rate": 1925.0, "unit": "Days"}, {"name": "Mower - Riding/Zero Turn", "rate": 175.0, "unit": "Days"}, {"name": "Skidsteer Loader - 70-80HP", "rate": 440.0, "unit": "Days"}, {"name": "Skidsteer Loader - 81-100 HP", "rate": 475.0, "unit": "Days"}, {"name": "Tractor - 50 HP 4x4 Tractor w/ Bush Hog", "rate": 36.5, "unit": "Hours"}, {"name": "Tractor - Farm w/ Bush Hog 26-40 HP", "rate": 27.5, "unit": "Hours"}, {"section": "Air Comps Blast Equip and Tools"}, {"name": "Air Compressor - 185 CFM", "rate": 195.0, "unit": "Days"}, {"name": "Air Compressor - 375 CFM", "rate": 275.0, "unit": "Days"}, {"name": "Air Impact Wrench - 1\"", "rate": 50.0, "unit": "Days"}, {"name": "Air Spade / Knife", "rate": 55.0, "unit": "Days"}, {"name": "Blast Rig - 4 Bag Pot w/ 185 CFM AC", "rate": 55.5, "unit": "Hours"}, {"name": "Blast Rig - 1 Pot w/ 375 CFM AC", "rate": 500.0, "unit": "Days"}, {"section": "Testing Eqjuip and Misc. Tools"}, {"name": "Bench & Volt Meter", "rate": 875.5, "unit": "Month"}, {"name": "Beveling Band - 30\"", "rate": 25.0, "unit": "Days"}, {"name": "Dearman Pipe Clamps", "rate": 25.0, "unit": "Days"}, {"name": "FL-9 Fiat-Allis", "rate": 41.05, "unit": "Hours"}, {"name": "Gasoline Emergancy Response Equipment", "rate": 5000.0, "unit": "Week"}, {"name": "Grove Man Lift 40ft", "rate": 29.95, "unit": "Hours"}, {"name": "HEPA Vacuum", "rate": 100.0, "unit": "Days"}, {"name": "Holiday Detector / Pipe Jeep", "rate": 72.0, "unit": "Days"}, {"name": "Hydraulic Torque", "rate": 200.0, "unit": "Days"}, {"name": "Hydro test pump", "rate": 60.0, "unit": "Days"}, {"name": "Hydrotest - High Pressure Test Equipment", "rate": 3800.0, "unit": "Days"}, {"name": "Jack Hammer", "rate": 72.0, "unit": "Days"}, {"name": "Laser Pump Aligner", "rate": 50.0, "unit": "Hours"}, {"name": "LEL/Gas Monitor - 4 Gas", "rate": 50.0, "unit": "Days"}, {"name": "Line Locator", "rate": 50.0, "unit": "Days"}, {"name": "Pipe Band Crawler", "rate": 25.0, "unit": "Days"}, {"name": "Pipe Beveling Machine 1 1/2-3\"", "rate": 25.0, "unit": "Days"}, {"name": "Pipe Beveling Machine 10-14\"", "rate": 40.0, "unit": "Days"}, {"name": "Pipe Beveling Machine 16-22\"", "rate": 100.0, "unit": "Days"}, {"name": "Tap Machine - 2\"", "rate": 190.0, "unit": "Days"}, {"name": "Torque Wrench - Pneumatic J5", "rate": 175.0, "unit": "Days"}, {"name": "Torque Wrench w/Multiplier Hand", "rate": 25.0, "unit": "Days"}, {"name": "Torque Wrench w/Sockets Hyd/Pneu", "rate": 195.0, "unit": "Days"}, {"name": "Wach Pipe Cutting Saw", "rate": 30.0, "unit": "Hours"}];
-const PL_BID_CREW=[{"cls": "Project Manager", "count": 0.5, "rt": 64.5, "ot": 96.75, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Foreman", "count": 1, "rt": 63.25, "ot": 94.875, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Technician", "count": 0, "rt": 60.75, "ot": 58.5, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Inspector", "count": 0, "rt": 53.75, "ot": 80.625, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Certified Welder", "count": 1, "rt": 60.75, "ot": 91.125, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Fitter", "count": 0, "rt": 58.5, "ot": 87.75, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Mechanic", "count": 2, "rt": 58.5, "ot": 87.75, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Operator", "count": 1, "rt": 58.5, "ot": 87.75, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Truck Driver", "count": 0.5, "rt": 58.5, "ot": 87.75, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Welder Helper", "count": 0, "rt": 57.25, "ot": 85.875, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Laborer", "count": 2, "rt": 51, "ot": 76.5, "rtHrs": 10.5, "otHrs": 2}, {"cls": "Spray Technician", "count": 0, "rt": 0, "ot": 0, "rtHrs": 0, "otHrs": 0}, {"cls": "Project Coordinator", "count": 0, "rt": 0, "ot": 0, "rtHrs": 0, "otHrs": 0}];
+/* Pipeline estimating prices from the SAME rate sheet the daily reports bill at
+   (POSITIONS_PIPELINE / EQUIP_LIST_PIPELINE above). There used to be a second copy
+   here, and the two had drifted apart. Saved estimates keep the rates they were
+   made with; these are the defaults for new ones. */
+const PL_LABOR_RATES=POSITIONS_PIPELINE.map(p=>({cls:p.name,rate:p.rate}));
+const PL_EQUIP_RATES=EQUIP_LIST_PIPELINE.map(e=>e.section?{section:e.section}:{name:e.name,rate:e.rate,unit:e.unit});
+const PL_BID_CREW_COUNTS=[["Project Manager",0.5],["Foreman",1],["Technician",0],["Inspector",0],["Certified Welder",1],["Fitter",0],["Mechanic",2],["Operator",1],["Truck Driver",0.5],["Helper (Welder)",0],["Laborer",2]];
+const PL_BID_CREW=[
+  ...PL_BID_CREW_COUNTS.map(([cls,count])=>{const p=POSITIONS_PIPELINE.find(x=>x.name===cls);const rt=p?p.rate:0;return {cls,count,rt,ot:Math.round(rt*1.5*1000)/1000,rtHrs:10.5,otHrs:2};}),
+  {cls:"Spray Technician",count:0,rt:0,ot:0,rtHrs:0,otHrs:0},{cls:"Project Coordinator",count:0,rt:0,ot:0,rtHrs:0,otHrs:0},
+];
 const PL_BID_EQUIP_DEFAULT=PL_EQUIP_RATES.filter(e=>!e.section).map(e=>({name:e.name,rate:e.rate,unit:e.unit,count:0}));
 
 const plMoney=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -4507,239 +4534,6 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
       </div>
     </div>
   );
-}
-
-function printReport(report, project){
-  const positions = getPositions(project.division);
-  const tot = reportTotals(report, project.division);
-  const [yr,mo,dy] = (report.date||'').split('-');
-  const dateStr = `${mo}/${dy}/${yr}`;
-  const fmt2 = n => (parseFloat(n)||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2});
-
-  const laborRows = [...(report.labor||[]).filter(l=>!isPerDiemRow(l))];
-  while(laborRows.length<14) laborRows.push(null);
-  const perDiemEntries = (report.labor||[]).filter(isPerDiemRow);
-  const perDiemTotal = perDiemEntries.reduce((s,l)=>s+laborAmt(l,project.division),0);
-  const perDiemHeads = perDiemEntries.reduce((s,l)=>s+perDiemCount(l),0);
-  const equipRows = [...(report.equipment||[])];
-  while(equipRows.length<15) equipRows.push(null);
-  const mats = report.materials||[];
-  const rentals = (report.rental_equipment||[]).map(r=>({
-    qty:r.qty||'',
-    description:r.description||'',
-    amount:(parseFloat(r.qty)||0)*(parseFloat(r.rate)||0)*(parseFloat(r.usage)||1)
-  }));
-
-  function laborRow(lr,i){
-    if(!lr) return `<tr><td></td><td colspan="2"></td><td></td><td></td><td></td><td></td><td></td></tr>`;
-    const pos = findPosition(project.division,lr.classification);
-    return `<tr>
-      <td>${lr.name||''}</td>
-      <td colspan="2">${lr.classification||''}</td>
-      <td class="num">${pos&&!pos.flat?lr.regHrs||0:''}</td>
-      <td class="num">${pos&&!pos.flat?lr.otHrs||0:''}</td>
-      <td class="num">${pos&&!pos.flat?lr.travelHrs||0:''}</td>
-      <td class="num">${pos?pos.rate:''}</td>
-      <td class="num amt">${fmt2(laborAmt(lr,project.division))}</td>
-    </tr>`;
-  }
-
-  function equipRow(er){
-    if(!er) return `<tr><td colspan="4"></td><td></td><td></td><td></td><td class="num amt">$0.00</td></tr>`;
-    return `<tr>
-      <td colspan="4">${er.description||''}</td>
-      <td class="num">${er.qty||''}</td>
-      <td class="num">${er.usage||''}</td>
-      <td class="num">${er.rate||''}</td>
-      <td class="num amt">${fmt2(equipAmt(er))}</td>
-    </tr>`;
-  }
-
-  function matPair(left,right){
-    return `
-    <tr>
-      <td class="num">${left?left.qty||'':''}</td>
-      <td colspan="3">${left?left.description||'':''}</td>
-      <td class="num amt">${left?fmt2(parseFloat(left.amount)||0):'$0.00'}</td>
-      <td class="num">${right?right.qty||'':''}</td>
-      <td colspan="2">${right?right.description||'':''}</td>
-      <td class="num amt">${right?fmt2(parseFloat(right.amount)||0):'$0.00'}</td>
-    </tr>
-    <tr class="sub-row">
-      <td></td><td colspan="3" class="sub-label">Tax</td><td class="num">$0.00</td>
-      <td></td><td colspan="2" class="sub-label">Tax</td><td class="num">$0.00</td>
-    </tr>
-    <tr class="sub-row">
-      <td></td><td colspan="3" class="sub-label">Total</td>
-      <td class="num">${left?fmt2(parseFloat(left.amount)||0):'$0.00'}</td>
-      <td></td><td colspan="2" class="sub-label">Total</td>
-      <td class="num">${right?fmt2(parseFloat(right.amount)||0):'$0.00'}</td>
-    </tr>`;
-  }
-
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>AIME Daily Report — ${project.name} — ${dateStr}</title>
-<style>
-  @page { size: letter portrait; margin: 0.35in 0.3in; }
-  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
-  body { font-size: 7.5pt; color: #000; }
-  table { width: 100%; border-collapse: collapse; }
-  td, th { border: 1px solid #000; padding: 2px 3px; vertical-align: middle; font-size: 7.5pt; }
-  .num { text-align: right; }
-  .amt { font-weight: 600; }
-  .section-header td { background: #d9e1f2; font-weight: bold; font-size: 8.5pt; text-align: center; padding: 3px; border: 2px solid #000; }
-  .col-header td { background: #f2f2f2; font-weight: bold; font-size: 7pt; text-align: center; border: 2px solid #000; }
-  .total-row td { background: #fff2cc; font-weight: bold; border: 2px solid #000; font-size: 8pt; }
-  .grand-total td { background: #ffd966; font-weight: bold; border: 2px solid #000; font-size: 9pt; }
-  .sub-row td { background: #fafafa; font-size: 6.5pt; }
-  .sub-label { font-style: italic; color: #555; }
-  .header-table td { border: 1px solid #000; padding: 3px 4px; }
-  .title-row td { background: #1f3864; color: #fff; font-size: 11pt; font-weight: bold; text-align: center; padding: 5px; border: 2px solid #000; letter-spacing: 1px; }
-  .sig-box { min-height: 40px; vertical-align: top; }
-  @media print {
-    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  }
-</style></head><body>
-
-<div style="margin-bottom:8px">${AIME_LOGO_IMG(50)}</div>
-<table class="header-table">
-  <!-- Title -->
-  <tr class="title-row"><td colspan="9">AIME DAILY REPORT</td></tr>
-
-  <!-- Row 2: Customer / PO / Date -->
-  <tr>
-    <td style="width:8%;font-weight:bold">Customer:</td>
-    <td colspan="2" style="width:22%">${project.client||''}</td>
-    <td style="width:13%;font-weight:bold;text-align:center">Work Order / PO #</td>
-    <td colspan="2" style="width:17%">${project.work_order||''}</td>
-    <td style="width:10%;font-weight:bold;text-align:center">Report Date:</td>
-    <td colspan="2" style="width:14%">${dateStr}</td>
-  </tr>
-
-  <!-- Row 3: Location -->
-  <tr>
-    <td style="font-weight:bold">Job Location:</td>
-    <td colspan="8">${project.location||''}</td>
-  </tr>
-
-  <!-- Row 4: Job Number / Report # -->
-  <tr>
-    <td style="font-weight:bold">Job Number:</td>
-    <td colspan="2">${project.name||''}</td>
-    <td style="font-weight:bold;text-align:center">Report #:</td>
-    <td colspan="5">${report.report_no||''}</td>
-  </tr>
-
-  <!-- Description -->
-  <tr>
-    <td style="font-weight:bold">Description of Work Done:</td>
-    <td colspan="8" style="min-height:16px">${report.description||''}</td>
-  </tr>
-</table>
-
-<br style="line-height:3px">
-
-<!-- LABOR -->
-<table>
-  <tr class="section-header"><td colspan="8">LABOR</td></tr>
-  <tr class="col-header">
-    <td style="width:18%">NAME</td>
-    <td colspan="2" style="width:22%">CLASSIFICATION</td>
-    <td style="width:8%">REG. HRS.</td>
-    <td style="width:8%">O.T. HRS.</td>
-    <td style="width:8%">TRAVEL HRS.</td>
-    <td style="width:12%">REGULAR RATE</td>
-    <td style="width:12%">AMOUNT</td>
-  </tr>
-  ${laborRows.map((lr,i)=>laborRow(lr,i)).join('')}
-  <!-- Per Diem row -->
-  <tr>
-    <td></td>
-    <td colspan="2" style="font-style:italic">Per Diem${perDiemHeads>0?` — ${perDiemHeads} employee${perDiemHeads!==1?'s':''}`:''}</td>
-    <td class="num">${perDiemHeads>0?perDiemHeads:''}</td><td></td><td></td>
-    <td class="num">${perDiemHeads>0?(perDiemTotal/perDiemHeads).toFixed(2):''}</td>
-    <td class="num amt">${fmt2(perDiemTotal)}</td>
-  </tr>
-  <tr class="total-row">
-    <td colspan="7" style="text-align:right;padding-right:6px">TOTAL LABOR</td>
-    <td class="num">${fmt2(tot.labor)}</td>
-  </tr>
-</table>
-
-<br style="line-height:3px">
-
-<!-- EQUIPMENT -->
-<table>
-  <tr class="section-header"><td colspan="8">EQUIPMENT</td></tr>
-  <tr class="col-header">
-    <td colspan="4" style="width:46%">DESCRIPTION</td>
-    <td style="width:8%">QUANTITY</td>
-    <td style="width:8%">HOURS/DAYS</td>
-    <td style="width:12%">RATE</td>
-    <td style="width:12%">AMOUNT</td>
-  </tr>
-  ${equipRows.map(er=>equipRow(er)).join('')}
-  <tr class="total-row">
-    <td colspan="7" style="text-align:right;padding-right:6px">TOTAL EQUIPMENT</td>
-    <td class="num">${fmt2(tot.equip)}</td>
-  </tr>
-</table>
-
-<br style="line-height:3px">
-
-<!-- RENTAL EQUIPMENT / MATERIALS -->
-<table>
-  <tr class="section-header"><td colspan="9">RENTAL EQUIPMENT</td></tr>
-  <tr><td colspan="9" style="font-size:6.5pt;font-style:italic;background:#f9f9f9;border:1px solid #000">MATERIAL &amp; MISCELLANEOUS — LIST OF MATERIAL &amp; ATTACH SUPPORTING INVOICES</td></tr>
-  <tr class="col-header">
-    <td style="width:5%">QTY</td>
-    <td colspan="3" style="width:27%">DESCRIPTION</td>
-    <td style="width:10%">AMOUNT</td>
-    <td style="width:5%">QTY</td>
-    <td colspan="2" style="width:27%">DESCRIPTION</td>
-    <td style="width:10%">AMOUNT</td>
-  </tr>
-  ${(rentals[0]||rentals[1])?matPair(rentals[0]||null,rentals[1]||null):''}
-  ${(rentals[2]||rentals[3])?matPair(rentals[2]||null,rentals[3]||null):''}
-  ${(rentals[4]||rentals[5])?matPair(rentals[4]||null,rentals[5]||null):''}
-  ${(!rentals[0]&&!rentals[1]&&!rentals[2]&&!rentals[3]&&!rentals[4]&&!rentals[5])?matPair(null,null):''}
-  <tr class="total-row">
-    <td colspan="8" style="text-align:right;padding-right:6px">TOTAL RENTAL EQUIPMENT</td>
-    <td class="num">${fmt2(tot.mats)}</td>
-  </tr>
-  <tr class="grand-total">
-    <td colspan="8" style="text-align:right;padding-right:6px">GRAND TOTAL</td>
-    <td class="num">${fmt2(tot.grand)}</td>
-  </tr>
-</table>
-
-<br style="line-height:3px">
-
-<!-- SIGNATURE -->
-<table>
-  <tr class="col-header">
-    <td style="width:28%">ACCEPTED BY</td>
-    <td style="width:12%">DATE</td>
-    <td style="width:28%">CERTIFIED AS CORRECT BY CONTRACTOR'S REP</td>
-    <td style="width:12%">DATE</td>
-    <td style="width:20%">INSPECTOR SIGNATURE</td>
-  </tr>
-  <tr>
-    <td class="sig-box" style="height:50px">${report.inspector_name||''}</td>
-    <td class="sig-box">${report.inspector_signed_at?new Date(report.inspector_signed_at).toLocaleDateString():''}</td>
-    <td class="sig-box"></td>
-    <td class="sig-box"></td>
-    <td class="sig-box" style="text-align:center">${report.inspector_signature?`<img src="${report.inspector_signature}" style="max-height:44px;max-width:100%;object-fit:contain;background:#fff;">`:''}</td>
-  </tr>
-</table>
-
-</body></html>`;
-
-  const win = window.open('','_blank','width=900,height=700');
-  win.document.write(html);
-  win.document.close();
-  win.focus();
-  setTimeout(()=>{win.focus();win.print();},1200);
 }
 
 // Rasterize / prepare selected project documents for the PDF appendix.
@@ -14305,6 +14099,10 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));{const rep=(reports||[]).find(r=>r.id===id)||activeReport||{};await notify("report_flagged",`Report Flagged — ${project.name}`,pm_notes,{project_id:project.id,report_id:id,to:rep.submitted_by,except:user.name});}await load(true);}catch(e){setErr(e.message);}}
   async function updateProject(data){
+    if(data.division&&data.division!==project.division&&reports.length>0){
+      const n=reports.length;
+      if(!window.confirm(`Move ${project.name} from ${project.division} to ${data.division}?\n\nThis job has ${n} daily report${n===1?"":"s"}. They will show under ${data.division} from now on and reprice at the ${data.division} rate sheet, so their totals will change. Approved invoices are not affected.`))return;
+    }
     setProjSaving(true);setErr("");
     try{
       // Projects carry computed fields (_reports, _billed, _openRfis, _photos …)
@@ -21086,6 +20884,23 @@ function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
   const billed=rows.filter(r=>r.status!=="void").reduce((s,r)=>s+(parseFloat(r.total)||0),0);
   const paid=rows.filter(r=>r.status==="paid").reduce((s,r)=>s+(parseFloat(r.total)||0),0);
   const outstanding=billed-paid;
+  // Folders so the list stops growing: drafts, billed & waiting on payment, and
+  // paid/closed (collapsed, grouped by month).
+  const [q,setQ]=useState("");const [openFolders,setOpenFolders]=useState({draft:true,sent:true,closed:false});
+  const [openMonths,setOpenMonths]=useState({});
+  const matches=(inv)=>{const s=q.trim().toLowerCase();return !s||[inv.invoice_no,inv.bill_to,inv.description,inv.invoice_date].some(v=>String(v||"").toLowerCase().includes(s));};
+  const folderOf=(inv)=>inv.status==="paid"||inv.status==="void"?"closed":inv.status==="sent"?"sent":"draft";
+  const folders={draft:[],sent:[],closed:[]};rows.filter(matches).forEach(inv=>folders[folderOf(inv)].push(inv));
+  const monthKey=(inv)=>String(inv.paid_date||inv.invoice_date||inv.created_at||"").slice(0,7)||"unknown";
+  const monthLabel=(k)=>{const [y,m]=k.split("-");const d=new Date(Number(y),Number(m)-1,1);return isNaN(d)?"Unknown date":d.toLocaleDateString("en-US",{month:"long",year:"numeric"});};
+  const closedByMonth={};folders.closed.forEach(inv=>{(closedByMonth[monthKey(inv)]=closedByMonth[monthKey(inv)]||[]).push(inv);});
+  const monthKeys=Object.keys(closedByMonth).sort().reverse();
+  const sum=(list)=>list.reduce((s,r)=>s+(parseFloat(r.total)||0),0);
+  const FolderHead=({id,icon,label,list,color,amt})=>(
+    <div onClick={()=>setOpenFolders(f=>({...f,[id]:!f[id]}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",borderRadius:12,marginBottom:8,cursor:"pointer",background:T.surface,border:`1px solid ${T.border}`}}>
+      <div style={{fontSize:12,fontWeight:800,color,textTransform:"uppercase",letterSpacing:"0.8px"}}>{openFolders[id]?"▾":"▸"} {icon} {label} ({list.length})</div>
+      <div style={{fontSize:12,fontWeight:700,color:T.sub}}>{money0(amt!=null?amt:sum(list))}</div>
+    </div>);
 
   return(
     <div>
@@ -21110,7 +20925,8 @@ function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
         <div style={{fontSize:12}}>Create one above. You can pull lines straight from {mfgJob?"shipped parts":"unbilled daily reports and T&M tickets"}.</div>
       </div>}
 
-      {rows.map(inv=>{const cm=inv.kind==="credit_memo";const against=cm&&inv.credits_invoice_id?rows.find(r=>r.id===inv.credits_invoice_id):null;return(
+      {rows.length>0&&<input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search invoice #, customer, description…" style={{...inp,marginBottom:12,padding:"9px 12px",fontSize:13}}/>}
+      {(()=>{const card=(inv)=>{const cm=inv.kind==="credit_memo";const against=cm&&inv.credits_invoice_id?rows.find(r=>r.id===inv.credits_invoice_id):null;return(
         <div key={inv.id} style={{...cardS,marginBottom:8,borderLeft:`3px solid ${cm?T.purple:(statusColor[inv.status]||T.muted)}`}}>
           <div onClick={()=>onOpen(inv)} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",cursor:"pointer"}}>
             <div>
@@ -21130,7 +20946,24 @@ function InvoiceList({project,mfgJob,user,onNew,onOpen,onErr}){
             <button onClick={()=>del(inv)} style={{...ghostBtn,fontSize:12,color:T.red,border:`1px solid ${T.red}30`}}>🗑</button>
           </div>
         </div>
-      );})}
+      );};
+      return(<>
+        {rows.length>0&&<FolderHead id="draft" icon="✏️" label="Drafts" list={folders.draft} color={T.muted}/>}
+        {openFolders.draft&&folders.draft.map(card)}
+        {openFolders.draft&&rows.length>0&&folders.draft.length===0&&<div style={{fontSize:12,color:T.muted,padding:"4px 12px 12px"}}>No drafts.</div>}
+        {rows.length>0&&<FolderHead id="sent" icon="📤" label="Billed — awaiting payment" list={folders.sent} color={T.yellow}/>}
+        {openFolders.sent&&folders.sent.map(card)}
+        {openFolders.sent&&rows.length>0&&folders.sent.length===0&&<div style={{fontSize:12,color:T.muted,padding:"4px 12px 12px"}}>Nothing waiting on payment.</div>}
+        {rows.length>0&&<FolderHead id="closed" icon="📁" label="Paid & closed" list={folders.closed} color={T.green}/>}
+        {openFolders.closed&&monthKeys.map(k=>(<div key={k} style={{marginLeft:10,marginBottom:6}}>
+          <div onClick={()=>setOpenMonths(m=>({...m,[k]:!m[k]}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",borderRadius:10,cursor:"pointer",background:T.card,border:`1px solid ${T.border}`,marginBottom:6}}>
+            <span style={{fontSize:12,fontWeight:700,color:T.sub}}>{openMonths[k]?"▾":"▸"} {monthLabel(k)} <span style={{color:T.muted,fontWeight:400}}>· {closedByMonth[k].length} invoice{closedByMonth[k].length===1?"":"s"}</span></span>
+            <span style={{fontSize:12,fontWeight:700,color:T.green}}>{money0(sum(closedByMonth[k]))}</span>
+          </div>
+          {openMonths[k]&&closedByMonth[k].map(card)}
+        </div>))}
+        {openFolders.closed&&folders.closed.length===0&&rows.length>0&&<div style={{fontSize:12,color:T.muted,padding:"4px 12px 12px"}}>Nothing paid yet. Mark an invoice Paid and it files here.</div>}
+      </>);})()}
     </div>
   );
 }
@@ -21381,10 +21214,6 @@ function InvoiceForm({project,mfgJob,user,invoice,onBack,onSaved,onErr}){
       await Promise.all([
         ...srcIds.reports.map(id=>API.reports.update(id,stamp).catch(()=>{})),
         ...srcIds.tickets.map(id=>API.tmTickets.update(id,stamp).catch(()=>{})),
-        // Shop labor records the rate it was billed at, so changing the shop
-        // rate later cannot restate an invoice that already went out.
-        ...srcOf("mfglabor").flatMap(l=>(l.source.ids||[l.source.id]).map(id=>
-          API.mfg.labor.update(id,{...stamp,billed_rate:parseFloat(l.unit_price)||null}).catch(()=>{}))),
       ]);
       onSaved&&onSaved();
     }catch(e){ onErr&&onErr(e.message); }
@@ -21624,12 +21453,7 @@ ${f.notes?`<div class="note"><strong>Notes:</strong> ${esc(f.notes).replace(/\n/
       {showPrint&&<InvoicePrintModal project={project} lines={lines} invoiceNo={f.invoice_no} onClose={()=>setShowPrint(false)} onPrint={async(choice,setBusy)=>{await printInvoice(choice,setBusy);setShowPrint(false);}}/>}
       </div>
 
-      {showPull&&(mfgJob
-        ?<PullMfgLaborModal job={mfgJob}
-           onClose={()=>setShowPull(false)}
-           onPull={(newLines)=>{setLines(ls=>[...ls,...newLines]);setShowPull(false);}}
-           onErr={onErr}/>
-        :<PullUnbilledModal project={project}
+      {showPull&&(<PullUnbilledModal project={project}
            onClose={()=>setShowPull(false)}
            onPull={(newLines)=>{setLines(ls=>[...ls,...newLines]);setShowPull(false);}}
            onErr={onErr}/>)}
@@ -22845,156 +22669,6 @@ table.g703 tfoot td{font-weight:800;background:#f0f0f0}
 
 
 /* ── Pull unbilled shop labor onto an invoice (Manufacturing) ── */
-function PullMfgLaborModal({job,onClose,onPull,onErr}){
-  const [rows,setRows]=useState([]);
-  const [parts,setParts]=useState([]);
-  const [sel,setSel]=useState({});
-  const [loading,setLoading]=useState(true);
-  const [rate,setRate]=useState(String(job.labor_rate??75));
-  const [mode,setMode]=useState("worker");   // worker | operation | entry
-
-  useEffect(()=>{(async()=>{
-    try{
-      const [l,p]=await Promise.all([
-        API.mfg.labor.forJob(job.id).catch(()=>[]),
-        API.mfg.parts.forJob(job.id).catch(()=>[]),
-      ]);
-      setRows((l||[]).filter(x=>!x.invoiced));
-      setParts(p||[]);
-    }catch(e){ onErr&&onErr(e.message); }
-    setLoading(false);
-  })();},[job.id]);
-
-  const toggle=(id)=>setSel(s=>{const n={...s};if(n[id])delete n[id];else n[id]=true;return n;});
-  const allOn=()=>setSel(Object.fromEntries(rows.map(r=>[r.id,true])));
-  const allOff=()=>setSel({});
-  const uid=()=>Math.random().toString(36).slice(2,10);
-
-  const chosen=rows.filter(r=>sel[r.id]);
-  const hrs=chosen.reduce((s,r)=>s+(parseFloat(r.hours)||0),0);
-  const rateN=parseFloat(rate)||0;
-  const total=hrs*rateN;
-
-  function pull(){
-    if(!chosen.length)return;
-    const partOf=(id)=>(parts.find(p=>p.id===id)||{}).part_number||"";
-    let groups;
-    if(mode==="entry"){
-      groups=chosen.map(r=>({
-        key:r.id,
-        label:`Shop labor — ${r.worker_name||"—"} · ${r.work_date}${r.operation?" · "+r.operation:""}${r.part_id?" · "+partOf(r.part_id):""}`,
-        hours:parseFloat(r.hours)||0, ids:[r.id]}));
-    }else{
-      const by={};
-      chosen.forEach(r=>{
-        const k=mode==="worker"?(r.worker_name||"Unassigned"):(r.operation||"General");
-        if(!by[k])by[k]={key:k,hours:0,ids:[],dates:[]};
-        by[k].hours+=parseFloat(r.hours)||0;
-        by[k].ids.push(r.id);
-        if(r.work_date)by[k].dates.push(r.work_date);
-      });
-      groups=Object.values(by).map(g=>{
-        const d=g.dates.sort();
-        const span=d.length?(d[0]===d[d.length-1]?d[0]:`${d[0]} to ${d[d.length-1]}`):"";
-        return{...g,label:`Shop labor — ${g.key}${span?" · "+span:""}`};
-      });
-    }
-    onPull(groups.map(g=>({
-      id:uid(),
-      description:g.label,
-      qty:Number(g.hours.toFixed(2)),
-      unit:"HRS",
-      unit_price:rateN.toFixed(2),
-      source:{type:"mfglabor",ids:g.ids},
-    })));
-  }
-
-  const modeLabel={worker:"By worker",operation:"By operation",entry:"One line each"};
-
-  return(
-    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:220,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
-      <div onClick={e=>e.stopPropagation()} style={{background:T.bg,borderRadius:"18px 18px 0 0",width:"100%",maxWidth:640,maxHeight:"88vh",display:"flex",flexDirection:"column"}}>
-        <div style={{padding:"16px 18px 10px",borderBottom:`1px solid ${T.border}`}}>
-          <div style={{fontSize:16,fontWeight:900,color:T.text}}>↓ Pull Unbilled Labor</div>
-          <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>Shop hours on {job.job_number} not yet invoiced.</div>
-        </div>
-
-        <div style={{padding:"10px 18px",borderBottom:`1px solid ${T.border}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-            <span style={{fontSize:12,color:T.sub,fontWeight:700}}>Shop rate</span>
-            <input type="number" step="0.01" value={rate} onChange={e=>setRate(e.target.value)}
-              style={{...inp,width:96,padding:"6px 9px",fontSize:13,textAlign:"right"}}/>
-            <span style={{fontSize:12,color:T.muted}}>per hour</span>
-          </div>
-          <div style={{display:"flex",gap:6}}>
-            {Object.entries(modeLabel).map(([k,l])=>(
-              <button key={k} onClick={()=>setMode(k)}
-                style={{flex:1,padding:"7px 4px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,
-                  fontWeight:mode===k?800:600,
-                  background:mode===k?T.orange:T.surface,color:mode===k?"#000":T.sub,
-                  border:`1px solid ${mode===k?T.orange:T.border}`}}>{l}</button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{flex:1,overflowY:"auto",padding:"12px 18px"}}>
-          {loading&&<div style={{textAlign:"center",padding:20,color:T.muted,fontSize:13}}>Loading…</div>}
-          {!loading&&rows.length===0&&<div style={{textAlign:"center",padding:"30px 10px",color:T.muted}}>
-            <div style={{fontSize:30,marginBottom:8}}>✅</div>
-            <div style={{fontSize:13,fontWeight:700,color:T.sub}}>No unbilled labor</div>
-            <div style={{fontSize:11.5,marginTop:3}}>Every logged hour on this job has been invoiced.</div>
-          </div>}
-
-          {rows.length>0&&<div style={{display:"flex",gap:8,marginBottom:10}}>
-            <button onClick={allOn} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:11.5,padding:"6px",color:T.green,border:`1px solid ${T.green}40`}}>Select all</button>
-            <button onClick={allOff} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:11.5,padding:"6px"}}>Clear</button>
-          </div>}
-
-          {rows.map(r=>{
-            const on=!!sel[r.id];
-            const part=(parts.find(p=>p.id===r.part_id)||{}).part_number;
-            return(
-              <div key={r.id} onClick={()=>toggle(r.id)} style={{...cardS,marginBottom:6,padding:"10px 12px",cursor:"pointer",
-                display:"flex",alignItems:"center",gap:10,
-                border:on?`1px solid ${T.green}`:`1px solid ${T.border}`,
-                background:on?T.greenLow:T.card}}>
-                <div style={{width:19,height:19,borderRadius:5,flexShrink:0,display:"flex",alignItems:"center",
-                  justifyContent:"center",fontSize:12,fontWeight:900,
-                  background:on?T.green:"transparent",color:"#000",
-                  border:on?"none":`1.5px solid ${T.border}`}}>{on?"✓":""}</div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:12.5,fontWeight:700,color:T.text}}>{r.worker_name||"—"}</div>
-                  <div style={{fontSize:11,color:T.muted}}>
-                    {r.work_date}{r.operation?"  ·  "+r.operation:""}{part?"  ·  "+part:""}
-                  </div>
-                </div>
-                <div style={{textAlign:"right",flexShrink:0}}>
-                  <div style={{fontSize:13,fontWeight:800,color:T.blue}}>{Number(r.hours||0).toFixed(1)}h</div>
-                  <div style={{fontSize:10.5,color:T.green}}>{money((parseFloat(r.hours)||0)*rateN)}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div style={{padding:"12px 18px 20px",borderTop:`1px solid ${T.border}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
-            <span style={{fontSize:12,color:T.sub}}>{chosen.length} entries · {hrs.toFixed(1)} hrs @ {money(rateN)}</span>
-            <span style={{fontSize:15,fontWeight:900,color:T.green}}>{money(total)}</span>
-          </div>
-          <div style={{display:"flex",gap:10}}>
-            <button onClick={pull} disabled={!chosen.length}
-              style={{...primBtn,borderRadius:12,background:T.green,color:"#000",opacity:chosen.length?1:0.4}}>
-              Add to Invoice
-            </button>
-            <button onClick={onClose} style={{...ghostBtn,flexShrink:0}}>Cancel</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ── Manufacturing billing tab — invoices only, no AIA ── */
 function MfgReportsArea({jobs,user,onSelectJob}){
   const [tab,setTab]=useState("overview");
