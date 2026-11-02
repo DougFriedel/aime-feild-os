@@ -2733,6 +2733,43 @@ function ActivityScreen({user,onBack}){
   );
 }
 
+/* Every feature that needed a SQL migration, with the column that proves it ran.
+   Admins see a banner on the home screen naming any that are missing, so the
+   app can't silently run ahead of the database again. */
+const REQUIRED_MIGRATIONS=[
+  {table:"time_cards",col:"source_id",file:"time_cards_follow_report_migration.sql",why:"daily report / T&M hours onto time cards"},
+  {table:"ap_invoices",col:"billed_source_id",file:"ap_invoice_on_report_migration.sql",why:"vendor invoices on daily reports"},
+  {table:"rfis",col:"kind",file:"rfi_pricing_change_order_migration.sql",why:"RFI pricing requests → change orders"},
+  {table:"tm_tickets",col:"change_order_id",file:"rfi_pricing_change_order_migration.sql",why:"charging T&M tickets to a change order"},
+  {table:"job_invoices",col:"kind",file:"credit_memo_migration.sql",why:"credit memos"},
+  {table:"job_invoices",col:"pay_app_id",file:"pay_app_invoice_migration.sql",why:"invoices from pay apps"},
+  {table:"estimates",col:"parent_id",file:"bid_multiple_estimates_migration.sql",why:"several estimates under one bid"},
+  {table:"ap_invoices",col:"division",file:"ap_division_backfill.sql",why:"AP invoices by division"},
+];
+let _migCheck=null;
+function checkMigrations(){
+  if(_migCheck)return _migCheck;
+  _migCheck=(async()=>{
+    const missing=[];
+    for(const m of REQUIRED_MIGRATIONS){
+      try{await sb(`/${m.table}?select=${m.col}&limit=1`,{silent:true});}
+      catch(e){if(new RegExp(m.col,"i").test(String(e.message||"")))missing.push(m);}
+    }
+    return missing;
+  })();
+  return _migCheck;
+}
+function MigrationBanner({user}){
+  const [missing,setMissing]=useState([]);
+  useEffect(()=>{if(user?.role!=="admin")return;checkMigrations().then(setMissing).catch(()=>{});},[user?.role]);
+  if(user?.role!=="admin"||!missing.length)return null;
+  const files=[...new Set(missing.map(m=>m.file))];
+  return(<div style={{margin:"12px 16px 0",background:T.redLow,border:`1px solid ${T.red}60`,borderRadius:12,padding:"12px 14px"}}>
+    <div style={{fontSize:13,fontWeight:800,color:T.red,marginBottom:4}}>⚠️ Database is behind the app — {files.length} SQL migration{files.length===1?"":"s"} not run</div>
+    <div style={{fontSize:12,color:T.sub,lineHeight:1.6}}>Run in the Supabase SQL editor: {files.map(f=><code key={f} style={{background:T.surface,padding:"1px 6px",borderRadius:6,marginRight:6}}>{f}</code>)}</div>
+    <div style={{fontSize:11,color:T.muted,marginTop:4}}>Until then: {[...new Set(missing.map(m=>m.why))].join("; ")} won't save correctly.</div>
+  </div>);
+}
 function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCards,onEstimating,onApInvoices,onMyHours,onActivity,onTraining,onMyTraining,onNotifications,notifCount,isOnline,pendingCount,onSync}){
   // Manufacturing jobs live in mfg_jobs, not projects, so counting `projects`
   // by division always returned zero for that card.
@@ -2773,6 +2810,7 @@ function DivisionScreen({user,projects,onSelect,onLogout,onCrew,onDash,onTimeCar
 
   return(
     <div style={{background:T.bg,minHeight:"100vh",fontFamily:"inherit",color:T.text}}>
+      <MigrationBanner user={user}/>
       {/* Header */}
       <div style={{background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"16px",paddingTop:padTop(16)}}>
         {/* Offline / pending banner */}
@@ -3126,7 +3164,7 @@ function DivisionReportsTab({user,division,projects,onErr}){
     const proj=projOf(active);
     return <ReportDetail report={active} project={proj} user={user}
       onBack={()=>{setActive(null);load();}}
-      onDelete={async(id)=>{try{await API.reports.remove(id);setActive(null);await load();}catch(e){onErr&&onErr(e.message);}}}
+      onDelete={async(id)=>{try{await deleteReportEverywhere(id,user);setActive(null);await load();}catch(e){onErr&&onErr(e.message);}}}
       onApprove={(id)=>upd(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()},{status:"approved"})}
       onFlag={(id,pm_notes)=>upd(id,{status:"flagged",pm_notes},{status:"flagged",pm_notes})}
       onArchive={(id,archived)=>upd(id,{archived},{archived})}/>;
@@ -4134,7 +4172,7 @@ async function autoPopulateTimeCards(report, project, source="daily"){
   (report.labor||[]).forEach(l=>{const n=(l.name||"").trim();if(!n)return;const w=want[n]=want[n]||{reg:0,ot:0,travel:0,cls:l.classification||""};
     w.reg+=parseFloat(l.regHrs)||0;w.ot+=parseFloat(l.otHrs)||0;w.travel+=parseFloat(l.travelHrs)||0;if(!w.cls)w.cls=l.classification||"";});
   Object.keys(want).forEach(n=>{const w=want[n];if(w.reg+w.ot+w.travel===0)delete want[n];});
-  let created=0,updated=0,removed=0;
+  let created=0,updated=0,removed=0;const errors=[];
   let existing=[];
   if(sourceId&&!TC_NO_SOURCE_COL){try{existing=(await API.timeCards.forSource(sourceId))||[];}catch(e){existing=[];if(tcColErr(e))TC_NO_SOURCE_COL=true;}}
   for(const name of Object.keys(want)){
@@ -4158,13 +4196,28 @@ async function autoPopulateTimeCards(report, project, source="daily"){
           division:project.division,...hours,notes:`From ${label} · ${project.name}`,source,source_id:sourceId,status:"pending"});
         created++;
       }
-    }catch(e){}
+    }catch(e){errors.push(`${name}: ${e.message||e}`);}
   }
   // Workers taken off the report lose that report's card.
   for(const c of existing){
-    if(!want[c.worker_name]){try{await API.timeCards.remove(c.id);removed++;}catch{}}
+    if(!want[c.worker_name]){try{await API.timeCards.remove(c.id);removed++;}catch(e){errors.push(`${c.worker_name}: ${e.message||e}`);}}
   }
-  return{created,updated,removed};
+  return{created,updated,removed,errors,workers:Object.keys(want).length};
+}
+/* A report saved but its hours did not reach the time cards: say so to the
+   person saving and to the division PM, instead of finding out at payroll. */
+async function reportTimeCardProblem(result,project,user,label){
+  const errs=(result&&result.errors)||[];
+  if(!errs.length)return;
+  const msg=`${label} saved, but time cards could not be updated for ${errs.length} worker${errs.length===1?"":"s"}:\n${errs.slice(0,4).join("\n")}${errs.length>4?"\n…":""}\n\nTell your PM — the hours are on the report and can be rebuilt from the Time Cards tab.`;
+  try{alert(msg);}catch{}
+  try{await notify("timecard_error",`Time cards failed — ${project.name}`,`${user.name}: ${label} saved but ${errs.length} time card${errs.length===1?"":"s"} failed (${errs[0]}). Use ⚡ Rebuild on the Time Cards tab.`,{...(project._mfg?{mfg_job_id:project.id}:{project_id:project.id}),to:await pmsForDivision(project._mfg?"Manufacturing":project.division)});}catch{}
+}
+/* One place that deletes a daily report and everything hanging off it. */
+async function deleteReportEverywhere(id,user){
+  await removeTimeCardsForSource(id).catch(()=>{});
+  await releaseApBilledForSource(id,user).catch(()=>{});
+  await API.reports.remove(id);
 }
 // A deleted report or ticket takes its hours with it.
 async function removeTimeCardsForSource(sourceId){
@@ -4342,7 +4395,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
         await API.reports.update(existing.id,{...reportData,updated_at:new Date().toISOString()});
         clearDraft(draftKey);
         // Time cards follow the report: replace this report's hours on each worker's card.
-        try{await autoPopulateTimeCards({...reportData,id:existing.id},project);}catch(e){}
+        try{const tcr=await autoPopulateTimeCards({...reportData,id:existing.id},project);await reportTimeCardProblem(tcr,project,user,"Report");}catch(e){try{alert("Report saved, but time cards could not be updated: "+e.message);}catch{}}
         try{await syncApBilledFromSource("daily",existing.id,`daily report ${fmtDate(reportData.date)}${reportData.report_no?" #"+reportData.report_no:""}`,apIdsOnReport(reportData),user,project);}catch(e){}
         onSave&&onSave(reportData,existing.id);
       }catch(e){
@@ -4382,8 +4435,8 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
       try{if(savedRow?.id)await syncApBilledFromSource("daily",savedRow.id,`daily report ${fmtDate(reportData.date)}${reportData.report_no?" #"+reportData.report_no:""}`,apIdsOnReport(reportData),user,project);}catch(e){}
       try{
         const tcResult=await autoPopulateTimeCards({...reportData,id:savedRow?.id||null},project);
-
-      }catch(e){}
+        await reportTimeCardProblem(tcResult,project,user,"Report");
+      }catch(e){try{alert("Report saved, but time cards could not be created: "+e.message);}catch{}}
       await notify("report_submitted","New Report Submitted",`${user.name} submitted a report for ${project.name}`,{...(project._mfg?{mfg_job_id:project.id}:{project_id:project.id}),to:await pmsForDivision(project._mfg?"Manufacturing":project.division),except:user.name});
     }catch(e){
       try{
@@ -14154,7 +14207,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   useEffect(()=>{load();const firstTab=visibleTabs[0]?.id||"info";setTab(firstTab);},[project.id]);
 
   async function saveReport(d){try{const{rental_equipment,...dbData}=d;let saved=null;try{saved=await API.reports.create({...dbData,rental_equipment,project_id:project.id});}catch(colErr){if(colErr.message&&colErr.message.includes("rental_equipment")){saved=await API.reports.create({...dbData,project_id:project.id});}else{throw colErr;}}if(!saved)throw new Error("Save failed");await load(true);setScreen("detail");return Array.isArray(saved)?saved[0]:saved;}catch(e){setErr(e.message);}}
-  async function deleteReport(id){try{await removeTimeCardsForSource(id);await releaseApBilledForSource(id,user).catch(()=>{});await API.reports.remove(id);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
+  async function deleteReport(id){try{await deleteReportEverywhere(id,user);setActiveReport(null);await load(true);setScreen("detail");}catch(e){setErr(e.message);}}
   async function approveReport(id){try{await API.reports.update(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});setActiveReport(r=>({...r,status:"approved"}));await load(true);}catch(e){setErr(e.message);}}
   async function flagReport(id,pm_notes){try{await API.reports.update(id,{status:"flagged",pm_notes});setActiveReport(r=>({...r,status:"flagged",pm_notes}));{const rep=(reports||[]).find(r=>r.id===id)||activeReport||{};await notify("report_flagged",`Report Flagged — ${project.name}`,pm_notes,{project_id:project.id,report_id:id,to:rep.submitted_by,except:user.name});}await load(true);}catch(e){setErr(e.message);}}
   async function updateProject(data){
@@ -22770,7 +22823,7 @@ function MfgDivisionReportsTab({jobs,user}){
   if(active&&jobOf(active)){
     return <ReportDetail report={active} project={mfgJobAsProject(jobOf(active))} user={user}
       onBack={()=>{setActive(null);load();}}
-      onDelete={async(id)=>{try{await API.reports.remove(id);setActive(null);await load();}catch(e){setErr(e.message);}}}
+      onDelete={async(id)=>{try{await deleteReportEverywhere(id,user);setActive(null);await load();}catch(e){setErr(e.message);}}}
       onApprove={(id)=>upd(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()},{status:"approved"})}
       onFlag={(id,pm_notes)=>upd(id,{status:"flagged",pm_notes},{status:"flagged",pm_notes})}
       onArchive={(id,archived)=>upd(id,{archived},{archived})}/>;
@@ -22833,7 +22886,7 @@ function MfgDailyReportsTab({job,user,onErr}){
   if(mode==="detail"&&active)return(
     <ReportDetail report={active} project={project} user={user}
       onBack={()=>{setMode("list");setActive(null);load();}}
-      onDelete={async(id)=>{try{await API.reports.remove(id);setActive(null);setMode("list");await load();}catch(e){onErr&&onErr(e.message);}}}
+      onDelete={async(id)=>{try{await deleteReportEverywhere(id,user);setActive(null);setMode("list");await load();}catch(e){onErr&&onErr(e.message);}}}
       onApprove={(id)=>upd(id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()},{status:"approved"})}
       onFlag={(id,pm_notes)=>upd(id,{status:"flagged",pm_notes},{status:"flagged",pm_notes})}
       onArchive={(id,archived)=>upd(id,{archived},{archived})}/>
@@ -24239,7 +24292,7 @@ function tmTicketToLabor(data){
     report_no:data.ticket_no||"",
     labor:(data.labor||[])
       .filter(r=>r&&(r.classification||"")!==PER_DIEM_CLASS)
-      .map(r=>({name:(r.name||r.worker_name||"").trim(),classification:r.classification||"",
+      .map(r=>({name:String(r.name==="__other"?(r.customName||""):(r.name||r.worker_name||"")).trim(),classification:r.classification||"",
         regHrs:r.hours||0,otHrs:r.ot_hours||0,travelHrs:r.travel_hours||0}))
       .filter(r=>r.name),
   };
@@ -24585,9 +24638,10 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
         const r=await API.tmTickets.create(data);const row=Array.isArray(r)?r[0]:r;
         try{if(row?.id)await syncApBilledFromSource("tm",row.id,`T&M ticket ${data.ticket_no||""}`.trim(),apIdsOnReport(data),user,project);}catch{}
         const tc=await feedTimeCardsFromTM({...data,id:row?.id||null},project);
+        await reportTimeCardProblem(tc,project,user,"T&M ticket");
         if(tc.created+tc.updated>0)alert(`Ticket saved. ${tc.created+tc.updated} time card${tc.created+tc.updated!==1?"s":""} updated with these hours (pending approval).`);
       }
-      else{await API.tmTickets.update(ticket.id,data);try{await syncApBilledFromSource("tm",ticket.id,`T&M ticket ${data.ticket_no||""}`.trim(),apIdsOnReport(data),user,project);}catch{}await feedTimeCardsFromTM({...data,id:ticket.id},project);}
+      else{await API.tmTickets.update(ticket.id,data);try{await syncApBilledFromSource("tm",ticket.id,`T&M ticket ${data.ticket_no||""}`.trim(),apIdsOnReport(data),user,project);}catch{}const tcu=await feedTimeCardsFromTM({...data,id:ticket.id},project);await reportTimeCardProblem(tcu,project,user,"T&M ticket");}
       onSaved&&onSaved();
     }catch(e){
       try{
