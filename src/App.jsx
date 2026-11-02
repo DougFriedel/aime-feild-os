@@ -4111,6 +4111,21 @@ const reportOwnerFields=(project)=>project._mfg?{project_id:null,mfg_job_id:proj
    shows the hours as entered; deleting the document removes them. One card per
    worker per document, so two reports on the same day for the same person are two
    cards that add up on My Hours and the PM's Time Cards tab. */
+/* If the source_id column is missing (migration not run yet) every card
+   insert fails silently and the report produces no time cards at all. Retry
+   without the column so hours still land; the link is added once the SQL runs. */
+let TC_NO_SOURCE_COL=false;
+const tcColErr=(e)=>/source_id/i.test(String(e&&e.message||""));
+async function tcCreate(body){
+  if(TC_NO_SOURCE_COL){const {source_id,...b}=body;return API.timeCards.create(b);}
+  try{return await API.timeCards.create(body);}
+  catch(e){if(!tcColErr(e))throw e;TC_NO_SOURCE_COL=true;const {source_id,...b}=body;return API.timeCards.create(b);}
+}
+async function tcUpdate(id,body){
+  if(TC_NO_SOURCE_COL){const {source_id,...b}=body;return API.timeCards.update(id,b);}
+  try{return await API.timeCards.update(id,body);}
+  catch(e){if(!tcColErr(e))throw e;TC_NO_SOURCE_COL=true;const {source_id,...b}=body;return API.timeCards.update(id,b);}
+}
 async function autoPopulateTimeCards(report, project, source="daily"){
   const sourceId=report.id||report._source_id||null;
   const label=source==="tm"?`T&M ticket${report.report_no?" "+report.report_no:""}`:`daily report${report.report_no?" #"+report.report_no:""}`;
@@ -4121,12 +4136,12 @@ async function autoPopulateTimeCards(report, project, source="daily"){
   Object.keys(want).forEach(n=>{const w=want[n];if(w.reg+w.ot+w.travel===0)delete want[n];});
   let created=0,updated=0,removed=0;
   let existing=[];
-  if(sourceId){try{existing=(await API.timeCards.forSource(sourceId))||[];}catch{existing=[];}}
+  if(sourceId&&!TC_NO_SOURCE_COL){try{existing=(await API.timeCards.forSource(sourceId))||[];}catch(e){existing=[];if(tcColErr(e))TC_NO_SOURCE_COL=true;}}
   for(const name of Object.keys(want)){
     const w=want[name];
     try{
       let card=existing.find(c=>c.worker_name===name)||null;
-      if(!card&&!existing.length){
+      if(!card&&(!existing.length||TC_NO_SOURCE_COL)){
         // Cards made before source tracking: adopt the report-fed card for this worker/day/job.
         const old=project._mfg?await API.timeCards.findMfg(name,report.date,project.id):await API.timeCards.find(name,report.date,project.id);
         card=(Array.isArray(old)?old:[]).find(c=>(c.source||"manual")!=="punch"&&!c.source_id)||null;
@@ -4137,9 +4152,9 @@ async function autoPopulateTimeCards(report, project, source="daily"){
         const body={...hours,source_id:sourceId||card.source_id||null,notes:`From ${label} · ${project.name}`};
         // An approved card whose hours change goes back to pending so the PM sees it again.
         if(changed&&card.status==="approved")Object.assign(body,{status:"pending",approved_by:null,approved_at:null,notes:body.notes+" · hours changed after approval, re-approve"});
-        if(changed||card.source_id!==sourceId){await API.timeCards.update(card.id,body);updated++;}
+        if(changed||card.source_id!==sourceId){await tcUpdate(card.id,body);updated++;}
       }else{
-        await API.timeCards.create({worker_name:name,date:report.date,project_id:project._mfg?null:project.id,mfg_job_id:project._mfg?project.id:null,
+        await tcCreate({worker_name:name,date:report.date,project_id:project._mfg?null:project.id,mfg_job_id:project._mfg?project.id:null,
           division:project.division,...hours,notes:`From ${label} · ${project.name}`,source,source_id:sourceId,status:"pending"});
         created++;
       }
@@ -9882,6 +9897,31 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
 
   /* ── Edit any card (pending or approved) with an audit trail ── */
   const canEdit=!readOnly&&(user.role==='admin'||user.role==='pm');
+  const [rebuilding,setRebuilding]=useState("");
+  // Hours live on the daily reports and T&M tickets; the cards are derived.
+  // This re-derives them for the range — fills gaps (a report that never made
+  // cards) and corrects edited hours, without touching approved cards whose
+  // hours already match.
+  async function rebuildFromReports(){
+    if(!fromDate||!toDate)return;
+    const projs=projects.filter(p=>!division||p.division===division);
+    if(!window.confirm(`Rebuild time cards from every daily report and T&M ticket on ${projs.length} ${division||""} job${projs.length===1?"":"s"} between ${fmtDate(fromDate)} and ${fmtDate(toDate)}?\n\nMissing cards are created, hours that changed are updated. Approved cards whose hours changed go back to pending.`))return;
+    setRebuilding("Loading reports…");
+    let created=0,updated=0,removed=0,docs=0;
+    try{
+      const [reps,tms]=await Promise.all([
+        sb(`/daily_reports?date=gte.${fromDate}&date=lte.${toDate}&select=*&limit=5000`).catch(()=>[]),
+        sb(`/tm_tickets?ticket_date=gte.${fromDate}&ticket_date=lte.${toDate}&select=*&limit=5000`).catch(()=>[])]);
+      const byId={};projs.forEach(p=>byId[p.id]=p);
+      const R=(reps||[]).filter(r=>byId[r.project_id]&&r.status!=="archived");
+      const Tk=(tms||[]).filter(t=>byId[t.project_id]&&t.status!=="void");
+      for(const r of R){setRebuilding(`Daily reports ${++docs} of ${R.length+Tk.length}…`);try{const x=await autoPopulateTimeCards(r,byId[r.project_id]);created+=x.created;updated+=x.updated;removed+=x.removed;}catch{}}
+      for(const t of Tk){setRebuilding(`T&M tickets ${++docs} of ${R.length+Tk.length}…`);try{const x=await feedTimeCardsFromTM(t,byId[t.project_id]);created+=x.created||0;updated+=x.updated||0;}catch{}}
+      const r2=await API.timeCards.byRange(fromDate,toDate);setCards(Array.isArray(r2)?r2:[]);
+      alert(`Done. ${R.length} daily report${R.length===1?"":"s"} and ${Tk.length} T&M ticket${Tk.length===1?"":"s"} checked: ${created} card${created===1?"":"s"} created, ${updated} updated, ${removed} removed.`);
+    }catch(e){setErr(e.message);}
+    setRebuilding("");
+  }
   const [edit,setEdit]=useState(null);       // card id
   const [draft,setDraft]=useState({});
   const [saving,setSaving]=useState(false);
@@ -10090,6 +10130,8 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
                 <div key={l} style={{...cardS,textAlign:'center',padding:10}}><div style={{fontSize:18,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:9.5,color:T.muted,textTransform:'uppercase',letterSpacing:'0.8px'}}>{l}</div></div>))}
               {pend.length>0&&<button onClick={()=>{if(window.confirm(`Approve all ${pend.length} pending time cards in this range?`))approveIds(pend.map(c=>c.id),'approved');}}
                 style={{...primBtn,gridColumn:'1 / -1',borderRadius:12,background:T.green,color:'#000',fontSize:13}}>✓ Approve all pending ({pend.length})</button>}
+              <button onClick={rebuildFromReports} disabled={!!rebuilding} title="Re-create time cards from every daily report and T&M ticket in this date range"
+                style={{...ghostBtn,gridColumn:'1 / -1',textAlign:'center',fontSize:12,color:T.blue,borderColor:T.blue+"50",opacity:rebuilding?0.6:1}}>{rebuilding||"⚡ Rebuild time cards from reports in this range"}</button>
             </div>
           );
         })()}
