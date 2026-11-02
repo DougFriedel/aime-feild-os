@@ -9836,24 +9836,35 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
       await notify("timecard_flag",`Time card flagged — ${c.worker_name}`,`${user.name} (${division}) flagged ${c.worker_name}'s ${c.date} card on ${jobOf(c)||"a job"}${note.trim()?": "+note.trim():""}`,{project_id:c.project_id||null,to:[c.worker_name,...await pmsForDivision(cardDiv(c))],except:user.name});
     }catch(e){setErr(e.message);}
   }
-  useEffect(()=>{(async()=>{
-    // A half-typed or cleared date box sends "" and Postgres rejects it.
-    if(!fromDate||!toDate)return;
-    setLoading(true);
-    try{
-      // byRange, not all() — all() caps at 500 rows ordered by date, so on a
-      // busy month the oldest cards silently vanished from the report.
-      const [r,m,pr]=await Promise.all([
-        API.timeCards.byRange(fromDate,toDate),
-        API.mfg.jobs.list().catch(()=>[]),
-        division?API.userProfiles.list().catch(()=>[]):Promise.resolve([]),
-      ]);
-      setCards(Array.isArray(r)?r:[]);
-      setMfgJobs(Array.isArray(m)?m:[]);
-      setProfiles(Array.isArray(pr)?pr:[]);
-    }catch(e){setErr(e.message);}
-    setLoading(false);
-  })();},[fromDate,toDate]);
+  // Typing a date fires this once per keystroke ("0002-10-26", "0020-10-26" …).
+  // Each one started a request, and whichever answered last won — often a
+  // stale, empty one, so a hand-typed range showed nothing. Now: wait until
+  // typing stops, and ignore any answer that isn't for the latest range.
+  const tcReq=useRef(0);
+  useEffect(()=>{
+    // A half-typed or cleared date box sends "" and Postgres rejects it; a
+    // 4-digit year under 2000 is still being typed.
+    if(!fromDate||!toDate||fromDate<"2000"||toDate<"2000")return;
+    const my=++tcReq.current;
+    const timer=setTimeout(async()=>{
+      setLoading(true);
+      try{
+        // byRange, not all() — all() caps at 500 rows ordered by date, so on a
+        // busy month the oldest cards silently vanished from the report.
+        const [r,m,pr]=await Promise.all([
+          API.timeCards.byRange(fromDate,toDate),
+          API.mfg.jobs.list().catch(()=>[]),
+          division?API.userProfiles.list().catch(()=>[]):Promise.resolve([]),
+        ]);
+        if(my!==tcReq.current)return;   // a newer range has been typed since
+        setCards(Array.isArray(r)?r:[]);
+        setMfgJobs(Array.isArray(m)?m:[]);
+        setProfiles(Array.isArray(pr)?pr:[]);
+      }catch(e){if(my===tcReq.current)setErr(e.message);}
+      if(my===tcReq.current)setLoading(false);
+    },350);
+    return ()=>clearTimeout(timer);
+  },[fromDate,toDate]);
 
   /* One lookup for both kinds of card. */
   const jobOf=(c)=>{
