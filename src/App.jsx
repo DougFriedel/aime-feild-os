@@ -2804,6 +2804,7 @@ const REQUIRED_MIGRATIONS=[
   {table:"ap_invoices",col:"division",file:"ap_division_backfill.sql",why:"AP invoices by division"},
   {table:"projects",col:"invoice_prefs",file:"invoice_prefs_migration.sql",why:"remembering how each job's invoices are built and printed"},
   {table:"tm_tickets",col:"from_report_id",file:"invoice_prefs_migration.sql",why:"creating a T&M ticket from a daily report"},
+  {table:"estimates",col:"proposal_items",file:"proposal_items_migration.sql",why:"work items on proposals"},
 ];
 let _migCheck=null;
 function checkMigrations(){
@@ -11895,6 +11896,12 @@ function buildProposalHtml(bid,f,total,breakdown,show){
   *{box-sizing:border-box}
   body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:9pt;line-height:1.35;margin:0}
   .twocol{display:flex;gap:26px;align-items:flex-start}
+  .items{margin:14px 0 6px}
+  .item{display:flex;justify-content:space-between;align-items:flex-start;padding:10px 0 8px;border-bottom:1px solid #eee}
+  .itemname{font-size:10pt;color:#111;padding-top:2px}
+  .itemcost{text-align:right}
+  .itemlabel{font-size:8pt;color:#2F5496}
+  .itemamt{font-size:10pt;font-weight:600;color:#111;margin-top:2px}
   .twocol>div{flex:1;min-width:0}
   .run{position:running(head)}
   .quoteline{text-align:right;font-size:9pt;color:#222;margin-bottom:6px}
@@ -11954,6 +11961,10 @@ function buildProposalHtml(bid,f,total,breakdown,show){
 
   <h2>Scope of Work</h2>
   ${bid.scope_of_work?`<div>${lines(bid.scope_of_work).map(l=>l.startsWith("-")||l.startsWith("•")?`<ul class="scope"><li>${l.replace(/^[-•]\s*/,"")}</li></ul>`:`<div>${l}</div>`).join("")}</div>`:'<div class="muted">No scope entered.</div>'}
+
+  ${(()=>{if(!show.items)return "";let its=bid.proposal_items;try{if(typeof its==="string")its=JSON.parse(its);}catch{its=[];}
+    if(!Array.isArray(its)||!its.length)return "";
+    return `<div class="items">${its.map(it=>`<div class="item"><div class="itemname">${esc(it.name)}</div><div class="itemcost"><div class="itemlabel">Total Cost</div><div class="itemamt">${money(it.amount)}</div></div></div>`).join("")}</div>`;})()}
 
   <div class="twocol">
     <div><h3>Included (+)</h3>${bulletBlock(inc)}</div>
@@ -12101,6 +12112,28 @@ function ProposalTab({bid,user,onErr,onSaved}){
   });
   const toggleShow=(k)=>{setShow(v=>({...v,[k]:!v[k]}));setDirty(true);};
   const [breakdown,setBreakdown]=useState({});
+  /* Work items: named groups of estimate lines, each shown to the client as
+     one "Total Cost" (Trench for New Rectifier … $15,324.00). The lines
+     keep their category markup, overhead, discount, tax, bond and permits
+     spread pro rata, so the items always add up to the proposal total. */
+  const [items,setItems]=useState(()=>{const raw=bid.proposal_items;try{const v=typeof raw==="string"?JSON.parse(raw):raw;return Array.isArray(v)?v.filter(i=>!i.auto).map(i=>({id:i.id,name:i.name||"",line_ids:i.line_ids||[]})):[];}catch{return [];}});
+  const [lineSell,setLineSell]=useState([]);   // [{id,description,category,qty,unit,sell}]
+  const newId=()=>Math.random().toString(36).slice(2,9);
+  const addItem=()=>{setItems(x=>[...x,{id:newId(),name:"",line_ids:[]}]);setDirty(true);};
+  const setItem=(id,patch)=>{setItems(x=>x.map(i=>i.id===id?{...i,...patch}:i));setDirty(true);};
+  const removeItem=(id)=>{setItems(x=>x.filter(i=>i.id!==id));setDirty(true);};
+  const toggleLine=(itemId,lineId)=>{setItems(x=>x.map(i=>{if(i.id===itemId){const has=i.line_ids.includes(lineId);return {...i,line_ids:has?i.line_ids.filter(l=>l!==lineId):[...i.line_ids,lineId]};}
+    // a line belongs to one item only
+    return i.line_ids.includes(lineId)?{...i,line_ids:i.line_ids.filter(l=>l!==lineId)}:i;}));setDirty(true);};
+  const sellOf=(lineId)=>(lineSell.find(l=>l.id===lineId)||{}).sell||0;
+  const itemAmount=(it)=>it.line_ids.reduce((s,id)=>s+sellOf(id),0);
+  const assigned=new Set(items.flatMap(i=>i.line_ids));
+  const unassigned=lineSell.filter(l=>!assigned.has(l.id));
+  const generalAmt=unassigned.reduce((s,l)=>s+l.sell,0);
+  // What gets saved and printed: the named items plus a "General" item for anything not assigned.
+  const itemsForProposal=()=>{const out=items.filter(i=>i.line_ids.length||i.name.trim()).map(i=>({id:i.id,name:i.name.trim()||"Work item",line_ids:i.line_ids,amount:Math.round(itemAmount(i)*100)/100}));
+    if(unassigned.length&&items.length)out.push({id:"general",name:show.general_name||"General Conditions",line_ids:unassigned.map(l=>l.id),amount:Math.round(generalAmt*100)/100,auto:true});
+    return out;};
   // Pulled from the estimate so the proposal cannot drift from it.
   const [postTax,setPostTax]=useState({preTax:0,tax:0,bond:0,permits:0});
   const [dirty,setDirty]=useState(false);
@@ -12202,6 +12235,23 @@ function ProposalTab({bid,user,onErr,onSaved}){
         split[bucket(c)]+=v*(1+(key?Number(rates[key])||0:0)/100);
       });
       setBreakdown({...split,overhead,discount,markup:marked-Object.values(cat).reduce((a,b)=>a+b,0)});
+      // Per-line sell price for work items: category markup, then overhead
+      // and discount, then scaled so the lines add up to the proposal total
+      // (tax, bond and permits are spread pro rata by that scaling).
+      const raw=(lines||[]).map(l=>{
+        const qty=qtyFor(l), wpu=weightOf(l);
+        const byWeight=l.pricing_basis==="weight"&&wpu>0;
+        const eff=byWeight?(Number(l.price_per_weight)||0)*wpu:(Number(l.unit_cost)||0);
+        const mat=qty*eff*(1+(Number(l.waste_pct)||0)/100);
+        const rate=l.labor_rate!=null&&l.labor_rate!==""?Number(l.labor_rate):Number(bid.labor_cost_rate)||102;
+        const lab=qty*(Number(l.labor_hours)||0)*rate;
+        const mk=(c)=>{const key=MARKUP_KEY[c];return 1+(key?Number(rates[key])||0:0)/100;};
+        const marked=mat*mk(l.category||"Other")+lab*mk("Labor");
+        return {id:l.id,description:l.description||l.item||"(no description)",category:l.category||"Other",qty,unit:l.unit||"",sell:marked*(1+(Number(bid.overhead_pct)||0)/100)*(1-(Number(bid.discount_pct)||0)/100)};
+      });
+      const rawSum=raw.reduce((s,l)=>s+l.sell,0);
+      const scale=rawSum>0&&t>0?t/rawSum:1;
+      setLineSell(raw.map(l=>({...l,sell:l.sell*scale})));
     }catch(e){ /* fall back to the figure stored on the bid */ }
   })();},[bid.id]);
 
@@ -12213,6 +12263,7 @@ function ProposalTab({bid,user,onErr,onSaved}){
       // what was previewed here.
       await API.estimates.update(bid.id,{...f,
         proposal_show:show,
+        proposal_items:itemsForProposal(),
         proposal_breakdown:{...breakdown,tax:taxAmt},
         total_sales:total,
         updated_at:new Date().toISOString()});
@@ -12229,7 +12280,7 @@ function ProposalTab({bid,user,onErr,onSaved}){
   const taxAmt=postTax.tax;
   const grand=total;                    // total already includes tax, bond, permits
   const buildHtml=()=>buildProposalHtml(
-    bid,f,total,
+    {...bid,proposal_items:itemsForProposal()},f,total,
     {...breakdown,tax:postTax.tax,bond:postTax.bond,permits:postTax.permits},show);
 
   const proposalLink=()=>`${window.location.origin}${window.location.pathname}?proposal=${bid.id}`;
@@ -12355,6 +12406,38 @@ function ProposalTab({bid,user,onErr,onSaved}){
 
       {/* What the client sees. Lump sum by default — an itemised proposal
           invites line-by-line negotiation — but some clients require one. */}
+      <div style={card}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,gap:10}}>
+          <div style={{fontSize:15,fontWeight:800,color:T.text}}>Work Items on the Proposal</div>
+          <button onClick={()=>toggleShow("items")} style={{...ghostBtn,padding:"7px 12px",fontSize:12,fontWeight:800,borderColor:show.items?T.green:T.border,color:show.items?T.green:T.sub,background:show.items?T.greenLow:"transparent"}}>{show.items?"☑ Shown":"☐ Hidden"}</button>
+        </div>
+        <div style={{fontSize:11.5,color:T.muted,marginBottom:12,lineHeight:1.5}}>Group the estimate's lines into named items — "Trench for New Rectifier", "Install New Anodes" — and the client sees one Total Cost per item. Markup, overhead, tax and bond are spread across them so the items add up to the proposal total.</div>
+        {items.map((it,idx)=>(
+          <div key={it.id} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 12px",marginBottom:8}}>
+            <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+              <span style={{fontSize:11,color:T.muted,fontWeight:700}}>{idx+1}.</span>
+              <input value={it.name} onChange={e=>setItem(it.id,{name:e.target.value})} placeholder="Item name as the client should read it" style={{...inp,flex:1,padding:"8px 10px",fontSize:13,fontWeight:700}}/>
+              <span style={{fontSize:14,fontWeight:900,color:T.green,flexShrink:0}}>{money(itemAmount(it))}</span>
+              <button onClick={()=>removeItem(it.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"4px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+              {lineSell.map(l=>{const mine=it.line_ids.includes(l.id);const elsewhere=!mine&&assigned.has(l.id);return(
+                <label key={l.id} style={{display:"flex",gap:8,alignItems:"center",padding:"6px 8px",borderRadius:8,cursor:"pointer",background:mine?T.greenLow:"transparent",border:`1px solid ${mine?T.green+"60":T.border}`,opacity:elsewhere?0.45:1}}>
+                  <input type="checkbox" checked={mine} onChange={()=>toggleLine(it.id,l.id)} style={{accentColor:T.green}}/>
+                  <span style={{flex:1,minWidth:0,fontSize:11.5,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={`${l.description} · ${l.category}`}>{l.description}<span style={{color:T.muted}}> · {l.category}</span></span>
+                  <span style={{fontSize:11,color:T.sub,flexShrink:0}}>{money(l.sell)}</span>
+                </label>);})}
+              {lineSell.length===0&&<div style={{fontSize:12,color:T.muted,gridColumn:"1/-1"}}>No priced lines on the Estimating tab yet.</div>}
+            </div>
+          </div>))}
+        <button onClick={addItem} style={{...ghostBtn,width:"100%",textAlign:"center",fontSize:12.5,color:T.orange,borderColor:T.orange+"60",borderStyle:"dashed"}}>+ Add work item</button>
+        {items.length>0&&unassigned.length>0&&<div style={{marginTop:10,padding:"8px 12px",borderRadius:10,background:T.yellowLow,border:`1px solid ${T.yellow}40`,fontSize:12,color:T.sub,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          <span style={{flex:1}}>{unassigned.length} line{unassigned.length===1?"":"s"} not in any item ({money(generalAmt)}) will print as:</span>
+          <input value={show.general_name||"General Conditions"} onChange={e=>{setShow(v=>({...v,general_name:e.target.value}));setDirty(true);}} style={{...inp,width:200,padding:"6px 10px",fontSize:12}}/>
+        </div>}
+        {items.length>0&&<div style={{display:"flex",justifyContent:"space-between",marginTop:10,fontSize:12.5,fontWeight:700,color:T.sub}}><span>Items total</span><span style={{color:T.green}}>{money(itemsForProposal().reduce((s,i)=>s+i.amount,0))}</span></div>}
+      </div>
+
       <div style={card}>
         <div style={{fontSize:15,fontWeight:800,color:T.text,marginBottom:4}}>What the Client Sees</div>
         <div style={{fontSize:11.5,color:T.muted,marginBottom:12}}>
