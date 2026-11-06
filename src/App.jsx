@@ -2805,6 +2805,7 @@ const REQUIRED_MIGRATIONS=[
   {table:"projects",col:"invoice_prefs",file:"invoice_prefs_migration.sql",why:"remembering how each job's invoices are built and printed"},
   {table:"tm_tickets",col:"from_report_id",file:"invoice_prefs_migration.sql",why:"creating a T&M ticket from a daily report"},
   {table:"estimates",col:"proposal_items",file:"proposal_items_migration.sql",why:"work items on proposals"},
+  {table:"estimates",col:"job_links",file:"estimate_job_links_migration.sql",why:"attaching one estimate to several job numbers"},
 ];
 let _migCheck=null;
 function checkMigrations(){
@@ -11533,8 +11534,38 @@ function AddEstimateModal({bid,family,user,onClose,onDone,onErr}){
 }
 
 /* Attach a bid, at any stage, to a job that already exists (the reverse of "Make it a Job"). */
+/* An estimate can serve several job numbers (one bid, three POs). The links
+   live in estimates.job_links [{kind,id,label,division}]; job_project_id /
+   job_mfg_id stay as the first link so older screens keep working. */
+function estimateJobLinks(bid){
+  let links=bid?.job_links;try{if(typeof links==="string")links=JSON.parse(links);}catch{links=[];}
+  links=Array.isArray(links)?links.filter(l=>l&&l.id):[];
+  const primary=bid?.job_project_id?{kind:"project",id:bid.job_project_id}:bid?.job_mfg_id?{kind:"mfg",id:bid.job_mfg_id}:null;
+  if(primary&&!links.some(l=>l.id===primary.id))links.unshift({...primary,label:bid.job_number||"",division:bid.job_division||""});
+  return links;
+}
+function jobLinksPatch(links,user){
+  const first=links[0]||null;
+  return {job_links:links,job_project_id:first&&first.kind==="project"?first.id:null,job_mfg_id:first&&first.kind==="mfg"?first.id:null,
+    job_number:first?first.label:null,job_division:first?first.division:null,
+    ...(first?{converted_by:user?.name||null,converted_at:new Date().toISOString()}:{}),updated_at:new Date().toISOString()};
+}
+async function saveJobLinks(bid,links,user){
+  const body=jobLinksPatch(links,user);
+  try{await API.estimates.update(bid.id,body);}
+  catch(e){
+    if(!/job_links/i.test(String(e.message||"")))throw e;
+    // column not there yet (proposal/job-links migration not run): keep the first job only
+    const {job_links,...b}=body;await API.estimates.update(bid.id,b);
+    throw new Error("Only the first job was saved — run estimate_job_links_migration.sql to attach an estimate to several jobs.");
+  }
+}
 function AttachJobModal({bid,user,onClose,onDone,onErr}){
   const [jobs,setJobs]=useState(null);const [q,setQ]=useState("");const [busy,setBusy]=useState(false);
+  const [links,setLinks]=useState(()=>estimateJobLinks(bid));
+  const linked=(j)=>links.some(l=>l.id===j.id);
+  const toggle=(j)=>setLinks(ls=>linked(j)?ls.filter(l=>l.id!==j.id):[...ls,{kind:j.kind,id:j.id,label:j.label,division:j.division}]);
+  async function saveAll(){setBusy(true);try{await saveJobLinks(bid,links,user);onDone&&onDone();}catch(e){onErr&&onErr(e.message);onDone&&onDone();}}
   useEffect(()=>{(async()=>{try{
     const [p,m]=await Promise.all([sb("/projects?select=id,name,client,division,status,location&order=created_at.desc&limit=600").catch(()=>[]),API.mfg.jobs.list().catch(()=>[])]);
     setJobs([...(p||[]).map(x=>({kind:"project",id:x.id,label:x.name,sub:[x.client,x.division,x.location,x.status].filter(Boolean).join(" · "),division:x.division})),
@@ -11553,16 +11584,20 @@ function AttachJobModal({bid,user,onClose,onDone,onErr}){
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:220,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:20,width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",border:`1px solid ${T.border}`}}>
-        <div style={{fontSize:16,fontWeight:900,marginBottom:4}}>Attach this estimate to a job</div>
-        <div style={{fontSize:12,color:T.muted,marginBottom:10}}>The job's Estimate tab will show this estimate and compare it to the daily reports.</div>
+        <div style={{fontSize:16,fontWeight:900,marginBottom:4}}>Jobs this estimate covers</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:10}}>Tick every job number this estimate was priced for. Each job's Estimate tab will show it and compare it to that job's daily reports.</div>
+        {links.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>{links.map(l=><span key={l.id} style={{...pill(T.green),display:"inline-flex",alignItems:"center",gap:6}}>{l.kind==="mfg"?"🏭 ":""}{l.label}<span onClick={()=>setLinks(ls=>ls.filter(x=>x.id!==l.id))} style={{cursor:"pointer",opacity:0.8}} title="Remove">×</span></span>)}</div>}
         <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search job number, customer, division…" style={{...inp,marginBottom:10}} autoFocus/>
         {jobs===null&&<Spinner/>}
-        {list.slice(0,80).map(j=>(<div key={j.kind+j.id} style={{...cardS,marginBottom:6,padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
-          <div style={{minWidth:0}}><div style={{fontSize:13.5,fontWeight:700}}>{j.kind==="mfg"?"🏭 ":""}{j.label}</div><div style={{fontSize:11,color:T.muted}}>{j.sub}</div></div>
-          <button disabled={busy} onClick={()=>pick(j)} style={{...ghostBtn,padding:"6px 12px",fontSize:11.5,color:T.orange,borderColor:T.orange+"60",flexShrink:0}}>Attach</button>
-        </div>))}
+        {list.slice(0,80).map(j=>{const on=linked(j);return(<label key={j.kind+j.id} style={{...cardS,marginBottom:6,padding:"10px 12px",display:"flex",alignItems:"center",gap:10,cursor:"pointer",border:`1px solid ${on?T.green:T.border}`,background:on?T.greenLow:T.card}}>
+          <input type="checkbox" checked={on} onChange={()=>toggle(j)} style={{accentColor:T.green}}/>
+          <div style={{minWidth:0,flex:1}}><div style={{fontSize:13.5,fontWeight:700}}>{j.kind==="mfg"?"🏭 ":""}{j.label}</div><div style={{fontSize:11,color:T.muted}}>{j.sub}</div></div>
+        </label>);})}
         {jobs&&list.length===0&&<div style={{color:T.muted,fontSize:12,textAlign:"center",padding:20}}>No jobs match.</div>}
-        <button onClick={onClose} style={{...ghostBtn,width:"100%",marginTop:8}}>Cancel</button>
+        <div style={{display:"flex",gap:8,marginTop:10}}>
+          <button disabled={busy} onClick={saveAll} style={{...primBtn,flex:2,borderRadius:10,background:T.green,color:"#000",opacity:busy?0.6:1}}>{busy?"Saving…":`Save (${links.length} job${links.length===1?"":"s"})`}</button>
+          <button onClick={onClose} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
+        </div>
       </div>
     </div>
   );
@@ -11634,13 +11669,9 @@ function BidDetail({bidId,user,onBack,onChanged,backLabel}){
             {bid.name||"Untitled bid"}
           </div>
           {bid.rfi_id&&<span style={{...pill(T.purple),padding:"7px 12px",fontSize:11.5}} title="Change-order quote for a client RFI">📝 {rfiTag(bid.rfi_ref)} quote</span>}
-          {converted&&<span style={{...pill(T.green),padding:"7px 12px",fontSize:11.5}}>
-            ✓ Job {bid.job_number||""}{bid.job_division?` · ${bid.job_division}`:""}
-          </span>}
-          {!converted&&<button onClick={()=>setAttachJob(true)} title="Link this estimate to a job that already exists"
-            style={{...ghostBtn,padding:"8px 12px",fontSize:11.5,flexShrink:0}}>🔗 Attach to job</button>}
-          {converted&&user.role==="admin"&&<button onClick={()=>{if(window.confirm("Detach this estimate from the job?"))patch({job_project_id:null,job_mfg_id:null,job_number:null,job_division:null});}} title="Unlink from the job"
-            style={{...ghostBtn,padding:"8px 10px",fontSize:11.5,flexShrink:0}}>Detach</button>}
+          {estimateJobLinks(bid).map(l=><span key={l.id} style={{...pill(T.green),padding:"7px 12px",fontSize:11.5}}>✓ {l.kind==="mfg"?"🏭 ":"Job "}{l.label||""}{l.division?` · ${l.division}`:""}</span>)}
+          <button onClick={()=>setAttachJob(true)} title="Link this estimate to one or more jobs"
+            style={{...ghostBtn,padding:"8px 12px",fontSize:11.5,flexShrink:0}}>🔗 {converted?"Jobs":"Attach to job"}</button>
           {canConvert&&!converted&&<button onClick={()=>setConvert(true)}
             style={{...primBtn,padding:"8px 14px",borderRadius:8,fontSize:11.5,background:T.green,color:"#000",flexShrink:0}}>
             🚀 Make it a Job
@@ -20838,7 +20869,9 @@ function JobEstimateTab({project,user,reports,onErr}){
   async function load(){
     setLoading(true);
     try{
-      const rows=await sb(`/estimates?job_project_id=eq.${project.id}&rfi_id=is.null&select=*&order=converted_at.desc.nullslast&limit=1`);
+      let rows;
+      try{rows=await sb(`/estimates?or=(job_project_id.eq.${project.id},job_links.cs.${encodeURIComponent(JSON.stringify([{id:project.id}]))})&rfi_id=is.null&select=*&order=converted_at.desc.nullslast&limit=1`,{silent:true});}
+      catch{rows=await sb(`/estimates?job_project_id=eq.${project.id}&rfi_id=is.null&select=*&order=converted_at.desc.nullslast&limit=1`);}
       const e=(rows||[])[0]||null;setEst(e);
       setLines(e?(await API.estimateLines.forEstimate(e.id).catch(()=>[]))||[]:[]);
     }catch(e){onErr&&onErr(e.message);}
@@ -20847,17 +20880,21 @@ function JobEstimateTab({project,user,reports,onErr}){
   useEffect(()=>{load();},[project.id]);
   async function openPicker(){
     setPicking(true);
-    try{const all=await sb("/estimates?select=id,name,quote_number,requester_company,division,status,total_sales,parent_id,estimate_label,job_project_id&order=created_at.desc&limit=500");setBids(all||[]);}
+    try{let all;try{all=await sb("/estimates?select=id,name,quote_number,requester_company,division,status,total_sales,parent_id,estimate_label,job_project_id,job_mfg_id,job_number,job_division,job_links&order=created_at.desc&limit=500",{silent:true});}
+      catch{all=await sb("/estimates?select=id,name,quote_number,requester_company,division,status,total_sales,parent_id,estimate_label,job_project_id,job_mfg_id,job_number,job_division&order=created_at.desc&limit=500");}
+      setBids(all||[]);}
     catch(e){onErr&&onErr(e.message);}
   }
   async function attach(b){
-    if(b.job_project_id&&b.job_project_id!==project.id&&!window.confirm("That estimate is already attached to another job. Move it to this one?"))return;
-    try{await API.estimates.update(b.id,{job_project_id:project.id,job_number:project.name,job_division:project.division,converted_by:b.converted_by||user.name,converted_at:b.converted_at||new Date().toISOString(),updated_at:new Date().toISOString()});setPicking(false);await load();}
+    const links=estimateJobLinks(b);
+    if(links.length&&!links.some(l=>l.id===project.id)&&!window.confirm(`That estimate is already on ${links.map(l=>l.label).join(", ")}. Attach it to ${project.name} as well?`))return;
+    if(!links.some(l=>l.id===project.id))links.push({kind:"project",id:project.id,label:project.name,division:project.division});
+    try{await saveJobLinks(b,links,user);setPicking(false);await load();}
     catch(e){onErr&&onErr(e.message);}
   }
   async function detach(){
     if(!window.confirm("Detach this estimate from the job? The estimate itself is not deleted."))return;
-    try{await API.estimates.update(est.id,{job_project_id:null,updated_at:new Date().toISOString()});await load();}catch(e){onErr&&onErr(e.message);}
+    try{await saveJobLinks(est,estimateJobLinks(est).filter(l=>l.id!==project.id),user);await load();}catch(e){onErr&&onErr(e.message);}
   }
   // Same labor rule as the Estimating and Proposal tabs.
   const rate=(l)=>l.labor_rate!=null&&l.labor_rate!==""?Number(l.labor_rate):Number(est?.labor_cost_rate)||102;
@@ -20883,7 +20920,7 @@ function JobEstimateTab({project,user,reports,onErr}){
         <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search bid name, quote #, customer…" style={{...inp,marginBottom:10}} autoFocus/>
         {list.slice(0,60).map(b=>(<div key={b.id} style={{...cardS,marginBottom:6,padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
           <div style={{minWidth:0}}><div style={{fontSize:13.5,fontWeight:700}}>{b.name||"Untitled"}{b.estimate_label?<span style={{color:T.orange}}> · {b.estimate_label}</span>:""}</div>
-            <div style={{fontSize:11,color:T.muted}}>{[b.quote_number?"Quote "+b.quote_number:null,b.requester_company,b.division,stageOf(b.status).label,b.job_project_id?(b.job_project_id===project.id?"attached here":"attached to another job"):null].filter(Boolean).join(" · ")}</div></div>
+            <div style={{fontSize:11,color:T.muted}}>{[b.quote_number?"Quote "+b.quote_number:null,b.requester_company,b.division,stageOf(b.status).label,(()=>{const ls=estimateJobLinks(b);return ls.length?(ls.some(l=>l.id===project.id)?"attached here":"on "+ls.map(l=>l.label).join(", ")):null;})()].filter(Boolean).join(" · ")}</div></div>
           <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:13,fontWeight:800,color:T.green}}>{money(b.total_sales)}</div>
             <button onClick={()=>attach(b)} style={{...ghostBtn,padding:"5px 10px",fontSize:11,marginTop:4,color:T.orange,borderColor:T.orange+"60"}}>Attach</button></div>
         </div>))}
