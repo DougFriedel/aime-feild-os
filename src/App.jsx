@@ -10017,6 +10017,8 @@ function TimeCardsScreen({user,projects:projectsIn,onBack,embedded,division,appr
 
   /* ── Edit any card (pending or approved) with an audit trail ── */
   const canEdit=!readOnly&&(user.role==='admin'||user.role==='pm');
+  // Admins can edit any division's hours from any Time Cards tab; PMs still see other divisions' days read-only.
+  const editAll=canEdit&&user.role==='admin';
   const [rebuilding,setRebuilding]=useState("");
   // Hours live on the daily reports and T&M tickets; the cards are derived.
   // This re-derives them for the range — fills gaps (a report that never made
@@ -10412,7 +10414,8 @@ function TimeCardsScreen({user,projects:projectsIn,onBack,embedded,division,appr
               {[...mine].sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(c=>{
                 const reg=parseFloat(gridVal(c,'reg_hours'))||0,ot=parseFloat(gridVal(c,'ot_hours'))||0,tr=parseFloat(gridVal(c,'travel_hours'))||0;
                 const changed=rowDirty(c);
-                if(isBorrowed(c)){
+                const otherDiv=isBorrowed(c)?(cardDiv(c)||'other'):null;
+                if(otherDiv&&!editAll){
                   const od=cardDiv(c)||'other';const ap=(c.status||'pending')==='approved';
                   const dowB=c.date?new Date(c.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'}):'';
                   return(
@@ -10432,10 +10435,10 @@ function TimeCardsScreen({user,projects:projectsIn,onBack,embedded,division,appr
                 const jobKey=gridVal(c,'job');
                 const jobKnown=jobKey===""||(jobKey.startsWith('p:')&&projects.some(p=>p.id===jobKey.slice(2)))||(jobKey.startsWith('m:')&&mfgJobs.some(j=>j.id===jobKey.slice(2)));
                 return(
-                  <div key={c.id} style={{display:'grid',gridTemplateColumns:anyRig?'150px 1fr 64px 64px 64px 52px 64px 82px 28px':'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,alignItems:'center',marginBottom:5}}>
+                  <div key={c.id} title={otherDiv?`${otherDiv} division's time card — you can edit it as admin`:undefined} style={{display:'grid',gridTemplateColumns:anyRig?'150px 1fr 64px 64px 64px 52px 64px 82px 28px':'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,alignItems:'center',marginBottom:5,...(otherDiv?{padding:'4px 6px',margin:'0 -6px 5px',borderRadius:8,borderLeft:`3px solid ${(DIV_META[otherDiv]||{}).color||T.muted}`,background:T.surface}:{})}}>
                     {canEdit
                       ?<div style={{display:'flex',alignItems:'center',gap:4}}>
-                        <span style={{fontSize:11,fontWeight:800,color:T.text,width:28}}>{dow}</span>
+                        <span style={{fontSize:11,fontWeight:800,color:otherDiv?((DIV_META[otherDiv]||{}).color||T.text):T.text,width:28}} title={otherDiv||''}>{dow}</span>
                         <input type="date" value={dateV} onChange={e=>setCell(c,'date',e.target.value)} style={{...inp,padding:'6px 4px',fontSize:11.5,flex:1,...(changed?{borderColor:T.blue,background:T.blueLow}:{})}}/>
                       </div>
                       :<div style={{fontSize:12,color:T.text,fontWeight:700}}>{dow} <span style={{color:T.muted,fontWeight:500}}>{dateV.slice(5).replace('-','/')}</span></div>}
@@ -10481,7 +10484,7 @@ function TimeCardsScreen({user,projects:projectsIn,onBack,embedded,division,appr
                 const complete=oursAp===ours.length&&borAp===bor.length;
                 return <div style={{marginTop:8,padding:'8px 10px',borderRadius:8,background:complete?T.greenLow:T.yellowLow,fontSize:11.5,color:complete?T.green:T.yellow,lineHeight:1.5}}>
                   {complete?'Week complete: ':'Week not complete yet: '}{oursAp} of {ours.length} day{ours.length!==1?'s':''} approved by you
-                  {Object.entries(byDiv).map(([d,v])=>` · ${v.ap} of ${v.n} approved by ${d}`).join('')}. Grayed days are another division's — use ⚑ to question one.
+                  {Object.entries(byDiv).map(([d,v])=>` · ${v.ap} of ${v.n} approved by ${d}`).join('')}. {editAll?'Days with a colored left edge are another division\'s — as admin you can edit them here.':'Grayed days are another division\'s — use ⚑ to question one.'}
                 </div>;
               })()}
               {canEdit&&<>
