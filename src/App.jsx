@@ -596,6 +596,9 @@ const API={
    refreshed at login, so a new hire is usable straight away. */
 let EXTRA_NAMES=[];
 let ROSTER_CLASS={};   // name → classification from the crew directory, so picking a worker fills it in
+/* Rig pay: a welder who brings their own rig gets a negotiated amount for the
+   day. Rates are private — the PM types the day's dollars straight onto the
+   time card (rig_pay); nothing about it shows to the crew. */
 function ROSTER(){
   return [...new Set([...NAMES,...EXTRA_NAMES])]
     .filter(Boolean)
@@ -2806,6 +2809,7 @@ const REQUIRED_MIGRATIONS=[
   {table:"tm_tickets",col:"from_report_id",file:"invoice_prefs_migration.sql",why:"creating a T&M ticket from a daily report"},
   {table:"estimates",col:"proposal_items",file:"proposal_items_migration.sql",why:"work items on proposals"},
   {table:"estimates",col:"job_links",file:"estimate_job_links_migration.sql",why:"attaching one estimate to several job numbers"},
+  {table:"time_cards",col:"rig_pay",file:"rig_pay_migration.sql",why:"rig pay on time cards"},
 ];
 let _migCheck=null;
 function checkMigrations(){
@@ -4213,17 +4217,17 @@ const reportOwnerFields=(project)=>project._mfg?{project_id:null,mfg_job_id:proj
 /* If the source_id column is missing (migration not run yet) every card
    insert fails silently and the report produces no time cards at all. Retry
    without the column so hours still land; the link is added once the SQL runs. */
-let TC_NO_SOURCE_COL=false;
+let TC_NO_SOURCE_COL=false,TC_NO_RIG_COL=false;
 const tcColErr=(e)=>/source_id/i.test(String(e&&e.message||""));
+const tcRigErr=(e)=>/rig_pay/i.test(String(e&&e.message||""));
+function tcStrip(body){let b={...body};if(TC_NO_SOURCE_COL)delete b.source_id;if(TC_NO_RIG_COL)delete b.rig_pay;return b;}
 async function tcCreate(body){
-  if(TC_NO_SOURCE_COL){const {source_id,...b}=body;return API.timeCards.create(b);}
-  try{return await API.timeCards.create(body);}
-  catch(e){if(!tcColErr(e))throw e;TC_NO_SOURCE_COL=true;const {source_id,...b}=body;return API.timeCards.create(b);}
+  try{return await API.timeCards.create(tcStrip(body));}
+  catch(e){if(tcColErr(e))TC_NO_SOURCE_COL=true;else if(tcRigErr(e))TC_NO_RIG_COL=true;else throw e;return API.timeCards.create(tcStrip(body));}
 }
 async function tcUpdate(id,body){
-  if(TC_NO_SOURCE_COL){const {source_id,...b}=body;return API.timeCards.update(id,b);}
-  try{return await API.timeCards.update(id,body);}
-  catch(e){if(!tcColErr(e))throw e;TC_NO_SOURCE_COL=true;const {source_id,...b}=body;return API.timeCards.update(id,b);}
+  try{return await API.timeCards.update(id,tcStrip(body));}
+  catch(e){if(tcColErr(e))TC_NO_SOURCE_COL=true;else if(tcRigErr(e))TC_NO_RIG_COL=true;else throw e;return API.timeCards.update(id,tcStrip(body));}
 }
 async function autoPopulateTimeCards(report, project, source="daily"){
   const sourceId=report.id||report._source_id||null;
@@ -9730,10 +9734,12 @@ function printEmployeeTimecards(cards,from,to,selectedJobs,projects,preOpenedWin
     const shop=c.mfg_job_id?(mfgJobs||[]).find(j=>j.id===c.mfg_job_id):null;
     const shopName=shop?.job_number
       ||(c.source==="shop"?String(c.notes||"").match(/Shop labor — ([^\s·]+)/)?.[1]:null);
-    byEmployee[name].entries.push({...c,reg,ot,travel,total,
+    const rigPay=parseFloat(c.rig_pay)||0,rig=rigPay>0?1:0;
+    byEmployee[name].entries.push({...c,reg,ot,travel,total,rig,rigPay,
       projName:proj?.name||shopName||"General",
       projAfe:proj?.afe||(shopName?"Shop":"")});
     byEmployee[name].reg+=reg;byEmployee[name].ot+=ot;byEmployee[name].travel+=travel;byEmployee[name].total+=total;
+    byEmployee[name].rig=(byEmployee[name].rig||0)+rig;byEmployee[name].rigPay=(byEmployee[name].rigPay||0)+rigPay;
   });
   const employees=Object.values(byEmployee).sort((a,b)=>a.name.localeCompare(b.name));
   const fmtD=d=>{if(!d)return"";const[y,m,dy]=d.split("-");return`${m}/${dy}/${y}`;};
@@ -9782,24 +9788,26 @@ ${employees.length===0
     <div class="period">Report Period: ${fmtD(from)} — ${fmtD(to)}</div>
   </div>
   <table>
-    <thead><tr><th>Date</th><th>Project</th><th>AFE/PO</th><th style="text-align:center">REG</th><th style="text-align:center">OT</th><th style="text-align:center">TRAVEL</th><th style="text-align:center">TOTAL</th><th>Notes</th></tr></thead>
+    <thead><tr><th>Date</th><th>Project</th><th>AFE/PO</th><th style="text-align:center">REG</th><th style="text-align:center">OT</th><th style="text-align:center">TRAVEL</th>${emp.rigPay>0?'<th style="text-align:center">RIG PAY</th>':''}<th style="text-align:center">TOTAL</th><th>Notes</th></tr></thead>
     <tbody>
       ${emp.entries.sort((a,b)=>(a.date||"").localeCompare(b.date||"")).map(e=>`
       <tr><td>${fmtD(e.date)}</td><td>${e.projName}</td><td style="text-align:center">${e.projAfe||"—"}</td>
       <td style="text-align:center;color:#166534;font-weight:600">${fmtN(e.reg)}</td>
       <td style="text-align:center;color:#b45309;font-weight:600">${fmtN(e.ot)}</td>
       <td style="text-align:center;color:#1e40af;font-weight:600">${fmtN(e.travel)}</td>
+      ${emp.rigPay>0?`<td style="text-align:center;color:#c2410c;font-weight:600">${e.rigPay>0?"$"+Number(e.rigPay).toFixed(2):"—"}</td>`:""}
       <td style="text-align:center;font-weight:800">${fmtN(e.total)}</td>
       <td style="font-size:8pt;color:#6b7280">${(e.notes||"").replace("Auto-filled from daily report","Auto")}</td></tr>`).join("")}
     </tbody>
     <tfoot><tr class="totals-row"><td colspan="3"><strong>TOTALS — ${emp.name.toUpperCase()}</strong></td>
     <td style="text-align:center">${fmtN(emp.reg)}</td><td style="text-align:center">${fmtN(emp.ot)}</td>
-    <td style="text-align:center">${fmtN(emp.travel)}</td><td style="text-align:center"><strong>${fmtN(emp.total)}</strong></td><td></td></tr></tfoot>
+    <td style="text-align:center">${fmtN(emp.travel)}</td>${emp.rigPay>0?`<td style="text-align:center">$${Number(emp.rigPay).toFixed(2)}</td>`:""}<td style="text-align:center"><strong>${fmtN(emp.total)}</strong></td><td></td></tr></tfoot>
   </table>
   <div class="summary">
     <div class="sum-box reg"><div class="sum-label">Regular</div><div class="sum-val">${fmtN(emp.reg)}h</div></div>
     <div class="sum-box ot"><div class="sum-label">Overtime</div><div class="sum-val">${fmtN(emp.ot)}h</div></div>
     <div class="sum-box travel"><div class="sum-label">Travel</div><div class="sum-val">${fmtN(emp.travel)}h</div></div>
+    ${emp.rigPay>0?`<div class="sum-box" style="background:#ffedd5;border:1px solid #fdba74"><div class="sum-label">Rig Pay</div><div class="sum-val">$${Number(emp.rigPay||0).toLocaleString("en-US",{minimumFractionDigits:2})}</div><div style="font-size:7.5pt;color:#9a3412">${emp.rig} day${emp.rig===1?"":"s"} with own rig</div></div>`:""}
     <div class="sum-box total"><div class="sum-label">TOTAL HOURS</div><div class="sum-val">${fmtN(emp.total)}</div></div>
   </div>
   <div class="sigs">
@@ -10030,7 +10038,10 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
   const [openWorker,setOpenWorker]=useState(null);   // worker name expanded in the summary list
   const [grid,setGrid]=useState({});                  // {cardId:{reg_hours,ot_hours,travel_hours}} unsaved edits
   const [gridNote,setGridNote]=useState("");
-  const GRID_KEYS=["reg_hours","ot_hours","travel_hours","date","job"];
+  const GRID_KEYS=["reg_hours","ot_hours","travel_hours","rig_pay","date","job"];
+  // Rig pay column: PMs always see it (to enter it); read-only viewers only when something is there.
+  const anyRig=canEdit||filtered.some(c=>parseFloat(c.rig_pay)>0);
+  const money2=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
   // "job" is a synthetic key: "p:<project_id>" or "m:<mfg_job_id>"
   const jobKeyOf=(c)=>c.project_id?`p:${c.project_id}`:c.mfg_job_id?`m:${c.mfg_job_id}`:"";
   const curVal=(c,k)=>k==="job"?jobKeyOf(c):(c[k]??"");
@@ -10046,6 +10057,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
       for(const c of changed){
         const d=grid[c.id];
         const reg=parseFloat(d.reg_hours??c.reg_hours)||0,ot=parseFloat(d.ot_hours??c.ot_hours)||0,tr=parseFloat(d.travel_hours??c.travel_hours)||0;
+        const rigPay=parseFloat(d.rig_pay??c.rig_pay)||0;
         const jk=d.job!==undefined?d.job:jobKeyOf(c);
         const project_id=jk.startsWith("p:")?jk.slice(2):null;
         const mfg_job_id=jk.startsWith("m:")?jk.slice(2):null;
@@ -10054,6 +10066,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
         if(d.date!==undefined&&d.date!==c.date)moved.push(`date ${c.date}→${d.date}`);
         if(jk!==jobKeyOf(c))moved.push(`job ${jobOf(c)||'—'}→${jobOf({project_id,mfg_job_id})||'—'}`);
         const body={reg_hours:reg,ot_hours:ot,travel_hours:tr,total_hours:reg+ot+tr,
+          ...(TC_NO_RIG_COL?{}:{rig_pay:rigPay}),
           date:d.date!==undefined&&d.date?d.date:c.date,
           project_id,mfg_job_id,
           division:proj?.division||(mfg_job_id?"Manufacturing":c.division||null),
@@ -10061,7 +10074,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
           edited_by:user.name,edited_at:new Date().toISOString(),
           edit_reason:gridNote.trim()||null,
           notes:`${c.notes||""}${c.notes?" · ":""}edited by ${user.name} (was ${t(c).toFixed(2)}h${moved.length?"; "+moved.join(", "):""})${gridNote.trim()?": "+gridNote.trim():""}`};
-        await API.timeCards.update(c.id,body);
+        await tcUpdate(c.id,body);
         setCards(cs=>cs.map(x=>x.id===c.id?{...x,...body}:x));
       }
       setGrid(g=>{const n={...g};changed.forEach(c=>delete n[c.id]);return n;});
@@ -10069,7 +10082,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
     }catch(e){setErr(e.message);}
     setSaving(false);
   }
-  const [add,setAdd]=useState({worker_name:"",date:today(),project_id:"",mfg_job_id:"",classification:"",reg_hours:"",ot_hours:"",travel_hours:"",reason:""});
+  const [add,setAdd]=useState({worker_name:"",date:today(),project_id:"",mfg_job_id:"",classification:"",reg_hours:"",ot_hours:"",travel_hours:"",rig_pay:"",reason:""});
   const t=(c)=>{const r=parseFloat(c.reg_hours)||0,o=parseFloat(c.ot_hours)||0,v=parseFloat(c.travel_hours)||0;return c.total_hours!=null&&c.total_hours!==""?parseFloat(c.total_hours):r+o+v;};
 
   function startEdit(c){
@@ -10114,10 +10127,11 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
         division:proj?.division||(add.mfg_job_id?"Manufacturing":null),
         classification:add.classification||null,
         reg_hours:reg,ot_hours:ot,travel_hours:tr,total_hours:reg+ot+tr,
+        ...(add.rig_pay!==""?{rig_pay:parseFloat(add.rig_pay)||0}:{}),
         source:"manual",status:"pending",
         notes:`Added by ${user.name}${add.reason?": "+add.reason:""}`,
         edited_by:user.name,edited_at:new Date().toISOString(),edit_reason:add.reason||null};
-      const res=await API.timeCards.create(body);
+      const res=await tcCreate(body);
       const row=Array.isArray(res)?res[0]:res;
       setCards(cs=>[row||body,...cs]);
       setShowAdd(false);
@@ -10211,10 +10225,11 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
   const byWorker={};
   filtered.forEach(c=>{
     const n=c.worker_name||'?';
-    if(!byWorker[n])byWorker[n]={name:n,total:0,ot:0,reg:0,travel:0};
+    if(!byWorker[n])byWorker[n]={name:n,total:0,ot:0,reg:0,travel:0,rig:0,rigPay:0};
     const reg=parseFloat(c.reg_hours)||0;const ot=parseFloat(c.ot_hours)||0;const trav=parseFloat(c.travel_hours)||0;
     const tot=c.total_hours?parseFloat(c.total_hours):reg+ot+trav;
     byWorker[n].total+=tot;byWorker[n].ot+=ot;byWorker[n].reg+=reg;byWorker[n].travel+=trav;
+    byWorker[n].rigPay+=parseFloat(c.rig_pay)||0;if(parseFloat(c.rig_pay)>0)byWorker[n].rig+=1;
   });
   const workerRows=Object.values(byWorker).sort((a,b)=>b.total-a.total);
   const fmt=n=>Number(n||0).toFixed(1);
@@ -10356,6 +10371,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
               </div>
               <div style={{display:'flex',gap:12,fontSize:11,color:T.muted,flexWrap:'wrap'}}>
                 <span>Reg: <strong style={{color:T.sub}}>{fmt(w.reg)}h</strong></span>
+                {w.rigPay>0&&<span style={{marginLeft:10}}>🚚 Rig pay: <strong style={{color:T.orange}}>{money2(w.rigPay)}</strong> <span style={{color:T.muted}}>({w.rig} day{w.rig===1?'':'s'})</span></span>}
                 {w.ot>0&&<span>OT: <strong style={{color:T.yellow}}>{fmt(w.ot)}h</strong></span>}
                 {w.travel>0&&<span>Travel: <strong style={{color:T.blue}}>{fmt(w.travel)}h</strong></span>}
                 {unconf.length>0?<span style={{color:T.red}}>not confirmed by employee</span>:mine.length>0&&<span style={{color:T.green}}>confirmed by employee</span>}
@@ -10365,8 +10381,8 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
                 </>);})()}
             </div>
             {open&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`}}>
-              <div style={{display:'grid',gridTemplateColumns:'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,fontSize:10,fontWeight:800,color:T.muted,textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:4,alignItems:'end'}}>
-                <div>Date</div><div>Job</div><div style={{textAlign:'center'}}>Reg</div><div style={{textAlign:'center'}}>OT</div><div style={{textAlign:'center'}}>Travel</div><div style={{textAlign:'right'}}>Total</div><div style={{textAlign:'center'}}>Status</div><div></div>
+              <div style={{display:'grid',gridTemplateColumns:anyRig?'150px 1fr 64px 64px 64px 78px 64px 82px 28px':'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,fontSize:10,fontWeight:800,color:T.muted,textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:4,alignItems:'end'}}>
+                <div>Date</div><div>Job</div><div style={{textAlign:'center'}}>Reg</div><div style={{textAlign:'center'}}>OT</div><div style={{textAlign:'center'}}>Travel</div>{anyRig&&<div style={{textAlign:'center'}} title="Rig pay for the day, in dollars — for workers who bring their own rig">🚚 Rig $</div>}<div style={{textAlign:'right'}}>Total</div><div style={{textAlign:'center'}}>Status</div><div></div>
               </div>
               {[...mine].sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(c=>{
                 const reg=parseFloat(gridVal(c,'reg_hours'))||0,ot=parseFloat(gridVal(c,'ot_hours'))||0,tr=parseFloat(gridVal(c,'travel_hours'))||0;
@@ -10375,10 +10391,10 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
                   const od=cardDiv(c)||'other';const ap=(c.status||'pending')==='approved';
                   const dowB=c.date?new Date(c.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'}):'';
                   return(
-                    <div key={c.id} style={{display:'grid',gridTemplateColumns:'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,alignItems:'center',marginBottom:5,padding:'6px 6px',margin:'0 -6px 5px',borderRadius:8,background:T.surface,color:T.muted,fontSize:12}}>
+                    <div key={c.id} style={{display:'grid',gridTemplateColumns:anyRig?'150px 1fr 64px 64px 64px 78px 64px 82px 28px':'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,alignItems:'center',marginBottom:5,padding:'6px 6px',margin:'0 -6px 5px',borderRadius:8,background:T.surface,color:T.muted,fontSize:12}}>
                       <div style={{fontWeight:700}}>{dowB} <span style={{fontWeight:500}}>{(c.date||'').slice(5).replace('-','/')}</span></div>
                       <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>→ {jobOf(c)||'—'} <span style={{...pill((DIV_META[od]||{}).color||T.muted),fontSize:9,marginLeft:4}}>{od}</span>{c.flagged_by&&<span title={c.flag_note||''} style={{color:T.red,marginLeft:6}}>⚑ flagged</span>}</div>
-                      <div style={{textAlign:'center'}}>{fmt(c.reg_hours)}</div><div style={{textAlign:'center'}}>{fmt(c.ot_hours)}</div><div style={{textAlign:'center'}}>{fmt(c.travel_hours)}</div>
+                      <div style={{textAlign:'center'}}>{fmt(c.reg_hours)}</div><div style={{textAlign:'center'}}>{fmt(c.ot_hours)}</div><div style={{textAlign:'center'}}>{fmt(c.travel_hours)}</div>{anyRig&&<div style={{textAlign:'center'}}>{parseFloat(c.rig_pay)>0?money2(c.rig_pay):'—'}</div>}
                       <div style={{textAlign:'right',fontWeight:800}}>{fmt(t(c))}</div>
                       <div style={{textAlign:'center',fontSize:10,color:ap?T.green:T.yellow,lineHeight:1.2}}>{ap?`✓ ${od} PM`:`awaiting ${od}`}</div>
                       {canEdit?<button onClick={()=>flagCard(c)} title="Flag this day for the other division's PM" style={{background:'none',border:'none',color:c.flagged_by?T.red:T.muted,cursor:'pointer',fontSize:13,padding:0}}>⚑</button>:<div/>}
@@ -10391,7 +10407,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
                 const jobKey=gridVal(c,'job');
                 const jobKnown=jobKey===""||(jobKey.startsWith('p:')&&projects.some(p=>p.id===jobKey.slice(2)))||(jobKey.startsWith('m:')&&mfgJobs.some(j=>j.id===jobKey.slice(2)));
                 return(
-                  <div key={c.id} style={{display:'grid',gridTemplateColumns:'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,alignItems:'center',marginBottom:5}}>
+                  <div key={c.id} style={{display:'grid',gridTemplateColumns:anyRig?'150px 1fr 64px 64px 64px 78px 64px 82px 28px':'150px 1fr 64px 64px 64px 64px 82px 28px',gap:6,alignItems:'center',marginBottom:5}}>
                     {canEdit
                       ?<div style={{display:'flex',alignItems:'center',gap:4}}>
                         <span style={{fontSize:11,fontWeight:800,color:T.text,width:28}}>{dow}</span>
@@ -10410,10 +10426,12 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
                       <input type="number" step="0.25" value={gridVal(c,'reg_hours')} onChange={e=>setCell(c,'reg_hours',e.target.value)} style={cell}/>
                       <input type="number" step="0.25" value={gridVal(c,'ot_hours')} onChange={e=>setCell(c,'ot_hours',e.target.value)} style={cell}/>
                       <input type="number" step="0.25" value={gridVal(c,'travel_hours')} onChange={e=>setCell(c,'travel_hours',e.target.value)} style={cell}/>
+                      {anyRig&&<input type="number" step="0.01" placeholder="$" value={gridVal(c,'rig_pay')||""} onChange={e=>setCell(c,'rig_pay',e.target.value)} title="Rig pay for this day (dollars)" style={{...cell,color:T.orange}}/>}
                     </>:<>
                       <div style={{textAlign:'center',fontSize:13}}>{fmt(reg)}</div>
                       <div style={{textAlign:'center',fontSize:13,color:T.yellow}}>{fmt(ot)}</div>
                       <div style={{textAlign:'center',fontSize:13,color:T.blue}}>{fmt(tr)}</div>
+                      {anyRig&&<div style={{textAlign:'center',fontSize:13,color:T.orange}}>{parseFloat(c.rig_pay)>0?money2(c.rig_pay):'—'}</div>}
                     </>}
                     <div style={{textAlign:'right',fontSize:14,fontWeight:900,color:T.green}} title={`${c.status||'pending'}${c.edited_by?` · edited by ${c.edited_by}${c.edit_reason?': '+c.edit_reason:''}`:''}`}>
                       {c.edited_by&&<span style={{fontSize:10,color:T.blue,marginRight:3}}>✎</span>}
@@ -10484,6 +10502,7 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
               <div><label style={lbl}>OT</label><input type="number" step="0.25" value={add.ot_hours} onChange={e=>setAdd(a=>({...a,ot_hours:e.target.value}))} style={{...inp,textAlign:'center'}}/></div>
               <div><label style={lbl}>Travel</label><input type="number" step="0.25" value={add.travel_hours} onChange={e=>setAdd(a=>({...a,travel_hours:e.target.value}))} style={{...inp,textAlign:'center'}}/></div>
             </div>
+            <div style={{marginBottom:10}}><label style={lbl}>🚚 Rig pay for the day ($, optional)</label><input type="number" step="0.01" value={add.rig_pay} onChange={e=>setAdd(a=>({...a,rig_pay:e.target.value}))} placeholder="Only for workers using their own rig" style={{...inp,textAlign:'center'}}/></div>
             <div style={{marginBottom:10}}><label style={lbl}>Reason</label><input value={add.reason} onChange={e=>setAdd(a=>({...a,reason:e.target.value}))} placeholder="e.g. No daily report filed 9/18" style={inp}/></div>
             <div style={{display:'flex',gap:8}}>
               <button onClick={saveAdd} disabled={saving} style={{...primBtn,flex:2,borderRadius:12,background:T.green,color:'#000',opacity:saving?0.6:1}}>{saving?'Saving…':'Save Card'}</button>
