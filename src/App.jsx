@@ -10175,7 +10175,12 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
             </div>);
   }
 
-  function handlePrint(){
+  // Pick who goes on the printed report. Empty = everyone in the range.
+  const [printPick,setPrintPick]=useState(false);
+  const [pickedWorkers,setPickedWorkers]=useState({});
+  const [approvedOnlyPrint,setApprovedOnlyPrint]=useState(false);
+  const pickedNames=Object.keys(pickedWorkers).filter(k=>pickedWorkers[k]);
+  function handlePrint(onlyWorker){
     const win=window.open("","_blank","width=900,height=750");
     if(!win){
       alert("Popup blocked! Please allow popups for this site in your browser settings, then try again.");
@@ -10183,7 +10188,11 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
     }
     setPrinting(true);
     try{
-      printEmployeeTimecards(cards,fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects,win,mfgJobs);
+      let toPrint=cards;
+      if(typeof onlyWorker==="string")toPrint=toPrint.filter(c=>(c.worker_name||'?')===onlyWorker);
+      else if(printPick&&pickedNames.length)toPrint=toPrint.filter(c=>pickedNames.includes(c.worker_name||'?'));
+      if(approvedOnlyPrint)toPrint=toPrint.filter(c=>c.status==='approved');
+      printEmployeeTimecards(toPrint,fromDate,toDate,selectedJobs.length>0?selectedJobs:null,projects,win,mfgJobs);
     }catch(e){
       win.close();
       alert("Error generating report: "+e.message);
@@ -10292,11 +10301,25 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
           ))}
         </div>}
 
-        {/* Print button */}
-        <button onClick={handlePrint} disabled={printing||filtered.length===0}
-          style={{...primBtn,borderRadius:14,marginBottom:16,background:filtered.length===0?T.surface:T.green,color:filtered.length===0?T.muted:'#000',opacity:filtered.length===0?0.5:1}}>
-          {printing?'Opening PDF…':`🖨️ Print Timecard Report (${filtered.length} entries · ${workerRows.length} workers)`}
-        </button>
+        {/* Print: everyone, or tick the workers to include */}
+        {(()=>{const sel=printPick&&pickedNames.length?pickedNames:null;
+          const entries=filtered.filter(c=>(!sel||sel.includes(c.worker_name||'?'))&&(!approvedOnlyPrint||c.status==='approved'));
+          const nWorkers=sel?sel.filter(n=>workerRows.some(w=>w.name===n)).length:workerRows.length;
+          return(<div style={{marginBottom:16}}>
+            <button onClick={()=>handlePrint()} disabled={printing||entries.length===0}
+              style={{...primBtn,borderRadius:14,background:entries.length===0?T.surface:T.green,color:entries.length===0?T.muted:'#000',opacity:entries.length===0?0.5:1}}>
+              {printing?'Opening PDF…':`🖨️ Print Timecard Report (${entries.length} entries · ${nWorkers} worker${nWorkers===1?'':'s'}${sel?' selected':''})`}
+            </button>
+            <div style={{display:'flex',gap:8,marginTop:8,flexWrap:'wrap',alignItems:'center'}}>
+              <button onClick={()=>{setPrintPick(v=>!v);if(printPick)setPickedWorkers({});}} style={{...ghostBtn,padding:'7px 12px',fontSize:12,borderColor:printPick?T.orange:T.border,color:printPick?T.orange:T.sub,background:printPick?T.orangeLow:'transparent'}}>{printPick?'☑ Choosing who to print':'☐ Choose who to print'}</button>
+              {printPick&&<>
+                <button onClick={()=>{const a={};workerRows.forEach(w=>a[w.name]=true);setPickedWorkers(a);}} style={{...ghostBtn,padding:'7px 10px',fontSize:11.5}}>All</button>
+                <button onClick={()=>setPickedWorkers({})} style={{...ghostBtn,padding:'7px 10px',fontSize:11.5}}>None</button>
+                <span style={{fontSize:11.5,color:T.muted}}>{pickedNames.length?`${pickedNames.length} picked`:'Tick names below — none picked prints everyone'}</span>
+              </>}
+              <label style={{fontSize:12,color:T.sub,display:'flex',alignItems:'center',gap:6,cursor:'pointer',marginLeft:'auto'}}><input type="checkbox" checked={approvedOnlyPrint} onChange={e=>setApprovedOnlyPrint(e.target.checked)} style={{accentColor:T.green}}/> approved hours only</label>
+            </div>
+          </div>);})()}
 
         <div style={{background:T.greenLow,border:`1px solid ${T.green}40`,borderRadius:12,padding:'10px 14px',marginBottom:14,fontSize:12,color:T.green,lineHeight:1.5}}>
           <strong>⚡ Auto-filled from daily reports</strong> — hours added automatically when a report is submitted.
@@ -10318,11 +10341,14 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
                 const borrowed=mine.filter(isBorrowed);
                 return(<>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6,gap:8}}>
-                <div style={{fontSize:14,fontWeight:800,color:T.orange,minWidth:0}}>{open?'▾':'▸'} {w.name}
+                <div style={{fontSize:14,fontWeight:800,color:T.orange,minWidth:0,display:'flex',alignItems:'center',gap:8}}>
+                  {printPick&&<input type="checkbox" checked={!!pickedWorkers[w.name]} onClick={e=>e.stopPropagation()} onChange={e=>setPickedWorkers(s=>({...s,[w.name]:e.target.checked}))} style={{accentColor:T.orange,width:17,height:17}}/>}
+                  <span>{open?'▾':'▸'} {w.name}</span>
                   {unconf.length>0&&<span title="Employee hasn't confirmed these hours in My Hours" style={{color:T.red,marginLeft:8}}>⚑</span>}
                   {fromOther&&<span style={{...pill(T.muted),marginLeft:8,fontSize:9}}>{profDiv(w.name)} crew</span>}
                 </div>
                 <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                  <button onClick={e=>{e.stopPropagation();handlePrint(w.name);}} title={`Print ${w.name}'s time card for this range`} style={{...ghostBtn,padding:'5px 8px',fontSize:12}}>🖨️</button>
                   <div style={{fontSize:16,fontWeight:900,color:T.green}}>{fmt(w.total)}h</div>
                   {canEdit&&pend.length>0&&<button onClick={e=>{e.stopPropagation();approveIds(pend.map(c=>c.id),'approved');}} style={{...primBtn,padding:'6px 10px',borderRadius:10,fontSize:11.5,background:T.green,color:'#000'}}>✓ Approve {borrowed.length?`${pend.length} day${pend.length!==1?'s':''}`:`(${pend.length})`}</button>}
                   {canEdit&&pend.length===0&&ours.length>0&&<span style={pill(T.green)}>Approved</span>}
