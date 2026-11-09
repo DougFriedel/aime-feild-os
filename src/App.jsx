@@ -9925,8 +9925,15 @@ function ClockRoster({pmDiv,divIds,user,onErr}){
   );
 }
 
-function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,readOnly}){
+function TimeCardsScreen({user,projects:projectsIn,onBack,embedded,division,approvedOnly,readOnly}){
   const [cards,setCards]=useState([]);const [loading,setLoading]=useState(true);
+  // The shop embeds this with no field jobs; load them so a welder's days on a
+  // field job still resolve to a job name and a division.
+  const [fetchedProjects,setFetchedProjects]=useState([]);
+  const projects=(projectsIn&&projectsIn.length)?projectsIn:fetchedProjects;
+  // "Also pull hours from" — other divisions whose cards should be shown (read-only)
+  // for OUR crew, so a worker's whole week can be seen and printed from here.
+  const [extraDivs,setExtraDivs]=useState([]);
   const [err,setErr]=useState('');
   const [fromDate,setFromDate]=useState(()=>{const d=new Date();d.setDate(d.getDate()-14);return d.toISOString().slice(0,10);});
   const [toDate,setToDate]=useState(today());
@@ -9948,7 +9955,9 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
   // of our crew's days worked on another division's job — shown read-only so
   // the home PM sees the whole week, but approved over there.
   const isOurs=(c)=>!division||cardDiv(c)===division;
-  const isBorrowed=(c)=>!!division&&!isOurs(c)&&profDiv(c.worker_name)===division;
+  // Our crew = profile in this division, or anyone with a card on one of our jobs in range.
+  const ourCrew=useMemo(()=>{const s=new Set();cards.forEach(c=>{if(cardDiv(c)===division)s.add(c.worker_name);});profiles.forEach(p=>{if(p.division===division)s.add(p.name);});return s;},[cards,profiles,projects,division]);
+  const isBorrowed=(c)=>!!division&&!isOurs(c)&&(profDiv(c.worker_name)===division||(extraDivs.includes(cardDiv(c))&&ourCrew.has(c.worker_name)));
   const inDivision=(c)=>!division||isOurs(c)||isBorrowed(c);
   async function flagCard(c){
     const note=window.prompt(`Flag ${c.worker_name}'s ${c.date} card for the ${cardDiv(c)||"other"} PM. What's wrong?`,"");
@@ -9975,12 +9984,14 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
       try{
         // byRange, not all() — all() caps at 500 rows ordered by date, so on a
         // busy month the oldest cards silently vanished from the report.
-        const [r,m,pr]=await Promise.all([
+        const [r,m,pr,pj]=await Promise.all([
           API.timeCards.byRange(fromDate,toDate),
           API.mfg.jobs.list().catch(()=>[]),
           division?API.userProfiles.list().catch(()=>[]):Promise.resolve([]),
+          (projectsIn&&projectsIn.length)?Promise.resolve(null):API.projects.list().catch(()=>[]),
         ]);
         if(my!==tcReq.current)return;   // a newer range has been typed since
+        if(Array.isArray(pj))setFetchedProjects(pj);
         setCards(Array.isArray(r)?r:[]);
         setMfgJobs(Array.isArray(m)?m:[]);
         setProfiles(Array.isArray(pr)?pr:[]);
@@ -10201,7 +10212,8 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
     }
     setPrinting(true);
     try{
-      let toPrint=cards;
+      // Print what's on screen (division scope + any "also pull from" divisions), not every card in the company.
+      let toPrint=filtered;
       if(typeof onlyWorker==="string")toPrint=toPrint.filter(c=>(c.worker_name||'?')===onlyWorker);
       else if(printPick&&pickedNames.length)toPrint=toPrint.filter(c=>pickedNames.includes(c.worker_name||'?'));
       if(approvedOnlyPrint)toPrint=toPrint.filter(c=>c.status==='approved');
@@ -10281,6 +10293,20 @@ function TimeCardsScreen({user,projects,onBack,embedded,division,approvedOnly,re
             ))}
           </div>
         </div>
+        {division&&<div style={{...cardS,marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.muted,textTransform:'uppercase',letterSpacing:'1px',marginBottom:8}}>🔀 Also pull hours from</div>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            {DIVISIONS.filter(d=>d!==division).map(d=>{const on=extraDivs.includes(d);const m=DIV_META[d]||{};return(
+              <button key={d} onClick={()=>setExtraDivs(s=>on?s.filter(x=>x!==d):[...s,d])}
+                style={{padding:'5px 11px',borderRadius:15,cursor:'pointer',fontFamily:'inherit',fontSize:11.5,fontWeight:on?800:600,background:on?(m.color||T.purple):T.surface,color:on?'#000':T.sub,border:`1px solid ${on?(m.color||T.purple):T.border}`}}>
+                {m.icon||''} {d}{on?' ✓':''}
+              </button>);})}
+            {extraDivs.length>0&&<button onClick={()=>setExtraDivs([])} style={{...ghostBtn,fontSize:11.5,padding:'5px 11px'}}>Clear</button>}
+          </div>
+          <div style={{fontSize:11,color:T.muted,marginTop:8,lineHeight:1.5}}>
+            {extraDivs.length?`Showing your crew's days on ${extraDivs.join(', ')} jobs too (grayed, read-only — approved by that division's PM). They print on the time card with everything else.`:'Pick a division to see and print your crew\'s hours worked on that division\'s jobs this period.'}
+          </div>
+        </div>}
         <div style={{...cardS,marginBottom:12}}>
           <button onClick={()=>setShowJobFilter(s=>!s)} style={{background:'none',border:'none',color:T.text,fontWeight:700,fontSize:13,cursor:'pointer',fontFamily:'inherit',width:'100%',textAlign:'left',display:'flex',justifyContent:'space-between'}}>
             <span>🏗️ Jobs {selectedJobs.length>0?`(${selectedJobs.length} selected)`:'(All)'}</span>
