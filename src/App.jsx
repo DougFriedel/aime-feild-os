@@ -746,7 +746,8 @@ const PERMS={
   // Accounting enters vendor invoices and processes them after PM approval.
   // view_reports = can open Daily Reports and T&M tickets read-only.
   // billing = the Billing tab on every job (invoices, credit memos, job cost, SOV, pay apps).
-  accounting:["ap_enter","ap_process","billing","docs","crew_directory","photos","view_dashboard","view_reports"],
+  // view_estimates = the Estimate tab on every job, read-only (no attach/change/detach).
+  accounting:["ap_enter","ap_process","billing","view_estimates","docs","crew_directory","photos","view_dashboard","view_reports"],
   // Estimator = everything a Foreman can do, plus the estimating platform and the dashboard
   estimator: ["estimating","view_dashboard","submit_report","time_card","safety","photos","docs","schedule","weather","subs","crew_equip","crew_directory"],
   // Foreman can now run jobs end to end, but still can't approve or flag reports —
@@ -7713,7 +7714,7 @@ const PTABS=[
   {id:"reports",icon:"📋",label:"Reports",perm:"submit_report",viewPerm:"view_reports"},
   {id:"tm",icon:"🧾",label:"T&M",perm:"submit_report",viewPerm:"view_reports"},
   {id:"billing",icon:"💰",label:"Billing",perm:"billing"},
-  {id:"estimate",icon:"📐",label:"Estimate",perm:"approve_report"},
+  {id:"estimate",icon:"📐",label:"Estimate",perm:"approve_report",viewPerm:"view_estimates"},
   {id:"time",icon:"⏱️",label:"Time",perm:"time_card"},
   {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
   {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
@@ -21005,8 +21006,8 @@ function JobEstimateTab({project,user,reports,onErr}){
     <div style={{...cardS,textAlign:"center",padding:28,color:T.muted}}>
       <div style={{fontSize:32,marginBottom:8}}>📐</div>
       <div style={{fontSize:14,fontWeight:700,color:T.sub,marginBottom:4}}>No estimate attached</div>
-      <div style={{fontSize:12,marginBottom:14}}>A bid turned into a job with "Make it a Job" attaches itself. For a job set up by hand, pick the estimate it was bid from.</div>
-      <button onClick={openPicker} style={{...primBtn,width:"auto",display:"inline-flex",padding:"10px 18px",borderRadius:10,fontSize:13}}>Attach an estimate</button>
+      <div style={{fontSize:12,marginBottom:14}}>{can(user,"approve_report")?'A bid turned into a job with "Make it a Job" attaches itself. For a job set up by hand, pick the estimate it was bid from.':'The PM or admin can attach the estimate this job was bid from.'}</div>
+      {can(user,"approve_report")&&<button onClick={openPicker} style={{...primBtn,width:"auto",display:"inline-flex",padding:"10px 18px",borderRadius:10,fontSize:13}}>Attach an estimate</button>}
     </div></div>);
   return(<div>
     {picker}
