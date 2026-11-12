@@ -437,6 +437,12 @@ const API={
     update:async(id,d)=>{const r=await sb(`/tm_tickets?id=eq.${id}`,{method:'PATCH',body:d,prefer:'return=representation'});cascadeCardStatus(id,d).catch(()=>{});return r;},
     remove:(id)=>sb(`/tm_tickets?id=eq.${id}`,{method:'DELETE'}),
   },
+  fireWatch:{
+    list:(key)=>sb(`/hot_work_permits?${key.project_id?`project_id=eq.${key.project_id}`:`mfg_job_id=eq.${key.mfg_job_id}`}&order=date.desc,start_time.desc.nullslast,created_at.desc`),
+    create:(d)=>sb("/hot_work_permits",{method:"POST",body:d,prefer:"return=representation"}),
+    update:(id,d)=>sb(`/hot_work_permits?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
+    remove:(id)=>sb(`/hot_work_permits?id=eq.${id}`,{method:"DELETE"}),
+  },
   safety:   {forProject:(pid)=>sb(`/safety_logs?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/safety_logs",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/safety_logs?id=eq.${id}`,{method:"DELETE"})},
   photos:   {forProject:(pid)=>sb(`/project_photos?project_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb("/project_photos",{method:"POST",body:d,prefer:"return=representation"}),remove:(id)=>sb(`/project_photos?id=eq.${id}`,{method:"DELETE"})},
   punches:{
@@ -2811,6 +2817,7 @@ const REQUIRED_MIGRATIONS=[
   {table:"estimates",col:"proposal_items",file:"proposal_items_migration.sql",why:"work items on proposals"},
   {table:"estimates",col:"job_links",file:"estimate_job_links_migration.sql",why:"attaching one estimate to several job numbers"},
   {table:"time_cards",col:"rig_day",file:"rig_pay_migration.sql",why:"rig pay days on time cards"},
+  {table:"hot_work_permits",col:"id",file:"hot_work_permit_migration.sql",why:"Hot Work Permit tab (Structural & Manufacturing)"},
 ];
 let _migCheck=null;
 function checkMigrations(){
@@ -6252,6 +6259,155 @@ function SubsTab({projectId,user,onErr}){
   </div>);
 }
 
+/* ═══════════ FIRE WATCH — hot work permit + fire watch log ═══════════
+   Structural and Manufacturing jobs. One row per hot work permit / shift:
+   who did the hot work, who stood fire watch, where, the pre-work checks,
+   start/stop, the post-work watch (30 or 60 min) and the close-out sign-off.
+   Printable as a log the client or an auditor can read. */
+const FW_WORK_TYPES=["Welding","Cutting / torch","Grinding","Brazing / soldering","Other"];
+const FW_CHECKS=[
+  ["extinguisher","Fire extinguisher at the work area (charged, inspected)"],
+  ["combustibles","Combustibles moved 35 ft away or covered with fire blankets"],
+  ["floors","Floors swept clean; no oil, rags or sawdust"],
+  ["openings","Wall / floor openings and ducts covered or blanketed"],
+  ["ventilation","Area ventilated; no flammable vapors or gas"],
+  ["sprinklers","Sprinklers / fire alarm in service (or impairment noted)"],
+  ["watch_trained","Fire watch trained, has no other duties and can reach an alarm"],
+];
+const fwBlank=()=>({date:today(),permit_no:"",location:"",work_type:"Welding",hot_work_by:"",fire_watch_by:"",start_time:"",end_time:"",post_watch_minutes:30,checks:{},notes:""});
+const fwTime=(t)=>t?String(t).slice(0,5):"";
+const fwAddMin=(t,m)=>{if(!t)return"";const [h,mi]=t.split(":").map(Number);const d=new Date(2000,0,1,h,mi+Number(m||0));return`${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
+function FireWatchTab({project,mfgJob,user,onErr}){
+  const key=project?{project_id:project.id}:{mfg_job_id:mfgJob.id};
+  const jobName=project?project.name:(mfgJob.job_number||"Shop job");
+  const divName=project?project.division:"Manufacturing";
+  const canEdit=["admin","pm","foreman","crew","estimator"].includes(user.role)||canMfg(user,"shop_floor");
+  const canDelete=user.role==="admin"||user.role==="pm"||canMfg(user,"manage_jobs");
+  const [rows,setRows]=useState([]);const [loading,setLoading]=useState(true);
+  const [showForm,setShowForm]=useState(false);const [editing,setEditing]=useState(null);
+  const [f,setF]=useState(fwBlank());const [saving,setSaving]=useState(false);
+  const [names,setNames]=useState([]);
+  const [range,setRange]=useState({from:"",to:""});
+  const [missing,setMissing]=useState(false);
+  async function load(){setLoading(true);try{const r=await API.fireWatch.list(key);setRows(Array.isArray(r)?r:[]);setMissing(false);}catch(e){if(/hot_work_permits/.test(String(e.message)))setMissing(true);else onErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();API.userProfiles.list().then(p=>setNames((p||[]).map(x=>x.name).filter(Boolean))).catch(()=>{});},[project?.id,mfgJob?.id]);
+  const set=(k,v)=>setF(x=>({...x,[k]:v}));
+  const checksDone=(c)=>FW_CHECKS.filter(([k])=>c&&c[k]).length;
+  function openNew(){setEditing(null);setF({...fwBlank(),fire_watch_by:"",hot_work_by:user.name||""});setShowForm(true);}
+  function openEdit(r){setEditing(r);setF({date:r.date||today(),permit_no:r.permit_no||"",location:r.location||"",work_type:r.work_type||"Welding",hot_work_by:r.hot_work_by||"",fire_watch_by:r.fire_watch_by||"",start_time:fwTime(r.start_time),end_time:fwTime(r.end_time),post_watch_minutes:r.post_watch_minutes||30,checks:r.checks||{},notes:r.notes||""});setShowForm(true);}
+  async function save(){
+    if(!f.fire_watch_by.trim()){onErr("Who is standing fire watch?");return;}
+    if(!f.location.trim()){onErr("Where is the hot work? (location / area)");return;}
+    setSaving(true);
+    try{
+      const body={...key,date:f.date,permit_no:f.permit_no.trim()||null,location:f.location.trim(),work_type:f.work_type,hot_work_by:f.hot_work_by.trim()||null,fire_watch_by:f.fire_watch_by.trim(),
+        start_time:f.start_time||null,end_time:f.end_time||null,post_watch_minutes:Number(f.post_watch_minutes)||30,checks:f.checks||{},notes:f.notes.trim()||null};
+      if(editing)await API.fireWatch.update(editing.id,{...body,updated_by:user.name});
+      else await API.fireWatch.create({...body,status:"open",created_by:user.name});
+      setShowForm(false);setEditing(null);await load();
+    }catch(e){onErr(e.message);}
+    setSaving(false);
+  }
+  async function endWork(r){
+    const now=new Date();const t=`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+    try{await API.fireWatch.update(r.id,{end_time:t,updated_by:user.name});await load();}catch(e){onErr(e.message);}
+  }
+  async function closeOut(r){
+    const ok=window.confirm(`Close out this fire watch?\n\nBy signing off, ${user.name} confirms the ${r.post_watch_minutes||30}-minute post-work watch was kept and the area was inspected with no sign of fire or smoldering.`);
+    if(!ok)return;
+    try{await API.fireWatch.update(r.id,{status:"closed",closed_by:user.name,closed_at:new Date().toISOString(),updated_by:user.name});await load();}catch(e){onErr(e.message);}
+  }
+  async function reopen(r){try{await API.fireWatch.update(r.id,{status:"open",closed_by:null,closed_at:null,updated_by:user.name});await load();}catch(e){onErr(e.message);}}
+  async function del(r){if(!window.confirm("Delete this hot work permit? This can't be undone."))return;try{await API.fireWatch.remove(r.id);await load();}catch(e){onErr(e.message);}}
+  const shown=rows.filter(r=>(!range.from||r.date>=range.from)&&(!range.to||r.date<=range.to));
+  const open=shown.filter(r=>r.status!=="closed"),closed=shown.filter(r=>r.status==="closed");
+  function printLog(){
+    const esc=(v)=>String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const list=[...shown].sort((a,b)=>(a.date||"").localeCompare(b.date||"")||fwTime(a.start_time).localeCompare(fwTime(b.start_time)));
+    const label=range.from||range.to?`${range.from||"…"} to ${range.to||"…"}`:"All entries";
+    const body=`<div class="hdr"><div>${AIME_LOGO_IMG(48)}<div class="sub">${esc(divName)} Division</div></div><div style="text-align:right"><h1>Hot Work Permit &amp; Fire Watch Log</h1><div class="sub">${esc(jobName)}${project&&project.client?" · "+esc(project.client):""}</div><div class="big">${list.length} entr${list.length===1?"y":"ies"} · ${esc(label)}</div></div></div>
+      <table><tr><th>Date</th><th>Permit #</th><th>Location / area</th><th>Hot work</th><th>Performed by</th><th>Fire watch</th><th>Start</th><th>Stop</th><th>Post-watch until</th><th>Pre-work checks</th><th>Closed out by</th></tr>
+      ${list.map(r=>`<tr><td>${esc(r.date)}</td><td>${esc(r.permit_no||"")}</td><td>${esc(r.location||"")}</td><td>${esc(r.work_type||"")}</td><td>${esc(r.hot_work_by||"")}</td><td>${esc(r.fire_watch_by||"")}</td><td>${esc(fwTime(r.start_time))}</td><td>${esc(fwTime(r.end_time))}</td><td>${r.end_time?esc(fwAddMin(fwTime(r.end_time),r.post_watch_minutes||30))+" ("+(r.post_watch_minutes||30)+" min)":""}</td><td>${checksDone(r.checks)} / ${FW_CHECKS.length}${checksDone(r.checks)<FW_CHECKS.length?" ⚠":""}</td><td>${r.status==="closed"?esc(r.closed_by||"")+(r.closed_at?" · "+new Date(r.closed_at).toLocaleString():""):"<i>open</i>"}</td></tr>${r.notes?`<tr><td></td><td colspan="10" style="color:#555;font-size:8.5pt">Notes: ${esc(r.notes)}</td></tr>`:""}`).join("")}
+      </table>
+      <h2 style="margin-top:14px">Pre-work checklist (each permit)</h2><ol style="font-size:8.5pt;color:#333;margin:4px 0 0 18px;padding:0">${FW_CHECKS.map(([,l])=>`<li>${esc(l)}</li>`).join("")}</ol>
+      <div style="margin-top:14px;font-size:8.5pt;color:#555">Fire watch is maintained during hot work and for the post-work period shown, then the area is re-inspected before close-out. Close-out is signed by the person who stood or supervised the watch.</div>`;
+    const w=window.open("","_blank");if(!w){alert("Pop-up blocked — allow pop-ups to print.");return;}
+    const title=`Hot Work Permit Log — ${jobName}`;
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${esc(title)}</title><style>${PL_PRINT_CSS}</style></head><body>${body}<div class="foot"><span>AIME · ${esc(divName)} Division · ${esc(title)}</span><span>Printed by ${esc(user?.name||"")} · ${new Date().toLocaleString()}</span></div><script>window.onload=function(){window.print();}</script></body></html>`);w.document.close();
+  }
+  if(missing)return(<div style={{...cardS,borderLeft:`3px solid ${T.red}`,fontSize:13,color:T.sub,lineHeight:1.6}}><b style={{color:T.red}}>Hot Work Permits aren't set up in the database yet.</b> Ask the admin to run <code>hot_work_permit_migration.sql</code> in Supabase, then reload.</div>);
+  const row=(r)=>{
+    const done=checksDone(r.checks),allOk=done===FW_CHECKS.length,closedR=r.status==="closed";
+    const until=r.end_time?fwAddMin(fwTime(r.end_time),r.post_watch_minutes||30):"";
+    return(<div key={r.id} style={{...cardS,marginBottom:9,borderLeft:`3px solid ${closedR?T.green:r.end_time?T.yellow:T.red}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:220}}>
+          <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+            <span style={pill(closedR?T.green:r.end_time?T.yellow:T.red)}>{closedR?"✓ Closed out":r.end_time?"⏱ Post-work watch":"🔥 Hot work in progress"}</span>
+            <span style={{fontSize:12,fontWeight:800,color:T.text}}>{fmtShort(r.date)}</span>
+            {r.permit_no&&<span style={{fontSize:11,color:T.muted}}>Permit #{r.permit_no}</span>}
+          </div>
+          <div style={{fontSize:14,fontWeight:700,color:T.text}}>{r.work_type} — {r.location}</div>
+          <div style={{fontSize:12,color:T.sub,marginTop:3,lineHeight:1.6}}>
+            Hot work: <b>{r.hot_work_by||"—"}</b> · Fire watch: <b style={{color:T.orange}}>{r.fire_watch_by}</b><br/>
+            {fwTime(r.start_time)||"—"} → {fwTime(r.end_time)||"…"}{until&&<> · watch until <b>{until}</b> ({r.post_watch_minutes||30} min)</>}
+            {" · "}<span style={{color:allOk?T.green:T.red}}>{done}/{FW_CHECKS.length} checks{allOk?" ✓":" ⚠"}</span>
+            {closedR&&<><br/>Closed out by {r.closed_by}{r.closed_at?` · ${new Date(r.closed_at).toLocaleString()}`:""}</>}
+          </div>
+          {r.notes&&<div style={{fontSize:12,color:T.muted,marginTop:4,fontStyle:"italic"}}>{r.notes}</div>}
+        </div>
+        {canEdit&&<div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
+          {!closedR&&!r.end_time&&<button onClick={()=>endWork(r)} style={{...ghostBtn,padding:"7px 10px",fontSize:12,color:T.yellow,borderColor:T.yellow+"60"}}>⏹ Hot work done</button>}
+          {!closedR&&r.end_time&&<button onClick={()=>closeOut(r)} style={{...ghostBtn,padding:"7px 10px",fontSize:12,color:T.green,borderColor:T.green+"60"}}>✓ Close out</button>}
+          {closedR&&canDelete&&<button onClick={()=>reopen(r)} style={{...ghostBtn,padding:"7px 10px",fontSize:12}}>Reopen</button>}
+          <button onClick={()=>openEdit(r)} style={{...ghostBtn,padding:"7px 10px",fontSize:12}}>✏️</button>
+          {canDelete&&<button onClick={()=>del(r)} style={{...ghostBtn,padding:"7px 10px",fontSize:12,color:T.red}}>🗑️</button>}
+        </div>}
+      </div>
+    </div>);
+  };
+  return(<div>
+    <datalist id="fw-names">{names.map(n=><option key={n} value={n}/>)}</datalist>
+    {canEdit&&<button onClick={()=>showForm?setShowForm(false):openNew()} style={{...primBtn,marginBottom:14,borderRadius:14,background:T.red,color:"#fff"}}>{showForm?"✕ Cancel":"🔥 New Hot Work Permit"}</button>}
+    {showForm&&<div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${T.red}`}}>
+      <div style={{fontSize:13,fontWeight:800,color:T.text,marginBottom:10}}>{editing?"Edit hot work permit":"Hot work permit & fire watch"}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+        <div><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>set("date",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Permit # (optional)</label><input value={f.permit_no} onChange={e=>set("permit_no",e.target.value)} placeholder="Client / site permit number" style={inp}/></div>
+      </div>
+      <div style={{marginBottom:10}}><label style={lbl}>Location / area</label><input value={f.location} onChange={e=>set("location",e.target.value)} placeholder="e.g. Bay 2 east wall, Pipe rack level 3" style={inp}/></div>
+      <div style={{marginBottom:10}}><label style={lbl}>Type of hot work</label><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{FW_WORK_TYPES.map(t=><button key={t} onClick={()=>set("work_type",t)} style={{padding:"7px 12px",borderRadius:15,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:f.work_type===t?800:600,background:f.work_type===t?T.red:T.surface,color:f.work_type===t?"#fff":T.sub,border:`1px solid ${f.work_type===t?T.red:T.border}`}}>{t}</button>)}</div></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+        <div><label style={lbl}>Hot work performed by</label><input list="fw-names" value={f.hot_work_by} onChange={e=>set("hot_work_by",e.target.value)} placeholder="Name" style={inp}/></div>
+        <div><label style={lbl}>Fire watch (person)</label><input list="fw-names" value={f.fire_watch_by} onChange={e=>set("fire_watch_by",e.target.value)} placeholder="Name" style={{...inp,borderColor:T.orange+"80"}}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+        <div><label style={lbl}>Start</label><input type="time" value={f.start_time} onChange={e=>set("start_time",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Stop</label><input type="time" value={f.end_time} onChange={e=>set("end_time",e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Post-work watch</label><select value={f.post_watch_minutes} onChange={e=>set("post_watch_minutes",e.target.value)} style={inpSel}><option value={30}>30 min</option><option value={60}>60 min</option><option value={120}>2 hours</option></select></div>
+      </div>
+      <label style={lbl}>Pre-work checks</label>
+      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
+        {FW_CHECKS.map(([k,l])=><label key={k} style={{display:"flex",alignItems:"flex-start",gap:8,fontSize:12.5,color:f.checks[k]?T.text:T.sub,cursor:"pointer",lineHeight:1.4}}><input type="checkbox" checked={!!f.checks[k]} onChange={e=>set("checks",{...f.checks,[k]:e.target.checked})} style={{width:18,height:18,accentColor:T.green,flexShrink:0,marginTop:1}}/>{l}</label>)}
+        <button onClick={()=>set("checks",Object.fromEntries(FW_CHECKS.map(([k])=>[k,true])))} style={{...ghostBtn,fontSize:11.5,padding:"6px 10px",alignSelf:"flex-start"}}>✓ All checks done</button>
+      </div>
+      <div style={{marginBottom:12}}><label style={lbl}>Notes</label><textarea rows={2} value={f.notes} onChange={e=>set("notes",e.target.value)} placeholder="Sprinkler impairment, special conditions, who was notified…" style={{...inp,resize:"vertical"}}/></div>
+      <button onClick={save} disabled={saving} style={{...primBtn,background:T.red,color:"#fff",borderRadius:12}}>{saving?"Saving…":editing?"Save changes":"Save permit & start fire watch"}</button>
+    </div>}
+    <div style={{...cardS,marginBottom:12,display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+      <div style={{flex:1,minWidth:130}}><label style={lbl}>From</label><input type="date" value={range.from} onChange={e=>setRange(r=>({...r,from:e.target.value}))} style={inp}/></div>
+      <div style={{flex:1,minWidth:130}}><label style={lbl}>To</label><input type="date" value={range.to} onChange={e=>setRange(r=>({...r,to:e.target.value}))} style={inp}/></div>
+      <button onClick={printLog} disabled={!shown.length} style={{...ghostBtn,padding:"10px 14px",fontSize:12.5,opacity:shown.length?1:0.5}}>🖨️ Print log ({shown.length})</button>
+    </div>
+    {loading&&<div style={{textAlign:"center",padding:20,color:T.muted}}>Loading…</div>}
+    {!loading&&rows.length===0&&!showForm&&<div style={{textAlign:"center",padding:"40px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>🔥</div><div>No hot work permits yet.</div><div style={{fontSize:12,marginTop:4}}>Start one before any welding, cutting or grinding.</div></div>}
+    {open.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.red,textTransform:"uppercase",letterSpacing:"1px",margin:"4px 0 8px"}}>Active ({open.length})</div>}
+    {open.map(row)}
+    {closed.length>0&&<div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",margin:"12px 0 8px"}}>Closed out ({closed.length})</div>}
+    {closed.map(row)}
+  </div>);
+}
+
 function SafetyTab({projectId,safety,user,onRefresh,onErr}){
   const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);const [type,setType]=useState("toolbox");
   const [f,setF]=useState({date:today(),topic:"",notes:"",severity:"low"});
@@ -7719,6 +7875,7 @@ const PTABS=[
   {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
   {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
   {id:"safety",icon:"⛑️",label:"Safety",perm:"safety"},
+  {id:"firewatch",icon:"🔥",label:"Hot Work Permit",perm:"safety",divisions:["Structural"]},
   {id:"docs",icon:"📁",label:"Docs",perm:"docs"},
   {id:"drawings",icon:"📐",label:"Drawings",perm:"docs"},
   {id:"package",icon:"📦",label:"Sign Pkg",perm:"docs"},
@@ -7732,7 +7889,7 @@ const PTABS=[
 const PTAB_GROUPS=[
   {id:"work",icon:"📋",label:"Work",tabs:["reports","tm"]},
   {id:"money",icon:"💰",label:"Money",tabs:["billing","estimate","co","rfi"]},
-  {id:"crew",icon:"👷",label:"Crew",tabs:["time","crew","safety"]},
+  {id:"crew",icon:"👷",label:"Crew",tabs:["time","crew","safety","firewatch"]},
   {id:"files",icon:"📁",label:"Files",tabs:["docs","drawings","package","photos"]},
   {id:"job",icon:"ℹ️",label:"Job",tabs:["info","schedule","weather"]},
 ];
@@ -14434,7 +14591,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   const [editingTicket,setEditingTicket]=useState(null);const [loading,setLoading]=useState(true);const [err,setErr]=useState("");
   const [screen,setScreen]=useState("detail");const [activeReport,setActiveReport]=useState(null);const [editProject,setEditProject]=useState(false);
   const [projSaving,setProjSaving]=useState(false);
-  const visibleTabs=PTABS.filter(t=>!t.perm||can(user,t.perm)||(t.viewPerm&&can(user,t.viewPerm)));
+  const visibleTabs=PTABS.filter(t=>(!t.divisions||t.divisions.includes(project.division))&&(!t.perm||can(user,t.perm)||(t.viewPerm&&can(user,t.viewPerm))));
   const divMeta=DIV_META[project.division]||{color:T.orange,icon:"🏗️"};
 
   async function load(silent=false){if(!silent)setLoading(true);try{const[reps,saf,phs,wx]=await Promise.all([API.reports.forProject(project.id),API.safety.forProject(project.id),API.photos.forProject(project.id),API.weather.forProject(project.id)]);setReports(reps||[]);setSafety(saf||[]);setPhotos(phs||[]);setWeather(wx||[]);}catch(e){setErr(e.message);}if(!silent)setLoading(false);}
@@ -14573,6 +14730,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
         {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="subs"     &&can(user,"subs")        &&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
+        {!loading&&tab==="firewatch"&&can(user,"safety")&&<FireWatchTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="safety"   &&can(user,"safety")      &&<SafetyTab projectId={project.id} safety={safety} user={user} onRefresh={()=>load(true)} onErr={setErr}/>}
         {!loading&&tab==="billing"&&<BillingTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="estimate"&&<JobEstimateTab project={project} user={user} reports={reports} onErr={setErr}/>}
@@ -16146,7 +16304,7 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-        {[["overview","📊 Overview"],["time","⏱️ Time"],["daily","📝 Daily Reports"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canMfg(user,"billing")?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["daily","📝 Daily Reports"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["firewatch","🔥 Hot Work Permit"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canMfg(user,"billing")?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:"1 0 auto",padding:"12px 8px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -16159,6 +16317,7 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
         {!loading&&tab==="time"&&<MfgTimeTab job={job} parts={parts} user={user} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="qc"&&<QCTab job={job} parts={parts} user={user} onErr={m=>setFormErr(m)}/>}
+        {!loading&&tab==="firewatch"&&<FireWatchTab mfgJob={job} user={user} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="report"&&<MfgProductionReport job={job} parts={parts} user={user}
           onBack={()=>setTab("overview")} onErr={m=>setFormErr(m)}/>}
