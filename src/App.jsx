@@ -438,7 +438,7 @@ const API={
     remove:(id)=>sb(`/tm_tickets?id=eq.${id}`,{method:'DELETE'}),
   },
   fireWatch:{
-    list:(key)=>sb(`/hot_work_permits?${key.project_id?`project_id=eq.${key.project_id}`:`mfg_job_id=eq.${key.mfg_job_id}`}&order=date.desc,start_time.desc.nullslast,created_at.desc`),
+    list:(key)=>sb(`/hot_work_permits?${key.project_id?`project_id=eq.${key.project_id}`:key.mfg_job_id?`mfg_job_id=eq.${key.mfg_job_id}`:key.project_ids?`project_id=in.(${key.project_ids.join(",")})`:`mfg_job_id=in.(${(key.mfg_job_ids||[]).join(",")})`}&order=date.desc,start_time.desc.nullslast,created_at.desc`),
     create:(d)=>sb("/hot_work_permits",{method:"POST",body:d,prefer:"return=representation"}),
     update:(id,d)=>sb(`/hot_work_permits?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
     remove:(id)=>sb(`/hot_work_permits?id=eq.${id}`,{method:"DELETE"}),
@@ -3976,8 +3976,10 @@ function plPrintEst(meta,data,calc,user){
 function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefresh}){
   const [search,setSearch]=useState("");
   const [filter,setFilter]=useState("active");
-  const [nav,setNav]=useState("jobs");          // jobs | estimating | pm
+  const [nav,setNav]=useState("jobs");          // jobs | estimating | pm | hotwork
   const [estErr,setEstErr]=useState("");
+  const [hwErr,setHwErr]=useState("");
+  const hasHotWork=division==="Structural";
   const meta=DIV_META[division]||{icon:"🏗️",color:T.orange};
   const isPM=user.role==="admin"||user.role==="pm";
 
@@ -4015,8 +4017,8 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
           {canCreate&&nav==="jobs"&&<button onClick={onNew} style={{background:T.orange,color:"#0D0D0F",border:"none",borderRadius:12,padding:"10px 16px",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>+ New Job</button>}
         </div>
         {/* Division nav bar — PM Dashboard is PM/admin only */}
-        {isPM&&<div style={{display:"flex",background:T.bg,borderRadius:12,padding:4,marginBottom:12,gap:4}}>
-          {[["jobs","🏗️ Jobs"],...(isPipeDiv(division)?[["estimating","📐 Estimating"]]:[]),["pm","📊 PM Dashboard"]].map(([id,label])=>(
+        {(isPM||hasHotWork)&&<div style={{display:"flex",background:T.bg,borderRadius:12,padding:4,marginBottom:12,gap:4}}>
+          {[["jobs","🏗️ Jobs"],...(isPM&&isPipeDiv(division)?[["estimating","📐 Estimating"]]:[]),...(hasHotWork?[["hotwork","🔥 Hot Work Permit"]]:[]),...(isPM?[["pm","📊 PM Dashboard"]]:[])].map(([id,label])=>(
             <button key={id} onClick={()=>setNav(id)}
               style={{flex:1,padding:"9px",background:nav===id?meta.color:"none",color:nav===id?"#0D0D0F":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
               {label}
@@ -4033,6 +4035,7 @@ function JobBoard({user,division,projects,loading,onSelect,onNew,onBack,onRefres
         </div>}
       </div>
 
+      {nav==="hotwork"&&hasHotWork&&<div style={{padding:"12px 16px 80px"}}><ErrBanner msg={hwErr} onDismiss={()=>setHwErr("")}/><FireWatchTab division={division} projects={divProjects} user={user} onErr={setHwErr}/></div>}
       {nav==="pm"&&isPM&&<PMDashboard embedded lockedDiv={division} user={user} projects={projects} onRefresh={onRefresh} onErr={()=>{}}/>}
       {nav==="estimating"&&isPM&&isPipeDiv(division)&&<div style={{padding:"12px 16px 80px"}}><ErrBanner msg={estErr} onDismiss={()=>setEstErr("")}/><PipelineEstimatingTab user={user} onErr={setEstErr}/></div>}
 
@@ -6277,10 +6280,15 @@ const FW_CHECKS=[
 const fwBlank=()=>({date:today(),permit_no:"",location:"",work_type:"Welding",hot_work_by:"",fire_watch_by:"",start_time:"",end_time:"",post_watch_minutes:30,checks:{},notes:""});
 const fwTime=(t)=>t?String(t).slice(0,5):"";
 const fwAddMin=(t,m)=>{if(!t)return"";const [h,mi]=t.split(":").map(Number);const d=new Date(2000,0,1,h,mi+Number(m||0));return`${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
-function FireWatchTab({project,mfgJob,user,onErr}){
-  const key=project?{project_id:project.id}:{mfg_job_id:mfgJob.id};
-  const jobName=project?project.name:(mfgJob.job_number||"Shop job");
-  const divName=project?project.division:"Manufacturing";
+function FireWatchTab({project,mfgJob,division,projects,mfgJobs,user,onErr}){
+  // Division mode (projects or mfgJobs given): every permit in the division, each tagged with its job.
+  const divMode=!project&&!mfgJob;
+  const jobList=divMode?(projects||mfgJobs||[]):[];
+  const isMfg=!!mfgJob||(divMode&&!!mfgJobs);
+  const key=project?{project_id:project.id}:mfgJob?{mfg_job_id:mfgJob.id}:(isMfg?{mfg_job_ids:jobList.map(j=>j.id)}:{project_ids:jobList.map(j=>j.id)});
+  const jobName=project?project.name:mfgJob?(mfgJob.job_number||"Shop job"):`${division||"Manufacturing"} Division`;
+  const divName=project?project.division:(division||"Manufacturing");
+  const jobLabel=(r)=>{const j=jobList.find(x=>x.id===(isMfg?r.mfg_job_id:r.project_id));return j?(isMfg?j.job_number:j.name):"";};
   const canEdit=["admin","pm","foreman","crew","estimator"].includes(user.role)||canMfg(user,"shop_floor");
   const canDelete=user.role==="admin"||user.role==="pm"||canMfg(user,"manage_jobs");
   const [rows,setRows]=useState([]);const [loading,setLoading]=useState(true);
@@ -6289,18 +6297,21 @@ function FireWatchTab({project,mfgJob,user,onErr}){
   const [names,setNames]=useState([]);
   const [range,setRange]=useState({from:"",to:""});
   const [missing,setMissing]=useState(false);
-  async function load(){setLoading(true);try{const r=await API.fireWatch.list(key);setRows(Array.isArray(r)?r:[]);setMissing(false);}catch(e){if(/hot_work_permits/.test(String(e.message)))setMissing(true);else onErr(e.message);}setLoading(false);}
-  useEffect(()=>{load();API.userProfiles.list().then(p=>setNames((p||[]).map(x=>x.name).filter(Boolean))).catch(()=>{});},[project?.id,mfgJob?.id]);
+  const [jobPick,setJobPick]=useState("");
+  async function load(){if(divMode&&!jobList.length){setRows([]);setLoading(false);return;}setLoading(true);try{const r=await API.fireWatch.list(key);setRows(Array.isArray(r)?r:[]);setMissing(false);}catch(e){if(/hot_work_permits/.test(String(e.message)))setMissing(true);else onErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();API.userProfiles.list().then(p=>setNames((p||[]).map(x=>x.name).filter(Boolean))).catch(()=>{});},[project?.id,mfgJob?.id,divMode?jobList.map(j=>j.id).join(","):""]);
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
   const checksDone=(c)=>FW_CHECKS.filter(([k])=>c&&c[k]).length;
-  function openNew(){setEditing(null);setF({...fwBlank(),fire_watch_by:"",hot_work_by:user.name||""});setShowForm(true);}
-  function openEdit(r){setEditing(r);setF({date:r.date||today(),permit_no:r.permit_no||"",location:r.location||"",work_type:r.work_type||"Welding",hot_work_by:r.hot_work_by||"",fire_watch_by:r.fire_watch_by||"",start_time:fwTime(r.start_time),end_time:fwTime(r.end_time),post_watch_minutes:r.post_watch_minutes||30,checks:r.checks||{},notes:r.notes||""});setShowForm(true);}
+  function openNew(){setEditing(null);setJobPick("");setF({...fwBlank(),fire_watch_by:"",hot_work_by:user.name||""});setShowForm(true);}
+  function openEdit(r){setEditing(r);setJobPick((isMfg?r.mfg_job_id:r.project_id)||"");setF({date:r.date||today(),permit_no:r.permit_no||"",location:r.location||"",work_type:r.work_type||"Welding",hot_work_by:r.hot_work_by||"",fire_watch_by:r.fire_watch_by||"",start_time:fwTime(r.start_time),end_time:fwTime(r.end_time),post_watch_minutes:r.post_watch_minutes||30,checks:r.checks||{},notes:r.notes||""});setShowForm(true);}
   async function save(){
     if(!f.fire_watch_by.trim()){onErr("Who is standing fire watch?");return;}
     if(!f.location.trim()){onErr("Where is the hot work? (location / area)");return;}
+    if(divMode&&!jobPick){onErr("Which job is the hot work on?");return;}
     setSaving(true);
     try{
-      const body={...key,date:f.date,permit_no:f.permit_no.trim()||null,location:f.location.trim(),work_type:f.work_type,hot_work_by:f.hot_work_by.trim()||null,fire_watch_by:f.fire_watch_by.trim(),
+      const rowKey=divMode?(isMfg?{mfg_job_id:jobPick}:{project_id:jobPick}):key;
+      const body={...rowKey,date:f.date,permit_no:f.permit_no.trim()||null,location:f.location.trim(),work_type:f.work_type,hot_work_by:f.hot_work_by.trim()||null,fire_watch_by:f.fire_watch_by.trim(),
         start_time:f.start_time||null,end_time:f.end_time||null,post_watch_minutes:Number(f.post_watch_minutes)||30,checks:f.checks||{},notes:f.notes.trim()||null};
       if(editing)await API.fireWatch.update(editing.id,{...body,updated_by:user.name});
       else await API.fireWatch.create({...body,status:"open",created_by:user.name});
@@ -6326,8 +6337,8 @@ function FireWatchTab({project,mfgJob,user,onErr}){
     const list=[...shown].sort((a,b)=>(a.date||"").localeCompare(b.date||"")||fwTime(a.start_time).localeCompare(fwTime(b.start_time)));
     const label=range.from||range.to?`${range.from||"…"} to ${range.to||"…"}`:"All entries";
     const body=`<div class="hdr"><div>${AIME_LOGO_IMG(48)}<div class="sub">${esc(divName)} Division</div></div><div style="text-align:right"><h1>Hot Work Permit &amp; Fire Watch Log</h1><div class="sub">${esc(jobName)}${project&&project.client?" · "+esc(project.client):""}</div><div class="big">${list.length} entr${list.length===1?"y":"ies"} · ${esc(label)}</div></div></div>
-      <table><tr><th>Date</th><th>Permit #</th><th>Location / area</th><th>Hot work</th><th>Performed by</th><th>Fire watch</th><th>Start</th><th>Stop</th><th>Post-watch until</th><th>Pre-work checks</th><th>Closed out by</th></tr>
-      ${list.map(r=>`<tr><td>${esc(r.date)}</td><td>${esc(r.permit_no||"")}</td><td>${esc(r.location||"")}</td><td>${esc(r.work_type||"")}</td><td>${esc(r.hot_work_by||"")}</td><td>${esc(r.fire_watch_by||"")}</td><td>${esc(fwTime(r.start_time))}</td><td>${esc(fwTime(r.end_time))}</td><td>${r.end_time?esc(fwAddMin(fwTime(r.end_time),r.post_watch_minutes||30))+" ("+(r.post_watch_minutes||30)+" min)":""}</td><td>${checksDone(r.checks)} / ${FW_CHECKS.length}${checksDone(r.checks)<FW_CHECKS.length?" ⚠":""}</td><td>${r.status==="closed"?esc(r.closed_by||"")+(r.closed_at?" · "+new Date(r.closed_at).toLocaleString():""):"<i>open</i>"}</td></tr>${r.notes?`<tr><td></td><td colspan="10" style="color:#555;font-size:8.5pt">Notes: ${esc(r.notes)}</td></tr>`:""}`).join("")}
+      <table><tr><th>Date</th>${divMode?"<th>Job</th>":""}<th>Permit #</th><th>Location / area</th><th>Hot work</th><th>Performed by</th><th>Fire watch</th><th>Start</th><th>Stop</th><th>Post-watch until</th><th>Pre-work checks</th><th>Closed out by</th></tr>
+      ${list.map(r=>`<tr><td>${esc(r.date)}</td>${divMode?`<td>${esc(jobLabel(r))}</td>`:""}<td>${esc(r.permit_no||"")}</td><td>${esc(r.location||"")}</td><td>${esc(r.work_type||"")}</td><td>${esc(r.hot_work_by||"")}</td><td>${esc(r.fire_watch_by||"")}</td><td>${esc(fwTime(r.start_time))}</td><td>${esc(fwTime(r.end_time))}</td><td>${r.end_time?esc(fwAddMin(fwTime(r.end_time),r.post_watch_minutes||30))+" ("+(r.post_watch_minutes||30)+" min)":""}</td><td>${checksDone(r.checks)} / ${FW_CHECKS.length}${checksDone(r.checks)<FW_CHECKS.length?" ⚠":""}</td><td>${r.status==="closed"?esc(r.closed_by||"")+(r.closed_at?" · "+new Date(r.closed_at).toLocaleString():""):"<i>open</i>"}</td></tr>${r.notes?`<tr><td></td><td colspan="${divMode?11:10}" style="color:#555;font-size:8.5pt">Notes: ${esc(r.notes)}</td></tr>`:""}`).join("")}
       </table>
       <h2 style="margin-top:14px">Pre-work checklist (each permit)</h2><ol style="font-size:8.5pt;color:#333;margin:4px 0 0 18px;padding:0">${FW_CHECKS.map(([,l])=>`<li>${esc(l)}</li>`).join("")}</ol>
       <div style="margin-top:14px;font-size:8.5pt;color:#555">Fire watch is maintained during hot work and for the post-work period shown, then the area is re-inspected before close-out. Close-out is signed by the person who stood or supervised the watch.</div>`;
@@ -6347,7 +6358,7 @@ function FireWatchTab({project,mfgJob,user,onErr}){
             <span style={{fontSize:12,fontWeight:800,color:T.text}}>{fmtShort(r.date)}</span>
             {r.permit_no&&<span style={{fontSize:11,color:T.muted}}>Permit #{r.permit_no}</span>}
           </div>
-          <div style={{fontSize:14,fontWeight:700,color:T.text}}>{r.work_type} — {r.location}</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.text}}>{divMode&&<span style={{color:T.orange}}>{jobLabel(r)||"(job?)"} · </span>}{r.work_type} — {r.location}</div>
           <div style={{fontSize:12,color:T.sub,marginTop:3,lineHeight:1.6}}>
             Hot work: <b>{r.hot_work_by||"—"}</b> · Fire watch: <b style={{color:T.orange}}>{r.fire_watch_by}</b><br/>
             {fwTime(r.start_time)||"—"} → {fwTime(r.end_time)||"…"}{until&&<> · watch until <b>{until}</b> ({r.post_watch_minutes||30} min)</>}
@@ -6375,6 +6386,7 @@ function FireWatchTab({project,mfgJob,user,onErr}){
         <div><label style={lbl}>Date</label><input type="date" value={f.date} onChange={e=>set("date",e.target.value)} style={inp}/></div>
         <div><label style={lbl}>Permit # (optional)</label><input value={f.permit_no} onChange={e=>set("permit_no",e.target.value)} placeholder="Client / site permit number" style={inp}/></div>
       </div>
+      {divMode&&<div style={{marginBottom:10}}><label style={lbl}>Job</label><select value={jobPick} onChange={e=>setJobPick(e.target.value)} style={inpSel}><option value="">— pick the job —</option>{jobList.filter(j=>j.status==="active"||j.status==="on_hold"||j.id===jobPick).map(j=><option key={j.id} value={j.id}>{isMfg?`${j.job_number}${j.customer?" · "+j.customer:""}`:`${j.name}${j.client?" · "+j.client:""}`}</option>)}</select></div>}
       <div style={{marginBottom:10}}><label style={lbl}>Location / area</label><input value={f.location} onChange={e=>set("location",e.target.value)} placeholder="e.g. Bay 2 east wall, Pipe rack level 3" style={inp}/></div>
       <div style={{marginBottom:10}}><label style={lbl}>Type of hot work</label><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{FW_WORK_TYPES.map(t=><button key={t} onClick={()=>set("work_type",t)} style={{padding:"7px 12px",borderRadius:15,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:f.work_type===t?800:600,background:f.work_type===t?T.red:T.surface,color:f.work_type===t?"#fff":T.sub,border:`1px solid ${f.work_type===t?T.red:T.border}`}}>{t}</button>)}</div></div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
@@ -7875,7 +7887,6 @@ const PTABS=[
   {id:"crew",icon:"🚜",label:"Crew",perm:"crew_equip"},
   {id:"subs",icon:"🏢",label:"Subs",perm:"subs"},
   {id:"safety",icon:"⛑️",label:"Safety",perm:"safety"},
-  {id:"firewatch",icon:"🔥",label:"Hot Work Permit",perm:"safety",divisions:["Structural"]},
   {id:"docs",icon:"📁",label:"Docs",perm:"docs"},
   {id:"drawings",icon:"📐",label:"Drawings",perm:"docs"},
   {id:"package",icon:"📦",label:"Sign Pkg",perm:"docs"},
@@ -7889,7 +7900,7 @@ const PTABS=[
 const PTAB_GROUPS=[
   {id:"work",icon:"📋",label:"Work",tabs:["reports","tm"]},
   {id:"money",icon:"💰",label:"Money",tabs:["billing","estimate","co","rfi"]},
-  {id:"crew",icon:"👷",label:"Crew",tabs:["time","crew","safety","firewatch"]},
+  {id:"crew",icon:"👷",label:"Crew",tabs:["time","crew","safety"]},
   {id:"files",icon:"📁",label:"Files",tabs:["docs","drawings","package","photos"]},
   {id:"job",icon:"ℹ️",label:"Job",tabs:["info","schedule","weather"]},
 ];
@@ -14730,7 +14741,6 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
         {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
         {!loading&&tab==="subs"     &&can(user,"subs")        &&<SubsTab projectId={project.id} user={user} onErr={setErr}/>}
-        {!loading&&tab==="firewatch"&&can(user,"safety")&&<FireWatchTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="safety"   &&can(user,"safety")      &&<SafetyTab projectId={project.id} safety={safety} user={user} onRefresh={()=>load(true)} onErr={setErr}/>}
         {!loading&&tab==="billing"&&<BillingTab project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="estimate"&&<JobEstimateTab project={project} user={user} reports={reports} onErr={setErr}/>}
@@ -15830,6 +15840,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
   const [f,setF]=useState({job_number:"",customer:"",description:"",po_number:"",due_date:"",notes:""});
   const [saving,setSaving]=useState(false);
   const [boardTab,setBoardTab]=useState("jobs");
+  const [hwErr,setHwErr]=useState("");
   const canAdmin=canMfg(user,"manage_jobs");
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
 
@@ -15919,7 +15930,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
 
         {/* Dashboard tab toggle */}
         {!loading&&jobs.length>0&&<div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4}}>
-          {[["jobs","🔩 Jobs"],...(canAdmin||user.role==="admin"||user.role==="pm"?[["reports","📊 PM Dashboard"]]:[])].map(([id,label])=>(
+          {[["jobs","🔩 Jobs"],["hotwork","🔥 Hot Work Permit"],...(canAdmin||user.role==="admin"||user.role==="pm"?[["reports","📊 PM Dashboard"]]:[])].map(([id,label])=>(
             <button key={id} onClick={()=>setBoardTab(id)}
               style={{flex:1,padding:"8px",background:boardTab===id?T.purple:"none",color:boardTab===id?"#fff":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
               {label}
@@ -15928,6 +15939,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
         </div>}
 
         {boardTab==="reports"&&<MfgReportsArea jobs={jobs} user={user} onSelectJob={j=>onSelectJob(j)}/>}
+        {boardTab==="hotwork"&&<><ErrBanner msg={hwErr} onDismiss={()=>setHwErr("")}/><FireWatchTab mfgJobs={jobs} user={user} onErr={setHwErr}/></>}
         {boardTab==="jobs"&&active.length===0&&!loading&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
           <div style={{fontSize:48,marginBottom:12}}>🏭</div>
           <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No Manufacturing Jobs</div>
@@ -16304,7 +16316,7 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-        {[["overview","📊 Overview"],["time","⏱️ Time"],["daily","📝 Daily Reports"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["firewatch","🔥 Hot Work Permit"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canMfg(user,"billing")?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["daily","📝 Daily Reports"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canMfg(user,"billing")?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:"1 0 auto",padding:"12px 8px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -16317,7 +16329,6 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
         {!loading&&tab==="time"&&<MfgTimeTab job={job} parts={parts} user={user} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="qc"&&<QCTab job={job} parts={parts} user={user} onErr={m=>setFormErr(m)}/>}
-        {!loading&&tab==="firewatch"&&<FireWatchTab mfgJob={job} user={user} onErr={m=>setFormErr(m)}/>}
 
         {!loading&&tab==="report"&&<MfgProductionReport job={job} parts={parts} user={user}
           onBack={()=>setTab("overview")} onErr={m=>setFormErr(m)}/>}
