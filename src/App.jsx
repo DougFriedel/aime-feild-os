@@ -467,6 +467,8 @@ const API={
     jobs:{list:()=>sb('/mfg_jobs?order=created_at.desc'),create:(d)=>sb('/mfg_jobs',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_jobs?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_jobs?id=eq.${id}`,{method:'DELETE'})},
     parts:{forJob:(jid)=>sb(`/mfg_parts?job_id=eq.${jid}&order=part_number.asc`),create:(d)=>sb('/mfg_parts',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_parts?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_parts?id=eq.${id}`,{method:'DELETE'})},
     bom:{forPart:(pid)=>sb(`/mfg_bom?part_id=eq.${pid}`),create:(d)=>sb('/mfg_bom',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_bom?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_bom?id=eq.${id}`,{method:'DELETE'})},
+    inventory:{list:()=>sb('/mfg_inventory?order=part_number.asc'),create:(d)=>sb('/mfg_inventory',{method:'POST',body:d,prefer:'return=representation'}),update:(id,d)=>sb(`/mfg_inventory?id=eq.${id}`,{method:'PATCH',body:d}),remove:(id)=>sb(`/mfg_inventory?id=eq.${id}`,{method:'DELETE'})},
+    inventoryTxns:{list:()=>sb('/mfg_inventory_txns?order=txn_date.desc,created_at.desc'),create:(d)=>sb('/mfg_inventory_txns',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_inventory_txns?id=eq.${id}`,{method:'DELETE'})},
     receipts:{forPart:(pid)=>sb(`/mfg_receipts?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_receipts',{method:'POST',body:d,prefer:'return=representation'})},
     travelers:{forPart:(pid)=>sb(`/mfg_travelers?part_id=eq.${pid}&limit=1`),upsert:(d)=>sb('/mfg_travelers',{method:'POST',body:d,prefer:'return=representation',resolution:'merge-duplicates'})},
     stageLog:{forPart:(pid)=>sb(`/mfg_stage_log?part_id=eq.${pid}&order=created_at.desc`),create:(d)=>sb('/mfg_stage_log',{method:'POST',body:d,prefer:'return=representation'}),remove:(id)=>sb(`/mfg_stage_log?id=eq.${id}`,{method:'DELETE'})},
@@ -2818,6 +2820,7 @@ const REQUIRED_MIGRATIONS=[
   {table:"estimates",col:"job_links",file:"estimate_job_links_migration.sql",why:"attaching one estimate to several job numbers"},
   {table:"time_cards",col:"rig_day",file:"rig_pay_migration.sql",why:"rig pay days on time cards"},
   {table:"hot_work_permits",col:"id",file:"hot_work_permit_migration.sql",why:"Hot Work Permit tab (Structural & Manufacturing)"},
+  {table:"mfg_inventory",col:"id",file:"shop_inventory_migration.sql",why:"shop-wide Manufacturing inventory"},
 ];
 let _migCheck=null;
 function checkMigrations(){
@@ -15930,7 +15933,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
 
         {/* Dashboard tab toggle */}
         {!loading&&jobs.length>0&&<div style={{display:"flex",background:T.surface,borderRadius:12,padding:4,marginBottom:14,gap:4}}>
-          {[["jobs","🔩 Jobs"],["hotwork","🔥 Hot Work Permit"],...(canAdmin||user.role==="admin"||user.role==="pm"?[["reports","📊 PM Dashboard"]]:[])].map(([id,label])=>(
+          {[["jobs","🔩 Jobs"],["inventory","📦 Inventory"],["hotwork","🔥 Hot Work Permit"],...(canAdmin||user.role==="admin"||user.role==="pm"?[["reports","📊 PM Dashboard"]]:[])].map(([id,label])=>(
             <button key={id} onClick={()=>setBoardTab(id)}
               style={{flex:1,padding:"8px",background:boardTab===id?T.purple:"none",color:boardTab===id?"#fff":T.muted,border:"none",borderRadius:10,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
               {label}
@@ -15940,6 +15943,7 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
 
         {boardTab==="reports"&&<MfgReportsArea jobs={jobs} user={user} onSelectJob={j=>onSelectJob(j)}/>}
         {boardTab==="hotwork"&&<><ErrBanner msg={hwErr} onDismiss={()=>setHwErr("")}/><FireWatchTab mfgJobs={jobs} user={user} onErr={setHwErr}/></>}
+        {boardTab==="inventory"&&<><ErrBanner msg={hwErr} onDismiss={()=>setHwErr("")}/><ShopInventoryTab user={user} onErr={setHwErr} onOpenJob={j=>{const full=jobs.find(x=>x.id===j.id);if(full)onSelectJob(full);}}/></>}
         {boardTab==="jobs"&&active.length===0&&!loading&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}>
           <div style={{fontSize:48,marginBottom:12}}>🏭</div>
           <div style={{fontSize:15,fontWeight:700,color:T.sub,marginBottom:6}}>No Manufacturing Jobs</div>
@@ -15952,6 +15956,265 @@ function ManufacturingJobBoard({user,onBack,onSelectJob}){
       </div>
     </div>
   );
+}
+
+/* ═══════════ SHOP INVENTORY ═══════════
+   One stock room shared by every Manufacturing job.
+     mfg_inventory       — the parts master (part #, description, vendor, unit, reorder level, bin)
+     mfg_inventory_txns  — every movement, signed: Received +, Adjustment ±, Damaged −, Shipped −
+     mfg_bom.inventory_id — ties an assembly's component line to a stock part
+   Parts come OFF inventory when a shipment is logged (qty shipped × qty per assembly).
+   Assemblies that are built but not yet shipped show their parts as "committed" so
+   Can-build never promises stock that is already sitting inside a finished unit. */
+let INV_MISSING=false;
+const invErr=(e)=>/mfg_inventory/i.test(String(e&&e.message||""));
+const INV_TXN_TYPES={Received:T.green,Adjustment:T.blue,Damaged:T.red,Shipped:T.purple};
+async function loadShopStock(){
+  const [items,txns,boms,asmParts,asm,ship,jobs]=await Promise.all([
+    API.mfg.inventory.list(),API.mfg.inventoryTxns.list(),
+    sb("/mfg_bom?select=*").catch(()=>[]),sb("/mfg_parts?select=*").catch(()=>[]),
+    sb("/mfg_assembly_log?select=part_id,job_id,qty_completed").catch(()=>[]),
+    sb("/mfg_shipping_log?select=id,part_id,job_id,qty_shipped").catch(()=>[]),
+    sb("/mfg_jobs?select=id,job_number,customer,status").catch(()=>[]),
+  ]);
+  INV_MISSING=false;
+  return{items:items||[],txns:txns||[],boms:boms||[],asmParts:asmParts||[],asm:asm||[],ship:ship||[],jobs:jobs||[]};
+}
+/* Per stock part: on hand, committed (inside built-but-unshipped assemblies), available,
+   what still needs to be built for open orders, and where it is used. */
+function stockCalc(d){
+  const jobById={};d.jobs.forEach(j=>jobById[j.id]=j);
+  const built={},shipped={};
+  d.asm.forEach(a=>built[a.part_id]=(built[a.part_id]||0)+(parseInt(a.qty_completed)||0));
+  d.ship.forEach(s=>{if(s.part_id)shipped[s.part_id]=(shipped[s.part_id]||0)+(parseInt(s.qty_shipped)||0);});
+  const out={};
+  d.items.forEach(it=>out[it.id]={item:it,onHand:0,committed:0,needOpen:0,uses:[]});
+  d.txns.forEach(t=>{if(out[t.inventory_id])out[t.inventory_id].onHand+=parseFloat(t.qty)||0;});
+  d.boms.forEach(b=>{
+    const o=out[b.inventory_id];if(!o)return;
+    const p=d.asmParts.find(x=>x.id===b.part_id);if(!p)return;
+    const job=jobById[p.job_id];const qpa=parseFloat(b.qty_per_assembly)||1;
+    const bu=built[p.id]||0,sh=shipped[p.id]||0;
+    const awaiting=Math.max(0,bu-sh);                    // built, not shipped → parts already inside them
+    const remaining=Math.max(0,(parseInt(p.qty_ordered)||0)-Math.max(bu,sh)); // still to build for the order
+    o.committed+=awaiting*qpa;
+    if(job&&job.status==="active")o.needOpen+=remaining*qpa;
+    o.uses.push({bomId:b.id,assembly:p,job,qpa,awaiting,remaining});
+  });
+  Object.values(out).forEach(o=>{
+    o.available=o.onHand-o.committed;
+    o.reorder=parseFloat(o.item.reorder_level)||0;
+    o.needsReorder=o.reorder>0&&o.available<=o.reorder;
+    o.short=Math.max(0,o.needOpen-o.available);
+    o.uses.forEach(u=>u.canBuild=Math.max(0,Math.floor(o.available/u.qpa)));
+  });
+  return out;
+}
+/* How many more of an assembly can be built from what's available right now (and which part limits it). */
+function canBuildAssembly(calc,boms,partId){
+  const rows=(boms||[]).filter(b=>b.part_id===partId&&b.inventory_id&&calc[b.inventory_id]);
+  if(!rows.length)return{n:null,limit:null};
+  let n=Infinity,limit=null;
+  rows.forEach(b=>{const o=calc[b.inventory_id];const c=Math.max(0,Math.floor(o.available/(parseFloat(b.qty_per_assembly)||1)));if(c<n){n=c;limit=o.item;}});
+  return{n:n===Infinity?0:n,limit};
+}
+/* Find or create the stock part for a part number (used when adding a BOM line or receiving a part that isn't in the master yet). */
+async function findOrCreateStockPart(items,partNumber,description,extra){
+  const pn=String(partNumber||"").trim();if(!pn)throw new Error("Part number is required.");
+  const hit=(items||[]).find(i=>String(i.part_number||"").trim().toLowerCase()===pn.toLowerCase());
+  if(hit)return hit;
+  const r=await API.mfg.inventory.create({part_number:pn,description:(description||"").trim()||null,unit:"ea",...(extra||{})});
+  return Array.isArray(r)?r[0]:r;
+}
+/* Deduct (or restore) the components of a shipment. */
+async function deductShipmentStock(shipRow,boms,user){
+  const rows=(boms||[]).filter(b=>b.part_id===shipRow.part_id&&b.inventory_id);
+  const qty=parseInt(shipRow.qty_shipped)||0;if(!rows.length||!qty)return;
+  await Promise.all(rows.map(b=>API.mfg.inventoryTxns.create({inventory_id:b.inventory_id,qty:-(qty*(parseFloat(b.qty_per_assembly)||1)),txn_type:"Shipped",txn_date:shipRow.ship_date||today(),entered_by:user.name,job_id:shipRow.job_id||null,shipping_log_id:shipRow.id,reference:shipRow.bol_number||null,notes:`Shipped ${qty} × assembly`})));
+}
+async function restoreShipmentStock(shipId){
+  await sb(`/mfg_inventory_txns?shipping_log_id=eq.${shipId}`,{method:"DELETE"}).catch(()=>{});
+}
+
+/* The Inventory tab on the Manufacturing page. */
+function ShopInventoryTab({user,onErr,onOpenJob}){
+  const [d,setD]=useState(null);const [loading,setLoading]=useState(true);const [missing,setMissing]=useState(false);
+  const [q,setQ]=useState("");const [open,setOpen]=useState(null);const [view,setView]=useState("all"); // all | short | reorder
+  const [showRecv,setShowRecv]=useState(false);const [showNew,setShowNew]=useState(false);const [saving,setSaving]=useState(false);
+  const [rf,setRf]=useState({part:"",qty:"",date:today(),ref:"",vendor:"",by:user.name,notes:""});
+  const [nf,setNf]=useState({part_number:"",description:"",vendor:"",unit:"ea",reorder_level:"",bin_location:""});
+  const [adj,setAdj]=useState(null);const [adjTo,setAdjTo]=useState("");const [adjReason,setAdjReason]=useState("");
+  const [editItem,setEditItem]=useState(null);
+  const canEdit=canMfg(user,"shop_floor");const canManage=canMfg(user,"manage_jobs")||user.role==="admin";
+  async function load(){setLoading(true);try{setD(await loadShopStock());setMissing(false);}catch(e){if(invErr(e))setMissing(true);else onErr(e.message);}setLoading(false);}
+  useEffect(()=>{load();},[]);
+  const calc=useMemo(()=>d?stockCalc(d):{},[d]);
+  const items=d?d.items:[];
+  const matchPart=(txt)=>items.find(i=>String(i.part_number||"").trim().toLowerCase()===String(txt||"").trim().toLowerCase());
+  const list=items.filter(i=>{
+    const s=q.trim().toLowerCase();
+    if(s&&![i.part_number,i.description,i.vendor,i.bin_location].some(v=>String(v||"").toLowerCase().includes(s)))return false;
+    const o=calc[i.id];if(!o)return false;
+    if(view==="short")return o.short>0;if(view==="reorder")return o.needsReorder;return true;
+  }).sort((a,b)=>String(a.part_number).localeCompare(String(b.part_number),undefined,{numeric:true}));
+  const shortCount=Object.values(calc).filter(o=>o.short>0).length,reorderCount=Object.values(calc).filter(o=>o.needsReorder).length;
+  async function receive(){
+    const qty=parseFloat(rf.qty);if(!rf.part.trim()||!(qty>0)){onErr("Pick a part and enter the quantity received.");return;}
+    setSaving(true);
+    try{
+      let it=matchPart(rf.part);
+      if(!it){if(!window.confirm(`"${rf.part.trim()}" isn't in inventory yet. Add it as a new part?`)){setSaving(false);return;}it=await findOrCreateStockPart(items,rf.part,"",{vendor:rf.vendor||null});}
+      await API.mfg.inventoryTxns.create({inventory_id:it.id,qty,txn_type:"Received",txn_date:rf.date,entered_by:rf.by||user.name,reference:rf.ref||null,vendor:rf.vendor||null,notes:rf.notes||null});
+      setRf(f=>({...f,part:"",qty:"",ref:"",notes:""}));await load();
+    }catch(e){onErr(e.message);}
+    setSaving(false);
+  }
+  async function createPart(){
+    if(!nf.part_number.trim()){onErr("Part number is required.");return;}
+    if(matchPart(nf.part_number)){onErr("That part number is already in inventory.");return;}
+    setSaving(true);
+    try{await API.mfg.inventory.create({part_number:nf.part_number.trim(),description:nf.description.trim()||null,vendor:nf.vendor.trim()||null,unit:nf.unit||"ea",reorder_level:parseFloat(nf.reorder_level)||0,bin_location:nf.bin_location.trim()||null});
+      setNf({part_number:"",description:"",vendor:"",unit:"ea",reorder_level:"",bin_location:""});setShowNew(false);await load();}catch(e){onErr(e.message);}
+    setSaving(false);
+  }
+  async function saveAdj(){
+    const target=parseFloat(adjTo);if(isNaN(target)||target<0){onErr("Enter the count you actually have.");return;}
+    const cur=calc[adj.id]?calc[adj.id].onHand:0;const delta=target-cur;
+    if(delta===0){setAdj(null);return;}
+    setSaving(true);
+    try{await API.mfg.inventoryTxns.create({inventory_id:adj.id,qty:delta,txn_type:/damag|scrap|broke/i.test(adjReason)?"Damaged":"Adjustment",txn_date:today(),entered_by:user.name,notes:`Counted ${target} (was ${cur})${adjReason?" — "+adjReason:""}`});setAdj(null);setAdjTo("");setAdjReason("");await load();}catch(e){onErr(e.message);}
+    setSaving(false);
+  }
+  async function saveEdit(){
+    setSaving(true);
+    try{await API.mfg.inventory.update(editItem.id,{part_number:editItem.part_number.trim(),description:editItem.description||null,vendor:editItem.vendor||null,unit:editItem.unit||"ea",reorder_level:parseFloat(editItem.reorder_level)||0,bin_location:editItem.bin_location||null});setEditItem(null);await load();}catch(e){onErr(e.message);}
+    setSaving(false);
+  }
+  async function delTxn(t){if(!window.confirm("Delete this inventory entry?"))return;try{await API.mfg.inventoryTxns.remove(t.id);await load();}catch(e){onErr(e.message);}}
+  async function delItem(it){
+    const o=calc[it.id];if(o&&o.uses.length){onErr(`${it.part_number} is on the BOM of ${o.uses.length} assembl${o.uses.length===1?"y":"ies"} — remove it there first.`);return;}
+    if(!window.confirm(`Delete ${it.part_number} and its whole history from inventory?`))return;
+    try{await API.mfg.inventory.remove(it.id);await load();}catch(e){onErr(e.message);}
+  }
+  function printStock(){
+    const esc=(v)=>String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const rows=list.map(i=>{const o=calc[i.id];return`<tr><td><b>${esc(i.part_number)}</b></td><td>${esc(i.description||"")}</td><td>${esc(i.vendor||"")}</td><td>${esc(i.bin_location||"")}</td><td style="text-align:right">${o.onHand}</td><td style="text-align:right">${o.committed||""}</td><td style="text-align:right"><b>${o.available}</b></td><td style="text-align:right">${o.reorder||""}</td><td style="text-align:right;color:#b91c1c">${o.short||""}</td></tr>`;}).join("");
+    const w=window.open("","_blank");if(!w){alert("Pop-up blocked — allow pop-ups to print.");return;}
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Shop Inventory</title><style>${PL_PRINT_CSS}</style></head><body><div class="hdr"><div>${AIME_LOGO_IMG(48)}<div class="sub">Manufacturing Division</div></div><div style="text-align:right"><h1>Shop Inventory</h1><div class="sub">${new Date().toLocaleString()} · ${list.length} parts${view!=="all"?" · "+esc(view==="short"?"short for open orders":"at/below reorder"):""}${q?" · search: "+esc(q):""}</div></div></div><table><tr><th>Part #</th><th>Description</th><th>Vendor</th><th>Bin</th><th style="text-align:right">On hand</th><th style="text-align:right">In built units</th><th style="text-align:right">Available</th><th style="text-align:right">Reorder at</th><th style="text-align:right">Short</th></tr>${rows}</table><div class="foot"><span>AIME · Manufacturing · Shop Inventory</span><span>Printed by ${esc(user.name||"")}</span></div><script>window.onload=function(){window.print();}</script></body></html>`);w.document.close();
+  }
+  if(missing)return(<div style={{...cardS,borderLeft:`3px solid ${T.red}`,fontSize:13,color:T.sub,lineHeight:1.6}}><b style={{color:T.red}}>Shop inventory isn't set up in the database yet.</b> Ask the admin to run <code>shop_inventory_migration.sql</code> in Supabase, then reload.</div>);
+  const txnsFor=(id)=>(d?d.txns:[]).filter(t=>t.inventory_id===id).sort((a,b)=>(b.txn_date||"").localeCompare(a.txn_date||"")||(b.created_at||"").localeCompare(a.created_at||""));
+  return(<div>
+    <datalist id="inv-parts">{items.map(i=><option key={i.id} value={i.part_number}>{i.description||""}</option>)}</datalist>
+    {/* Summary */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+      {[[items.length,"Parts tracked",T.purple,"all"],[shortCount,"Short for open orders",shortCount?T.red:T.muted,"short"],[reorderCount,"At / below reorder",reorderCount?T.orange:T.muted,"reorder"]].map(([v,l,c,id])=>(
+        <button key={l} onClick={()=>setView(id)} style={{...cardS,textAlign:"center",cursor:"pointer",border:`2px solid ${view===id?c:"transparent"}`,fontFamily:"inherit"}}><div style={{fontSize:24,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",marginTop:2}}>{l}</div></button>
+      ))}
+    </div>
+    {canEdit&&<div style={{display:"flex",gap:8,marginBottom:12}}>
+      <button onClick={()=>{setShowRecv(s=>!s);setShowNew(false);}} style={{...primBtn,flex:2,borderRadius:12,background:T.green,color:"#000"}}>{showRecv?"✕ Cancel":"📥 Receive Parts"}</button>
+      <button onClick={()=>{setShowNew(s=>!s);setShowRecv(false);}} style={{...ghostBtn,flex:1,textAlign:"center",fontSize:12.5}}>{showNew?"✕ Cancel":"+ New Part"}</button>
+      <button onClick={printStock} style={{...ghostBtn,padding:"10px 12px",fontSize:12.5}}>🖨️</button>
+    </div>}
+    {showRecv&&<div style={{...cardS,marginBottom:12,border:`1px solid ${T.green}40`}}>
+      <div style={{fontSize:13,fontWeight:800,color:T.green,marginBottom:10}}>📥 Receive parts into stock</div>
+      <div style={{marginBottom:8}}><label style={lbl}>Part # *</label><input list="inv-parts" value={rf.part} onChange={e=>setRf(f=>({...f,part:e.target.value}))} placeholder="Type or pick a part number" style={inp} autoFocus/>
+        {rf.part&&(matchPart(rf.part)?<div style={{fontSize:11,color:T.green,marginTop:3}}>✓ {matchPart(rf.part).description||"in inventory"} · {calc[matchPart(rf.part).id]?.onHand??0} on hand now</div>:<div style={{fontSize:11,color:T.yellow,marginTop:3}}>New part — it will be added to inventory</div>)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>Qty received *</label><input type="number" value={rf.qty} onChange={e=>setRf(f=>({...f,qty:e.target.value}))} placeholder="0" style={{...inp,fontSize:16,fontWeight:800,textAlign:"center"}}/></div>
+        <div><label style={lbl}>Date</label><input type="date" value={rf.date} onChange={e=>setRf(f=>({...f,date:e.target.value}))} style={inp}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>PO / BOL / packing slip #</label><input value={rf.ref} onChange={e=>setRf(f=>({...f,ref:e.target.value}))} style={inp}/></div>
+        <div><label style={lbl}>Vendor / from</label><input value={rf.vendor} onChange={e=>setRf(f=>({...f,vendor:e.target.value}))} style={inp}/></div>
+        <div><label style={lbl}>Received by</label><input value={rf.by} onChange={e=>setRf(f=>({...f,by:e.target.value}))} style={inp}/></div>
+      </div>
+      <div style={{marginBottom:10}}><label style={lbl}>Notes</label><input value={rf.notes} onChange={e=>setRf(f=>({...f,notes:e.target.value}))} placeholder="Damaged on arrival, partial delivery, etc." style={inp}/></div>
+      <button onClick={receive} disabled={saving} style={{...primBtn,borderRadius:12,background:T.green,color:"#000"}}>{saving?"Saving…":"✓ Add to inventory"}</button>
+    </div>}
+    {showNew&&<div style={{...cardS,marginBottom:12,border:`1px solid ${T.purple}40`}}>
+      <div style={{fontSize:13,fontWeight:800,color:T.purple,marginBottom:10}}>New stock part</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:8,marginBottom:8}}>
+        <div><label style={lbl}>Part # *</label><input value={nf.part_number} onChange={e=>setNf(f=>({...f,part_number:e.target.value}))} style={inp} autoFocus/></div>
+        <div><label style={lbl}>Description</label><input value={nf.description} onChange={e=>setNf(f=>({...f,description:e.target.value}))} style={inp}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:10}}>
+        <div><label style={lbl}>Vendor</label><input value={nf.vendor} onChange={e=>setNf(f=>({...f,vendor:e.target.value}))} style={inp}/></div>
+        <div><label style={lbl}>Unit</label><select value={nf.unit} onChange={e=>setNf(f=>({...f,unit:e.target.value}))} style={inpSel}>{["ea","ft","in","lb","kg","gal","box","roll","sheet"].map(u=><option key={u}>{u}</option>)}</select></div>
+        <div><label style={lbl}>Reorder at</label><input type="number" value={nf.reorder_level} onChange={e=>setNf(f=>({...f,reorder_level:e.target.value}))} style={inp}/></div>
+        <div><label style={lbl}>Bin / location</label><input value={nf.bin_location} onChange={e=>setNf(f=>({...f,bin_location:e.target.value}))} style={inp}/></div>
+      </div>
+      <button onClick={createPart} disabled={saving} style={{...primBtn,borderRadius:12,background:T.purple}}>{saving?"Saving…":"Add part"}</button>
+    </div>}
+    <div style={{position:"relative",marginBottom:10}}>
+      <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",fontSize:14,pointerEvents:"none"}}>🔍</span>
+      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search part #, description, vendor, bin…" style={{...inp,paddingLeft:38,borderRadius:12}}/>
+    </div>
+    {loading&&<Spinner/>}
+    {!loading&&list.length===0&&<div style={{textAlign:"center",padding:"36px 0",color:T.muted}}><div style={{fontSize:32,marginBottom:8}}>📦</div><div>{items.length?"Nothing matches.":"No parts in inventory yet — receive a delivery or add a part."}</div></div>}
+    {list.map(i=>{
+      const o=calc[i.id];const isOpen=open===i.id;
+      const color=o.short>0?T.red:o.needsReorder?T.orange:o.available<=0?T.yellow:T.green;
+      return(<div key={i.id} style={{...cardS,marginBottom:8,borderLeft:`4px solid ${color}`,padding:0,overflow:"hidden"}}>
+        <div onClick={()=>setOpen(isOpen?null:i.id)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"12px 14px",cursor:"pointer"}}>
+          <div style={{minWidth:0,flex:1}}>
+            <div style={{fontSize:14,fontWeight:800,color:T.orange}}>{i.part_number} <span style={{fontSize:12,fontWeight:400,color:T.sub}}>{i.description||""}</span></div>
+            <div style={{fontSize:11,color:T.muted,marginTop:2}}>{[i.vendor,i.bin_location?"Bin "+i.bin_location:null,o.uses.length?`on ${o.uses.length} assembl${o.uses.length===1?"y":"ies"}`:"not on any BOM",o.reorder?`reorder at ${o.reorder}`:null].filter(Boolean).join(" · ")}</div>
+            {o.short>0&&<div style={{fontSize:11,color:T.red,fontWeight:700,marginTop:3}}>⚠ Short {o.short} {i.unit||"ea"} for open orders</div>}
+          </div>
+          <div style={{display:"flex",gap:6,flexShrink:0}}>
+            {[["On hand",o.onHand,T.text],...(o.committed?[["In built units",o.committed,T.muted]]:[]),["Available",o.available,color]].map(([l,v,c])=>(
+              <div key={l} style={{background:T.surface,borderRadius:8,padding:"6px 8px",textAlign:"center",minWidth:58}}><div style={{fontSize:17,fontWeight:900,color:c,lineHeight:1}}>{v}</div><div style={{fontSize:8,color:T.muted,textTransform:"uppercase",marginTop:2}}>{l}</div></div>
+            ))}
+          </div>
+        </div>
+        {isOpen&&<div style={{padding:"0 14px 12px",borderTop:`1px solid ${T.border}`}}>
+          {canEdit&&<div style={{display:"flex",gap:6,flexWrap:"wrap",margin:"10px 0"}}>
+            <button onClick={()=>{setShowRecv(true);setRf(f=>({...f,part:i.part_number}));window.scrollTo({top:0,behavior:"smooth"});}} style={{...ghostBtn,padding:"6px 10px",fontSize:11.5,color:T.green,borderColor:T.green+"60"}}>📥 Receive</button>
+            <button onClick={()=>{setAdj(i);setAdjTo(String(o.onHand));setAdjReason("");}} style={{...ghostBtn,padding:"6px 10px",fontSize:11.5,color:T.blue,borderColor:T.blue+"60"}}>✏️ Count / adjust</button>
+            {canManage&&<button onClick={()=>setEditItem({...i,reorder_level:i.reorder_level??""})} style={{...ghostBtn,padding:"6px 10px",fontSize:11.5}}>⚙️ Edit part</button>}
+            {canManage&&<button onClick={()=>delItem(i)} style={{...ghostBtn,padding:"6px 10px",fontSize:11.5,color:T.red}}>🗑️</button>}
+          </div>}
+          {adj&&adj.id===i.id&&<div style={{...cardS,background:T.surface,marginBottom:10}}>
+            <div style={{display:"grid",gridTemplateColumns:"110px 1fr",gap:8,marginBottom:8}}>
+              <div><label style={lbl}>Count on hand</label><input type="number" value={adjTo} onChange={e=>setAdjTo(e.target.value)} style={{...inp,textAlign:"center",fontSize:16,fontWeight:800}} autoFocus/></div>
+              <div><label style={lbl}>Reason</label><input value={adjReason} onChange={e=>setAdjReason(e.target.value)} placeholder="physical count, damaged, scrapped, found…" style={inp}/></div>
+            </div>
+            {(()=>{const t=parseFloat(adjTo);const dd=isNaN(t)?0:t-o.onHand;return dd?<div style={{fontSize:11.5,color:dd>0?T.green:T.red,marginBottom:8}}>{dd>0?"+":""}{dd} against the current {o.onHand} on hand</div>:null;})()}
+            <div style={{display:"flex",gap:8}}><button onClick={saveAdj} disabled={saving} style={{...primBtn,flex:2,borderRadius:10,background:T.blue}}>{saving?"Saving…":"Set count"}</button><button onClick={()=>setAdj(null)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button></div>
+          </div>}
+          {editItem&&editItem.id===i.id&&<div style={{...cardS,background:T.surface,marginBottom:10}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:8,marginBottom:8}}>
+              <div><label style={lbl}>Part #</label><input value={editItem.part_number} onChange={e=>setEditItem(x=>({...x,part_number:e.target.value}))} style={inp}/></div>
+              <div><label style={lbl}>Description</label><input value={editItem.description||""} onChange={e=>setEditItem(x=>({...x,description:e.target.value}))} style={inp}/></div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>
+              <div><label style={lbl}>Vendor</label><input value={editItem.vendor||""} onChange={e=>setEditItem(x=>({...x,vendor:e.target.value}))} style={inp}/></div>
+              <div><label style={lbl}>Unit</label><select value={editItem.unit||"ea"} onChange={e=>setEditItem(x=>({...x,unit:e.target.value}))} style={inpSel}>{["ea","ft","in","lb","kg","gal","box","roll","sheet"].map(u=><option key={u}>{u}</option>)}</select></div>
+              <div><label style={lbl}>Reorder at</label><input type="number" value={editItem.reorder_level} onChange={e=>setEditItem(x=>({...x,reorder_level:e.target.value}))} style={inp}/></div>
+              <div><label style={lbl}>Bin</label><input value={editItem.bin_location||""} onChange={e=>setEditItem(x=>({...x,bin_location:e.target.value}))} style={inp}/></div>
+            </div>
+            <div style={{display:"flex",gap:8}}><button onClick={saveEdit} disabled={saving} style={{...primBtn,flex:2,borderRadius:10}}>{saving?"Saving…":"Save"}</button><button onClick={()=>setEditItem(null)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button></div>
+          </div>}
+          {o.uses.length>0&&<div style={{marginBottom:10}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>Used on</div>
+            {o.uses.map(u=>(<div key={u.bomId} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
+              <div><button onClick={()=>u.job&&onOpenJob&&onOpenJob(u.job)} style={{background:"none",border:"none",padding:0,color:T.purple,fontWeight:800,cursor:u.job?"pointer":"default",fontFamily:"inherit",fontSize:12}}>{u.job?u.job.job_number:"?"}</button> <span style={{color:T.sub}}>{u.assembly.part_number}{u.assembly.description?" — "+u.assembly.description:""}</span> <span style={{color:T.muted}}>· {u.qpa}×/asm</span></div>
+              <div style={{textAlign:"right"}}><span style={{fontWeight:800,color:u.canBuild>0?T.green:T.red}}>can build {u.canBuild}</span>{u.remaining>0&&<span style={{color:T.muted}}> · {u.remaining} left on order</span>}</div>
+            </div>))}
+          </div>}
+          <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}}>History</div>
+          {txnsFor(i.id).length===0&&<div style={{fontSize:12,color:T.muted}}>No movements yet.</div>}
+          {txnsFor(i.id).slice(0,60).map(t=>{const job=t.job_id?(d.jobs.find(j=>j.id===t.job_id)):null;return(
+            <div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
+              <div><span style={{fontWeight:800,color:INV_TXN_TYPES[t.txn_type]||T.text}}>{t.qty>0?"+":""}{t.qty}</span> <span style={{fontSize:9,background:T.surface,color:INV_TXN_TYPES[t.txn_type]||T.sub,borderRadius:4,padding:"1px 6px",fontWeight:800,marginLeft:4}}>{(t.txn_type||"").toUpperCase()}</span> <span style={{color:T.muted,marginLeft:6}}>{t.txn_date}{t.entered_by?" · "+t.entered_by:""}{job?" · "+job.job_number:""}{t.vendor?" · "+t.vendor:""}{t.reference?" · "+t.reference:""}</span>{t.notes&&<div style={{fontSize:10.5,color:T.sub,fontStyle:"italic"}}>{t.notes}</div>}</div>
+              {canManage&&t.txn_type!=="Shipped"&&<button onClick={()=>delTxn(t)} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12}}>🗑</button>}
+            </div>);})}
+        </div>}
+      </div>);
+    })}
+  </div>);
 }
 
 function MfgJobCard({job,onSelect,onArchive,onDelete,dimmed}){
@@ -16081,6 +16344,8 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
   const [rBy,setRBy]=useState(user.name);
   const [saving,setSaving]=useState(false);
   const [formErr,setFormErr]=useState("");
+  const [stock,setStock]=useState(null);        // shop-wide inventory (null = migration not run → legacy per-job receipts)
+  const calc=useMemo(()=>stock?stockCalc(stock):{},[stock]);
   const [adjItem,setAdjItem]=useState(null);   // bom row being counted
   const [adjTo,setAdjTo]=useState("");
   const [adjReason,setAdjReason]=useState("");
@@ -16134,12 +16399,22 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
       setPackingSlips(Array.isArray(pSlips)?pSlips:[]);
       setAssemblyLogs(Array.isArray(aLog)?aLog:[]);
       setShippingLogs(Array.isArray(sLog)?sLog:[]);
+      try{setStock(await loadShopStock());}catch(e){if(invErr(e))setStock(null);else console.error(e);}
     }catch(e){console.error(e);}
     setLoading(false);
   }
+  const stockOf=(item)=>(item&&item.inventory_id&&calc[item.inventory_id])||null;
 
   function inv(item){
-    // Every movement is a row in mfg_receipts, told apart by transaction_type.
+    // Shop inventory (shared by every job): what's on the shelf, what's already inside
+    // built-but-unshipped assemblies, and what that leaves to build with.
+    const so=stockOf(item);
+    if(so){
+      const qpa=parseFloat(item.qty_per_assembly)||1;
+      return{received:so.onHand,damaged:0,usedInAsm:so.committed,adjusted:0,onHand:so.onHand,committed:so.committed,available:so.available,shop:true,
+        canBuild:Math.max(0,Math.floor(so.available/qpa)),qpa,reorderLevel:so.reorder,needsReorder:so.needsReorder,short:so.short,stockItem:so.item};
+    }
+    // Legacy (before shop_inventory_migration.sql): every movement is a row in mfg_receipts, told apart by transaction_type.
     // The old version summed qty_received across all of them, so an Issued row
     // inflated the RECEIVED figure by the amount consumed.
     const itxns=receipts.filter(r=>r.bom_id===item.id);
@@ -16182,11 +16457,19 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
     }catch(e){alert("Error: "+e.message);}
     setSaving(false);
   }
+  const stockMatch=(txt)=>stock?stock.items.find(i=>String(i.part_number||"").trim().toLowerCase()===String(txt||"").trim().toLowerCase()):null;
   async function addCompPart(){
-    if(!newCompNum.trim()||!newCompDesc.trim()||!newCompPartId)return;
+    if(!newCompNum.trim()||!newCompPartId)return;
+    if(!stock&&!newCompDesc.trim())return;
     setSaving(true);
     try{
-      await API.mfg.bom.create({part_id:newCompPartId,component_part_number:newCompNum.trim(),material:newCompDesc.trim(),qty_per_assembly:parseFloat(newCompQpa)||1,reorder_level:parseFloat(newCompReorder)||0,unit:"ea"});
+      let invId=null,desc=newCompDesc.trim();
+      if(stock){
+        const it=await findOrCreateStockPart(stock.items,newCompNum,desc,{reorder_level:parseFloat(newCompReorder)||0});
+        invId=it.id;desc=desc||it.description||"";
+        if(newCompReorder&&it.reorder_level!==(parseFloat(newCompReorder)||0))await API.mfg.inventory.update(it.id,{reorder_level:parseFloat(newCompReorder)||0}).catch(()=>{});
+      }
+      await API.mfg.bom.create({part_id:newCompPartId,component_part_number:newCompNum.trim(),material:desc||newCompNum.trim(),qty_per_assembly:parseFloat(newCompQpa)||1,reorder_level:parseFloat(newCompReorder)||0,unit:"ea",...(invId?{inventory_id:invId}:{})});
       setNewCompNum("");setNewCompDesc("");setNewCompQpa("1");setNewCompReorder("");setShowAddComp(false);
       await load();
     }catch(e){alert("Error: "+e.message);}
@@ -16208,6 +16491,9 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
     if(delta===0){setAdjItem(null);return;}
     setSaving(true);setFormErr("");
     try{
+      if(adjItem.inventory_id&&stock){
+        await API.mfg.inventoryTxns.create({inventory_id:adjItem.inventory_id,qty:delta,txn_type:/damag|scrap|broke/i.test(adjReason)?"Damaged":"Adjustment",txn_date:today(),entered_by:user.name,job_id:job.id,notes:`Counted ${target} (was ${current})${adjReason?" — "+adjReason:""}`});
+      }else
       await API.mfg.receipts.create({
         bom_id:adjItem.id,part_id:adjItem.part_id,
         qty_received:delta,qty_issued:0,qty_damaged:0,
@@ -16226,6 +16512,9 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
     if(!selectedBomItem||!rQty){setFormErr("Please select a part and enter a quantity.");return;}
     setSaving(true);setFormErr("");
     try{
+      if(selectedBomItem.inventory_id&&stock){
+        await API.mfg.inventoryTxns.create({inventory_id:selectedBomItem.inventory_id,qty:parseFloat(rQty)||0,txn_type:"Received",txn_date:rDate,entered_by:rBy||user.name,reference:rBol||null,job_id:job.id});
+      }else
       await API.mfg.receipts.create({
         bom_id:selectedBomItem.id,
         part_id:selectedBomItem.part_id,
@@ -16248,7 +16537,8 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
     setSaving(true);
     try{
       await API.mfg.assemblyLog.create({part_id:af.part_id,job_id:job.id,qty_completed:parseInt(af.qty),completion_date:af.date,entered_by:af.by});
-      const bom=boms[af.part_id]||[];
+      // With shop inventory, parts come off stock when the assembly SHIPS (built units show as "committed").
+      const bom=stock?[]:(boms[af.part_id]||[]);
       await Promise.all(bom.map(item=>API.mfg.receipts.create({bom_id:item.id,part_id:af.part_id,qty_received:parseInt(af.qty)*(item.qty_per_assembly||1),qty_issued:0,qty_damaged:0,transaction_type:"Issued",received_date:af.date,received_by:af.by,job_number:job.job_number||null,notes:"Auto: assemblies completed"}).catch(()=>{})));
       setShowAsmForm(false);setAf({part_id:"",qty:"",date:today(),by:user.name});
       await load();
@@ -16265,8 +16555,14 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
     setSaving(true);
     try{
       const qty=parseInt(sf.qty)||0;
-      await API.mfg.shippingLog.create({part_id:sf.part_id||null,item_description:sf.part_id?null:(sf.item.trim()||null),
+      if(stock&&sf.part_id){
+        const shortRows=(boms[sf.part_id]||[]).filter(b=>b.inventory_id&&calc[b.inventory_id]).map(b=>({b,o:calc[b.inventory_id],need:qty*(parseFloat(b.qty_per_assembly)||1)})).filter(x=>x.o.onHand<x.need);
+        if(shortRows.length&&!window.confirm(`Inventory doesn't show enough stock for this shipment:\n\n${shortRows.map(x=>`${x.b.component_part_number}: need ${x.need}, on hand ${x.o.onHand}`).join("\n")}\n\nLog it anyway? (Stock will go negative until it's received or counted.)`)){setSaving(false);return;}
+      }
+      const created=await API.mfg.shippingLog.create({part_id:sf.part_id||null,item_description:sf.part_id?null:(sf.item.trim()||null),
         job_id:job.id,qty_shipped:qty,ship_date:sf.date,customer:sf.customer||null,bol_number:sf.bol||null,entered_by:sf.by});
+      const shipRow=Array.isArray(created)?created[0]:created;
+      if(stock&&sf.part_id&&shipRow&&shipRow.id)await deductShipmentStock(shipRow,boms[sf.part_id]||[],user).catch(e=>alert("Shipment saved, but inventory wasn't deducted: "+e.message));
       // mfg_parts.qty_shipped is a cached total the manufacturing dashboard
       // reads. The packing slip flow updates it; this one did not, so the
       // dashboard showed 0 shipped while the job showed 40.
@@ -16316,7 +16612,7 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
 
       {/* Tabs */}
       <div style={{display:"flex",background:T.surface,borderBottom:`1px solid ${T.border}`,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-        {[["overview","📊 Overview"],["time","⏱️ Time"],["daily","📝 Daily Reports"],["received","📦 Received Parts"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canMfg(user,"billing")?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
+        {[["overview","📊 Overview"],["time","⏱️ Time"],["daily","📝 Daily Reports"],["received","📦 Parts & Stock"],["assembly","🏭 Assembly Log"],["qc","✅ QC"],["shipping","📤 Shipping Log"],["docs","📁 Docs"],["report","📈 Report"],...(canMfg(user,"billing")?[["billing","💰 Billing"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{flex:"1 0 auto",padding:"12px 8px",background:"none",border:"none",borderBottom:`3px solid ${tab===id?T.purple:"transparent"}`,color:tab===id?T.purple:T.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
             {label}
           </button>
@@ -16394,17 +16690,18 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
                         style={{background:"none",border:`1px solid ${T.blue}40`,borderRadius:6,padding:"2px 8px",color:T.blue,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>✏️ Count</button>}
                       {canAdmin&&<button onClick={async e=>{e.stopPropagation();if(window.confirm("Remove "+item.component_part_number+" from BOM?"))try{await API.mfg.bom.remove(item.id);await load();}catch(err){}}} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"2px 8px",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>🗑 Remove</button>}
                     </div>
-                    <div style={{fontSize:28,fontWeight:900,color:i.needsReorder?T.red:i.onHand<=0?T.yellow:T.green,lineHeight:1}}>{i.onHand}</div>
-                    <div style={{fontSize:10,color:T.muted,marginTop:2}}>on hand</div>
+                    <div style={{fontSize:28,fontWeight:900,color:i.needsReorder?T.red:(i.shop?i.available:i.onHand)<=0?T.yellow:T.green,lineHeight:1}}>{i.shop?i.available:i.onHand}</div>
+                    <div style={{fontSize:10,color:T.muted,marginTop:2}}>{i.shop?"available (shop stock)":"on hand"}</div>
                     {i.needsReorder&&<div style={{background:"#7c2d12",color:"#fca5a5",borderRadius:6,padding:"2px 8px",fontSize:9,fontWeight:800,marginTop:4}}>🔴 REORDER</div>}
                   </div>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:i.adjusted?"1fr 1fr 1fr 1fr 1fr":"1fr 1fr 1fr 1fr",gap:6}}>
-                  {[["Received",i.received,T.blue],
+                <div style={{display:"grid",gridTemplateColumns:i.shop?"1fr 1fr 1fr 1fr":(i.adjusted?"1fr 1fr 1fr 1fr 1fr":"1fr 1fr 1fr 1fr"),gap:6}}>
+                  {(i.shop?[["On hand",i.onHand,T.blue],["In built units",i.committed,T.muted],["Short (open orders)",i.short,i.short>0?T.red:T.muted],["Can Build",i.canBuild,i.canBuild>0?T.green:T.red]]
+                  :[["Received",i.received,T.blue],
                     ...(i.adjusted?[["Adjusted",(i.adjusted>0?"+":"")+i.adjusted,i.adjusted<0?T.red:T.green]]:[]),
                     ["Used",i.usedInAsm,T.muted],
                     ["Damaged",i.damaged,i.damaged>0?T.red:T.muted],
-                    ["Can Build",i.canBuild,i.canBuild>0?T.green:T.red]].map(([l,v,c])=>(
+                    ["Can Build",i.canBuild,i.canBuild>0?T.green:T.red]]).map(([l,v,c])=>(
                     <div key={l} style={{background:T.surface,borderRadius:6,padding:"6px",textAlign:"center"}}>
                       <div style={{fontSize:15,fontWeight:800,color:c}}>{v}</div>
                       <div style={{fontSize:8,color:T.muted,textTransform:"uppercase"}}>{l}</div>
@@ -16483,9 +16780,9 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
           {parts.length>0&&<div style={{...cardS,marginBottom:12,border:`1px solid ${T.orange}40`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <div style={{fontSize:13,fontWeight:800,color:T.orange}}>Step 2 — What parts COME IN from the customer?</div>
+                <div style={{fontSize:13,fontWeight:800,color:T.orange}}>Step 2 — What parts go INTO each assembly?</div>
                 <div style={{fontSize:11,color:T.muted,marginTop:2}}>
-                  {allBomItems.length===0?"These are the JLG/customer part #s that arrive as raw materials (e.g. 3572922 Side Pieces)":""+allBomItems.length+" component part"+(allBomItems.length!==1?"s":"")+" configured"}
+                  {allBomItems.length===0?(stock?"Pick parts from shop inventory (or type a new part # to add it) and say how many go into one assembly":"These are the JLG/customer part #s that arrive as raw materials (e.g. 3572922 Side Pieces)"):""+allBomItems.length+" component part"+(allBomItems.length!==1?"s":"")+" configured"}
                 </div>
               </div>
               {canAdmin&&<button onClick={()=>setShowAddComp(s=>!s)}
@@ -16501,23 +16798,25 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
                 </select>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-                <div><label style={lbl}>Customer (JLG) Part # *</label><input value={newCompNum} onChange={e=>setNewCompNum(e.target.value)} placeholder="e.g. 3572922" style={inp}/></div>
-                <div><label style={lbl}>Description *</label><input value={newCompDesc} onChange={e=>setNewCompDesc(e.target.value)} placeholder="e.g. Side Pieces" style={inp}/></div>
+                <div><label style={lbl}>Part # *</label><input list="job-inv-parts" value={newCompNum} onChange={e=>{setNewCompNum(e.target.value);const m=stockMatch(e.target.value);if(m&&!newCompDesc)setNewCompDesc(m.description||"");}} placeholder="e.g. 3572922" style={inp}/>
+                  {stock&&<datalist id="job-inv-parts">{stock.items.map(i=><option key={i.id} value={i.part_number}>{i.description||""}</option>)}</datalist>}
+                  {stock&&newCompNum&&(stockMatch(newCompNum)?<div style={{fontSize:10.5,color:T.green,marginTop:3}}>✓ In inventory · {calc[stockMatch(newCompNum).id]?.available??0} available</div>:<div style={{fontSize:10.5,color:T.yellow,marginTop:3}}>New part — will be added to shop inventory</div>)}</div>
+                <div><label style={lbl}>Description{stock?"":" *"}</label><input value={newCompDesc} onChange={e=>setNewCompDesc(e.target.value)} placeholder="e.g. Side Pieces" style={inp}/></div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
                 <div><label style={lbl}>Qty Per Assembly</label><input type="number" value={newCompQpa} onChange={e=>setNewCompQpa(e.target.value)} placeholder="1" style={inp}/></div>
                 <div><label style={lbl}>Reorder Level</label><input type="number" value={newCompReorder} onChange={e=>setNewCompReorder(e.target.value)} placeholder="e.g. 50" style={inp}/></div>
               </div>
-              <button onClick={addCompPart} disabled={!newCompNum.trim()||!newCompDesc.trim()||!newCompPartId||saving}
-                style={{...primBtn,borderRadius:12,background:T.orange,color:"#000",opacity:newCompNum.trim()&&newCompDesc.trim()&&newCompPartId&&!saving?1:0.5}}>
-                {saving?"Adding…":"Add Incoming Part"}
+              <button onClick={addCompPart} disabled={!newCompNum.trim()||(!stock&&!newCompDesc.trim())||!newCompPartId||saving}
+                style={{...primBtn,borderRadius:12,background:T.orange,color:"#000",opacity:newCompNum.trim()&&(stock||newCompDesc.trim())&&newCompPartId&&!saving?1:0.5}}>
+                {saving?"Adding…":"Add Component"}
               </button>
             </div>}
             {/* List current components */}
             {allBomItems.length>0&&<div style={{marginTop:10}}>
               {allBomItems.map(item=>(
                 <div key={item.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
-                  <div><span style={{color:T.orange,fontWeight:700}}>{item.component_part_number}</span> <span style={{color:T.sub}}>{item.material}</span> <span style={{color:T.muted}}>· {item.qty_per_assembly||1}x/asm</span></div>
+                  <div><span style={{color:T.orange,fontWeight:700}}>{item.component_part_number}</span> <span style={{color:T.sub}}>{item.material}</span> <span style={{color:T.muted}}>· {item.qty_per_assembly||1}x/asm</span>{stock&&!item.inventory_id&&<span style={{color:T.yellow,fontSize:10,marginLeft:6}}>not linked to stock</span>}</div>
                   {canAdmin&&<button onClick={async()=>{if(window.confirm("Remove?"))try{await API.mfg.bom.remove(item.id);await load();}catch(e){}}} style={{background:"none",border:"none",color:T.red,cursor:"pointer",fontSize:12}}>🗑</button>}
                 </div>
               ))}
@@ -16526,7 +16825,8 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
 
           {/* STEP 3: Log receipt */}
           {allBomItems.length>0&&<div style={{...cardS,marginBottom:16,border:`1px solid ${T.green}40`}}>
-            <div style={{fontSize:13,fontWeight:800,color:T.green,marginBottom:12}}>Step 3 — Log Parts Received from Customer</div>
+            <div style={{fontSize:13,fontWeight:800,color:T.green,marginBottom:4}}>Step 3 — Receive parts{stock?" into shop inventory":" from customer"}</div>
+            {stock&&<div style={{fontSize:11,color:T.muted,marginBottom:12}}>Goes into the shared shop stock (same as the Inventory tab on the Manufacturing page). Parts come off stock when assemblies ship.</div>}
 
             {formErr&&<div style={{background:T.redLow,border:`1px solid ${T.red}40`,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:T.red}}>{formErr}</div>}
 
@@ -16537,7 +16837,7 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
                 <option value="">— Select a part —</option>
                 {parts.map(p=><optgroup key={p.id} label={`Assembly: ${p.part_number}`}>
                   {(boms[p.id]||[]).map(item=>(
-                    <option key={item.id} value={item.id}>{item.component_part_number} — {item.material} ({item.qty_per_assembly||1}x per asm)</option>
+                    <option key={item.id} value={item.id}>{item.component_part_number} — {item.material} ({item.qty_per_assembly||1}x per asm){stockOf(item)?` · ${stockOf(item).onHand} on hand`:""}</option>
                   ))}
                 </optgroup>)}
               </select>
@@ -16559,9 +16859,23 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
           </div>}
 
           {/* Running receipt list */}
-          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10,marginTop:4}}>Receipt &amp; Adjustment History</div>
-          {receipts.filter(r=>["Received","Adjustment"].includes(r.transaction_type)).length===0&&<div style={{textAlign:"center",padding:30,color:T.muted,fontSize:12}}>Nothing logged yet. Use the form above to log incoming parts.</div>}
-          {receipts.filter(r=>["Received","Adjustment"].includes(r.transaction_type)).map((r,i)=>{
+          <div style={{fontSize:12,fontWeight:800,color:T.text,marginBottom:10,marginTop:4}}>{stock?"Stock movements for this job's parts":"Receipt & Adjustment History"}</div>
+          {stock&&(()=>{
+            const ids=new Set(allBomItems.map(b=>b.inventory_id).filter(Boolean));
+            const tx=stock.txns.filter(t=>ids.has(t.inventory_id)).slice(0,80);
+            if(!tx.length)return <div style={{textAlign:"center",padding:30,color:T.muted,fontSize:12}}>Nothing logged yet. Receive parts above or on the Inventory tab.</div>;
+            return tx.map(t=>{const it=stock.items.find(i=>i.id===t.inventory_id);const jb=t.job_id&&t.job_id!==job.id?stock.jobs.find(j=>j.id===t.job_id):null;return(
+              <div key={t.id} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:INV_TXN_TYPES[t.txn_type]||T.text}}>{t.qty>0?"+":""}{t.qty} — <span style={{color:T.orange}}>{it?.part_number||"—"}</span> <span style={{color:T.sub,fontWeight:400}}>{it?.description||""}</span><span style={{fontSize:9,background:T.surface,color:INV_TXN_TYPES[t.txn_type]||T.sub,borderRadius:4,padding:"1px 6px",marginLeft:6,fontWeight:800}}>{(t.txn_type||"").toUpperCase()}</span></div>
+                  <div style={{fontSize:11,color:T.muted}}>{t.txn_date}{t.entered_by?" · "+t.entered_by:""}{jb?" · "+jb.job_number:""}{t.vendor?" · "+t.vendor:""}{t.reference?" · "+t.reference:""}</div>
+                  {t.notes&&<div style={{fontSize:10.5,color:T.sub,marginTop:2,fontStyle:"italic"}}>{t.notes}</div>}
+                </div>
+                {canAdmin&&t.txn_type!=="Shipped"&&<button onClick={async()=>{if(window.confirm("Delete this inventory entry?"))try{await API.mfg.inventoryTxns.remove(t.id);await load();}catch(e){}}} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:8,padding:"4px 8px",color:T.red,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>}
+              </div>);});
+          })()}
+          {!stock&&receipts.filter(r=>["Received","Adjustment"].includes(r.transaction_type)).length===0&&<div style={{textAlign:"center",padding:30,color:T.muted,fontSize:12}}>Nothing logged yet. Use the form above to log incoming parts.</div>}
+          {!stock&&receipts.filter(r=>["Received","Adjustment"].includes(r.transaction_type)).map((r,i)=>{
             const bomItem=allBomItems.find(b=>b.id===r.bom_id);
             return(
               <div key={i} style={{...cardS,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -16600,7 +16914,7 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
               <div><label style={lbl}>Date</label><input type="date" value={af.date} onChange={e=>setAf(x=>({...x,date:e.target.value}))} style={inp}/></div>
             </div>
             <div style={{marginBottom:10}}><label style={lbl}>Entered By</label><input value={af.by} onChange={e=>setAf(x=>({...x,by:e.target.value}))} style={inp}/></div>
-            {af.part_id&&af.qty&&<div style={{background:T.blueLow,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:11,color:T.blue}}>ℹ️ Will auto-deduct {af.qty} × each component from inventory</div>}
+            {af.part_id&&af.qty&&<div style={{background:T.blueLow,borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:11,color:T.blue}}>{stock?"ℹ️ Built units hold their parts as \"committed\" stock — parts come off inventory when they ship":`ℹ️ Will auto-deduct ${af.qty} × each component from inventory`}</div>}
             <div style={{display:"flex",gap:8}}>
               <button onClick={logAssembly} disabled={!af.qty||!af.part_id||saving} style={{...primBtn,flex:2,borderRadius:12,background:T.green,color:"#000",opacity:af.qty&&af.part_id&&!saving?1:0.5}}>{saving?"Saving…":"Log Assemblies"}</button>
               <button onClick={()=>setShowAsmForm(false)} style={{...ghostBtn,flex:1,textAlign:"center"}}>Cancel</button>
@@ -16681,7 +16995,8 @@ function ManufacturingJobDetail({job:jobProp,user,onBack,onSelectPart,onJobChang
                     </>}
                 </div>
               </div>
-              {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete?"))try{
+              {canAdmin&&<button onClick={async()=>{if(window.confirm("Delete this shipment?"+(stock?" Its parts go back into inventory.":"")))try{
+                await restoreShipmentStock(s.id);
                 await sb(`/mfg_shipping_log?id=eq.${s.id}`,{method:"DELETE"});
                 // Wind the cached part total back too, or the dashboard keeps
                 // counting a shipment that no longer exists.
