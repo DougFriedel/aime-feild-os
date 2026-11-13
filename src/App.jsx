@@ -7224,7 +7224,7 @@ function SignaturePackageScreen({project,user,onBack,onErr}){
       // receipts attached to T&M material rows ride along as extra pages
       const attachments=chosen.flatMap(({type,row})=>
         type==="tm"
-          ?(row.materials||[]).map(x=>x.attachment_url).filter(Boolean)
+          ?[...(row.materials||[]),...(row.other_charges||[])].map(x=>x.attachment_url).filter(Boolean)
           :(row.materials||[]).flatMap(x=>(x.receipts||[]).filter(r=>r.kind!=="file").map(r=>r.src)).filter(Boolean));
       const dates=items.map(i=>i.reportDate).filter(Boolean).sort();
       const label=dates.length>1?`${dates[0]}_to_${dates[dates.length-1]}`:(dates[0]||"package");
@@ -22372,7 +22372,7 @@ function InvoicePrintModal({project,lines,invoiceNo,onClose,onPrint}){
       R.forEach(r=>{const lab=`Daily ${r.report_no?"#"+r.report_no:fmtDate(r.date)}`;
         (r.materials||[]).forEach(m=>(m.receipts||[]).forEach(a=>{if(!a||!a.src)return;rc.push({id:`r_${r.id}_${a.id}`,reportId:r.id,kind:a.kind==="file"?"file":"image",name:`${m.description||"Material"}${a.name?" — "+a.name:""}`,src:a.src,file_name:a.name||"",file_type:a.type||"",from:lab,date:r.date});}));
         (r.rental_equipment||[]).forEach(e=>(e.attachments||[]).forEach(a=>{if(!a||!a.src)return;rc.push({id:`r_${r.id}_${a.id}`,reportId:r.id,kind:a.kind==="file"?"file":"image",name:`Rental: ${e.description||"equipment"}${a.name?" — "+a.name:""}`,src:a.src,file_name:a.name||"",file_type:a.type||"",from:lab,date:r.date});}));});
-      Tk.forEach(t=>{(t.materials||[]).forEach(m=>{if(!m.attachment_url)return;rc.push({id:`t_${t.id}_${m.id}`,ticketId:t.id,kind:/\.(png|jpe?g|gif|webp)(\?|$)/i.test(m.attachment_url)?"image":"file",name:`${m.description||"Material"}${m.attachment_name?" — "+m.attachment_name:""}`,src:m.attachment_url,file_name:m.attachment_name||"",file_type:"",from:`T&M #${t.ticket_no||""}`,date:t.ticket_date});});});
+      Tk.forEach(t=>{[...(t.materials||[]),...(t.other_charges||[])].forEach(m=>{if(!m.attachment_url)return;rc.push({id:`t_${t.id}_${m.id}`,ticketId:t.id,kind:/\.(png|jpe?g|gif|webp)(\?|$)/i.test(m.attachment_url)?"image":"file",name:`${m.description||"Material"}${m.attachment_name?" — "+m.attachment_name:""}`,src:m.attachment_url,file_name:m.attachment_name||"",file_type:"",from:`T&M #${t.ticket_no||""}`,date:t.ticket_date});});});
       setReceipts(rc);
       // vendor invoices from Accounting on the invoice lines or the reports
       const apIds=new Set();lines.forEach(l=>{if(l.ap_invoice_id)apIds.add(l.ap_invoice_id);});R.forEach(r=>(r.materials||[]).forEach(m=>{if(m.ap_invoice_id)apIds.add(m.ap_invoice_id);}));Tk.forEach(t=>(t.materials||[]).forEach(m=>{if(m.ap_invoice_id)apIds.add(m.ap_invoice_id);}));
@@ -25168,6 +25168,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   const [equipment,setEquipment]=useState(ticket?.equipment||[]);
   const [materials,setMaterials]=useState(ticket?.materials||[]);
   const [other,setOther]=useState(ticket?.other_charges||[]);
+  const [apPickOther,setApPickOther]=useState(false);
 
   const [saving,setSaving]=useState(false);
   const [tab,setTab]=useState("labor");
@@ -25812,11 +25813,17 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
         {tab==="other"&&<div>
           <button onClick={()=>addRow(setOther,{description:"",amount:""})}
             style={{...primBtn,borderRadius:12,marginBottom:10,background:T.blue,fontSize:13}}>+ Add Charge</button>
+          {apCanBill(user)&&<button onClick={()=>setApPickOther(true)} style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:10,fontSize:13,color:T.teal,borderColor:T.teal+"60",borderStyle:"dashed"}}>🧾 Add vendor invoice from Accounting</button>}
+          {apPickOther&&<ApInvoicePicker project={project} user={user} sourceId={ticket?.id||null} exclude={[...materials,...other].map(m=>m.ap_invoice_id).filter(Boolean)} onClose={()=>setApPickOther(false)}
+            onPick={r=>{const l=apLineFromInvoice(r);addRow(setOther,{description:l.description,amount:l.amount,attachment_url:r.file_url||null,attachment_name:r.file_name||(r.file_url?`Invoice ${r.invoice_no||""}`:null),ap_invoice_id:r.id,ap_vendor:l.ap_vendor,ap_invoice_no:l.ap_invoice_no});setApPickOther(false);}}/>}
           {other.map(r=>(
-            <div key={r.id} style={{...cardS,marginBottom:8,display:"flex",gap:10,alignItems:"flex-end"}}>
-              <div style={{flex:2}}><label style={lbl}>Description</label><input value={r.description} onChange={e=>updateRow(setOther,r.id,"description",e.target.value)} placeholder="Misc charge" style={ri}/></div>
-              <div style={{flex:1}}><label style={lbl}>Amount ($)</label><input type="number" step="0.01" value={r.amount} onChange={e=>updateRow(setOther,r.id,"amount",e.target.value)} placeholder="0.00" style={ri}/></div>
-              <button onClick={()=>removeRow(setOther,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"8px 10px",color:T.red,fontSize:12,cursor:"pointer",fontFamily:"inherit",marginBottom:2}}>🗑</button>
+            <div key={r.id} style={{...cardS,marginBottom:8,borderLeft:r.ap_invoice_id?`3px solid ${T.teal}`:undefined}}>
+              <div style={{display:"flex",gap:10,alignItems:"flex-end"}}>
+                <div style={{flex:2}}><label style={lbl}>Description{r.ap_invoice_id&&<span style={{...pill(T.teal),marginLeft:6,fontSize:10}}>🧾 Accounting</span>}</label><input value={r.description} onChange={e=>updateRow(setOther,r.id,"description",e.target.value)} placeholder="Misc charge" style={ri}/></div>
+                <div style={{flex:1}}><label style={lbl}>Amount ($)</label><input type="number" step="0.01" value={r.amount} onChange={e=>updateRow(setOther,r.id,"amount",e.target.value)} placeholder="0.00" style={ri}/></div>
+                <button onClick={()=>removeRow(setOther,r.id)} style={{background:"none",border:`1px solid ${T.red}30`,borderRadius:6,padding:"8px 10px",color:T.red,fontSize:12,cursor:"pointer",fontFamily:"inherit",marginBottom:2}}>🗑</button>
+              </div>
+              {r.attachment_url&&<a href={r.attachment_url} target="_blank" rel="noreferrer" style={{display:"block",fontSize:12,color:T.blue,textDecoration:"none",marginTop:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📎 {r.attachment_name||"Attachment"}</a>}
             </div>
           ))}
           {other.length===0&&<div style={{textAlign:"center",padding:"24px",color:T.muted,fontSize:12}}>No other charges</div>}
