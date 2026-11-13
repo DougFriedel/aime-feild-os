@@ -404,8 +404,8 @@ const API={
   projects:{
     list:()=>sb("/projects?select=*&order=created_at.desc"),
     byDivision:(div)=>sb(`/projects?division=eq.${encodeURIComponent(div)}&select=*&order=created_at.desc`),
-    create:(d)=>sb("/projects",{method:"POST",body:d,prefer:"return=representation"}),
-    update:(id,d)=>sb(`/projects?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
+    create:(d)=>sb("/projects",{method:"POST",body:d,prefer:"return=representation"}).catch(e=>{if(/rate_sheet/.test(String(e.message))){const{rate_sheet,...rest}=d;return sb("/projects",{method:"POST",body:rest,prefer:"return=representation"});}throw e;}),
+    update:(id,d)=>sb(`/projects?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}).catch(e=>{if(/rate_sheet/.test(String(e.message))){const{rate_sheet,...rest}=d;return sb(`/projects?id=eq.${id}`,{method:"PATCH",body:rest,prefer:"return=representation"});}throw e;}),
     remove:(id)=>sb(`/projects?id=eq.${id}`,{method:"DELETE"}),
   },
   reports:{
@@ -740,6 +740,15 @@ const WMO={0:["Clear Sky","☀️"],1:["Mainly Clear","🌤️"],2:["Partly Clou
 const DIVISIONS=["Mechanical","Pipeline","Pipeline South","Structural","Manufacturing"];
 // Pipeline South runs exactly like Pipeline (rate sheet, estimating, report layout).
 const isPipeDiv=(d)=>d==="Pipeline"||d==="Pipeline South";
+/* Rate sheet per job — Pipeline South only. A Pipeline South job bills at the
+   Colonial (Pipeline) rate sheet unless the PM sets it to Standard, which uses
+   the Mechanical rate sheet, classifications and equipment list for its daily
+   reports, T&M tickets, invoices and job cost. The report layout stays the
+   Pipeline one. The Pipeline division itself is untouched. */
+const RATE_SHEETS=[["colonial","Colonial rates","Pipeline rate sheet (default)"],["mechanical","Standard rates","Mechanical rate sheet — e.g. Buckeye"]];
+const hasRateSheetChoice=(p)=>!!p&&p.division==="Pipeline South";
+const rateDivOf=(p)=>(hasRateSheetChoice(p)&&p.rate_sheet==="mechanical")?"Mechanical":((p&&p.division)||"");
+const rateSheetLabel=(p)=>{const r=RATE_SHEETS.find(x=>x[0]===((p&&p.rate_sheet)||"colonial"))||RATE_SHEETS[0];return r[1];};
 /* Field time clock. When off, crew cannot clock in/out on field jobs — hours
    reach a time card only through Daily Reports and T&M tickets. The shop
    clock on manufacturing jobs is separate and unaffected. */
@@ -2821,6 +2830,7 @@ const REQUIRED_MIGRATIONS=[
   {table:"time_cards",col:"rig_day",file:"rig_pay_migration.sql",why:"rig pay days on time cards"},
   {table:"hot_work_permits",col:"id",file:"hot_work_permit_migration.sql",why:"Hot Work Permit tab (Structural & Manufacturing)"},
   {table:"mfg_inventory",col:"id",file:"shop_inventory_migration.sql",why:"shop-wide Manufacturing inventory"},
+  {table:"projects",col:"rate_sheet",file:"rate_sheet_migration.sql",why:"per-job rate sheet (Pipeline South)"},
 ];
 let _migCheck=null;
 function checkMigrations(){
@@ -4196,6 +4206,13 @@ function ProjectForm({initial,onSave,onCancel,saving,defaultDivision,externalErr
             {DIVISIONS.map(div=>{const m=DIV_META[div];return(<button key={div} onClick={()=>set("division",div)} style={{padding:"12px 8px",borderRadius:12,border:`2px solid ${f.division===div?m.color:T.border}`,background:f.division===div?m.color+"20":T.surface,color:f.division===div?m.color:T.sub,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:20,marginBottom:4}}>{m.icon}</div>{div}</button>);})}
           </div>
         </div>
+        {f.division==="Pipeline South"&&<div style={{marginBottom:12}}>
+          <label style={lbl}>Rate sheet</label>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {RATE_SHEETS.map(([id,label,hint])=>{const on=(f.rate_sheet||"colonial")===id;return(<button key={id} onClick={()=>set("rate_sheet",id)} style={{padding:"10px 8px",borderRadius:12,border:`2px solid ${on?T.orange:T.border}`,background:on?T.orange+"20":T.surface,color:on?T.orange:T.sub,fontFamily:"inherit",cursor:"pointer",textAlign:"left"}}><div style={{fontSize:13,fontWeight:800}}>{label}</div><div style={{fontSize:10.5,color:T.muted,marginTop:2}}>{hint}</div></button>);})}
+          </div>
+          <div style={{fontSize:11,color:T.muted,marginTop:6,lineHeight:1.5}}>Daily reports, T&M tickets, invoices and job cost on this job use the chosen sheet. Reports already saved keep the rates they were written with.</div>
+        </div>}
         <div style={{marginBottom:12}}><label style={lbl}>Start Date</label><input type="date" value={f.start_date||today()} onChange={e=>set("start_date",e.target.value)} style={inp}/></div>
         <div style={{marginBottom:20}}><label style={lbl}>Notes</label><textarea placeholder="Project notes, scope, special instructions…" value={f.notes||""} onChange={e=>set("notes",e.target.value)} rows={3} style={{...inp,resize:"vertical",lineHeight:1.5}}/></div>
         <button onClick={()=>f.name.trim()&&!saving&&onSave({...f,contract_value:f.contract_value&&f.contract_value!==""?parseFloat(f.contract_value):null,contract_hours:f.contract_hours&&f.contract_hours!==""?parseFloat(f.contract_hours):null,estimated_budget:f.estimated_budget&&f.estimated_budget!==""?parseFloat(f.estimated_budget):null})} style={{...primBtn,opacity:f.name.trim()&&!saving?1:0.5}}>{saving?"Saving…":initial?"Save Changes":"Create Job"}</button>
@@ -4431,7 +4448,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
     }catch(e){alert("Could not fetch weather: "+e.message+"\n\nTry a city name like \"Houston, TX\" or a zip code.");}
     setWeatherFilling(false);
   }
-  const tot=reportTotals(rpt,project.division);
+  const tot=reportTotals(rpt,rateDivOf(project));
 
   useEffect(()=>{
     if(!isEdit&&!rpt.report_no){
@@ -4554,6 +4571,7 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
       </div>
       <div style={{padding:"14px 16px 100px"}}>
         {step===1&&(<div>
+          {hasRateSheetChoice(project)&&<div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${project.rate_sheet==="mechanical"?T.blue:T.orange}`,fontSize:12,color:T.sub}}>💲 This job bills at <b style={{color:T.text}}>{rateSheetLabel(project)}</b>{project.rate_sheet==="mechanical"?" — crew classifications and equipment come from the Mechanical sheet.":"."} Change it under Edit Job.</div>}
           <div style={{...cardS,marginBottom:14,borderLeft:`3px solid ${divMeta.color}`}}><div style={{fontSize:11,color:T.muted,marginBottom:2}}>Project · {project.division}</div><div style={{fontSize:15,fontWeight:700}}>{project.name}</div>{project.afe&&<div style={{fontSize:12,color:T.sub}}>AFE: {project.afe}{project.work_order?" · PO: "+project.work_order:""}</div>}<div style={{marginTop:6,display:"flex",gap:6}}><span style={pill(divMeta.color)}>{divMeta.icon} {project.division} Rates</span></div></div>
           <div style={{marginBottom:12}}><label style={lbl}>Date</label><input type="date" value={rpt.date} onChange={e=>setR("date",e.target.value)} style={inp}/></div>
           <div style={{marginBottom:12}}><label style={lbl}>Report No.</label><input type="text" placeholder="Report #" value={rpt.report_no||""} onChange={e=>setR("report_no",e.target.value)} style={inp}/></div>
@@ -4586,14 +4604,14 @@ function DailyReportForm({user,project,onSave,onCancel,isOnline,existing}){
             <textarea placeholder="Describe the work performed today… or tap 🎤 to speak" value={rpt.description||""} onChange={e=>setR("description",e.target.value)} rows={4} style={{...inp,resize:"vertical",lineHeight:1.5}}/>
           </div>
         </div>)}
-        {step===2&&(<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontSize:17,fontWeight:800}}>👷 Labor</div>{tot.labor>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.labor)}</div>}</div>{rpt.labor.map((row,i)=>isPerDiemRow(row)?null:<LaborCard key={row.id} row={row} cos={cos} onChange={r=>upd("labor",i,r)} onRemove={()=>del("labor",i)} division={project.division}/>)}<DashedAdd label="+ Add Worker" onClick={()=>add("labor",{id:uid(),name:"",classification:"",regHrs:"",otHrs:"",travelHrs:"",co_id:rpt.change_order_id||null})} color={T.orange}/>{project.division!=="Manufacturing"&&<><div style={{height:14}}/><PerDiemCard labor={rpt.labor} onChangeLabor={l=>setRpt(r=>({...r,labor:l}))} division={project.division}/></>}</div>)}
+        {step===2&&(<div><div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontSize:17,fontWeight:800}}>👷 Labor</div>{tot.labor>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.labor)}</div>}</div>{rpt.labor.map((row,i)=>isPerDiemRow(row)?null:<LaborCard key={row.id} row={row} cos={cos} onChange={r=>upd("labor",i,r)} onRemove={()=>del("labor",i)} division={rateDivOf(project)}/>)}<DashedAdd label="+ Add Worker" onClick={()=>add("labor",{id:uid(),name:"",classification:"",regHrs:"",otHrs:"",travelHrs:"",co_id:rpt.change_order_id||null})} color={T.orange}/>{project.division!=="Manufacturing"&&<><div style={{height:14}}/><PerDiemCard labor={rpt.labor} onChangeLabor={l=>setRpt(r=>({...r,labor:l}))} division={rateDivOf(project)}/></>}</div>)}
         {step===3&&(<div>
           {/* Company Equipment */}
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
             <div style={{fontSize:17,fontWeight:800}}>🚜 Equipment</div>
             {tot.equip>0&&can(user,"view_dashboard")&&<div style={{fontSize:16,fontWeight:800,color:T.green}}>${fmt(tot.equip)}</div>}
           </div>
-          {rpt.equipment.map((row,i)=><EquipCard key={row.id} row={row} cos={cos} onChange={r=>upd("equipment",i,r)} onRemove={()=>del("equipment",i)} division={project.division}/>)}
+          {rpt.equipment.map((row,i)=><EquipCard key={row.id} row={row} cos={cos} onChange={r=>upd("equipment",i,r)} onRemove={()=>del("equipment",i)} division={rateDivOf(project)}/>)}
           <DashedAdd label="+ Add Company Equipment" onClick={()=>add("equipment",{id:uid(),description:"",qty:"",usage:"",rate:"",unit:"",co_id:rpt.change_order_id||null})} color={T.yellow}/>
 
           {/* Rented Equipment — Pipeline logs rentals under Materials & Misc. instead */}
@@ -4741,12 +4759,12 @@ async function prepareDocsForPrint(docs,onProgress){
 }
 
 function reportPrintHtml(report, project, sections, photos, photoLayout, docItems){
-  const division = project.division;
+  const division = rateDivOf(project);        // rates / classifications
   const positions = getPositions(division);
   const tot = reportTotals(report, division);
   // Pipeline reports: no Qty column on equipment, and the Inspector signs
   // alongside the Foreman and PM.
-  const isPipeline = isPipeDiv(division);
+  const isPipeline = isPipeDiv(project.division);   // layout follows the division, not the rate sheet
   const showQty = !isPipeline;
   const subsTotal = (report.subcontractors||[]).reduce((s,x)=>s+subLineTotal(x),0);
   const [yr,mo,dy] = (report.date||'').split('-');
@@ -5120,7 +5138,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
   const [photoLayout]=useState("full"); // every selected attachment prints on its own page
   // Editing is delegated to DailyReportForm, which owns the save.
   const [editing,setEditing]=useState(false);
-  const tot=reportTotals(report,project.division);
+  const tot=reportTotals(report,rateDivOf(project));
   const sc={submitted:T.yellow,approved:T.green,flagged:T.red,signed:T.green}[report.status]||T.muted;
   const divColor=DIV_META[project.division]?.color||T.orange;
 
@@ -5198,8 +5216,8 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     if(!esigEmail.trim()||!esigName.trim()){setEsigError("Please enter inspector name and email.");return;}
     setEsigSending(true);setEsigError("");
     try{
-      const tot=reportTotals(report,project.division);
-      const div=project.division;
+      const tot=reportTotals(report,rateDivOf(project));
+      const div=rateDivOf(project);
       const m=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
       const res=await fetch("/.netlify/functions/box-sign-create",{
         method:"POST",
@@ -5307,7 +5325,7 @@ function ReportDetail({report:initReport,project,user,onBack,onDelete,onApprove,
     try{
       const wb = XLSX.read(DAILY_XLSX_TEMPLATE_B64, {type:'base64', cellStyles:true});
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const div = project.division;
+      const div = rateDivOf(project);
       const tot = reportTotals(report, div);
 
       // Drop formulas so the values we write are what Excel shows.
@@ -7138,7 +7156,7 @@ function SignaturePackageScreen({project,user,onBack,onErr}){
   const [sent,setSent]=useState(false);
   const [err,setErr]=useState("");
 
-  const div=project.division;
+  const div=rateDivOf(project);
   const m=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 
   useEffect(()=>{(async()=>{
@@ -8182,10 +8200,10 @@ function PMDashboard({onBack,user,projects:initProjects,onRefresh,onErr,embedded
     const p=projects.find(x=>x.id===c.project_id);
     return p?p.division:(c.division||pmDiv);
   };
-  const cardPay=(c)=>laborAmt({
+  const cardPay=(c)=>{const p=projects.find(x=>x.id===c.project_id);return laborAmt({
     classification:c.classification,
     regHrs:c.reg_hours,otHrs:c.ot_hours,travelHrs:c.travel_hours,
-  },cardDiv(c));
+  },p?rateDivOf(p):cardDiv(c));};
 
   const wkScoped=wkCards.filter(c=>
     c.project_id?divIds.has(c.project_id):(!pmDiv||c.division===pmDiv));
@@ -14638,7 +14656,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
   async function archiveProject(){if(!window.confirm(project.status==="active"?"Archive this job?":"Restore?"))return;await updateProject({status:project.status==="active"?"archived":"active"});onBack();}
   async function deleteProject(){if(!window.confirm("Permanently delete this job and ALL its data? This cannot be undone."))return;if(!window.confirm("Are you sure? All reports, photos, time cards and safety logs will be deleted."))return;try{await API.projects.remove(project.id);onBack();}catch(e){setErr(e.message);}}
 
-  const tot=reports.reduce((s,r)=>{const t=reportTotals(r,project.division);return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
+  const tot=reports.reduce((s,r)=>{const t=reportTotals(r,rateDivOf(project));return{l:s.l+t.labor,e:s.e+t.equip,m:s.m+t.mats,g:s.g+t.grand};},{l:0,e:0,m:0,g:0});
 
   if(screen==="newReport"&&can(user,"submit_report")) return <DailyReportForm user={user} project={project} onSave={saveReport} onCancel={()=>setScreen("detail")} isOnline={isOnline}/>;
   if(screen==="reportDetail"&&activeReport) return <ReportDetail report={activeReport} project={project} user={user} onBack={()=>setScreen("detail")} onDelete={deleteReport} onApprove={approveReport} onFlag={flagReport}
@@ -14658,7 +14676,10 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
             </div>
             <div style={{fontSize:12,color:T.sub}}>{[project.client,project.location].filter(Boolean).join(" · ")||"No details"}</div>
           </div>
-          <span style={pill(project.status==="active"?T.green:T.muted)}>{project.status}</span>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+            <span style={pill(project.status==="active"?T.green:T.muted)}>{project.status}</span>
+            {hasRateSheetChoice(project)&&<span style={{...pill(project.rate_sheet==="mechanical"?T.blue:T.orange),fontSize:10}} title="Set on Edit Job">💲 {rateSheetLabel(project)}</span>}
+          </div>
         </div>
         <StatBar items={[{label:"Reports",val:reports.length,color:divMeta.color},{label:"Labor",val:"$"+(tot.l>=1000?(tot.l/1000).toFixed(1)+"k":fmt(tot.l)),color:T.green},{label:"Equip",val:"$"+(tot.e>=1000?(tot.e/1000).toFixed(1)+"k":fmt(tot.e)),color:T.yellow},{label:"Total",val:"$"+(tot.g>=1000?(tot.g/1000).toFixed(1)+"k":fmt(tot.g)),color:T.blue}]}/>
         {/* Five groups, then the tabs inside the chosen group. 17 chips in a
@@ -14739,7 +14760,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
                 💡 Reports track labor, equipment, materials and site conditions — and automatically generate time cards for payroll.
               </div>
             </div>}
-          {shown.map(r=>{const t=reportTotals(r,project.division);const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{stLabel(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
+          {shown.map(r=>{const t=reportTotals(r,rateDivOf(project));const sc={submitted:T.yellow,approved:T.green,flagged:T.red}[r.status||"submitted"]||T.muted;return(<div key={r.id} onClick={()=>{setActiveReport(r);setScreen("reportDetail");}} style={{...cardS,marginBottom:9,cursor:"pointer",borderLeft:`3px solid ${sc}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{fontSize:15,fontWeight:700}}>{fmtShort(r.date)}</div><span style={pill(sc)}>{stLabel(r.status||"submitted").toUpperCase()}</span></div><div style={{fontSize:11,color:T.muted,marginTop:4,display:"flex",gap:8}}>{(r.labor||[]).length>0&&<span>👷 {r.labor.length}</span>}{(r.equipment||[]).length>0&&<span>🚜 {r.equipment.length}</span>}{r.submitted_by&&<span>by {r.submitted_by}</span>}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:17,fontWeight:900,color:T.green}}>${fmt(t.grand)}</div><div style={{fontSize:9,color:T.muted}}>TOTAL</div></div></div>);})}
          </div>);})()}
         {!loading&&tab==="time"     &&can(user,"time_card")   &&<TimeCardsTab projectId={project.id} project={project} user={user} onErr={setErr}/>}
         {!loading&&tab==="crew"     &&can(user,"crew_equip")  &&<CrewEquipTab projectId={project.id} user={user} onErr={setErr}/>}
@@ -14785,7 +14806,7 @@ function ChangeOrdersTab({project,user,onErr}){
       const m={};(rf||[]).forEach(x=>m[x.id]=x);setRfiMap(m);
     }catch(e){onErr(e.message);}setLoading(false);}
   // Actual cost charged to each change order (daily report lines + T&M tickets tagged to it).
-  const costBy=coCostBreakdown(reports,tickets,project.division);
+  const costBy=coCostBreakdown(reports,tickets,rateDivOf(project));
 
   async function save(){
     setSaving(true);
@@ -21463,7 +21484,7 @@ function JobEstimateTab({project,user,reports,onErr}){
   const estHrs=lines.reduce((s,l)=>s+hrsOf(l),0);
   const estLabor=lines.reduce((s,l)=>s+hrsOf(l)*rate(l),0);
   const estMat=lines.reduce((s,l)=>s+matOf(l),0);
-  const actual=(reports||[]).reduce((a,r)=>{const t=reportTotals(r,project.division);a.hrs+=t.labor_hrs;a.labor+=t.labor;a.equip+=t.equip;a.mats+=t.mats+(t.rental||0);a.grand+=t.grand;return a;},{hrs:0,labor:0,equip:0,mats:0,grand:0});
+  const actual=(reports||[]).reduce((a,r)=>{const t=reportTotals(r,rateDivOf(project));a.hrs+=t.labor_hrs;a.labor+=t.labor;a.equip+=t.equip;a.mats+=t.mats+(t.rental||0);a.grand+=t.grand;return a;},{hrs:0,labor:0,equip:0,mats:0,grand:0});
   const cats={};lines.forEach(l=>{const c=l.category||"Other";(cats[c]=cats[c]||[]).push(l);});
   const pct=(a,b)=>b>0?Math.round(a/b*100):null;
   const bar=(label,a,b,fmt)=>{const p=pct(a,b);const over=p!=null&&p>100;return(
@@ -21609,7 +21630,7 @@ function JobCostView({project,user,onErr}){
   const inRange=(d)=>!!d&&(!from||d>=from)&&(!to||d<=to);
   const money=(n)=>"$"+Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
   const num=(n,d=1)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
-  const div=project.division;
+  const div=rateDivOf(project);
   const reps=reports.filter(r=>inRange(r.date));
   const tms=tickets.filter(t=>inRange(t.ticket_date)&&t.status!=="void");
   const aps=ap.filter(a=>inRange(a.invoice_date||String(a.created_at||"").slice(0,10)));
@@ -22164,7 +22185,7 @@ ${lines.filter(l=>!l.hidden).map(l=>l.heading?`<tr><td colspan="5" style="font-w
 ${(()=>{const b=choice&&choice.breakdown;if(!b)return "";
   const rows=[];const tot={labor:0,equip:0,mats:0,other:0,total:0};
   const add=(label,date,labor,equip,mats,other)=>{const t=labor+equip+mats+other;rows.push({label,date,labor,equip,mats,other,t});tot.labor+=labor;tot.equip+=equip;tot.mats+=mats;tot.other+=other;tot.total+=t;};
-  (b.reports||[]).forEach(r=>{const t=reportTotals(r,project.division);const subs=(r.subcontractors||[]).reduce((s,x)=>s+subLineTotal(x),0);add(`Daily Report ${r.report_no?"#"+r.report_no:""}`,r.date,t.labor,t.equip,t.mats+t.rental,subs);});
+  (b.reports||[]).forEach(r=>{const t=reportTotals(r,rateDivOf(project));const subs=(r.subcontractors||[]).reduce((s,x)=>s+subLineTotal(x),0);add(`Daily Report ${r.report_no?"#"+r.report_no:""}`,r.date,t.labor,t.equip,t.mats+t.rental,subs);});
   (b.tickets||[]).forEach(t=>{const v=tmTicketViewFromRow(t,project,[]);add(`T&M Ticket #${t.ticket_no||""}`,t.ticket_date,v.laborTotal,v.equipTotal,v.matsTotal,Math.max(0,v.grandTotal-v.laborTotal-v.equipTotal-v.matsTotal));});
   rows.sort((a,c)=>String(a.date).localeCompare(String(c.date)));
   const td='style="text-align:right"';
@@ -22494,7 +22515,7 @@ function PullUnbilledModal({project,onClose,onPull,onErr}){
   const [from,setFrom]=useState(iso(monthStart));
   const [to,setTo]=useState(iso(d0));
   const uid=()=>Math.random().toString(36).slice(2,10);
-  const div=project.division;
+  const div=rateDivOf(project);
 
   useEffect(()=>{(async()=>{
     try{
@@ -25059,7 +25080,7 @@ function tmTicketToLabor(data){
    equipment and materials twice. The ticket points back at the report
    (from_report_id) and does NOT feed time cards — the report already did. */
 function tmTicketFromReport(report,project,user,ticketNo){
-  const div=project.division;const uid=()=>Math.random().toString(36).slice(2,10);
+  const div=rateDivOf(project);const uid=()=>Math.random().toString(36).slice(2,10);
   const n2=(n)=>Number(n||0).toFixed(2);
   const labor=[];
   (report.labor||[]).forEach(x=>{
@@ -25108,7 +25129,7 @@ function TMTicketForm({project,user,ticket,onBack,onSaved}){
   // Accounting opens tickets view-only: fields can't be changed and every
   // add / remove / sign / save / delete control is hidden. Print still works.
   const readOnly=reportsReadOnly(user);
-  const division=project.division||"Pipeline";
+  const division=rateDivOf(project)||"Pipeline";
   const positions=getPositions(division);
   const equipList=getEquipList(division);
 
