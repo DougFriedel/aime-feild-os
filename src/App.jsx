@@ -14778,6 +14778,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
           </div>
         </div>
         <StatBar items={[{label:"Reports",val:reports.length,color:divMeta.color},{label:"Labor",val:"$"+(tot.l>=1000?(tot.l/1000).toFixed(1)+"k":fmt(tot.l)),color:T.green},{label:"Equip",val:"$"+(tot.e>=1000?(tot.e/1000).toFixed(1)+"k":fmt(tot.e)),color:T.yellow},{label:"Total",val:"$"+(tot.g>=1000?(tot.g/1000).toFixed(1)+"k":fmt(tot.g)),color:T.blue}]}/>
+        <JobRemainingBar project={project} refreshKey={reports.length+":"+tab} workLogged={tot.g}/>
         {/* Five groups, then the tabs inside the chosen group. 17 chips in a
             row did not fit a phone. */}
         {(()=>{
@@ -21489,6 +21490,30 @@ function useContractPosition(project,refreshKey){
   const remaining=current-billed;
   const pct=current>0?(billed/current)*100:0;
   return {...d,isContract,original,approvedCO,pendingCO,current,invoiced,payAppStored,billed,remaining,pct};
+}
+/* Slim strip under the job header, for everyone on the job: how much of the
+   contract (or budget) is left. Billed = invoices / pay apps; work logged is
+   shown too so the crew can see when logged work is catching up to it. */
+function JobRemainingBar({project,refreshKey,workLogged}){
+  const c=useContractPosition(project,refreshKey);
+  const money0=(n)=>"$"+Math.round(Number(n||0)).toLocaleString("en-US");
+  if(c.loading||!c.current)return null;
+  const over=c.remaining<0;
+  const pctLeft=Math.max(0,Math.min(100,100-c.pct));
+  const workPct=c.current>0?Math.min(100,((workLogged||0)/c.current)*100):0;
+  return(
+    <div style={{...cardS,marginTop:8,marginBottom:0,padding:"9px 12px",borderLeft:`3px solid ${over?T.red:pctLeft<15?T.yellow:T.green}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+        <div style={{fontSize:12,color:T.sub}}>{c.isContract?"Contract":"Budget"} <b style={{color:T.text}}>{money0(c.current)}</b>{c.approvedCO?<span style={{color:T.muted,fontSize:10.5}}> incl. COs</span>:null} · billed <b style={{color:T.green}}>{money0(c.billed)}</b></div>
+        <div style={{fontSize:13,fontWeight:900,color:over?T.red:pctLeft<15?T.yellow:T.text}}>{over?"Over by "+money0(-c.remaining):money0(c.remaining)+" left"} <span style={{fontSize:10,fontWeight:700,color:T.muted}}>({Math.round(pctLeft)}%)</span></div>
+      </div>
+      <div style={{position:"relative",height:5,background:T.border,borderRadius:3,marginTop:7}} title={`Billed ${Math.round(c.pct)}% · work logged ${Math.round(workPct)}%`}>
+        <div style={{position:"absolute",left:0,top:0,height:5,borderRadius:3,width:`${Math.min(100,workPct)}%`,background:T.blue+"55"}}/>
+        <div style={{position:"absolute",left:0,top:0,height:5,borderRadius:3,width:`${Math.min(100,c.pct)}%`,background:over?T.red:T.green}}/>
+      </div>
+      <div style={{fontSize:10,color:T.muted,marginTop:4}}>Green = billed · blue = work logged ({money0(workLogged)})</div>
+    </div>
+  );
 }
 function ContractStrip({project,refreshKey,compact}){
   const c=useContractPosition(project,refreshKey);
