@@ -572,6 +572,32 @@ const API={
     create:(d)=>sb("/sov_items",{method:"POST",body:d,prefer:"return=representation"}),
     update:(id,d)=>sb(`/sov_items?id=eq.${id}`,{method:"PATCH",body:d,prefer:"return=representation"}),
     remove:(id)=>sb(`/sov_items?id=eq.${id}`,{method:"DELETE"}),
+    /* Keep the schedule of values in step with approved change orders, so the
+       contract sum to date on the G702/G703 (and the SOV editor) always
+       includes them. Each approved CO owns one SOV line (change_order_id):
+       added when approved, amount/description kept in sync, removed again if
+       the CO drops back to Pending/Rejected or is deleted — unless work has
+       already been billed on that line. Returns true when anything changed. */
+    syncChangeOrders:async(projectId)=>{
+      const [cos,rows]=await Promise.all([sb(`/change_orders?project_id=eq.${projectId}&select=id,co_number,description,amount,status`),sb(`/sov_items?project_id=eq.${projectId}&select=*&order=item_no.asc`)]);
+      const approved=(cos||[]).filter(c=>c.status==="Approved");let changed=false;
+      let next=(rows||[]).reduce((m,r)=>Math.max(m,r.item_no||0),0);
+      for(const co of approved){
+        const desc=`${co.co_number} — ${co.description||"Change Order"}`.slice(0,180);const amt=parseFloat(co.amount)||0;
+        const row=(rows||[]).find(r=>r.change_order_id===co.id);
+        if(!row){next+=1;await sb("/sov_items",{method:"POST",body:{project_id:projectId,item_no:next,description:desc,scheduled_value:amt,change_order_id:co.id}});changed=true;}
+        else if(Math.abs((parseFloat(row.scheduled_value)||0)-amt)>=0.005||row.description!==desc){await sb(`/sov_items?id=eq.${row.id}`,{method:"PATCH",body:{description:desc,scheduled_value:amt}});changed=true;}
+      }
+      const stale=(rows||[]).filter(r=>r.change_order_id&&!approved.some(c=>c.id===r.change_order_id));
+      if(stale.length){
+        const used=await sb(`/pay_app_lines?sov_item_id=in.(${stale.map(r=>r.id).join(",")})&select=sov_item_id`).catch(()=>[]);
+        for(const row of stale){
+          if((used||[]).some(u=>u.sov_item_id===row.id))continue;   // a pay app already carries it — leave it
+          await sb(`/sov_items?id=eq.${row.id}`,{method:"DELETE"});changed=true;
+        }
+      }
+      return changed;
+    },
   },
   payApps:{
     forProject:(pid)=>sb(`/pay_apps?project_id=eq.${pid}&select=*&order=app_no.desc`),
@@ -2831,6 +2857,7 @@ const REQUIRED_MIGRATIONS=[
   {table:"hot_work_permits",col:"id",file:"hot_work_permit_migration.sql",why:"Hot Work Permit tab (Structural & Manufacturing)"},
   {table:"mfg_inventory",col:"id",file:"shop_inventory_migration.sql",why:"shop-wide Manufacturing inventory"},
   {table:"projects",col:"rate_sheet",file:"rate_sheet_migration.sql",why:"per-job rate sheet (Pipeline South)"},
+  {table:"estimates",col:"review_notes",file:"review_notes_migration.sql",why:"review notes on estimates"},
 ];
 let _migCheck=null;
 function checkMigrations(){
@@ -11197,7 +11224,7 @@ const STAGE_OUTCOME={
   bid_submitted:{icon:"📤",word:"submitted",  tone:"good"},
   portfolio:   {icon:"🏆",word:"won — added to portfolio",tone:"good"},
 };
-async function notifyReviewOutcome(bid,newStatus,actor){
+async function notifyReviewOutcome(bid,newStatus,actor,note){
   // Only when it was actually waiting on a reviewer.
   if(bid?.status!=="ready_review")return;
   const meta=STAGE_OUTCOME[newStatus];
@@ -11209,9 +11236,76 @@ async function notifyReviewOutcome(bid,newStatus,actor){
       `${meta.icon} Bid ${meta.word} — ${bid.name||"Untitled"}`,
       `${actor} ${meta.word==="approved"?"approved":"moved"} ${bid.name||"your bid"}`+
       `${bid.quote_number?` (Quote ${bid.quote_number})`:""}`+
-      `${meta.word==="approved"?".":` to ${stageOf(newStatus).label}.`}`,
+      `${meta.word==="approved"?".":` to ${stageOf(newStatus).label}.`}${note?` Note: ${note}`:""}`,
       {to:who,bid_id:bid.id});
   }catch(e){ console.warn("review notification failed:",e.message); }
+}
+
+/* ── Review notes ──────────────────────────────────────────────
+   A running thread on the bid (review_notes jsonb): the reviewer's comments
+   with the decision they came with, and the estimator's replies. Internal
+   only — never on the proposal. */
+const REVIEW_DECISION={approved:{icon:"✅",label:"Approved",color:T.green},sent_back:{icon:"↩️",label:"Sent back for changes",color:T.yellow},note:{icon:"💬",label:"Note",color:T.blue}};
+const reviewNotesOf=(b)=>Array.isArray(b?.review_notes)?b.review_notes:[];
+const openReviewNote=(b)=>{const n=reviewNotesOf(b);const last=n[n.length-1];return last&&last.decision==="sent_back"&&!n.slice(n.indexOf(last)+1).some(x=>x.decision==="approved");};
+function ReviewNotesPanel({bid,user,patch,onDecision}){
+  const notes=reviewNotesOf(bid);
+  const isReviewer=user.name===EST_REVIEWER||user.role==="admin";
+  const inReview=bid.status==="ready_review";
+  const [text,setText]=useState("");const [busy,setBusy]=useState(false);
+  const [open,setOpen]=useState(inReview||notes.length>0);
+  useEffect(()=>{if(inReview)setOpen(true);},[inReview]);
+  async function add(decision){
+    const t=text.trim();
+    if(decision==="sent_back"&&!t){alert("Say what needs to change before sending it back.");return;}
+    if(decision==="note"&&!t)return;
+    setBusy(true);
+    const entry={id:Math.random().toString(36).slice(2,10),by:user.name,at:new Date().toISOString(),text:t,decision};
+    const body={review_notes:[...notes,entry]};
+    if(decision==="approved")body.status="bid_approved";
+    if(decision==="sent_back")body.status="estimating";
+    try{
+      await patch(body);
+      setText("");
+      if(decision!=="note")await onDecision(body.status,t);
+      else{
+        // A plain note still tells the other side.
+        const to=user.name===EST_REVIEWER?(bid.requested_review_by||bid.estimator):EST_REVIEWER;
+        if(to&&to!==user.name)try{await notify("bid_review",`💬 Note on ${bid.name||"a bid"}`,`${user.name}: ${t}`,{to,bid_id:bid.id});}catch{}
+      }
+    }catch(e){alert(e.message);}
+    setBusy(false);
+  }
+  const last=notes[notes.length-1];
+  const sentBack=last&&last.decision==="sent_back"&&bid.status!=="bid_approved";
+  return(<div style={{...cardS,marginTop:12,borderLeft:`3px solid ${inReview?"#38BDF8":sentBack?T.yellow:T.border}`}}>
+    <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+      <div style={{fontSize:12.5,fontWeight:800,color:T.text}}>📝 Review notes {notes.length>0&&<span style={{...pill(sentBack?T.yellow:T.muted),marginLeft:6,fontSize:10}}>{notes.length}</span>}
+        {inReview&&<span style={{...pill("#38BDF8"),marginLeft:6,fontSize:10}}>waiting on {EST_REVIEWER}</span>}
+        {sentBack&&!inReview&&<span style={{...pill(T.yellow),marginLeft:6,fontSize:10}}>↩️ sent back — see notes</span>}
+      </div>
+      <span style={{color:T.muted,fontSize:12}}>{open?"▾":"▸"}</span>
+    </div>
+    {open&&<div style={{marginTop:10}}>
+      <div style={{fontSize:11,color:T.muted,marginBottom:8}}>Internal — never shows on the proposal or anything the client sees.</div>
+      {notes.length===0&&<div style={{fontSize:12,color:T.muted,padding:"6px 0 10px"}}>No notes yet.</div>}
+      {notes.map(n=>{const d=REVIEW_DECISION[n.decision]||REVIEW_DECISION.note;const mine=n.by===user.name;return(
+        <div key={n.id} style={{background:T.surface,borderRadius:10,padding:"8px 12px",marginBottom:6,borderLeft:`3px solid ${d.color}`}}>
+          <div style={{fontSize:11,color:T.sub,marginBottom:3}}><b style={{color:mine?T.orange:T.text}}>{n.by}</b> · {new Date(n.at).toLocaleString()} · <span style={{color:d.color,fontWeight:700}}>{d.icon} {d.label}</span></div>
+          {n.text&&<div style={{fontSize:13,color:T.text,whiteSpace:"pre-wrap",lineHeight:1.5}}>{n.text}</div>}
+        </div>);})}
+      <textarea value={text} onChange={e=>setText(e.target.value)} rows={3}
+        placeholder={isReviewer&&inReview?"What needs to change, or anything to note with your approval…":"Add a note or reply…"}
+        style={{...inp,resize:"vertical",lineHeight:1.5,marginTop:6}}/>
+      <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+        {isReviewer&&inReview&&<>
+          <button onClick={()=>add("approved")} disabled={busy} style={{...primBtn,flex:1,borderRadius:10,background:T.green,color:"#000",fontSize:12.5}}>✅ Approve</button>
+          <button onClick={()=>add("sent_back")} disabled={busy} style={{...primBtn,flex:1,borderRadius:10,background:T.yellow,color:"#000",fontSize:12.5}}>↩️ Send back for changes</button>
+        </>}
+        <button onClick={()=>add("note")} disabled={busy||!text.trim()} style={{...ghostBtn,padding:"9px 14px",fontSize:12.5,opacity:text.trim()?1:0.5}}>💬 Add note</button>
+      </div>
+    </div>}
+  </div>);
 }
 
 function BidBoard({user,onBack,initialOpenId}){
@@ -11405,6 +11499,7 @@ function BidBoard({user,onBack,initialOpenId}){
                         {b.quote_number&&<div style={{fontSize:11,color:T.sub,marginTop:2,fontWeight:600}}>
                           Quote {b.quote_number}
                         </div>}
+                        {reviewNotesOf(b).length>0&&<div style={{fontSize:11,marginTop:3,color:openReviewNote(b)?T.yellow:T.muted,fontWeight:700}}>{openReviewNote(b)?"↩️ sent back":"💬"} {reviewNotesOf(b).length} review note{reviewNotesOf(b).length===1?"":"s"}</div>}
                         {b.description&&<div style={{fontSize:11.5,color:T.muted,marginTop:3,lineHeight:1.45}}>{b.description}</div>}
                       </td>
                       <td style={{padding:"12px",verticalAlign:"top",minWidth:180}}>
@@ -11969,6 +12064,7 @@ function BidDetail({bidId,user,onBack,onChanged,backLabel}){
             {bid.parent_id&&<button onClick={removeEst} title="Delete this estimate" style={{...ghostBtn,padding:"5px 9px",fontSize:11,color:T.red,borderColor:T.red+"50"}}>🗑</button>}
           </span>
         </div>
+        <ReviewNotesPanel bid={bid} user={user} patch={patch} onDecision={(next,note)=>notifyReviewOutcome({...bid,status:"ready_review"},next,user.name,note)}/>
       </div>
 
       {attachJob&&<AttachJobModal bid={bid} user={user} onClose={()=>setAttachJob(false)} onErr={setErr}
@@ -14815,12 +14911,13 @@ function ChangeOrdersTab({project,user,onErr}){
       const payload={...f,project_id:project.id,amount:parseFloat(f.amount)||0,date_submitted:toDate(f.date_submitted),approved_date:toDate(f.approved_date)};
       if(editing){await API.changeOrders.update(editing,payload);}
       else{await API.changeOrders.create(payload);}
+      API.sov.syncChangeOrders(project.id).catch(()=>{});   // contract sum to date follows approved COs
       setShowForm(false);setEditing(null);setF(blank);await load();
     }catch(e){onErr(e.message);}
     setSaving(false);
   }
 
-  async function remove(id){if(!window.confirm("Delete this change order?"))return;try{await API.changeOrders.remove(id);await load();}catch(e){onErr(e.message);}}
+  async function remove(id){if(!window.confirm("Delete this change order?"))return;try{await API.changeOrders.remove(id);API.sov.syncChangeOrders(project.id).catch(()=>{});await load();}catch(e){onErr(e.message);}}
 
   function copyCoLink(co){
     const link=`${appUrl}?co=${co.id}`;
@@ -15474,7 +15571,8 @@ function PublicCOForm({coId}){
   async function submit(){
     if(!signerName.trim()||!sigData){setErr("Please enter your name and signature.");return;}
     setSaving(true);setErr("");
-    try{await sb(`/change_orders?id=eq.${coId}`,{method:"PATCH",body:{client_signature:sigData,client_signed_by:signerName+(signerTitle?" ("+signerTitle+")":""),client_signed_date:today(),status:"Approved"},prefer:"return=representation"});setSubmitted(true);}
+    try{const r=await sb(`/change_orders?id=eq.${coId}`,{method:"PATCH",body:{client_signature:sigData,client_signed_by:signerName+(signerTitle?" ("+signerTitle+")":""),client_signed_date:today(),status:"Approved"},prefer:"return=representation"});setSubmitted(true);
+      const row=Array.isArray(r)?r[0]:r;if(row&&row.project_id)API.sov.syncChangeOrders(row.project_id).catch(()=>{});}
     catch(e){setErr("Failed: "+e.message);}setSaving(false);
   }
   const s={bg:"#0D0D0F",card:"#1A1A20",inp:{width:"100%",boxSizing:"border-box",background:"#0C0C0F",border:"1px solid #27272A",borderRadius:10,color:"#fff",fontSize:14,padding:"12px 14px",fontFamily:"inherit",outline:"none"},lbl:{display:"block",fontSize:11,fontWeight:700,color:"#A1A1AA",textTransform:"uppercase",letterSpacing:"1px",marginBottom:6}};
@@ -22694,13 +22792,15 @@ function SOVEditor({project,user,onErr}){
 
   async function load(){
     setLoading(true);
-    try{ setRows(await API.sov.forProject(project.id)||[]); }
+    try{ await API.sov.syncChangeOrders(project.id).catch(()=>{}); setRows(await API.sov.forProject(project.id)||[]); }
     catch(e){ onErr&&onErr(e.message); }
     setLoading(false);
   }
   useEffect(()=>{load();},[project.id]);
 
-  const contractSum=parseFloat(project.contract_value)||0;
+  const originalSum=parseFloat(project.contract_value)||0;
+  const coSum=rows.filter(r=>r.change_order_id).reduce((s,r)=>s+(parseFloat(r.scheduled_value)||0),0);
+  const contractSum=originalSum+coSum;                       // contract sum to date (G702 line 3)
   const scheduled=rows.reduce((s,r)=>s+(parseFloat(r.scheduled_value)||0),0);
   const variance=scheduled-contractSum;
 
@@ -22758,8 +22858,9 @@ function SOVEditor({project,user,onErr}){
   return(
     <div>
       <div style={{...cardS,marginBottom:12,borderLeft:`3px solid ${Math.abs(variance)<0.01?T.green:T.yellow}`}}>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-          {[["Contract Sum",contractSum,T.text],
+        <div style={{display:"grid",gridTemplateColumns:coSum?"1fr 1fr 1fr 1fr 1fr":"1fr 1fr 1fr",gap:10}}>
+          {[...(coSum?[["Original Contract",originalSum,T.muted],["Approved COs",coSum,T.green]]:[]),
+            ["Contract Sum to Date",contractSum,T.text],
             ["Scheduled",scheduled,T.blue],
             ["Variance",variance,Math.abs(variance)<0.01?T.green:T.yellow]].map(([l,v,c])=>(
             <div key={l} style={{textAlign:"center"}}>
@@ -22769,7 +22870,7 @@ function SOVEditor({project,user,onErr}){
           ))}
         </div>
         {Math.abs(variance)>=0.01&&<div style={{fontSize:11.5,color:T.yellow,marginTop:10,paddingTop:10,borderTop:`1px solid ${T.border}`,lineHeight:1.5}}>
-          The schedule of values {variance>0?"exceeds":"is under"} the contract sum by {money(Math.abs(variance))}.
+          The base lines of the schedule of values {variance>0?"exceed":"are under"} the original contract by {money(Math.abs(variance))}.
           A pay application built on this won't reconcile to the contract.
         </div>}
         {contractSum===0&&<div style={{fontSize:11.5,color:T.muted,marginTop:8}}>
@@ -22844,6 +22945,7 @@ function PayAppList({project,user,onNew,onOpen,onErr}){
   async function load(){
     setLoading(true);
     try{
+      await API.sov.syncChangeOrders(project.id).catch(()=>{});
       const [a,s]=await Promise.all([
         API.payApps.forProject(project.id),
         API.sov.forProject(project.id).catch(()=>[]),
@@ -22865,7 +22967,8 @@ function PayAppList({project,user,onNew,onOpen,onErr}){
 
   const statusColor={draft:T.muted,submitted:T.yellow,certified:T.blue,paid:T.green};
   const billedToDate=rows.reduce((m,a)=>Math.max(m,parseFloat(a.completed_stored)||0),0);
-  const contractSum=rows.length?parseFloat(rows[0].contract_to_date)||0:(parseFloat(project.contract_value)||0);
+  const cosApproved=sov.filter(r=>r.change_order_id).reduce((s,r)=>s+(parseFloat(r.scheduled_value)||0),0);
+  const contractSum=rows.length?parseFloat(rows[0].contract_to_date)||0:(parseFloat(project.contract_value)||0)+cosApproved;
   const pct=contractSum>0?(billedToDate/contractSum)*100:0;
 
   if(sov.length===0&&!loading)return(
