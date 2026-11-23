@@ -23158,12 +23158,20 @@ function PayAppForm({project,user,payApp,onBack,onSaved,onErr}){
     return{C:s.C+c.C,D:s.D+c.D,E:s.E+c.E,F:s.F+c.F,G:s.G+c.G,balance:s.balance+c.balance};},
     {C:0,D:0,E:0,F:0,G:0,balance:0});
 
-  /* ── G702 lines 1-9 ── */
-  const originalContract=parseFloat(project.contract_value)||0;
-  const coAdditions=cos.filter(c=>(parseFloat(c.amount)||0)>0).reduce((s,c)=>s+(parseFloat(c.amount)||0),0);
-  const coDeductions=Math.abs(cos.filter(c=>(parseFloat(c.amount)||0)<0).reduce((s,c)=>s+(parseFloat(c.amount)||0),0));
+  /* ── G702 lines 1-9 ──
+     Lines 1–3 come from the continuation sheet itself so the two forms can never
+     disagree: line 1 = the base SOV lines, line 2 = the change-order lines
+     (each approved CO owns one SOV line), line 3 = column C total. */
+  const coSovIds=new Set(sov.filter(r=>r.change_order_id).map(r=>r.id));
+  const isCOLine=(l)=>!!l.sov_item_id&&coSovIds.has(l.sov_item_id);
+  const schedOf=(l)=>parseFloat(l.scheduled_value)||0;
+  const coLines=lines.filter(isCOLine),baseLines=lines.filter(l=>!isCOLine(l));
+  const originalContract=lines.length?baseLines.reduce((s,l)=>s+schedOf(l),0):(parseFloat(project.contract_value)||0);
+  const coAdditions=coLines.filter(l=>schedOf(l)>0).reduce((s,l)=>s+schedOf(l),0);
+  const coDeductions=Math.abs(coLines.filter(l=>schedOf(l)<0).reduce((s,l)=>s+schedOf(l),0));
   const netCO=coAdditions-coDeductions;
   const contractToDate=originalContract+netCO;              // line 3
+  const coSummary=coLines.map(l=>{const r=sov.find(x=>x.id===l.sov_item_id)||{};const co=cos.find(c=>c.id===r.change_order_id)||{};return{id:l.sov_item_id,co_number:co.co_number||(l.description||"").split(" — ")[0],description:co.description||l.description,amount:schedOf(l)};});
   const completedStored=tot.G;                              // line 4
   // 5a is retainage on completed work (D+E), 5b on stored material (F)
   const retainWork=(tot.D+tot.E)*((parseFloat(f.retainage_work_pct)||0)/100);
@@ -23512,6 +23520,7 @@ table.g703 tfoot td{font-weight:800;background:#f0f0f0}
       {tab==="g702"&&<div>
         <div style={{...cardS,marginBottom:12}}>
           {g702row("1.","Original contract sum",originalContract)}
+          {lines.length>0&&Math.abs(originalContract-(parseFloat(project.contract_value)||0))>=0.01&&<div style={{fontSize:11,color:T.yellow,margin:"2px 0 6px",lineHeight:1.5}}>⚠ The job's contract value ({money(project.contract_value)}) doesn't match the base SOV lines ({money(originalContract)}). Line 1 uses the SOV. {(parseFloat(project.contract_value)||0)>originalContract?"If the job's contract value was bumped to include change orders, set it back to the original amount under Edit Job — COs are carried on line 2.":"Check the SOV lines or the job's contract value."}</div>}
           {g702row("2.","Net change by change orders",netCO)}
           {g702row("3.","Contract sum to date (1 ± 2)",contractToDate)}
           {g702row("4.","Total completed & stored to date (Column G)",completedStored)}
@@ -23561,8 +23570,8 @@ table.g703 tfoot td{font-weight:800;background:#f0f0f0}
 
         <div style={{...cardS,marginBottom:12}}>
           <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",letterSpacing:"1px",marginBottom:9}}>Change Order Summary</div>
-          {cos.length===0?<div style={{fontSize:12,color:T.muted}}>No approved change orders on this job.</div>:<>
-            {cos.map(c=>(
+          {coSummary.length===0?<div style={{fontSize:12,color:T.muted}}>No approved change orders on the schedule of values.{cos.length>0?" Approved COs are added to the SOV automatically — open the SOV tab once, then come back.":""}</div>:<>
+            {coSummary.map(c=>(
               <div key={c.id} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
                 <span style={{color:T.sub}}>{c.co_number} — {(c.description||"").slice(0,40)}</span>
                 <span style={{fontWeight:700,color:(parseFloat(c.amount)||0)<0?T.red:T.green}}>{money(c.amount)}</span>
