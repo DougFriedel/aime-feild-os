@@ -14778,7 +14778,7 @@ function ProjectDetail({project:initP,user,onBack,onProjectUpdated,isOnline=true
           </div>
         </div>
         <StatBar items={[{label:"Reports",val:reports.length,color:divMeta.color},{label:"Labor",val:"$"+(tot.l>=1000?(tot.l/1000).toFixed(1)+"k":fmt(tot.l)),color:T.green},{label:"Equip",val:"$"+(tot.e>=1000?(tot.e/1000).toFixed(1)+"k":fmt(tot.e)),color:T.yellow},{label:"Total",val:"$"+(tot.g>=1000?(tot.g/1000).toFixed(1)+"k":fmt(tot.g)),color:T.blue}]}/>
-        <JobRemainingBar project={project} refreshKey={reports.length+":"+tab} workLogged={tot.g}/>
+        <JobRemainingBar project={project} user={user} refreshKey={reports.length+":"+tab} workLogged={tot.g}/>
         {/* Five groups, then the tabs inside the chosen group. 17 chips in a
             row did not fit a phone. */}
         {(()=>{
@@ -21494,10 +21494,17 @@ function useContractPosition(project,refreshKey){
 /* Slim strip under the job header, for everyone on the job: how much of the
    contract (or budget) is left. Billed = invoices / pay apps; work logged is
    shown too so the crew can see when logged work is catching up to it. */
-function JobRemainingBar({project,refreshKey,workLogged}){
+function JobRemainingBar({project,refreshKey,workLogged,user}){
   const c=useContractPosition(project,refreshKey);
   const money0=(n)=>"$"+Math.round(Number(n||0)).toLocaleString("en-US");
-  if(c.loading||!c.current)return null;
+  if(c.loading)return null;
+  if(!c.current){
+    // Nothing to measure against yet — tell the PM where to set it; crew see nothing.
+    if(!user||!(user.role==="admin"||user.role==="pm"))return null;
+    return(<div style={{...cardS,marginTop:8,marginBottom:0,padding:"8px 12px",fontSize:11.5,color:T.muted,borderLeft:`3px solid ${T.border}`}}>
+      Remaining balance isn't showing on this job because it has no {c.isContract?"contract value":"estimated budget"} yet — set it under <b style={{color:T.sub}}>Job → Edit Job</b> and the crew will see how much is left.
+    </div>);
+  }
   const over=c.remaining<0;
   const pctLeft=Math.max(0,Math.min(100,100-c.pct));
   const workPct=c.current>0?Math.min(100,((workLogged||0)/c.current)*100):0;
