@@ -23484,6 +23484,11 @@ table.g703 tfoot td{font-weight:800;background:#f0f0f0}
                   <div style={{fontSize:10,color:T.muted}}>{Math.round(c.pct)}% complete</div>
                 </div>
               </div>
+              {(()=>{const before=c.C-c.D;const left=c.balance;return(
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:T.surface,borderRadius:9,padding:"7px 10px",marginBottom:9,fontSize:12}}>
+                <span style={{color:T.sub}}>Left to bill: <b style={{color:before>0.005?T.orange:T.green}}>{money(Math.max(0,before))}</b>{(parseFloat(l.this_period)||0)+(parseFloat(l.stored_materials)||0)>0&&<span style={{color:T.muted}}> → {money(Math.max(0,left))} after this period</span>}</span>
+                {before>0.005&&c.pct<100&&<button onClick={()=>setLine(i,"this_period",before.toFixed(2))} style={{...ghostBtn,padding:"4px 9px",fontSize:11,color:T.orange,borderColor:T.orange+"60"}}>Bill the rest</button>}
+              </div>);})()}
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                 <div><label style={lbl}>E — This Period</label>
                   <input type="number" step="0.01" value={l.this_period}
