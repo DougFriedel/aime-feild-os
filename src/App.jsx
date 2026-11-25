@@ -23769,6 +23769,14 @@ function MfgDivisionReportsTab({jobs,user}){
   const jobOf=(r)=>jobs.find(j=>j.id===r.mfg_job_id);
   const stColor=(st)=>st==="approved"?T.green:st==="flagged"?T.red:T.yellow;
   const upd=async(id,body,patch)=>{try{await API.reports.update(id,body);setActive(r=>r?{...r,...patch}:r);setRows(rs=>rs.map(x=>x.id===id?{...x,...patch}:x));}catch(e){setErr(e.message);}};
+  const canApprove=can(user,"approve_report")||canMfg(user,"manage_jobs");
+  const [busyId,setBusyId]=useState(null);
+  const awaitingRows=rows.filter(r=>(r.status||"submitted")==="submitted");
+  async function approveOne(r){if(busyId)return;setBusyId(r.id);await upd(r.id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()},{status:"approved",approved_by:user.name});setBusyId(null);}
+  async function approveAll(){
+    if(!awaitingRows.length||!window.confirm(`Approve all ${awaitingRows.length} shop report${awaitingRows.length===1?"":"s"} awaiting approval?`))return;
+    setBusyId("all");for(const r of awaitingRows){await upd(r.id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()},{status:"approved",approved_by:user.name});}setBusyId(null);
+  }
   if(active&&jobOf(active)){
     return <ReportDetail report={active} project={mfgJobAsProject(jobOf(active))} user={user}
       onBack={()=>{setActive(null);load();}}
@@ -23785,16 +23793,22 @@ function MfgDivisionReportsTab({jobs,user}){
           <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option>
         </select>
       </div>
+      {canApprove&&awaitingRows.length>0&&<button onClick={approveAll} disabled={!!busyId}
+        style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:12,fontSize:12.5,color:T.green,borderColor:T.green+"60"}}>{busyId==="all"?"Approving…":`✓ Approve all ${awaitingRows.length} awaiting approval`}</button>}
       {loading&&<Spinner/>}
       {!loading&&rows.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}><div style={{fontSize:40,marginBottom:10}}>📝</div>No shop daily reports in this range.</div>}
-      {rows.map(r=>{const j=jobOf(r);const t=reportTotals(r,"Manufacturing");const crew=(r.labor||[]).filter(l=>l.name).length;return(
+      {rows.map(r=>{const j=jobOf(r);const t=reportTotals(r,"Manufacturing");const crew=(r.labor||[]).filter(l=>l.name).length;const awaiting=(r.status||"submitted")==="submitted";return(
         <div key={r.id} onClick={()=>setActive(r)} style={{...cardS,marginBottom:8,cursor:"pointer",borderLeft:`3px solid ${stColor(r.status)}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
             <div style={{minWidth:0}}>
               <div style={{fontSize:13.5,fontWeight:800,color:T.text}}>🏭 {j?.job_number||"—"} <span style={{color:T.muted,fontWeight:500}}>· #{r.report_no||"—"} · {r.date}</span></div>
               <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{r.submitted_by||"—"} · {crew} on crew · {t.labor_hrs.toFixed(1)} hrs</div>
             </div>
-            <span style={pill(stColor(r.status))}>{stLabel(r.status||"submitted")}</span>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+              <span style={pill(stColor(r.status))}>{stLabel(r.status||"submitted")}</span>
+              {canApprove&&awaiting&&<button onClick={e=>{e.stopPropagation();approveOne(r);}} disabled={!!busyId}
+                style={{background:T.green,color:"#000",border:"none",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit",opacity:busyId===r.id?0.6:1}}>{busyId===r.id?"…":"✓ Approve"}</button>}
+            </div>
           </div>
         </div>);})}
     </div>
