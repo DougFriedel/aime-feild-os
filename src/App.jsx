@@ -3259,6 +3259,22 @@ function DivisionReportsTab({user,division,projects,onErr}){
   const [active,setActive]=useState(null);
   const divProjects=projects.filter(p=>p.division===division);
   const ids=new Set(divProjects.map(p=>p.id));
+  const [busyId,setBusyId]=useState(null);
+  const canApprove=can(user,"approve_report");
+  // One-tap approve from the list. API.reports.update also moves the report's time cards to approved.
+  async function approveOne(r){
+    if(busyId)return;setBusyId(r.id);
+    try{await API.reports.update(r.id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});
+      setRows(rs=>rs.map(x=>x.id===r.id?{...x,status:"approved",approved_by:user.name}:x));}
+    catch(e){onErr&&onErr(e.message);}
+    setBusyId(null);
+  }
+  async function approveAll(list){
+    if(!list.length||!window.confirm(`Approve all ${list.length} report${list.length===1?"":"s"} awaiting approval in this list?`))return;
+    setBusyId("all");let n=0;
+    for(const r of list){try{await API.reports.update(r.id,{status:"approved",approved_by:user.name,approved_at:new Date().toISOString()});n++;}catch(e){onErr&&onErr(`${r.report_no||r.id}: ${e.message}`);break;}}
+    setBusyId(null);await load();
+  }
   async function load(){
     setLoading(true);
     try{
@@ -3302,10 +3318,13 @@ function DivisionReportsTab({user,division,projects,onErr}){
         {[["Reports",filtered.length,T.blue],["Labor hrs",hrs.toFixed(1),T.green],["Awaiting approval",pending,pending?T.yellow:T.muted]].map(([l,v,c])=>(
           <div key={l} style={{...cardS,textAlign:"center",padding:12}}><div style={{fontSize:20,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:"1px"}}>{l}</div></div>))}
       </div>
+      {canApprove&&pending>0&&<button onClick={()=>approveAll(filtered.filter(r=>(r.status||"submitted")==="submitted"))} disabled={!!busyId}
+        style={{...ghostBtn,width:"100%",textAlign:"center",marginBottom:12,fontSize:12.5,color:T.green,borderColor:T.green+"60"}}>{busyId==="all"?"Approving…":`✓ Approve all ${pending} awaiting approval`}</button>}
       {loading&&<Spinner/>}
       {!loading&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 16px",color:T.muted}}><div style={{fontSize:40,marginBottom:10}}>📝</div>No daily reports in this range.</div>}
       {filtered.map(r=>{
-        const p=projOf(r);const t=reportTotals(r,division);const crew=(r.labor||[]).filter(l=>l.name&&!isPerDiemRow(l)).length;
+        const p=projOf(r);const t=reportTotals(r,p?rateDivOf(p):division);const crew=(r.labor||[]).filter(l=>l.name&&!isPerDiemRow(l)).length;
+        const awaiting=(r.status||"submitted")==="submitted";
         return(
           <div key={r.id} onClick={()=>setActive(r)} style={{...cardS,marginBottom:8,cursor:"pointer",borderLeft:`3px solid ${stColor(r.status)}`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
@@ -3314,7 +3333,11 @@ function DivisionReportsTab({user,division,projects,onErr}){
                 <div style={{fontSize:11.5,color:T.muted,marginTop:2}}>{r.submitted_by||"—"} · {crew} on crew · {t.labor_hrs.toFixed(1)} hrs{can(user,"view_dashboard")?` · $${t.grand.toLocaleString("en-US",{minimumFractionDigits:2})}`:""}</div>
                 {r.description&&<div style={{fontSize:11.5,color:T.sub,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</div>}
               </div>
-              <span style={pill(stColor(r.status))}>{stLabel(r.status||"submitted")}</span>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+                <span style={pill(stColor(r.status))}>{stLabel(r.status||"submitted")}</span>
+                {canApprove&&awaiting&&<button onClick={e=>{e.stopPropagation();approveOne(r);}} disabled={!!busyId}
+                  style={{background:T.green,color:"#000",border:"none",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit",opacity:busyId===r.id?0.6:1}}>{busyId===r.id?"…":"✓ Approve"}</button>}
+              </div>
             </div>
           </div>
         );
